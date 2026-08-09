@@ -414,10 +414,6 @@ impl Operator {
         writeln!(out, "end_operator").unwrap();
     }
 
-    pub fn get_cost(&self) -> f64 {
-        self.cost
-    }
-
     pub fn get_name(&self) -> String {
         self.name.clone()
     }

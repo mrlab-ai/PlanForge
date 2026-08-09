@@ -70,7 +70,6 @@ pub struct CausalGraph {
     ordering: OrderingVars,
     propositional_ordering: ExplicitOrderingVars,
     numeric_ordering: NumericOrderingVars,
-    acyclic: bool,
 }
 
 impl CausalGraph {
@@ -110,10 +109,13 @@ impl CausalGraph {
         let (ordering, weighted_graph) =
             Self::calculate_topological_pseudo_sort(&goals, weighted_graph, &sccs);
 
-        let acyclic = sccs.len() == (variables.len() + numeric_variables.len());
         info!(
             "The causal graph is {}acyclic.",
-            if acyclic { "" } else { "not " }
+            if sccs.len() == variables.len() + numeric_variables.len() {
+                ""
+            } else {
+                "not "
+            }
         );
 
         let mut cg = Self {
@@ -133,7 +135,6 @@ impl CausalGraph {
             ordering,
             propositional_ordering: Vec::new(),
             numeric_ordering: Vec::new(),
-            acyclic,
         };
 
         cg.calculate_important_vars();
@@ -556,18 +557,6 @@ impl CausalGraph {
         index as usize
     }
 
-    pub fn get_variable_ordering(&self) -> &ExplicitOrderingVars {
-        &self.propositional_ordering
-    }
-
-    pub fn get_numeric_variable_ordering(&self) -> &NumericOrderingVars {
-        &self.numeric_ordering
-    }
-
-    pub fn is_acyclic(&self) -> bool {
-        self.acyclic
-    }
-
     pub fn dump(&self) {
         for (source, succs) in &self.weighted_graph {
             debug!(
@@ -676,7 +665,6 @@ impl CausalGraph {
         Vec<MutexGroup>,
         Vec<ExplicitFact>,
         Option<GlobalConstraint>,
-        bool,
         usize,
     ) {
         self.strip_mutexes();
@@ -687,7 +675,6 @@ impl CausalGraph {
 
         self.check_and_repair_empty_axiom_layers();
 
-        let is_acyclic = self.is_acyclic();
         let metric_index = self.get_metric_index();
 
         let variables: Vec<ExplicitVariable> = self.variables.take();
@@ -713,7 +700,6 @@ impl CausalGraph {
             self.mutexes,
             self.goals,
             self.global_constraint,
-            is_acyclic,
             metric_index,
         )
     }

@@ -109,10 +109,6 @@ impl ExplicitVariable {
         self.values.len()
     }
 
-    pub fn is_comparison(&self) -> bool {
-        self.comparison
-    }
-
     pub fn set_comparison(&mut self) {
         self.comparison = true;
     }
@@ -175,7 +171,6 @@ impl ExplicitVariable {
 pub struct NumericVariable {
     pub index: usize,
     name: String,
-    value: f64,
     layer: i32,
     level: i32,
     necessary: bool,
@@ -233,7 +228,6 @@ impl NumericVariable {
         Self {
             index,
             name,
-            value: 0.0,
             layer,
             level: -1,
             necessary: false,
@@ -245,10 +239,6 @@ impl NumericVariable {
     pub fn set_level(&mut self, new_level: i32) {
         assert_eq!(self.level, -1);
         self.level = new_level;
-    }
-
-    pub fn set_value(&mut self, new_value: f64) {
-        self.value = new_value;
     }
 
     pub fn set_necessary(&mut self) {
@@ -267,20 +257,12 @@ impl NumericVariable {
         }
     }
 
-    pub fn set_layer(&mut self, new_layer: i32) {
-        self.layer = new_layer;
-    }
-
     pub fn is_necessary(&self) -> bool {
         self.necessary
     }
 
     pub fn get_level(&self) -> i32 {
         self.level
-    }
-
-    pub fn is_subterm(&self) -> bool {
-        self.subterm
     }
 
     pub fn set_subterm(&mut self) {

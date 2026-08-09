@@ -1,6 +1,5 @@
 pub mod axiom;
 pub mod causal_graph;
-pub mod domain_transition_graph;
 pub mod fact;
 pub mod helper_functions;
 pub mod max_dag;
@@ -8,7 +7,6 @@ pub mod mutex_group;
 pub mod operator;
 pub mod scc;
 pub mod state;
-pub mod successor_generator;
 pub mod variable;
 
 use std::fs::File;
@@ -17,7 +15,6 @@ use std::io::{Read, Write};
 use tracing::{debug, info};
 
 use self::causal_graph::CausalGraph;
-use self::domain_transition_graph::{are_dtgs_strongly_connected, build_dtgs};
 use self::fact::ExplicitFact;
 use self::helper_functions::{InputStream, read_preprocessed_problem_description, to_sas_writer};
 
@@ -36,10 +33,6 @@ pub struct GlobalConstraint {
     pub value: usize,
 }
 pub type Condition = Vec<ExplicitFact>;
-
-pub fn run_preprocess(args: &[String]) {
-    run_preprocess_to_output(args, std::path::Path::new("output"));
-}
 
 pub fn run_preprocess_to_output(args: &[String], output_path: &std::path::Path) {
     let mut outfile = File::create(output_path)
@@ -114,7 +107,6 @@ pub fn run_preprocess_str_to_writer<W: Write>(input: &str, prune_variables: bool
         mutexes,
         goals,
         global_constraint,
-        cg_acyclic,
         new_metric_index,
     ) = CausalGraph::new(
         variables,
@@ -136,16 +128,6 @@ pub fn run_preprocess_str_to_writer<W: Write>(input: &str, prune_variables: bool
         "Metric index changed from {} to {}",
         old_metric_index, new_metric_index
     );
-
-    info!("Building domain transition graphs...");
-    let transition_graphs =
-        build_dtgs(&ordered_variables, &orig_variables, &operators, &axioms_rel);
-
-    let mut solvable_in_poly_time = false;
-    if cg_acyclic {
-        solvable_in_poly_time = are_dtgs_strongly_connected(&transition_graphs);
-    }
-    info!("solvable in poly time {}", solvable_in_poly_time);
 
     let mut facts = 0;
     let mut derived_vars = 0;

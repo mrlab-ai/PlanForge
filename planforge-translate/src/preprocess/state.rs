@@ -47,10 +47,6 @@ impl State {
         *self.numeric_values.get(&var).unwrap()
     }
 
-    pub fn numeric_size(&self) -> usize {
-        self.numeric_values.len()
-    }
-
     pub fn get(&self, var: usize) -> usize {
         *self.values.get(&var).unwrap()
     }

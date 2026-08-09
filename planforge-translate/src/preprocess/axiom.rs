@@ -52,22 +52,6 @@ impl AxiomRelational {
         vars[self.effect_var].get_level() == -1
     }
 
-    pub fn str_repr(&self, vars: &[ExplicitVariable]) -> String {
-        let mut buf = String::new();
-        let effect_level = vars[self.effect_var].get_level();
-        buf.push_str(&format!("[AX: {} := ", effect_level));
-        for cond in &self.conditions {
-            let level = vars[cond.var].get_level();
-            buf.push_str(&format!("{} & ", level));
-        }
-        if buf.ends_with(" & ") {
-            let len = buf.len();
-            buf.replace_range(len - 3..len, "");
-        }
-        buf.push(']');
-        buf
-    }
-
     pub fn dump(&self, vars: &[ExplicitVariable]) {
         debug!("axiom:");
         debug!("conditions:");
@@ -114,14 +98,6 @@ impl AxiomRelational {
 
     pub fn get_effect_var(&self) -> usize {
         self.effect_var
-    }
-
-    pub fn get_old_val(&self) -> usize {
-        self.old_val
-    }
-
-    pub fn get_effect_val(&self) -> usize {
-        self.effect_val
     }
 }
 
@@ -181,16 +157,6 @@ impl AxiomFunctionalComparison {
         vars[self.effect_var].get_level() == -1
             || numeric_vars[self.left_var].get_level() == -1
             || numeric_vars[self.right_var].get_level() == -1
-    }
-
-    pub fn str_repr(&self, vars: &[ExplicitVariable], numeric_vars: &[NumericVariable]) -> String {
-        let effect_level = vars[self.effect_var].get_level();
-        let left_level = numeric_vars[self.left_var].get_level();
-        let right_level = numeric_vars[self.right_var].get_level();
-        format!(
-            "[AX: {} := {} {} {}]",
-            effect_level, left_level, self.cop, right_level
-        )
     }
 
     pub fn dump(&self, vars: &[ExplicitVariable], numeric_vars: &[NumericVariable]) {
@@ -286,16 +252,6 @@ impl AxiomNumericComputation {
         num_vars[self.effect_var].get_level() == -1
             || num_vars[self.left_var].get_level() == -1
             || num_vars[self.right_var].get_level() == -1
-    }
-
-    pub fn str_repr(&self, num_vars: &[NumericVariable]) -> String {
-        let effect_level = num_vars[self.effect_var].get_level();
-        let left_level = num_vars[self.left_var].get_level();
-        let right_level = num_vars[self.right_var].get_level();
-        format!(
-            "[AX: {} := {} {} {}]",
-            effect_level, left_level, self.fop, right_level
-        )
     }
 
     pub fn dump(&self, num_vars: &[NumericVariable]) {

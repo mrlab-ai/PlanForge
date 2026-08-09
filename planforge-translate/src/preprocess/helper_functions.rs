@@ -1,9 +1,8 @@
-use std::io::{Read, Write};
+use std::io::Write;
 
 use tracing::{debug, error, info};
 
 use super::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
-use super::domain_transition_graph::DomainTransitionGraph;
 use super::fact::ExplicitFact;
 use super::mutex_group::MutexGroup;
 use super::operator::Operator;
@@ -17,12 +16,6 @@ pub struct InputStream {
 }
 
 impl InputStream {
-    pub fn from_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
-        let mut input = String::new();
-        reader.read_to_string(&mut input)?;
-        Ok(Self { input, pos: 0 })
-    }
-
     pub fn new(input: String) -> Self {
         Self { input, pos: 0 }
     }
@@ -226,13 +219,6 @@ fn read_goal(stream: &mut InputStream) -> Vec<ExplicitFact> {
     goals
 }
 
-fn dump_goal(goals: &[ExplicitFact], variables: &[ExplicitVariable]) {
-    info!("Goal Conditions:");
-    for goal in goals {
-        info!("  {}: {}", variables[goal.var].get_name(), goal.value);
-    }
-}
-
 fn read_operators(stream: &mut InputStream) -> Vec<Operator> {
     let count = stream.read_usize();
     let mut operators = Vec::with_capacity(count);
@@ -362,122 +348,6 @@ pub fn read_preprocessed_problem_description(
         axioms_numeric,
         global_constraint,
     )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn dump_preprocessed_problem_description(
-    variables: &[ExplicitVariable],
-    numeric_variables: &[NumericVariable],
-    initial_state: &State,
-    goals: &[ExplicitFact],
-    operators: &Vec<Operator>,
-    axioms_rel: &Vec<AxiomRelational>,
-    axioms_func_ass: &Vec<AxiomNumericComputation>,
-    axioms_func_comp: &Vec<AxiomFunctionalComparison>,
-) {
-    info!("Variables ({}):", variables.len());
-    for var in variables {
-        var.dump();
-    }
-    info!("Numeric variables ({}):", numeric_variables.len());
-    for var in numeric_variables {
-        var.dump();
-    }
-    debug!("Initial State:");
-    initial_state.dump(variables, numeric_variables);
-    dump_goal(goals, variables);
-    for op in operators {
-        op.dump(variables, numeric_variables);
-    }
-    for ax in axioms_rel {
-        ax.dump(variables);
-    }
-    for ax in axioms_func_ass {
-        ax.dump(numeric_variables);
-    }
-    for ax in axioms_func_comp {
-        ax.dump(variables, numeric_variables);
-    }
-}
-
-pub fn dump_dtgs(ordering: &[ExplicitVariable], transition_graphs: &mut [DomainTransitionGraph]) {
-    let num_graphs = transition_graphs.len();
-    for i in 0..num_graphs {
-        let name = ordering[i].get_name();
-        debug!("Domain transition graph for {}:", name);
-        transition_graphs[i].dump(ordering);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn to_sas(
-    orig_vars: &[ExplicitVariable],
-    orig_numeric_vars: &[NumericVariable],
-    ordered_vars: &[ExplicitVariable],
-    ordered_numeric_vars: &[NumericVariable],
-    metric: &Metric,
-    mutexes: &Vec<MutexGroup>,
-    initial_state: &State,
-    goals: &Vec<ExplicitFact>,
-    operators: &Vec<Operator>,
-    axioms_rel: &Vec<AxiomRelational>,
-    axioms_func_ass: &Vec<AxiomNumericComputation>,
-    axioms_func_comp: &Vec<AxiomFunctionalComparison>,
-    constraint: &Option<GlobalConstraint>,
-) {
-    to_sas_at_path(
-        orig_vars,
-        orig_numeric_vars,
-        ordered_vars,
-        ordered_numeric_vars,
-        metric,
-        mutexes,
-        initial_state,
-        goals,
-        operators,
-        axioms_rel,
-        axioms_func_ass,
-        axioms_func_comp,
-        constraint,
-        std::path::Path::new("output"),
-    );
-}
-
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
-pub fn to_sas_at_path(
-    orig_vars: &[ExplicitVariable],
-    orig_numeric_vars: &[NumericVariable],
-    ordered_vars: &[ExplicitVariable],
-    ordered_numeric_vars: &[NumericVariable],
-    metric: &Metric,
-    mutexes: &Vec<MutexGroup>,
-    initial_state: &State,
-    goals: &Vec<ExplicitFact>,
-    operators: &Vec<Operator>,
-    axioms_rel: &Vec<AxiomRelational>,
-    axioms_func_ass: &Vec<AxiomNumericComputation>,
-    axioms_func_comp: &Vec<AxiomFunctionalComparison>,
-    constraint: &Option<GlobalConstraint>,
-    output_path: &std::path::Path,
-) {
-    let mut outfile = std::fs::File::create(output_path)
-        .unwrap_or_else(|_| panic!("open output {}", output_path.display()));
-    to_sas_writer(
-        orig_vars,
-        orig_numeric_vars,
-        ordered_vars,
-        ordered_numeric_vars,
-        metric,
-        mutexes,
-        initial_state,
-        goals,
-        operators,
-        axioms_rel,
-        axioms_func_ass,
-        axioms_func_comp,
-        constraint,
-        &mut outfile,
-    );
 }
 
 /// Same content as `to_sas_at_path`, but writes to an arbitrary `Write` sink
