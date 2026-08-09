@@ -1,5 +1,5 @@
 use clap::Parser;
-use tracing::{error, info};
+use tracing::info;
 use planforge_cli_utils::*;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
@@ -986,6 +986,7 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
         }
     };
 
+    write_plan_file(&result)?;
     print_search_result(&result);
 
     Ok(result)
@@ -999,6 +1000,26 @@ pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
     }
 }
 
+/// Write the plan to `sas_plan`, if the search found one.
+///
+/// Kept separate from [`print_search_result`] because this can fail and the
+/// failure has to reach the caller: exiting successfully with no plan on disk
+/// is worse than exiting with an error.
+pub fn write_plan_file(result: &SearchResult) -> std::io::Result<()> {
+    let Some(plan) = result.plan.as_ref() else {
+        return Ok(());
+    };
+    if !matches!(result.status, SearchStatus::Solved(_)) {
+        return Ok(());
+    }
+
+    let mut plan_content = String::new();
+    for op in plan.iter() {
+        plan_content.push_str(&format!("({})\n", op.name()));
+    }
+    fs::write("sas_plan", plan_content)
+}
+
 pub fn print_search_result(result: &SearchResult) {
     match result.status {
         SearchStatus::Solved(_) => {
@@ -1007,16 +1028,6 @@ pub fn print_search_result(result: &SearchResult) {
                 let plan_cost = result
                     .solution_cost
                     .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum());
-
-                let mut plan_content = String::new();
-                for op in plan.iter() {
-                    plan_content.push_str(&format!("({})\n", op.name()));
-                }
-
-                match fs::write("sas_plan", plan_content) {
-                    Ok(()) => {}
-                    Err(e) => error!("Error writing plan file: {}", e),
-                }
 
                 for (i, op) in plan.iter().enumerate() {
                     info!("  {}: {}", i + 1, op.name());

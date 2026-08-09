@@ -246,12 +246,19 @@ impl Operator {
             let ex_var = stream.read_usize();
             stream.skip_ws();
 
-            let _ = ecs;
-            assign_effects.push(NumericEffect::new(af_var, operator, ex_var));
+            if eff_conds != 0 {
+                assign_effects.push(NumericEffect::new_conditional(
+                    af_var, ecs, operator, ex_var,
+                ));
+            } else {
+                assign_effects.push(NumericEffect::new(af_var, operator, ex_var));
+            }
         }
 
         let cost_str = stream.read_token();
-        let cost = cost_str.parse::<f64>().unwrap_or(0.0);
+        let cost = cost_str
+            .parse::<f64>()
+            .unwrap_or_else(|e| panic!("operator {name} has a malformed cost {cost_str:?}: {e}"));
         stream.skip_ws();
         check_magic(stream, "end_operator");
 
@@ -382,7 +389,16 @@ impl Operator {
         for eff in &self.assign_effects {
             write!(out, "{}", eff.effect_conds.len()).unwrap();
             for cond in &eff.effect_conds {
-                write!(out, " {} {}", num_vars[cond.var].get_level(), cond.cond).unwrap();
+                // An assignment effect's conditions are propositional facts,
+                // exactly like a `pre_post` effect's, so they index `vars` and
+                // not `num_vars`.
+                assert!(
+                    vars[cond.var].get_level() != -1,
+                    "operator {} guards an assignment effect on a pruned variable {}",
+                    self.name,
+                    cond.var,
+                );
+                write!(out, " {} {}", vars[cond.var].get_level(), cond.cond).unwrap();
             }
             writeln!(
                 out,

@@ -214,7 +214,12 @@ impl NumericVariable {
         let nvtype = stream.read_char();
         stream.skip_ws();
         let layer_str = stream.read_until(' ');
-        let layer = layer_str.parse::<i32>().unwrap_or(0);
+        // Layer 0 is a real layer and -1 means "not derived", so a default
+        // here would silently promote a non-derived variable into layer 0 and
+        // change the axiom stratification.
+        let layer = layer_str.parse::<i32>().unwrap_or_else(|e| {
+            panic!("numeric variable {index} has a malformed axiom layer {layer_str:?}: {e}")
+        });
         let name = stream.read_line();
 
         let mut ntype = NumType::Unknown;

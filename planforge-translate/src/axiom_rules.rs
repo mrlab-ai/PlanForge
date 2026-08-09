@@ -63,7 +63,7 @@ fn compute_necessary_axiom_literals(
             if let Some(positive_atom) = literal.literal_positive() {
                 if axioms_by_atom.contains_key(&positive_atom) {
                     let normalized = if negated {
-                        literal.negate_literal().unwrap_or_else(|| literal.clone())
+                        negate_axiom_literal(literal)
                     } else {
                         literal.clone()
                     };
@@ -233,13 +233,22 @@ fn compute_negative_axioms(
     new_axioms
 }
 
+/// Negate an axiom literal.
+///
+/// After normalization every axiom condition and effect is an atom or a negated
+/// atom, so `negate_literal` returning `None` is a broken invariant rather than
+/// a case to recover from. Falling back to the literal itself would substitute
+/// `L` for `¬L` and invert the axiom's meaning.
+fn negate_axiom_literal(literal: &Condition) -> Condition {
+    literal
+        .negate_literal()
+        .unwrap_or_else(|| panic!("axiom literal is not negatable: {literal:?}"))
+}
+
 pub fn negate(axioms: &[PropositionalAxiom]) -> Vec<PropositionalAxiom> {
     assert!(!axioms.is_empty());
 
-    let initial_effect = axioms[0]
-        .effect
-        .negate_literal()
-        .unwrap_or_else(|| axioms[0].effect.clone());
+    let initial_effect = negate_axiom_literal(&axioms[0].effect);
     let mut result = vec![PropositionalAxiom::new(
         axioms[0].name.clone(),
         vec![],
@@ -251,16 +260,14 @@ pub fn negate(axioms: &[PropositionalAxiom]) -> Vec<PropositionalAxiom> {
         if condition.is_empty() {
             return vec![];
         } else if condition.len() == 1 {
-            let new_literal = condition[0]
-                .negate_literal()
-                .unwrap_or_else(|| condition[0].clone());
+            let new_literal = negate_axiom_literal(&condition[0]);
             for result_axiom in &mut result {
                 result_axiom.condition.push(new_literal.clone());
             }
         } else {
             let mut new_result = vec![];
             for literal in condition {
-                let negated_literal = literal.negate_literal().unwrap_or_else(|| literal.clone());
+                let negated_literal = negate_axiom_literal(literal);
                 for result_axiom in &result {
                     let mut new_axiom = result_axiom.clone_axiom();
                     new_axiom.condition.push(negated_literal.clone());

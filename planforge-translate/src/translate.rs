@@ -1609,17 +1609,19 @@ pub fn translate_task_from_grounded_internal(
     // Filter unreachable facts
     if options::FILTER_UNREACHABLE_FACTS {
         let mut sas_task = sas_task;
-        match simplify::filter_unreachable_propositions(&mut sas_task) {
-            Ok(()) => return Ok(sas_task),
-            Err(simplify::SimplifyError::Impossible) => {
-                return Ok(simplify::trivial_task(false));
-            }
-            Err(simplify::SimplifyError::TriviallySolvable) => {
-                return Ok(simplify::trivial_task(true));
-            }
-            Err(_) => {}
-        }
-        return Ok(sas_task);
+        return match simplify::filter_unreachable_propositions(&mut sas_task) {
+            Ok(()) => Ok(sas_task),
+            Err(simplify::SimplifyError::Impossible) => Ok(simplify::trivial_task(false)),
+            Err(simplify::SimplifyError::TriviallySolvable) => Ok(simplify::trivial_task(true)),
+            // `filter_unreachable_propositions` renames the task in place, so
+            // returning `sas_task` here would hand back a partially renamed
+            // one. Naming the variant rather than using a wildcard makes any
+            // future variant a compile error instead of a silent fallthrough.
+            Err(simplify::SimplifyError::DoesNothing) => panic!(
+                "filter_unreachable_propositions reported DoesNothing after \
+                 renaming the task in place, leaving it half-rewritten"
+            ),
+        };
     }
 
     Ok(sas_task)

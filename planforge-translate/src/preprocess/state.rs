@@ -33,9 +33,7 @@ impl State {
         check_magic(stream, "begin_numeric_state");
         let mut numeric_values: HashMap<usize, f64> = HashMap::new();
         for numvar in numeric_variables {
-            let value_str = stream.read_token();
-            let num_value = value_str.parse::<f64>().unwrap_or(0.0);
-            numeric_values.insert(numvar.index, num_value);
+            numeric_values.insert(numvar.index, stream.read_f64());
         }
         check_magic(stream, "end_numeric_state");
 

@@ -345,6 +345,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         }
     };
 
+    planforge_searcher::write_plan_file(&result)?;
     print_search_result(&result);
 
     Ok(result)

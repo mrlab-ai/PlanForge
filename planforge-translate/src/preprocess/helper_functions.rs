@@ -83,19 +83,37 @@ impl InputStream {
 
     pub fn read_char(&mut self) -> char {
         self.skip_ws();
-        let ch = self.peek_char().unwrap_or('\0');
+        let ch = self.peek_char().unwrap_or_else(|| {
+            panic!(
+                "unexpected end of input at byte {} while reading a character",
+                self.pos
+            )
+        });
         self.pos += ch.len_utf8();
         ch
     }
 
+    /// These are the primitive readers for every variable id, value, count and
+    /// axiom layer in the SAS stream. Returning a default on a malformed token
+    /// would not degrade gracefully: `0` is a valid variable id, a valid value
+    /// and a valid count, so a garbled token would silently rewrite the task
+    /// instead of failing. Fail loudly, like `check_magic` already does.
     pub fn read_i32(&mut self) -> i32 {
         let tok = self.read_token();
-        tok.parse::<i32>().unwrap_or(0)
+        tok.parse::<i32>()
+            .unwrap_or_else(|e| panic!("expected an i32 in the SAS stream, got {tok:?}: {e}"))
     }
 
     pub fn read_usize(&mut self) -> usize {
         let tok = self.read_token();
-        tok.parse::<usize>().unwrap_or(0)
+        tok.parse::<usize>()
+            .unwrap_or_else(|e| panic!("expected a usize in the SAS stream, got {tok:?}: {e}"))
+    }
+
+    pub fn read_f64(&mut self) -> f64 {
+        let tok = self.read_token();
+        tok.parse::<f64>()
+            .unwrap_or_else(|e| panic!("expected an f64 in the SAS stream, got {tok:?}: {e}"))
     }
 
     fn peek_char(&self) -> Option<char> {
