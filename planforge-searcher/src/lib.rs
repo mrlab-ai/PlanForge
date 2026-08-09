@@ -14,6 +14,7 @@ use planforge_search::evaluation::abstraction_collections::saturated_cost_partit
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
+use planforge_search::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
 };
@@ -254,6 +255,21 @@ fn build_heuristic_from_spec_internal<'a>(
                 return Err("`blind` does not accept arguments".to_string().into());
             }
             Ok(None)
+        }
+        "check_admissible" => {
+            let inner_spec = single_wrapped_heuristic_spec("check_admissible", &spec.args)?;
+            // The oracle solves the remaining task from scratch, which needs a
+            // registry of its own and therefore a shared handle on the task.
+            let sampling_task = sampling_task.ok_or_else(|| {
+                "`check_admissible` needs a shared task handle for its goal-distance oracle; \
+                 build it through `build_heuristic_from_spec_with_task_ref`"
+                    .to_string()
+            })?;
+            let inner =
+                build_heuristic_from_spec_internal(&inner_spec, task, Some(sampling_task.clone()))?;
+            let h = CheckAdmissibleHeuristic::new(inner, sampling_task)
+                .map_err(|error| format!("failed to construct `check_admissible`: {error}"))?;
+            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "ff" => {
             if !spec.args.is_empty() {
@@ -770,6 +786,27 @@ fn build_heuristic_from_spec_internal<'a>(
     }
 }
 
+/// Read the single positional heuristic argument of a wrapping heuristic such
+/// as `check_admissible(<inner>)`.
+fn single_wrapped_heuristic_spec(
+    wrapper: &str,
+    args: &[recursive_config::ConfigArg],
+) -> Result<HeuristicSpec, String> {
+    let [arg] = args else {
+        return Err(format!(
+            "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain_abstraction())`, \
+             but got {} arguments",
+            args.len()
+        ));
+    };
+    if let Some(key) = arg.key() {
+        return Err(format!(
+            "`{wrapper}` takes its heuristic positionally, not as `{key}=...`"
+        ));
+    }
+    recursive_config::heuristic_spec_from_value(arg.value())
+}
+
 use tracing_subscriber::filter::LevelFilter;
 
 pub fn init_logger(level: LevelFilter) {
@@ -822,7 +859,8 @@ pub struct PlannersSearcherCli {
     pub restrict_task: bool,
 
     /// Recursive search configuration.
-    /// Examples: `astar(blind())`, `astar(domain_abstraction())`, `da_debug()`.
+    /// Examples: `astar(blind())`, `astar(domain_abstraction())`,
+    /// `astar(check_admissible(domain_abstraction()))`.
     #[arg(
         long,
         value_name = "SPEC",
@@ -936,16 +974,6 @@ pub fn run_internal(cli: &PlannersSearcherCli) -> std::io::Result<SearchResult> 
     let (heuristic_spec, gbfs_priority, mpd) = match &cli.search {
         crate::recursive_config::SearchSpec::Astar(h, mpd) => (h, false, *mpd),
         crate::recursive_config::SearchSpec::Gbfs(h) => (h, true, false),
-        crate::recursive_config::SearchSpec::DaDebug => {
-            return Err(std::io::Error::other(
-                "`da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
-            ));
-        }
-        crate::recursive_config::SearchSpec::AstarDaDebug => {
-            return Err(std::io::Error::other(
-                "`astar_da_debug()` is implemented in the `planforge` binary path, not `planforge-searcher`",
-            ));
-        }
         crate::recursive_config::SearchSpec::AstarFs(_, _) => {
             return Err(std::io::Error::other(
                 "`astar_fs(...)` is implemented in the `planforge` binary path, not `planforge-searcher`",

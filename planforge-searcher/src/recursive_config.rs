@@ -65,8 +65,6 @@ pub enum SearchSpec {
     /// list ordering and a *slow* but possibly tighter one evaluated
     /// lazily when a state is about to be expanded.
     AstarFs(HeuristicSpec, HeuristicSpec),
-    DaDebug,
-    AstarDaDebug,
     /// Search-free plan synthesis by gradient descent. Not a search engine at
     /// all; it shares `--search` only to reuse the translation, resource-limit
     /// and plan-writing plumbing.
@@ -82,7 +80,6 @@ impl SearchSpec {
         match self {
             Self::Astar(heuristic, _) | Self::Gbfs(heuristic) => heuristic.contains_call(name),
             Self::AstarFs(fast, slow) => fast.contains_call(name) || slow.contains_call(name),
-            Self::DaDebug | Self::AstarDaDebug => false,
             // The sgd engine never nests a heuristic; it is not allowed one.
             Self::Sgd(_) => false,
         }
@@ -91,7 +88,9 @@ impl SearchSpec {
 
 fn config_value_contains_call(value: &ConfigValue, name: &str) -> bool {
     match value {
-        ConfigValue::Atom(_) => false,
+        // `parse_value` normalizes a zero-argument call such as `blind()` into
+        // a bare atom, so an atom spelled `name` *is* a call to `name`.
+        ConfigValue::Atom(atom) => atom == name,
         ConfigValue::Call(call) => {
             call.name() == name
                 || call
@@ -132,8 +131,6 @@ impl fmt::Display for SearchSpec {
             Self::Astar(h, true) => write!(f, "astar({h}, mpd=true)"),
             Self::Gbfs(h) => write!(f, "gbfs({h})"),
             Self::AstarFs(fast, slow) => write!(f, "astar_fs(fast={fast}, slow={slow})"),
-            Self::DaDebug => write!(f, "da_debug()"),
-            Self::AstarDaDebug => write!(f, "astar_da_debug()"),
             Self::Sgd(args) => {
                 if args.is_empty() {
                     return write!(f, "sgd()");
@@ -412,14 +409,6 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
             let slow = slow.ok_or_else(|| "`astar_fs(...)` requires `slow=...`".to_string())?;
             Ok(SearchSpec::AstarFs(fast, slow))
         }
-        "da_debug" => {
-            ensure_no_args(call)?;
-            Ok(SearchSpec::DaDebug)
-        }
-        "astar_da_debug" => {
-            ensure_no_args(call)?;
-            Ok(SearchSpec::AstarDaDebug)
-        }
         "sgd" => Ok(SearchSpec::Sgd(call.args.clone())),
         other => Err(format!("unknown search engine `{other}`")),
     }
@@ -476,7 +465,7 @@ fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicSpec, Stri
     heuristic_spec_from_value(&arg.value)
 }
 
-fn heuristic_spec_from_value(value: &ConfigValue) -> Result<HeuristicSpec, String> {
+pub(crate) fn heuristic_spec_from_value(value: &ConfigValue) -> Result<HeuristicSpec, String> {
     let call = match value {
         ConfigValue::Atom(name) => ConfigCall {
             name: name.clone(),
@@ -499,14 +488,6 @@ fn call_from_value(value: &ConfigValue) -> Result<ConfigCall, String> {
             name: name.clone(),
             args: Vec::new(),
         }),
-    }
-}
-
-fn ensure_no_args(call: &ConfigCall) -> Result<(), String> {
-    if call.args.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("`{}` does not accept arguments", call.name))
     }
 }
 

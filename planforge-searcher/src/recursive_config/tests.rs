@@ -863,36 +863,44 @@ fn trims_trailing_punctuation() {
         astar_heuristic("astar(canonical_domain_abstractions());").name,
         "canonical_domain_abstractions"
     );
+}
 
+#[test]
+fn parses_check_admissible_around_a_nested_heuristic() {
+    let spec = astar_heuristic("astar(check_admissible(domain_abstraction()));");
+    assert_eq!(spec.name, "check_admissible");
+    assert_eq!(spec.args.len(), 1);
+    let inner = heuristic_spec_from_value(spec.args[0].value()).unwrap();
+    assert_eq!(inner.name, "domain_abstraction");
+    assert!(spec.contains_call("domain_abstraction"));
+}
+
+#[test]
+fn check_admissible_round_trips_through_display() {
+    let spec = parse_search_spec("astar(check_admissible(blind()))").unwrap();
+    // `parse_value` normalizes a zero-argument call into a bare name, so the
+    // round-trip is over the spec, not over the exact input text.
+    assert_eq!(spec.to_string(), "astar(check_admissible(blind))");
+    assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
+
+    let with_options =
+        parse_search_spec("astar(check_admissible(domain_abstraction(max_time=1.5)))").unwrap();
     assert_eq!(
-        parse_search_spec("da_debug();").unwrap(),
-        SearchSpec::DaDebug
+        with_options.to_string(),
+        "astar(check_admissible(domain_abstraction(max_time=1.5)))"
     );
     assert_eq!(
-        parse_search_spec("astar_da_debug();").unwrap(),
-        SearchSpec::AstarDaDebug
+        parse_search_spec(&with_options.to_string()).unwrap(),
+        with_options
     );
 }
 
 #[test]
-fn parses_top_level_da_debug_with_or_without_unit_parens() {
-    assert_eq!(parse_search_spec("da_debug").unwrap(), SearchSpec::DaDebug);
-    assert_eq!(
-        parse_search_spec("da_debug()").unwrap(),
-        SearchSpec::DaDebug
-    );
-}
-
-#[test]
-fn parses_top_level_astar_da_debug_with_or_without_unit_parens() {
-    assert_eq!(
-        parse_search_spec("astar_da_debug").unwrap(),
-        SearchSpec::AstarDaDebug
-    );
-    assert_eq!(
-        parse_search_spec("astar_da_debug()").unwrap(),
-        SearchSpec::AstarDaDebug
-    );
+fn debug_search_engines_are_gone() {
+    for removed in ["da_debug()", "astar_da_debug()"] {
+        let error = parse_search_spec(removed).unwrap_err();
+        assert!(error.contains("unknown search engine"), "{error}");
+    }
 }
 
 #[test]

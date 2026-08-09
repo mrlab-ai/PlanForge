@@ -921,6 +921,14 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This method creates a new state from the provided values, evaluates axioms,
     /// and registers it in the state pool.
+    ///
+    /// `numeric_values` is indexed by numeric-variable id, so it accepts a full
+    /// vector as returned by [`Self::get_numeric_vars`]. Constant entries are
+    /// checked against the values this registry already holds and derived
+    /// entries are recomputed by the axiom pass; see
+    /// [`Self::process_register_numeric_variables`]. The initial state must
+    /// have been created first, because that is where the numeric layout of the
+    /// registry is fixed.
     pub fn register_state(
         &mut self,
         values: Vec<u64>,
@@ -983,6 +991,12 @@ impl<'a> StateRegistry<'a> {
     }
 
     /// Process numeric variables during state registration.
+    ///
+    /// Only `Regular` values enter the packed buffer and only `Cost` values are
+    /// returned; `Constant` values are the same in every state and are verified
+    /// against the ones this registry recorded when the initial state was
+    /// created, and `Derived` values are a function of the inputs that
+    /// [`Self::evaluate_axioms`] recomputes right after this call.
     fn process_register_numeric_variables(
         &mut self,
         buffer: &mut [u64],
@@ -1021,13 +1035,32 @@ impl<'a> StateRegistry<'a> {
                         packed_value,
                     );
                 }
-                _ => {
-                    return Err(StateInsertError {
-                        message: format!(
-                            "Only regular and cost variables are allowed during registration: {:?}",
-                            numeric_variable.get_type()
-                        ),
-                    });
+                NumericType::Constant => {
+                    let constant_index =
+                        self.numeric_indices[i].ok_or_else(|| StateInsertError {
+                            message: format!(
+                                "Constant numeric variable {i} has no value yet; create the initial state before registering other states"
+                            ),
+                        })?;
+                    let registered = *self.numeric_constants.get(constant_index).ok_or_else(|| {
+                        StateInsertError {
+                            message: format!(
+                                "Constant numeric variable {i} points at constant slot {constant_index}, but only {} constants are registered",
+                                self.numeric_constants.len()
+                            ),
+                        }
+                    })?;
+                    if !float_tolerance::equal(registered, value) {
+                        return Err(StateInsertError {
+                            message: format!(
+                                "Constant numeric variable {i} is {registered} in this registry, but the state to register has {value}"
+                            ),
+                        });
+                    }
+                }
+                NumericType::Derived => {
+                    // Recomputed from the inputs by `evaluate_axioms`, so the
+                    // supplied value is deliberately not stored.
                 }
             }
         }

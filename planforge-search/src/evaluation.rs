@@ -8,6 +8,7 @@ pub mod abstraction_collections;
 pub(crate) mod abstraction_task;
 pub mod cartesian_abstractions;
 pub mod cegar;
+pub mod check_admissible;
 pub mod domain_abstractions;
 pub mod evaluator;
 pub mod ff_heuristic;
