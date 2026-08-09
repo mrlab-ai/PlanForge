@@ -1,4 +1,5 @@
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
@@ -31,6 +32,22 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         axiom_layer,
+        1,
+    )
+}
+
+/// A variable carrying a numeric condition, with the three values the
+/// translator gives one: true, false and "not derived yet".
+fn condition_var(name: &str, axiom_layer: usize) -> ExplicitVariable {
+    ExplicitVariable::new(
+        ConditionValue::DOMAIN_SIZE,
+        name.to_string(),
+        vec![
+            format!("{name}=0"),
+            format!("{name}=1"),
+            format!("{name}=2"),
+        ],
+        Some(axiom_layer),
         1,
     )
 }
@@ -72,7 +89,7 @@ fn comparison_guarded_task() -> NumericRootTask {
     NumericRootTask::new(
         1,
         Metric::new(true, None),
-        vec![simple_var("cmp", Some(0)), simple_var("goal", None)],
+        vec![condition_var("cmp", 0), simple_var("goal", None)],
         vec![
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),

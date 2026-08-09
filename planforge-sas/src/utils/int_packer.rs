@@ -61,10 +61,27 @@ impl VariableInfo {
         (buffer[self.bin_index] & self.read_mask) >> self.shift
     }
 
+    /// Bits a value written to this slot may occupy, aligned at bit zero.
+    #[inline]
+    fn value_mask(&self) -> u64 {
+        self.read_mask >> self.shift
+    }
+
+    #[inline]
     pub fn set(&self, buffer: &mut [u64], value: u64) {
+        // The slot is exactly as wide as `range` needs, so a wider value would
+        // be truncated by `read_mask` and read back as a different value. That
+        // is silent data loss, so it fails here instead.
+        assert_eq!(
+            value & self.value_mask(),
+            value,
+            "value {value} does not fit the {} bits packed for range {}",
+            self.read_mask.count_ones(),
+            self.range
+        );
         let bin_index = self.bin_index;
         let bin = buffer[bin_index];
-        buffer[bin_index] = (bin & self.clear_mask) | ((value << self.shift) & self.read_mask);
+        buffer[bin_index] = (bin & self.clear_mask) | (value << self.shift);
     }
 }
 
