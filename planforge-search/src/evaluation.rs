@@ -12,7 +12,6 @@ pub mod check_admissible;
 pub mod domain_abstractions;
 pub mod evaluator;
 pub mod ff_heuristic;
-pub mod g_evaluator;
 pub mod heuristic;
 pub mod numeric_landmarks;
 #[cfg(feature = "cplex")]
@@ -22,7 +21,6 @@ pub mod pattern_databases;
 mod tests;
 
 pub use evaluator::{EvaluationError, EvaluationState, Evaluator};
-pub use g_evaluator::GEvaluator;
 pub use heuristic::Heuristic;
 
 use planforge_sas::state_registry::ConcreteState;

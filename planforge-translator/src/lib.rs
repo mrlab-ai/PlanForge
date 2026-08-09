@@ -111,9 +111,6 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
         Err(planforge_translate::simplify::SimplifyError::TriviallySolvable) => {
             sastask = planforge_translate::simplify::trivial_task(true);
         }
-        Err(planforge_translate::simplify::SimplifyError::DoesNothing) => {
-            // Task unchanged
-        }
     }
 
     let py_task = planforge_translate::sas_tasks::from_internal(&sastask);

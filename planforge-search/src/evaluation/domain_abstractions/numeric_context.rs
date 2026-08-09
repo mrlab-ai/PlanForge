@@ -18,6 +18,13 @@ pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask)
     numeric_intervals
 }
 
+/// Propagate every comparison tree's arithmetic nodes into the intervals of the
+/// derived numeric variables they define.
+///
+/// `evaluate_interval_and_fill` fills the intervals unconditionally and returns
+/// the tri-state truth value of the comparison over them; `None` means the
+/// comparison is indeterminate on this box, not that the fill failed. Only
+/// callers that want the truth value keep it.
 pub fn fill_derived_numeric_intervals_from_comparison_trees(
     comparison_trees: &[ComparisonTree],
     numeric_intervals: &mut [Interval],

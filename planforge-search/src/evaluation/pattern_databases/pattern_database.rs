@@ -988,7 +988,14 @@ impl<'task> PatternDatabase<'task> {
                 let distance = match self.evaluate_failed_lookup_lmcut(propositional, numeric) {
                     Ok(result) if result.dead_end => f64::INFINITY,
                     Ok(result) => result.value.max(self.min_operator_cost()),
-                    Err(_) => self.min_operator_cost(),
+                    // The LM-cut instance runs on the projected task this PDB
+                    // built itself, so a failure is an internal inconsistency.
+                    // Substituting `min_operator_cost` here would fabricate a
+                    // heuristic value and, worse, cache it for every later
+                    // lookup of the same state.
+                    Err(error) => {
+                        panic!("LM-cut fallback failed on a projected PDB state: {error}")
+                    }
                 };
                 self.failed_lookup_cache
                     .borrow_mut()

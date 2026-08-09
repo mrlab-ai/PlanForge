@@ -1013,7 +1013,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
             if helper_propositional_ids.is_empty() && helper_numeric_ids.is_empty() {
                 if self.is_numeric_axiom_var(goal.var()) {
-                    let _ = self.precondition_proposition_ids(goal);
+                    // The numeric helper did not compile this goal into helper
+                    // conditions, so the goal operator gets no precondition for
+                    // it. Dropping a numeric-axiom condition we cannot model is
+                    // the admissible relaxation documented on
+                    // `precondition_proposition_ids`: the goal becomes easier to
+                    // reach, never harder.
                     continue;
                 }
                 for proposition_id in self.precondition_proposition_ids(goal) {

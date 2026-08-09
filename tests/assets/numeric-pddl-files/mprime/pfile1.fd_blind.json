@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/home/markus/code/pf-numcond/target/release/planforge",
+    "--search",
+    "astar(blind())",
+    "/home/markus/code/pf-numcond/tests/assets/numeric-pddl-files/mprime/domain.pddl",
+    "/home/markus/code/pf-numcond/tests/assets/numeric-pddl-files/mprime/pfile1.pddl"
+  ],
+  "problem_file": "mprime/pfile1.pddl",
+  "returncode": 0,
+  "source_domain": "/home/markus/data/ipc2023/mprime/domain.pddl",
+  "source_problem": "/home/markus/data/ipc2023/mprime/pfile1.pddl",
+  "stats": {
+    "dead_ends": 0,
+    "evaluated": 2637,
+    "evaluations": 2637,
+    "expanded": 757,
+    "generated": 14961,
+    "plan_cost": 4.0,
+    "plan_length": 4,
+    "registered_states": 2637,
+    "reopened": 0,
+    "search_time_line": "Search time: 0.004940s",
+    "search_time_s": 0.00494,
+    "solution_found": true
+  },
+  "timed_out": false,
+  "wall_time_s": 0.01223949900304433
+}

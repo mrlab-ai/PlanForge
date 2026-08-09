@@ -242,7 +242,7 @@ impl Cegar {
                 &mut domain_sizes,
                 &mut partitions,
                 &mut numeric_domain_sizes,
-            );
+            )?;
         } else {
             apply_initial_seed_splits(
                 task,
@@ -1237,7 +1237,7 @@ fn apply_initial_goal_splits(
     domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
     numeric_domain_sizes: &mut [usize],
-) {
+) -> Result<()> {
     let goal_values: HashMap<usize, usize> = goal_variable_values(task)
         .into_iter()
         .map(|v| (v.var(), v.value()))
@@ -1358,48 +1358,50 @@ fn apply_initial_goal_splits(
     // selected init split lets different CEGAR iterations focus on
     // different comparison axioms, producing pattern diversity (and
     // hence additivity) in the resulting collection.
-    if let Ok(index) = ComparisonAxiomIndex::from_task(task) {
-        let init_split_filter: Option<&HashSet<usize>> = config.init_split_var_ids.as_ref();
-        for fact in goal_variable_values(task) {
-            if let Some(allowed) = init_split_filter
-                && !allowed.contains(&fact.var())
-            {
+    let index = ComparisonAxiomIndex::from_task(task)
+        .map_err(|e| anyhow::anyhow!("failed to build ComparisonAxiomIndex: {e}"))?;
+    let init_split_filter: Option<&HashSet<usize>> = config.init_split_var_ids.as_ref();
+    for fact in goal_variable_values(task) {
+        if let Some(allowed) = init_split_filter
+            && !allowed.contains(&fact.var())
+        {
+            continue;
+        }
+        let Some(tree) = index.comparison_tree(fact.var()) else {
+            continue;
+        };
+        for numeric_var_id in comparison_refinement_dimensions(task, tree) {
+            if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
                 continue;
             }
-            let Some(tree) = index.comparison_tree(fact.var()) else {
+            let Some(_) = task.numeric_variables().get(numeric_var_id) else {
                 continue;
             };
-            for numeric_var_id in comparison_refinement_dimensions(task, tree) {
-                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
-                    continue;
-                }
-                let Some(_) = task.numeric_variables().get(numeric_var_id) else {
-                    continue;
-                };
-                if !is_refinable_numeric_dimension(task, numeric_var_id) {
-                    continue;
-                }
-                if !can_refine_numeric_variable(
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    numeric_var_id,
-                    initial_max_abstraction_size,
-                ) {
-                    continue;
-                }
-                let Some(&init_value) = initial_numeric.get(numeric_var_id) else {
-                    continue;
-                };
-                let include_in_lower = rng.gen_range(0..2) == 0;
-                if partitions.split_at(numeric_var_id, init_value, include_in_lower)
-                    && let Some(parts) = partitions.partitions(numeric_var_id)
-                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
-                {
-                    *slot = parts.len();
-                }
+            if !is_refinable_numeric_dimension(task, numeric_var_id) {
+                continue;
+            }
+            if !can_refine_numeric_variable(
+                domain_sizes,
+                numeric_domain_sizes,
+                numeric_var_id,
+                initial_max_abstraction_size,
+            ) {
+                continue;
+            }
+            let Some(&init_value) = initial_numeric.get(numeric_var_id) else {
+                continue;
+            };
+            let include_in_lower = rng.gen_range(0..2) == 0;
+            if partitions.split_at(numeric_var_id, init_value, include_in_lower)
+                && let Some(parts) = partitions.partitions(numeric_var_id)
+                && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
+            {
+                *slot = parts.len();
             }
         }
     }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

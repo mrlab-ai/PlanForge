@@ -1461,56 +1461,12 @@ fn compute_hash_effects_with_preconditions(
     let mut changed_numeric_vars: Vec<usize> = changed_numeric_vars_for_semantics;
     let mut combo_scratch: Vec<(usize, usize, usize)> = Vec::with_capacity(per_var.len());
     let mut source_intervals_buf: Vec<Interval> = Vec::new();
-    let mut target_intervals_buf: Vec<Interval> = Vec::new();
-
-    // The set of numeric vars whose partition is pinned by this combo —
-    // affected (with effect transitions) ∪ needed (with identity transitions)
-    // ∪ deps with domain_size==1 (treated as the unbounded singleton
-    // partition; covered by the default-fill in
-    // `prepare_comparison_tree_inputs_for_combo_into`). Passing only
-    // `affected_numeric_vars` here drops bit transitions for comparisons
-    // whose deps span both affected and identity-iterated vars; skipping
-    // domain_size==1 deps drops them when the var hasn't been refined yet
-    // but the comparison still needs to emit its source→target bit
-    // transition based on the optimistic eval over the default (unbounded)
-    // interval.
-    let mut bound_numeric_vars: HashSet<usize> = per_var.iter().map(|(v, _)| *v).collect();
-    bound_numeric_vars.extend(needed_numeric_vars.iter().copied());
-    bound_numeric_vars.extend(affected_numeric_vars.iter().copied());
-    if let Some(index) = &generator.comparison_index {
-        // Treat *every* comparison axiom that's in the abstraction's hash
-        // and whose deps overlap the combo's bound set as fully bound: any
-        // unrefined dep already has the unbounded default interval filled
-        // by `prepare_comparison_tree_inputs_for_combo_into`, which is the
-        // correct (admissible, fully fan-out) input for the optimistic
-        // eval.
-        let snapshot: Vec<usize> = bound_numeric_vars.iter().copied().collect();
-        for tree in &generator.comparison_trees {
-            let var_id = tree.affected_var_id;
-            if generator.domain_sizes.get(var_id).copied().unwrap_or(1) <= 1 {
-                continue;
-            }
-            let deps = active_comparison_dimensions(
-                task,
-                tree,
-                &generator.numeric_domain_sizes,
-                &generator.additive_numeric_views,
-            );
-            if deps.iter().any(|d| snapshot.contains(d)) {
-                for dep in &deps {
-                    bound_numeric_vars.insert(*dep);
-                }
-            }
-        }
-        let _ = index;
-    }
 
     enumerate_partition_combos(
         task,
         generator,
         op_preconditions,
         &per_var,
-        &bound_numeric_vars,
         num_props,
         op_has_comparison_preconditions,
         any_changed_var_affects_comparison,
@@ -1520,7 +1476,6 @@ fn compute_hash_effects_with_preconditions(
         &mut changed_numeric_vars,
         &mut combo_scratch,
         &mut source_intervals_buf,
-        &mut target_intervals_buf,
         &mut out,
         deadline,
     )?;
@@ -1534,7 +1489,6 @@ fn enumerate_partition_combos(
     generator: &AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
     per_var: &[(usize, Vec<(usize, usize)>)],
-    affected_numeric_vars: &HashSet<usize>,
     num_props: usize,
     op_has_comparison_preconditions: bool,
     any_changed_var_affects_comparison: bool,
@@ -1544,7 +1498,6 @@ fn enumerate_partition_combos(
     changed_numeric_vars: &mut Vec<usize>,
     combo_scratch: &mut Vec<(usize, usize, usize)>,
     source_intervals_buf: &mut Vec<Interval>,
-    target_intervals_buf: &mut Vec<Interval>,
     out: &mut Vec<TransitionInfo>,
     deadline: Option<Instant>,
 ) -> Result<()> {
@@ -1587,12 +1540,9 @@ fn enumerate_partition_combos(
             return Ok(());
         }
 
-        // Slow path: either the operator has a comparison-axiom precondition
-        // (we must source-side filter), or this combo's numeric changes can
-        // affect at least one comparison axiom (we must emit bit transitions
-        // into the operator). We always need the source intervals here, and
-        // we always need the target intervals to evaluate the comparison bit
-        // at the target partition combo.
+        // Slow path: the operator has a comparison-axiom precondition, so the
+        // combo has to be filtered on its source side before it can be
+        // emitted.
         prepare_comparison_tree_inputs_for_combo_into(
             task,
             generator,
@@ -1600,58 +1550,30 @@ fn enumerate_partition_combos(
             false,
             source_intervals_buf,
         )?;
-        prepare_comparison_tree_inputs_for_combo_into(
-            task,
-            generator,
-            combo_scratch,
-            true,
-            target_intervals_buf,
-        )?;
 
-        let variants = compute_comparison_transition_facts(
-            task,
-            generator,
-            op_preconditions,
-            source_intervals_buf,
-            target_intervals_buf,
-            affected_numeric_vars,
-        )?;
-
-        // Empty Vec = combo is dead (a precondition is contradicted on this
-        // combo's source side, or every variant got pruned).
-        if variants.is_empty() {
+        if !comparison_preconditions_admit_combo(generator, op_preconditions, source_intervals_buf)
+        {
             return Ok(());
         }
 
-        // `changed_numeric_vars` is built by the recursion in ascending order
-        // with no duplicates (see fast-path debug_assert).
+        debug_assert!(
+            source_partition_facts.windows(2).all(|w| w[0] <= w[1]),
+            "source_partition_facts must be sorted by construction"
+        );
+        debug_assert!(
+            target_partition_facts.windows(2).all(|w| w[0] <= w[1]),
+            "target_partition_facts must be sorted by construction"
+        );
         debug_assert!(
             changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
             "changed_numeric_vars must be strictly ascending by construction"
         );
-
-        for comparison_facts in variants {
-            let mut source_facts = source_partition_facts.clone();
-            let mut target_facts = target_partition_facts.clone();
-            let mut prevail_facts = comparison_facts.prevail_facts;
-            // Comparison-axiom facts may introduce out-of-order entries when
-            // extended onto the (already-sorted) partition facts, so keep
-            // the sort+dedup here.
-            source_facts.extend(comparison_facts.source_facts);
-            target_facts.extend(comparison_facts.target_facts);
-            source_facts.sort();
-            source_facts.dedup();
-            target_facts.sort();
-            target_facts.dedup();
-            prevail_facts.sort();
-            prevail_facts.dedup();
-            out.push(TransitionInfo {
-                source_partition_facts: source_facts,
-                target_partition_facts: target_facts,
-                prevail_facts,
-                changed_numeric_vars: changed_numeric_vars.clone(),
-            });
-        }
+        out.push(TransitionInfo {
+            source_partition_facts: source_partition_facts.clone(),
+            target_partition_facts: target_partition_facts.clone(),
+            prevail_facts: Vec::new(),
+            changed_numeric_vars: changed_numeric_vars.clone(),
+        });
         return Ok(());
     }
 
@@ -1673,7 +1595,6 @@ fn enumerate_partition_combos(
             generator,
             op_preconditions,
             per_var,
-            affected_numeric_vars,
             num_props,
             op_has_comparison_preconditions,
             any_changed_var_affects_comparison,
@@ -1683,7 +1604,6 @@ fn enumerate_partition_combos(
             changed_numeric_vars,
             combo_scratch,
             source_intervals_buf,
-            target_intervals_buf,
             out,
             deadline,
         )?;
@@ -1760,23 +1680,21 @@ fn prepare_comparison_tree_inputs_for_combo_into(
     Ok(())
 }
 
-#[derive(Debug, Clone, Default)]
-struct ComparisonTransitionFacts {
-    source_facts: Vec<ExplicitFact>,
-    target_facts: Vec<ExplicitFact>,
-    prevail_facts: Vec<ExplicitFact>,
-}
-
-fn compute_comparison_transition_facts(
-    task: &dyn AbstractNumericTask,
+/// Whether a partition combo survives this operator's comparison-axiom
+/// preconditions, evaluated optimistically over the combo's source intervals.
+///
+/// The abstract operator carries no comparison-bit source/target facts of its
+/// own: an operator that only feeds a comparison axiom through a numeric
+/// dependency is picked up by the cascade-relevance rule in
+/// `DomainAbstractionFactory` instead. This function is therefore purely a
+/// filter.
+fn comparison_preconditions_admit_combo(
     generator: &AbstractOperatorGenerator,
     op_preconditions: &[ExplicitFact],
     source_inputs: &[Interval],
-    target_inputs: &[Interval],
-    affected_numeric_vars: &HashSet<usize>,
-) -> Result<Vec<ComparisonTransitionFacts>> {
+) -> bool {
     if generator.comparison_index.is_none() {
-        return Ok(vec![ComparisonTransitionFacts::default()]);
+        return true;
     }
 
     // Filter on the concrete TRUE/FALSE precondition value, not the abstract
@@ -1799,17 +1717,16 @@ fn compute_comparison_transition_facts(
         };
         if required_concrete == COMPARISON_TRUE_VAL {
             if !tree.evaluate_interval_admits_true(source_inputs) {
-                return Ok(Vec::new());
+                return false;
             }
         } else if required_concrete == COMPARISON_FALSE_VAL
             && !tree.evaluate_interval_admits_false(source_inputs)
         {
-            return Ok(Vec::new());
+            return false;
         }
     }
 
-    let _ = (task, target_inputs, affected_numeric_vars);
-    Ok(vec![ComparisonTransitionFacts::default()])
+    true
 }
 
 fn compute_hash_multipliers(

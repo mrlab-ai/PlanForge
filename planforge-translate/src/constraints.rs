@@ -153,24 +153,21 @@ impl Assignment {
     }
 
     /// Python: def is_consistent(self)
-    pub fn is_consistent(&self) -> bool {
-        if self.consistent.is_none() {
-            // Need interior mutability or clone-and-compute
-            let mut clone = self.clone();
-            clone.compute_mapping();
-            return clone.consistent.unwrap();
-        }
-        self.consistent.unwrap()
+    pub fn is_consistent(&mut self) -> bool {
+        self.get_mapping().is_some()
     }
 
     /// Python: def get_mapping(self)
-    pub fn get_mapping(&self) -> HashMap<String, String> {
-        if self.mapping.is_none() {
-            let mut clone = self.clone();
-            clone.compute_mapping();
-            return clone.mapping.unwrap_or_default();
+    ///
+    /// `None` exactly when the assignment is inconsistent, i.e. one equivalence
+    /// class contains two different constants and no substitution can satisfy
+    /// it. An empty mapping is a valid answer for an assignment without
+    /// equalities, so the two cases must not be conflated.
+    pub fn get_mapping(&mut self) -> Option<&HashMap<String, String>> {
+        if self.consistent.is_none() {
+            self.compute_mapping();
         }
-        self.mapping.clone().unwrap_or_default()
+        self.mapping.as_ref()
     }
 }
 
@@ -190,10 +187,12 @@ impl ConstraintSystem {
     }
 
     /// Python: def _all_clauses_satisfiable(self, assignment)
-    fn all_clauses_satisfiable(&self, assignment: &Assignment) -> bool {
-        let mapping = assignment.get_mapping();
+    fn all_clauses_satisfiable(&self, assignment: &mut Assignment) -> bool {
+        let mapping = assignment
+            .get_mapping()
+            .expect("clauses are only checked against consistent assignments");
         for neg_clause in &self.neg_clauses {
-            let clause = neg_clause.apply_mapping(&mapping);
+            let clause = neg_clause.apply_mapping(mapping);
             if !clause.is_satisfiable() {
                 return false;
             }
@@ -251,11 +250,11 @@ impl ConstraintSystem {
         let combos = cartesian_product_refs(&self.combinatorial_assignments);
         for combo in &combos {
             let refs: Vec<&Assignment> = combo.iter().copied().collect();
-            let combined = Self::combine_assignments(&refs);
+            let mut combined = Self::combine_assignments(&refs);
             if !combined.is_consistent() {
                 continue;
             }
-            if self.all_clauses_satisfiable(&combined) {
+            if self.all_clauses_satisfiable(&mut combined) {
                 return true;
             }
         }

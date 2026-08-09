@@ -140,7 +140,8 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         &mut domain_sizes,
         &mut partitions,
         &mut numeric_domain_sizes,
-    );
+    )
+    .unwrap();
 
     assert_eq!(numeric_domain_sizes, vec![2]);
     let parts = partitions.partitions(0).unwrap();

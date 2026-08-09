@@ -408,7 +408,20 @@ impl<'a> AStarSearch<'a> {
                 heuristic_revision: self.heuristic.revision(),
             },
             Err(EvaluationError::DeadEnd { reliable }) => {
-                let _ = reliable;
+                // Reliable and unreliable dead ends both prune, matching Fast
+                // Downward's `OpenList::is_dead_end`: an unreliable detection
+                // prunes as soon as *every* evaluator agrees, and this engine
+                // runs a single heuristic, so agreement is trivial. The
+                // `Ok(+infinity)` arm above marks the state dead on the same
+                // grounds. Reliability is still worth seeing in a trace,
+                // because it is the one case where pruning rests on the
+                // heuristic rather than on a proof.
+                if !reliable {
+                    debug!(
+                        "pruning state on an unreliable dead-end report from {}",
+                        self.heuristic.name()
+                    );
+                }
                 SearchEvaluation {
                     h_value: f64::INFINITY,
                     f_value: f64::INFINITY,

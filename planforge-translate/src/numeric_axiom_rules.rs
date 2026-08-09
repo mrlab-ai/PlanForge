@@ -89,6 +89,10 @@ fn identify_constants(axioms: &mut [InstantiatedNumericAxiom]) {
     let mut visiting: HashSet<PrimitiveNumericExpression> = HashSet::new();
 
     for idx in 0..axioms.len() {
+        // The fold rewrites `axioms[idx]` in place; the returned value is the
+        // folded constant, which only a recursive caller resolving a dependency
+        // needs. `None` means "not constant", a normal outcome here, not a
+        // failure.
         let _ = fold_axiom_if_constant(idx, axioms, &axiom_index, &mut memo, &mut visiting);
     }
 }

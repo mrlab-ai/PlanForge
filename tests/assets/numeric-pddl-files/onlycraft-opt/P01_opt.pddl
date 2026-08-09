@@ -1,0 +1,31 @@
+(define (problem P01_opt)
+(:domain PolyCraft)
+(:objects
+    cell0 cell1 cell2 cell3 cell4 cell5 cell6 cell7 cell8 - cell
+)
+(:init
+		(position cell4)
+		(crafting_table_cell cell6)
+		(= (toxicity) 0)
+		(air_cell cell0)
+		(air_cell cell1)
+		(air_cell cell2)
+		(air_cell cell3)
+		(tree_cell cell4)
+		(tree_cell cell5)
+		(tree_cell cell6)
+		(tree_cell cell7)
+		(air_cell cell8)
+		(= (count_log_in_inventory) 0)
+		(= (count_planks_in_inventory) 0)
+		(= (count_stick_in_inventory) 0)
+		(= (count_tree_tap_in_inventory) 0)
+		(= (count_sack_polyisoprene_pellets_in_inventory) 0)
+		(= (count_pogo_stick) 0)
+)
+(:goal
+  (and
+    (>= (count_pogo_stick) 1)
+  )
+)
+)

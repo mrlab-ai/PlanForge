@@ -162,9 +162,6 @@ fn main() -> anyhow::Result<()> {
                     info!("translator: task simplified to trivially solvable");
                     sastask = planforge_translate::simplify::trivial_task(true);
                 }
-                Err(planforge_translate::simplify::SimplifyError::DoesNothing) => {
-                    info!("translator: simplification made no changes");
-                }
             }
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
             let py_task = planforge_translate::sas_tasks::from_internal(&sastask);

@@ -500,7 +500,7 @@ fn translate_strips_operator_aux(
     condition: &HashMap<usize, usize>,
     comp_axiom_dict: &mut HashMap<(String, Vec<usize>), Condition>,
     sas_comp_axioms: &mut Vec<SASCompareAxiom>,
-    _num_vals: &[f64],
+    num_vals: &[f64],
     relevant_numeric: &[usize],
 ) -> Option<SASOperator> {
     // Collect all add effects
@@ -685,22 +685,50 @@ fn translate_strips_operator_aux(
         condition,
         &effects_by_variable,
         &ass_effects_by_variable,
-        operator
-            .cost
-            .as_ref()
-            .map(|c| {
-                if let FunctionalExpression::NumericConstant(nc) = &c.expression {
-                    nc.value.into_inner()
-                } else {
-                    // State-dependent cost: evaluate in initial state
-                    1.0 // Fallback
-                }
-            })
-            .unwrap_or(1.0),
+        sas_operator_cost(
+            &operator.name,
+            operator.cost.as_ref(),
+            numeric_dictionary,
+            num_vals,
+        ),
         ranges,
         implied_facts,
         relevant_numeric,
     )
+}
+
+/// Scalar cost of a SAS operator.
+///
+/// An action without an `(increase (total-cost) ...)` effect costs 1, PDDL's
+/// default action cost. A cost effect is either a literal constant or — after
+/// normalization, which rewrites every compound cost expression into a derived
+/// function — a primitive numeric expression; the latter is evaluated in the
+/// initial state, mirroring how Fast Downward resolves static cost functions.
+/// A state-dependent cost is additionally recorded as an assignment effect on
+/// the metric fluent by the caller, which is what the search actually uses for
+/// tasks with a metric (`metric_operator_cost_from_initial_values`).
+///
+/// Anything else cannot be turned into a number here; returning a default
+/// would silently replace the action's real cost, so it is a hard error.
+fn sas_operator_cost(
+    action_name: &str,
+    cost: Option<&FunctionAssignment>,
+    numeric_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
+    num_vals: &[f64],
+) -> f64 {
+    let Some(cost) = cost else {
+        return 1.0;
+    };
+    match &cost.expression {
+        FunctionalExpression::NumericConstant(nc) => nc.value.into_inner(),
+        FunctionalExpression::PrimitiveNumericExpression(pne) => {
+            let &var = numeric_dictionary.get(pne).unwrap_or_else(|| {
+                panic!("cost expression {pne} of action {action_name} has no numeric variable")
+            });
+            num_vals[var]
+        }
+        other => panic!("action {action_name} has an unsupported cost expression {other}"),
+    }
 }
 
 // ============================================================
@@ -1166,22 +1194,46 @@ fn translate_task(
             && global_constraint_dict_list.as_ref().unwrap().len() == 1
     );
 
-    // Numeric init values
+    // Numeric init values.
+    //
+    // Fluents without a SAS numeric variable are not dropped here: the caller
+    // splits `num_init` on exactly the same predicate and hands those facts to
+    // `SASTask` as `init_constant_numerics`, so skipping them is the
+    // complementary half of that split.
     let mut num_init_values: Vec<f64> = vec![0.0; num_count];
 
     let mut relevant_numeric: Vec<usize> = vec![];
     for fact in num_init {
-        let var = numeric_strips_to_sas
-            .get(&fact.fluent)
-            .copied()
-            .unwrap_or(usize::MAX);
-        if var != usize::MAX {
-            if let FunctionalExpression::NumericConstant(nc) = &fact.expression {
-                num_init_values[var] = nc.value.into_inner();
-            }
-            if fact.fluent.ntype == 'R' {
-                relevant_numeric.push(var);
-            }
+        let Some(&var) = numeric_strips_to_sas.get(&fact.fluent) else {
+            continue;
+        };
+        let FunctionalExpression::NumericConstant(nc) = &fact.expression else {
+            return Err(format!(
+                "numeric init fact for {} must assign a numeric constant, got {}",
+                fact.fluent, fact.expression
+            ));
+        };
+        num_init_values[var] = nc.value.into_inner();
+        if fact.fluent.ntype == 'R' {
+            relevant_numeric.push(var);
+        }
+    }
+
+    // Fold the constant numeric axioms into the initial values before the
+    // operators are translated: `sas_operator_cost` evaluates a non-constant
+    // action cost in the initial state, and normalization rewrites every
+    // compound cost expression into a derived function backed by such an
+    // axiom. Constant axiom effects are derived fluents and therefore never
+    // collide with the `:init` facts above.
+    for axiom in const_num_axioms {
+        if let Some(&var) = numeric_strips_to_sas.get(&axiom.effect) {
+            let Some(FunctionalExpression::NumericConstant(nc)) = axiom.parts.first() else {
+                unreachable!(
+                    "constant numeric axiom {} must hold a folded numeric constant",
+                    axiom.name
+                );
+            };
+            num_init_values[var] = nc.value.into_inner();
         }
     }
 
@@ -1295,15 +1347,6 @@ fn translate_task(
         .map(|group| SASMutexGroup::new(group.clone()))
         .collect();
 
-    // Handle constant numeric axioms
-    for axiom in const_num_axioms {
-        if let Some(&var) = numeric_strips_to_sas.get(&axiom.effect) {
-            if let Some(FunctionalExpression::NumericConstant(nc)) = axiom.parts.first() {
-                num_init_values[var] = nc.value.into_inner();
-            }
-        }
-    }
-
     let sas_init = SASInit::new(init_values, num_init_values);
 
     // Look up metric fluent
@@ -1318,11 +1361,22 @@ fn translate_task(
         }
     };
 
-    let gc_pair = global_constraint_dict_list.unwrap()[0]
+    // The global constraint is a single atom (asserted by the caller) and
+    // `USE_PARTIAL_ENCODING` maps every atom to exactly one SAS fact, so the
+    // translated condition holds exactly one pair. Picking an arbitrary pair
+    // out of a larger map would silently install a different constraint, and
+    // an empty map has no pair to pick at all.
+    let global_constraint_facts = &global_constraint_dict_list.unwrap()[0];
+    assert_eq!(
+        global_constraint_facts.len(),
+        1,
+        "global constraint must translate to exactly one SAS fact, got {global_constraint_facts:?}"
+    );
+    let gc_pair = global_constraint_facts
         .iter()
-        .map(|(&k, &v)| (k, v))
+        .map(|(&var, &value)| (var, value))
         .next()
-        .unwrap_or((0, 0));
+        .expect("length checked above");
 
     Ok(SASTask::new(
         variables,
@@ -1611,16 +1665,13 @@ pub fn translate_task_from_grounded_internal(
         let mut sas_task = sas_task;
         return match simplify::filter_unreachable_propositions(&mut sas_task) {
             Ok(()) => Ok(sas_task),
+            // Naming every variant rather than using a wildcard makes a future
+            // variant a compile error instead of a silent fallthrough:
+            // `filter_unreachable_propositions` renames the task in place, so
+            // returning `sas_task` for an unhandled error would hand back a
+            // half-rewritten task.
             Err(simplify::SimplifyError::Impossible) => Ok(simplify::trivial_task(false)),
             Err(simplify::SimplifyError::TriviallySolvable) => Ok(simplify::trivial_task(true)),
-            // `filter_unreachable_propositions` renames the task in place, so
-            // returning `sas_task` here would hand back a partially renamed
-            // one. Naming the variant rather than using a wildcard makes any
-            // future variant a compile error instead of a silent fallthrough.
-            Err(simplify::SimplifyError::DoesNothing) => panic!(
-                "filter_unreachable_propositions reported DoesNothing after \
-                 renaming the task in place, leaving it half-rewritten"
-            ),
         };
     }
 

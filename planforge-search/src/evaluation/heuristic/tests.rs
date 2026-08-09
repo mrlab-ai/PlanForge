@@ -87,15 +87,3 @@ fn test_heuristic_normal_value() {
     assert_eq!(result.get_f_value("normal_h"), 47.0); // g + h = 5 + 42
     assert!(!result.is_dead_end);
 }
-
-#[test]
-fn test_cached_heuristic() {
-    let state = create_test_state(1);
-    let inner_heuristic = TestHeuristic::new("inner_h", 25.0, false);
-    let cached_heuristic = CachedHeuristic::new(inner_heuristic, Some("cached_test".to_string()));
-
-    let result = cached_heuristic.evaluate(&state, 3.0).unwrap();
-
-    assert_eq!(result.get_heuristic_value("cached_test"), 25.0);
-    assert_eq!(result.get_f_value("cached_test"), 28.0);
-}

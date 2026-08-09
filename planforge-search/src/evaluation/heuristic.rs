@@ -9,7 +9,6 @@ mod tests;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState, Evaluator};
 use planforge_sas::numeric_task::Operator;
 use planforge_sas::state_registry::ConcreteState;
-use std::collections::HashMap;
 
 /// Base trait for heuristic functions.
 ///
@@ -217,58 +216,5 @@ impl Heuristic for BlindHeuristic {
 
     fn heuristic_name(&self) -> String {
         self.name.clone()
-    }
-}
-
-/// A heuristic that caches computed values to avoid recomputation.
-pub struct CachedHeuristic<H: Heuristic> {
-    inner: H,
-    // Using state hash as key.
-    cache: HashMap<Vec<u8>, f64>,
-    name: String,
-}
-
-impl<H: Heuristic> CachedHeuristic<H> {
-    pub fn new(inner: H, name: Option<String>) -> Self {
-        let heuristic_name = name.unwrap_or_else(|| format!("cached_{}", inner.name()));
-        Self {
-            inner,
-            cache: HashMap::new(),
-            name: heuristic_name,
-        }
-    }
-
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
-    }
-
-    pub fn cache_size(&self) -> usize {
-        self.cache.len()
-    }
-}
-
-impl<H: Heuristic> Heuristic for CachedHeuristic<H> {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        // For the direct interface, we bypass caching
-        self.inner.compute_heuristic(eval_state)
-    }
-
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn get_cost_type(&self) -> CostType {
-        self.inner.get_cost_type()
-    }
-
-    fn get_preferred_operators(&self, state: &ConcreteState) -> Vec<Operator> {
-        self.inner.get_preferred_operators(state)
-    }
-
-    fn get_preferred_operator_ids(&self) -> Vec<usize> {
-        self.inner.get_preferred_operator_ids()
     }
 }

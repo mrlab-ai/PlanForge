@@ -14,7 +14,6 @@ use super::sas_tasks::*;
 pub enum SimplifyError {
     Impossible,
     TriviallySolvable,
-    DoesNothing,
 }
 
 impl std::fmt::Display for SimplifyError {
@@ -22,12 +21,29 @@ impl std::fmt::Display for SimplifyError {
         match self {
             SimplifyError::Impossible => write!(f, "Impossible"),
             SimplifyError::TriviallySolvable => write!(f, "TriviallySolvable"),
-            SimplifyError::DoesNothing => write!(f, "DoesNothing"),
         }
     }
 }
 
 impl std::error::Error for SimplifyError {}
+
+/// A condition mentions a fact that no reachable state can hold, so the whole
+/// condition is unsatisfiable.
+///
+/// This is the only way `convert_pairs` can fail; having its own type keeps the
+/// call sites exhaustive without a catch-all arm.
+#[derive(Debug, Clone, Copy)]
+struct UnsatisfiableCondition;
+
+/// Why `apply_to_axiom` dropped an axiom.
+#[derive(Debug, Clone, Copy)]
+enum AxiomRemoval {
+    /// The condition can never hold, so the axiom can never fire.
+    UnreachableCondition,
+    /// The effect is the only remaining value of its variable, so the axiom is
+    /// a no-op.
+    EffectAlwaysTrue,
+}
 
 // ============================================================
 // Sentinel values for renaming
@@ -383,9 +399,14 @@ impl VarValueRenaming {
         for axiom in axioms.iter() {
             match self.apply_to_axiom(axiom) {
                 Ok(new_axiom) => new_axioms.push(new_axiom),
-                Err(_) => {
+                Err(AxiomRemoval::UnreachableCondition) => {
                     num_removed += 1;
-                    debug!("Removed axiom:");
+                    debug!("Removed axiom with an unreachable condition:");
+                    axiom.dump();
+                }
+                Err(AxiomRemoval::EffectAlwaysTrue) => {
+                    num_removed += 1;
+                    debug!("Removed axiom whose effect is always true:");
                     axiom.dump();
                 }
             }
@@ -402,10 +423,9 @@ impl VarValueRenaming {
 
     fn translate_operator(&self, op: &SASOperator) -> Option<SASOperator> {
         let mut applicability_conditions = op.get_applicability_conditions();
-        match self.convert_pairs(&mut applicability_conditions) {
-            Err(_) => return None, // Never applicable
-            Ok(()) => {}
-        }
+        let Ok(()) = self.convert_pairs(&mut applicability_conditions) else {
+            return None; // Never applicable.
+        };
 
         let conditions_dict: HashMap<usize, usize> =
             applicability_conditions.iter().cloned().collect();
@@ -444,9 +464,10 @@ impl VarValueRenaming {
         ))
     }
 
-    fn apply_to_axiom(&self, axiom: &SASAxiom) -> Result<SASAxiom, SimplifyError> {
+    fn apply_to_axiom(&self, axiom: &SASAxiom) -> Result<SASAxiom, AxiomRemoval> {
         let mut new_condition = axiom.condition.clone();
-        self.convert_pairs(&mut new_condition)?;
+        self.convert_pairs(&mut new_condition)
+            .map_err(|UnsatisfiableCondition| AxiomRemoval::UnreachableCondition)?;
 
         let (new_var, new_value) = self.translate_pair(axiom.effect.0, axiom.effect.1);
         match new_value {
@@ -459,11 +480,9 @@ impl VarValueRenaming {
                         condition should have been impossible"
                 );
             }
-            RenamedValue::AlwaysTrue => {
-                return Err(SimplifyError::DoesNothing);
-            }
+            RenamedValue::AlwaysTrue => Err(AxiomRemoval::EffectAlwaysTrue),
             RenamedValue::Normal(nv) => {
-                let nvn = new_var.ok_or(SimplifyError::DoesNothing)?;
+                let nvn = new_var.ok_or(AxiomRemoval::EffectAlwaysTrue)?;
                 Ok(SASAxiom::new(new_condition, (nvn, nv)))
             }
         }
@@ -530,10 +549,9 @@ impl VarValueRenaming {
         );
 
         let mut new_cond = cond.clone();
-        match self.convert_pairs(&mut new_cond) {
-            Err(_) => return None, // Effect conditions impossible
-            Ok(()) => {}
-        }
+        let Ok(()) = self.convert_pairs(&mut new_cond) else {
+            return None; // The effect condition can never hold.
+        };
 
         for &(cond_var, cond_value) in &new_cond {
             if let Some(&cond_dict_val) = conditions_dict.get(&cond_var) {
@@ -554,13 +572,13 @@ impl VarValueRenaming {
         (new_var_no, new_value)
     }
 
-    fn convert_pairs(&self, pairs: &mut Vec<(usize, usize)>) -> Result<(), SimplifyError> {
+    fn convert_pairs(&self, pairs: &mut Vec<(usize, usize)>) -> Result<(), UnsatisfiableCondition> {
         let mut new_pairs = vec![];
         for &(var, val) in pairs.iter() {
             let (new_var_no, new_value) = self.translate_pair(var, val);
             match new_value {
                 RenamedValue::AlwaysFalse => {
-                    return Err(SimplifyError::Impossible);
+                    return Err(UnsatisfiableCondition);
                 }
                 RenamedValue::AlwaysTrue => {
                     // Skip, always satisfied

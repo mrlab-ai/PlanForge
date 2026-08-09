@@ -533,15 +533,20 @@ impl Invariant {
         add_effect: &super::pddl::effects::Effect,
         inv_vars: &[String],
     ) -> Vec<ConstraintSystem> {
-        let assigs = self.get_covering_assignments(inv_vars, &add_effect.peffect);
+        let mut assigs = self.get_covering_assignments(inv_vars, &add_effect.peffect);
 
         let params: Vec<String> = action.parameters.iter().map(|p| p.name.clone()).collect();
         let mut minimal_renamings = vec![];
 
-        for assignment in &assigs {
+        for assignment in &mut assigs {
             let mut system = ConstraintSystem::new();
             system.add_assignment(assignment.clone());
-            let mapping = assignment.get_mapping();
+            // A covering assignment equates each invariant variable with one
+            // effect argument, so it can never place two constants in the same
+            // class.
+            let mapping = assignment
+                .get_mapping()
+                .expect("covering assignments are consistent by construction");
             if params.len() > 1 {
                 for combo in params.iter().combinations(2) {
                     let n1 = combo[0];
@@ -804,6 +809,14 @@ impl BalanceChecker {
         self.predicates_to_add_action_indices.get(predicate)
     }
 
+    /// The variant of `actions[action_idx]` with every parameterized effect
+    /// duplicated.
+    ///
+    /// `action_to_heavy_action` only holds the actions that needed such a
+    /// variant; an action whose effects are all parameter-free is its own heavy
+    /// action, which is why the miss returns the action itself rather than a
+    /// substitute. Both entries are built from the same inequality-augmented
+    /// action, and an out-of-range index still panics on the slice.
     pub fn get_heavy_action(&self, action_idx: usize) -> &Action {
         self.action_to_heavy_action
             .get(&action_idx)

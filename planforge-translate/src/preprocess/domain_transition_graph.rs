@@ -50,9 +50,9 @@ impl Ord for Transition {
         } else if self.condition.len() != other.condition.len() {
             self.condition.len().cmp(&other.condition.len())
         } else {
-            self.cost
-                .partial_cmp(&other.cost)
-                .unwrap_or(Ordering::Equal)
+            // `add_transition` rejects non-finite costs, so `total_cmp` agrees
+            // with `partial_cmp` here while still being a total order.
+            self.cost.total_cmp(&other.cost)
         }
     }
 }
@@ -87,7 +87,13 @@ impl DomainTransitionGraph {
         let var = pre_post.var;
         assert!(vars[var].get_level() == self.level && pre_post.post == to);
         let mut trans = Transition::new(to, op_index);
-        trans.cost = op.get_cost();
+        let cost = op.get_cost();
+        assert!(
+            cost.is_finite(),
+            "operator {} has a non-finite cost {cost}, which has no place in the transition order",
+            op.get_name()
+        );
+        trans.cost = cost;
         let cond = &mut trans.condition;
 
         let prevail = op.get_prevail();
