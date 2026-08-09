@@ -2007,307 +2007,86 @@ impl CartesianAbstractionCollectionGenerator {
             .max(1)
             .checked_mul(variants_per_goal)
             .context("Cartesian collection abstraction count overflow")?;
+        let progressive_goal_roots = self.config.progressive_goal_roots;
+
         let start = Instant::now();
         let mut remaining_states = self.config.max_collection_states;
         let mut abstractions = Vec::with_capacity(abstraction_count);
-        let initial_refinement_root = (self.config.progressive_goal_roots && goal_count > 0)
-            .then(|| initial_cartesian_concrete_state(task))
-            .transpose()?;
-        let mut refinement_roots = initial_refinement_root
-            .as_ref()
-            .map_or_else(Vec::new, |root| vec![root.clone(); variants_per_goal]);
-        let mut satisfied_goals_by_root = refinement_roots
-            .iter()
-            .map(|root| count_satisfied_cartesian_goals(task, root))
-            .collect::<Result<Vec<_>>>()?;
-        let mut progressive_root_advanced = vec![false; refinement_roots.len()];
-        let mut progressive_lane_complete = vec![false; refinement_roots.len()];
-        let mut initial_root_goal_covered = vec![false; goal_count];
-        let mut variants_built_by_goal = vec![0usize; goal_count];
-        let mut best_initial_h_by_goal = vec![0.0f64; goal_count];
-        let mut continuation_queue = VecDeque::<(usize, usize)>::new();
         let mut abstraction_id = 0usize;
-        let mut initial_abstractions_built = 0usize;
+        let mut state = CartesianCollectionState::new(
+            task,
+            goal_count,
+            variants_per_goal,
+            progressive_goal_roots,
+        )?;
+
         let mut stop_reason = "requested abstraction count reached";
-        while initial_abstractions_built < abstraction_count
-            || !continuation_queue.is_empty()
-            || (self.config.progressive_goal_roots
-                && initial_root_goal_covered.iter().any(|covered| !covered))
-        {
+        while state.has_work_left(abstraction_count, progressive_goal_roots) {
             if remaining_states < 2 && !abstractions.is_empty() {
                 stop_reason = "collection size limit";
                 break;
             }
-            let scheduled_member_pending = initial_abstractions_built < abstraction_count;
-            let initial_root_specialist_goal = (!scheduled_member_pending
-                && self.config.progressive_goal_roots)
-                .then(|| {
-                    initial_root_goal_covered
-                        .iter()
-                        .position(|covered| !covered)
-                })
-                .flatten();
-            let continuation = if self.config.progressive_goal_roots
-                && !scheduled_member_pending
-                && initial_root_specialist_goal.is_none()
-            {
-                loop {
-                    let Some((goal_id, variant_id)) = continuation_queue.pop_front() else {
-                        break None;
-                    };
-                    if !cartesian_goal_is_satisfied(
-                        task,
-                        refinement_roots
-                            .get(variant_id)
-                            .expect("progressive continuation references missing root"),
-                        goal_id,
-                    )? {
-                        break Some((goal_id, variant_id));
-                    }
-                }
-            } else {
-                None
-            };
-            let is_continuation = continuation.is_some();
-            let mut is_initial_root_specialist = false;
-            let (goal_id, variant_id) = if goal_count == 0 {
-                (0, 0)
-            } else if scheduled_member_pending {
-                let Some(goal_id) = select_next_cartesian_collection_goal(
-                    &variants_built_by_goal,
-                    &best_initial_h_by_goal,
-                    variants_per_goal,
-                ) else {
-                    stop_reason = "requested abstraction count reached";
+            let member = match state.select_next_member(
+                task,
+                goal_count,
+                abstraction_count,
+                variants_per_goal,
+                progressive_goal_roots,
+            )? {
+                NextMember::Build(member) => member,
+                NextMember::Stop(reason) => {
+                    stop_reason = reason;
                     break;
-                };
-                (goal_id, variants_built_by_goal[goal_id])
-            } else if let Some(goal_id) = initial_root_specialist_goal {
-                is_initial_root_specialist = true;
-                (goal_id, variants_per_goal)
-            } else if let Some(continuation) = continuation {
-                continuation
-            } else {
-                stop_reason = "requested abstractions and initial-root goal coverage reached";
-                break;
-            };
-            let remaining_time = match self.config.total_max_time {
-                Some(total_max_time) => {
-                    let elapsed = start.elapsed();
-                    if elapsed >= total_max_time {
-                        if abstractions.is_empty() {
-                            Some(Duration::ZERO)
-                        } else {
-                            stop_reason = "collection time limit";
-                            break;
-                        }
-                    } else {
-                        Some(total_max_time - elapsed)
-                    }
                 }
-                None => None,
             };
-            let mut abstraction_config = self.config.abstraction.clone();
-            abstraction_config.max_states = abstraction_config.max_states.min(remaining_states);
-            abstraction_config.max_time = match (abstraction_config.max_time, remaining_time) {
-                (Some(per_abstraction), Some(remaining)) => Some(per_abstraction.min(remaining)),
-                (Some(per_abstraction), None) => Some(per_abstraction),
-                (None, Some(remaining)) => Some(remaining),
-                (None, None) => None,
+            let remaining_time = match remaining_collection_time(
+                self.config.total_max_time,
+                start,
+                abstractions.is_empty(),
+            ) {
+                CollectionBudget::Remaining(remaining) => remaining,
+                CollectionBudget::Exhausted => {
+                    stop_reason = "collection time limit";
+                    break;
+                }
             };
-            let construction_variant_id = if is_initial_root_specialist {
-                0
-            } else {
-                variant_id
-            };
-            if goal_count > 0 && self.config.collection_strategy.is_complementary() {
-                abstraction_config.refinement_direction =
-                    if construction_variant_id.is_multiple_of(2) {
-                        CartesianRefinementDirection::Progression
-                    } else {
-                        CartesianRefinementDirection::Regression
-                    };
-                abstraction_config.split_selection_rank = Some(construction_variant_id / 2);
-                abstraction_config.random_seed = if construction_variant_id == 0 {
-                    None
-                } else {
-                    Some(derive_variant_seed(
-                        abstraction_config.random_seed.unwrap_or(0),
-                        goal_id,
-                        construction_variant_id - 1,
-                    ))
-                };
-            } else if goal_count > 0
-                && self.config.variants_per_goal > 1
-                && construction_variant_id > 0
-            {
-                abstraction_config.random_seed = Some(derive_variant_seed(
-                    abstraction_config.random_seed.unwrap_or(0),
-                    goal_id,
-                    construction_variant_id - 1,
-                ));
-            }
 
-            let goal_task =
-                (goal_count > 0).then(|| SingleGoalTask::new(task, *task.get_goal_fact(goal_id)));
-            let abstraction_task = goal_task
-                .as_ref()
-                .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
-            debug!(
-                "Cartesian collection: building abstraction {}, goal={}, variant={}, continuation={}, initial_root_specialist={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
-                abstraction_id + 1,
-                goal_id,
-                variant_id,
-                is_continuation,
-                is_initial_root_specialist,
-                abstraction_config.refinement_direction,
-                abstraction_config.split_selection_rank,
-                abstraction_config.max_states,
-                abstraction_config.random_seed
-            );
-            let generator = CartesianAbstractionGenerator::new(abstraction_config)?;
-            let lane_is_complete = progressive_lane_complete
-                .get(variant_id)
-                .copied()
-                .unwrap_or(false);
-            let refinement_root = (!is_initial_root_specialist && !lane_is_complete)
-                .then(|| refinement_roots.get(variant_id))
-                .flatten();
-            let built_from_initial_root = is_initial_root_specialist
-                || refinement_root.is_none()
-                || !progressive_root_advanced
-                    .get(variant_id)
-                    .copied()
-                    .unwrap_or(false);
-            let mut reset_progressive_root = false;
-            let mut abstraction = match generator
-                .generate_from_root(abstraction_task, refinement_root)
-            {
-                Ok(abstraction) => abstraction,
-                Err(error)
-                    if refinement_root.is_some()
-                        && error.downcast_ref::<RefinementRootDeadEnd>().is_some() =>
-                {
-                    reset_progressive_root = true;
-                    info!(
-                        "Cartesian collection: progressive root is an abstract dead end for goal {goal_id}, variant {variant_id}; rebuilding this member from the task initial state"
-                    );
-                    generator.generate_from_root(abstraction_task, None)
-                        .with_context(|| {
-                            format!("failed to rebuild Cartesian collection abstraction {abstraction_id} from the task initial state")
-                        })?
-                }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!("failed to build Cartesian collection abstraction {abstraction_id}")
-                    });
-                }
-            };
+            let BuiltMember {
+                abstraction,
+                built_from_initial_root,
+                reset_progressive_root,
+            } = self.build_member(
+                task,
+                &state,
+                &member,
+                goal_count,
+                abstraction_id,
+                remaining_states,
+                remaining_time,
+            )?;
+
             let state_count = abstraction.num_states();
             ensure!(
                 state_count <= remaining_states,
                 "Cartesian goal abstraction used {state_count} states with only {remaining_states} remaining"
             );
             remaining_states -= state_count;
-            abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(goal_id);
-            abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(variant_id);
-            abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
-            abstraction.metadata.progressive_refinement_root = !is_initial_root_specialist
-                && !lane_is_complete
-                && progressive_root_advanced
-                    .get(variant_id)
-                    .copied()
-                    .unwrap_or(false)
-                && !reset_progressive_root;
-            if goal_count > 0 && (built_from_initial_root || reset_progressive_root) {
-                initial_root_goal_covered[goal_id] = true;
-            }
-            if goal_count > 0 && !is_continuation && !is_initial_root_specialist {
-                variants_built_by_goal[goal_id] += 1;
-                initial_abstractions_built += 1;
-                let initial_h = abstraction.distance_table.distances
-                    [abstraction.distance_table.initial_state_hash];
-                best_initial_h_by_goal[goal_id] = best_initial_h_by_goal[goal_id].max(initial_h);
-            } else if goal_count == 0 {
-                initial_abstractions_built += 1;
-            }
-            if !is_initial_root_specialist
-                && !lane_is_complete
-                && let Some(root) = refinement_roots.get_mut(variant_id)
-            {
-                if reset_progressive_root {
-                    *root = initial_refinement_root
-                        .as_ref()
-                        .expect("progressive refinement root requires an initial root")
-                        .clone();
-                    progressive_root_advanced[variant_id] = false;
-                    progressive_lane_complete[variant_id] = true;
-                    satisfied_goals_by_root[variant_id] =
-                        count_satisfied_cartesian_goals(task, root)?;
-                    continuation_queue
-                        .retain(|(_, queued_variant_id)| *queued_variant_id != variant_id);
-                    debug!(
-                        "Cartesian collection: dead root made progressive variant {variant_id} terminal after rebuilding goal {goal_id} from the initial state"
-                    );
-                } else {
-                    match abstraction.metadata.concrete_plan_operator_ids.as_deref() {
-                        Some(operator_ids) => {
-                            let previous_satisfied_goals = satisfied_goals_by_root[variant_id];
-                            *root = replay_cartesian_operator_sequence(task, root, operator_ids)?;
-                            let satisfied_goals = count_satisfied_cartesian_goals(task, root)?;
-                            satisfied_goals_by_root[variant_id] = satisfied_goals;
-                            debug!(
-                                "Cartesian collection: advanced progressive root for variant {variant_id} through {} concrete operators; satisfied_goals={}/{}",
-                                operator_ids.len(),
-                                satisfied_goals,
-                                goal_count,
-                            );
-                            if satisfied_goals == goal_count {
-                                *root = initial_refinement_root
-                                    .as_ref()
-                                    .expect("progressive refinement root requires an initial root")
-                                    .clone();
-                                progressive_root_advanced[variant_id] = false;
-                                progressive_lane_complete[variant_id] = true;
-                                satisfied_goals_by_root[variant_id] =
-                                    count_satisfied_cartesian_goals(task, root)?;
-                                continuation_queue.retain(|(_, queued_variant_id)| {
-                                    *queued_variant_id != variant_id
-                                });
-                                debug!(
-                                    "Cartesian collection: full goal reached for variant {variant_id}; made the progressive lane terminal"
-                                );
-                            } else {
-                                progressive_root_advanced[variant_id] = true;
-                                if satisfied_goals > previous_satisfied_goals {
-                                    for (retry_goal_id, &variants_built) in
-                                        variants_built_by_goal.iter().enumerate()
-                                    {
-                                        let was_already_attempted = variants_built > variant_id;
-                                        if was_already_attempted
-                                            && !cartesian_goal_is_satisfied(
-                                                task,
-                                                root,
-                                                retry_goal_id,
-                                            )?
-                                            && !continuation_queue
-                                                .contains(&(retry_goal_id, variant_id))
-                                        {
-                                            continuation_queue
-                                                .push_back((retry_goal_id, variant_id));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            debug!(
-                                "Cartesian collection: goal {goal_id} variant {variant_id} produced no concrete plan; progressive root remains unchanged"
-                            );
-                        }
-                    }
-                }
-            }
+
+            state.record_built_member(
+                &member,
+                goal_count,
+                built_from_initial_root,
+                reset_progressive_root,
+                &abstraction,
+            );
+            state.advance_lane(
+                task,
+                goal_count,
+                &member,
+                &abstraction,
+                reset_progressive_root,
+            )?;
+
             abstractions.push(abstraction);
             abstraction_id += 1;
             if !crate::resource_limits::poll_and_release_if_exceeded() {
@@ -2317,34 +2096,576 @@ impl CartesianAbstractionCollectionGenerator {
         }
 
         if stop_reason == "requested abstraction count reached"
-            && self.config.progressive_goal_roots
-            && initial_root_goal_covered.iter().all(|covered| *covered)
+            && progressive_goal_roots
+            && state
+                .initial_root_goal_covered
+                .iter()
+                .all(|covered| *covered)
         {
             stop_reason = "requested abstractions and initial-root goal coverage reached";
         }
-        info!(
-            "Cartesian collection: abstractions={}, states={}, elapsed={:.3}s, stop_reason={}",
-            abstractions.len(),
+        state.log_summary(
+            &abstractions,
+            goal_count,
             self.config.max_collection_states - remaining_states,
             start.elapsed().as_secs_f64(),
-            stop_reason
+            stop_reason,
         );
-        if !satisfied_goals_by_root.is_empty() {
+        Ok(abstractions)
+    }
+
+    /// Configuration for one member: the collection's per-abstraction
+    /// configuration, capped by what is left of the collection's state and
+    /// time budgets, then specialised for this variant.
+    ///
+    /// A complementary collection alternates progression and regression by
+    /// variant parity and ranks split selection by variant; otherwise only the
+    /// random seed varies, and only when more than one variant per goal is
+    /// requested.
+    fn member_abstraction_config(
+        &self,
+        member: &CollectionMember,
+        goal_count: usize,
+        remaining_states: usize,
+        remaining_time: Option<Duration>,
+    ) -> CartesianAbstractionConfig {
+        let mut config = self.config.abstraction.clone();
+        config.max_states = config.max_states.min(remaining_states);
+        // Whichever of the two budgets exist bind; the tighter one wins.
+        config.max_time = config.max_time.into_iter().chain(remaining_time).min();
+
+        let variant = member.construction_variant_id();
+        let base_seed = config.random_seed.unwrap_or(0);
+        if goal_count > 0 && self.config.collection_strategy.is_complementary() {
+            config.refinement_direction = if variant.is_multiple_of(2) {
+                CartesianRefinementDirection::Progression
+            } else {
+                CartesianRefinementDirection::Regression
+            };
+            config.split_selection_rank = Some(variant / 2);
+            config.random_seed =
+                (variant > 0).then(|| derive_variant_seed(base_seed, member.goal_id, variant - 1));
+        } else if goal_count > 0 && self.config.variants_per_goal > 1 && variant > 0 {
+            config.random_seed = Some(derive_variant_seed(base_seed, member.goal_id, variant - 1));
+        }
+        config
+    }
+
+    /// Build one member's abstraction: derive its configuration, restrict the
+    /// task to its goal, refine from its lane's root, and tag the result so
+    /// collection heuristics can tell members apart.
+    fn build_member(
+        &self,
+        task: &dyn AbstractNumericTask,
+        state: &CartesianCollectionState,
+        member: &CollectionMember,
+        goal_count: usize,
+        abstraction_id: usize,
+        remaining_states: usize,
+        remaining_time: Option<Duration>,
+    ) -> Result<BuiltMember> {
+        let abstraction_config =
+            self.member_abstraction_config(member, goal_count, remaining_states, remaining_time);
+        let goal_task = (goal_count > 0)
+            .then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
+        let abstraction_task = goal_task
+            .as_ref()
+            .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
+        debug!(
+            "Cartesian collection: building abstraction {}, goal={}, variant={}, continuation={}, initial_root_specialist={}, direction={:?}, split_rank={:?}, max_states={}, seed={:?}",
+            abstraction_id + 1,
+            member.goal_id,
+            member.variant_id,
+            member.is_continuation(),
+            member.is_initial_root_specialist(),
+            abstraction_config.refinement_direction,
+            abstraction_config.split_selection_rank,
+            abstraction_config.max_states,
+            abstraction_config.random_seed
+        );
+        let generator = CartesianAbstractionGenerator::new(abstraction_config)?;
+
+        // A specialist and a terminal lane both refine from the task initial
+        // state, which `generate_from_root` takes as `None`.
+        let lane_is_complete = state.lane_is_complete(member.variant_id);
+        let refinement_root = (!member.is_initial_root_specialist() && !lane_is_complete)
+            .then(|| state.refinement_roots.get(member.variant_id))
+            .flatten();
+        let built_from_initial_root = member.is_initial_root_specialist()
+            || refinement_root.is_none()
+            || !state.lane_root_advanced(member.variant_id);
+
+        let (mut abstraction, reset_progressive_root) = refine_collection_member(
+            &generator,
+            abstraction_task,
+            refinement_root,
+            abstraction_id,
+            member,
+        )?;
+
+        abstraction.metadata.collection_goal_id = (goal_count > 0).then_some(member.goal_id);
+        abstraction.metadata.collection_variant_id = (goal_count > 0).then_some(member.variant_id);
+        abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember;
+        abstraction.metadata.progressive_refinement_root = !member.is_initial_root_specialist()
+            && !lane_is_complete
+            && state.lane_root_advanced(member.variant_id)
+            && !reset_progressive_root;
+
+        Ok(BuiltMember {
+            abstraction,
+            built_from_initial_root,
+            reset_progressive_root,
+        })
+    }
+}
+
+/// One finished member, with the two facts the collection bookkeeping needs
+/// about how it was built.
+struct BuiltMember {
+    abstraction: CartesianAbstraction,
+    /// The member refined from the task initial state, so it covers its goal
+    /// for every state.
+    built_from_initial_root: bool,
+    /// The lane's progressive root was an abstract dead end and the member had
+    /// to be rebuilt from the task initial state.
+    reset_progressive_root: bool,
+}
+
+/// Why the collection is building a member.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MemberKind {
+    /// One of the `abstraction_count` members the configuration asks for.
+    Scheduled,
+    /// A goal that no member built from the task initial state covers yet.
+    InitialRootSpecialist,
+    /// A goal some lane already attempted, retried from that lane's advanced
+    /// refinement root.
+    Continuation,
+}
+
+/// One member the collection has decided to build.
+struct CollectionMember {
+    goal_id: usize,
+    variant_id: usize,
+    kind: MemberKind,
+}
+
+impl CollectionMember {
+    /// Variant the abstraction *configuration* derives from. An initial-root
+    /// specialist reuses variant 0's configuration; its own `variant_id` only
+    /// records that it sits past the scheduled variants.
+    fn construction_variant_id(&self) -> usize {
+        match self.kind {
+            MemberKind::InitialRootSpecialist => 0,
+            MemberKind::Scheduled | MemberKind::Continuation => self.variant_id,
+        }
+    }
+
+    fn is_initial_root_specialist(&self) -> bool {
+        self.kind == MemberKind::InitialRootSpecialist
+    }
+
+    fn is_continuation(&self) -> bool {
+        self.kind == MemberKind::Continuation
+    }
+}
+
+enum NextMember {
+    Build(CollectionMember),
+    Stop(&'static str),
+}
+
+/// What is left of the collection's total time budget.
+enum CollectionBudget {
+    /// Time limit for the next member, `None` when the collection is
+    /// unbounded.
+    Remaining(Option<Duration>),
+    /// The budget is spent and the collection already has a member.
+    Exhausted,
+}
+
+fn remaining_collection_time(
+    total_max_time: Option<Duration>,
+    start: Instant,
+    collection_is_empty: bool,
+) -> CollectionBudget {
+    let Some(total_max_time) = total_max_time else {
+        return CollectionBudget::Remaining(None);
+    };
+    let elapsed = start.elapsed();
+    if elapsed < total_max_time {
+        return CollectionBudget::Remaining(Some(total_max_time - elapsed));
+    }
+    if collection_is_empty {
+        // An empty collection is useless, so the first member is built even
+        // with no time left — with a zero budget, which stops it immediately.
+        CollectionBudget::Remaining(Some(Duration::ZERO))
+    } else {
+        CollectionBudget::Exhausted
+    }
+}
+
+/// Build one member, retrying from the task initial state when the lane's
+/// progressive refinement root turns out to be an abstract dead end. The
+/// returned flag reports whether that retry happened.
+fn refine_collection_member(
+    generator: &CartesianAbstractionGenerator,
+    abstraction_task: &dyn AbstractNumericTask,
+    refinement_root: Option<&CartesianConcreteState>,
+    abstraction_id: usize,
+    member: &CollectionMember,
+) -> Result<(CartesianAbstraction, bool)> {
+    match generator.generate_from_root(abstraction_task, refinement_root) {
+        Ok(abstraction) => Ok((abstraction, false)),
+        Err(error)
+            if refinement_root.is_some()
+                && error.downcast_ref::<RefinementRootDeadEnd>().is_some() =>
+        {
             info!(
-                "Cartesian collection: progressive root goal coverage={satisfied_goals_by_root:?}/{goal_count}"
+                "Cartesian collection: progressive root is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
+                member.goal_id, member.variant_id
+            );
+            let abstraction = generator
+                .generate_from_root(abstraction_task, None)
+                .with_context(|| {
+                    format!(
+                        "failed to rebuild Cartesian collection abstraction {abstraction_id} from the task initial state"
+                    )
+                })?;
+            Ok((abstraction, true))
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!("failed to build Cartesian collection abstraction {abstraction_id}")
+        }),
+    }
+}
+
+/// Mutable state of one collection run.
+///
+/// With progressive goal roots enabled the collection keeps `variants_per_goal`
+/// independent *lanes*. A lane owns a refinement root that walks forward
+/// through the concrete plans its members produce; it becomes terminal once it
+/// reaches the complete task goal or its root turns out to be a dead end, and
+/// from then on its members start from the task initial state again.
+struct CartesianCollectionState {
+    /// `None` when progressive goal roots are off, in which case there are no
+    /// lanes at all.
+    initial_refinement_root: Option<CartesianConcreteState>,
+    refinement_roots: Vec<CartesianConcreteState>,
+    satisfied_goals_by_root: Vec<usize>,
+    progressive_root_advanced: Vec<bool>,
+    progressive_lane_complete: Vec<bool>,
+    initial_root_goal_covered: Vec<bool>,
+    variants_built_by_goal: Vec<usize>,
+    best_initial_h_by_goal: Vec<f64>,
+    /// `(goal_id, variant_id)` pairs to retry from a lane's advanced root.
+    continuation_queue: VecDeque<(usize, usize)>,
+    initial_abstractions_built: usize,
+}
+
+impl CartesianCollectionState {
+    fn new(
+        task: &dyn AbstractNumericTask,
+        goal_count: usize,
+        variants_per_goal: usize,
+        progressive_goal_roots: bool,
+    ) -> Result<Self> {
+        let initial_refinement_root = (progressive_goal_roots && goal_count > 0)
+            .then(|| initial_cartesian_concrete_state(task))
+            .transpose()?;
+        let refinement_roots = initial_refinement_root
+            .as_ref()
+            .map_or_else(Vec::new, |root| vec![root.clone(); variants_per_goal]);
+        let satisfied_goals_by_root = refinement_roots
+            .iter()
+            .map(|root| count_satisfied_cartesian_goals(task, root))
+            .collect::<Result<Vec<_>>>()?;
+        let lane_count = refinement_roots.len();
+        Ok(Self {
+            initial_refinement_root,
+            refinement_roots,
+            satisfied_goals_by_root,
+            progressive_root_advanced: vec![false; lane_count],
+            progressive_lane_complete: vec![false; lane_count],
+            initial_root_goal_covered: vec![false; goal_count],
+            variants_built_by_goal: vec![0usize; goal_count],
+            best_initial_h_by_goal: vec![0.0f64; goal_count],
+            continuation_queue: VecDeque::new(),
+            initial_abstractions_built: 0,
+        })
+    }
+
+    /// `false` when progressive goal roots are off — there is then no lane
+    /// that could have advanced.
+    fn lane_root_advanced(&self, variant_id: usize) -> bool {
+        self.progressive_root_advanced
+            .get(variant_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// `false` when progressive goal roots are off — there is then no lane
+    /// that could have completed.
+    fn lane_is_complete(&self, variant_id: usize) -> bool {
+        self.progressive_lane_complete
+            .get(variant_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// More scheduled members are due, a lane queued a retry, or some goal
+    /// still lacks a member built from the task initial state.
+    fn has_work_left(&self, abstraction_count: usize, progressive_goal_roots: bool) -> bool {
+        self.initial_abstractions_built < abstraction_count
+            || !self.continuation_queue.is_empty()
+            || (progressive_goal_roots
+                && self
+                    .initial_root_goal_covered
+                    .iter()
+                    .any(|covered| !covered))
+    }
+
+    fn select_next_member(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        goal_count: usize,
+        abstraction_count: usize,
+        variants_per_goal: usize,
+        progressive_goal_roots: bool,
+    ) -> Result<NextMember> {
+        let scheduled_member_pending = self.initial_abstractions_built < abstraction_count;
+        let initial_root_specialist_goal = (!scheduled_member_pending && progressive_goal_roots)
+            .then(|| {
+                self.initial_root_goal_covered
+                    .iter()
+                    .position(|covered| !covered)
+            })
+            .flatten();
+        let continuation = if progressive_goal_roots
+            && !scheduled_member_pending
+            && initial_root_specialist_goal.is_none()
+        {
+            self.pop_unsatisfied_continuation(task)?
+        } else {
+            None
+        };
+
+        if goal_count == 0 {
+            // A goal-free task gets exactly one abstraction of the full task.
+            return Ok(NextMember::Build(CollectionMember {
+                goal_id: 0,
+                variant_id: 0,
+                kind: MemberKind::Scheduled,
+            }));
+        }
+        if scheduled_member_pending {
+            let Some(goal_id) = select_next_cartesian_collection_goal(
+                &self.variants_built_by_goal,
+                &self.best_initial_h_by_goal,
+                variants_per_goal,
+            ) else {
+                return Ok(NextMember::Stop("requested abstraction count reached"));
+            };
+            return Ok(NextMember::Build(CollectionMember {
+                goal_id,
+                variant_id: self.variants_built_by_goal[goal_id],
+                kind: MemberKind::Scheduled,
+            }));
+        }
+        if let Some(goal_id) = initial_root_specialist_goal {
+            return Ok(NextMember::Build(CollectionMember {
+                goal_id,
+                variant_id: variants_per_goal,
+                kind: MemberKind::InitialRootSpecialist,
+            }));
+        }
+        if let Some((goal_id, variant_id)) = continuation {
+            return Ok(NextMember::Build(CollectionMember {
+                goal_id,
+                variant_id,
+                kind: MemberKind::Continuation,
+            }));
+        }
+        Ok(NextMember::Stop(
+            "requested abstractions and initial-root goal coverage reached",
+        ))
+    }
+
+    /// Drop queued retries whose goal the lane's root now satisfies anyway,
+    /// and return the first one that still has work to do.
+    fn pop_unsatisfied_continuation(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+    ) -> Result<Option<(usize, usize)>> {
+        while let Some((goal_id, variant_id)) = self.continuation_queue.pop_front() {
+            let root = self
+                .refinement_roots
+                .get(variant_id)
+                .expect("progressive continuation references missing root");
+            if !cartesian_goal_is_satisfied(task, root, goal_id)? {
+                return Ok(Some((goal_id, variant_id)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn record_built_member(
+        &mut self,
+        member: &CollectionMember,
+        goal_count: usize,
+        built_from_initial_root: bool,
+        reset_progressive_root: bool,
+        abstraction: &CartesianAbstraction,
+    ) {
+        if goal_count == 0 {
+            self.initial_abstractions_built += 1;
+            return;
+        }
+        if built_from_initial_root || reset_progressive_root {
+            self.initial_root_goal_covered[member.goal_id] = true;
+        }
+        // Specialists and retries fill gaps; only scheduled members count
+        // against the requested abstraction count.
+        if member.kind == MemberKind::Scheduled {
+            self.variants_built_by_goal[member.goal_id] += 1;
+            self.initial_abstractions_built += 1;
+            let initial_h =
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+            self.best_initial_h_by_goal[member.goal_id] =
+                self.best_initial_h_by_goal[member.goal_id].max(initial_h);
+        }
+    }
+
+    /// Replay the member's concrete plan onto its lane's refinement root, so
+    /// the next member of that lane refines from further along.
+    fn advance_lane(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        goal_count: usize,
+        member: &CollectionMember,
+        abstraction: &CartesianAbstraction,
+        reset_progressive_root: bool,
+    ) -> Result<()> {
+        let variant_id = member.variant_id;
+        if member.is_initial_root_specialist()
+            || self.lane_is_complete(variant_id)
+            || variant_id >= self.refinement_roots.len()
+        {
+            return Ok(());
+        }
+        if reset_progressive_root {
+            self.make_lane_terminal(task, variant_id)?;
+            debug!(
+                "Cartesian collection: dead root made progressive variant {variant_id} terminal after rebuilding goal {} from the initial state",
+                member.goal_id
+            );
+            return Ok(());
+        }
+        let Some(operator_ids) = abstraction.metadata.concrete_plan_operator_ids.as_deref() else {
+            debug!(
+                "Cartesian collection: goal {} variant {variant_id} produced no concrete plan; progressive root remains unchanged",
+                member.goal_id
+            );
+            return Ok(());
+        };
+
+        let previous_satisfied_goals = self.satisfied_goals_by_root[variant_id];
+        let root = &mut self.refinement_roots[variant_id];
+        *root = replay_cartesian_operator_sequence(task, root, operator_ids)?;
+        let satisfied_goals = count_satisfied_cartesian_goals(task, root)?;
+        self.satisfied_goals_by_root[variant_id] = satisfied_goals;
+        debug!(
+            "Cartesian collection: advanced progressive root for variant {variant_id} through {} concrete operators; satisfied_goals={satisfied_goals}/{goal_count}",
+            operator_ids.len(),
+        );
+
+        if satisfied_goals == goal_count {
+            self.make_lane_terminal(task, variant_id)?;
+            debug!(
+                "Cartesian collection: full goal reached for variant {variant_id}; made the progressive lane terminal"
+            );
+            return Ok(());
+        }
+        self.progressive_root_advanced[variant_id] = true;
+        if satisfied_goals > previous_satisfied_goals {
+            self.queue_reopened_goals(task, variant_id)?;
+        }
+        Ok(())
+    }
+
+    /// Return a lane to the task initial state and stop advancing it, because
+    /// its root is a dead end or has reached the complete task goal. Retries
+    /// queued for the lane go with it.
+    fn make_lane_terminal(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        variant_id: usize,
+    ) -> Result<()> {
+        let initial_root = self
+            .initial_refinement_root
+            .as_ref()
+            .expect("progressive refinement root requires an initial root")
+            .clone();
+        self.refinement_roots[variant_id] = initial_root;
+        self.progressive_root_advanced[variant_id] = false;
+        self.progressive_lane_complete[variant_id] = true;
+        self.satisfied_goals_by_root[variant_id] =
+            count_satisfied_cartesian_goals(task, &self.refinement_roots[variant_id])?;
+        self.continuation_queue
+            .retain(|(_, queued_variant_id)| *queued_variant_id != variant_id);
+        Ok(())
+    }
+
+    /// The lane's root now satisfies goals it did not before, so goals this
+    /// lane already attempted may be worth another abstraction from here.
+    fn queue_reopened_goals(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        variant_id: usize,
+    ) -> Result<()> {
+        let root = &self.refinement_roots[variant_id];
+        for (retry_goal_id, &variants_built) in self.variants_built_by_goal.iter().enumerate() {
+            let was_already_attempted = variants_built > variant_id;
+            if was_already_attempted
+                && !cartesian_goal_is_satisfied(task, root, retry_goal_id)?
+                && !self
+                    .continuation_queue
+                    .contains(&(retry_goal_id, variant_id))
+            {
+                self.continuation_queue
+                    .push_back((retry_goal_id, variant_id));
+            }
+        }
+        Ok(())
+    }
+
+    fn log_summary(
+        &self,
+        abstractions: &[CartesianAbstraction],
+        goal_count: usize,
+        states_used: usize,
+        elapsed_secs: f64,
+        stop_reason: &str,
+    ) {
+        info!(
+            "Cartesian collection: abstractions={}, states={states_used}, elapsed={elapsed_secs:.3}s, stop_reason={stop_reason}",
+            abstractions.len(),
+        );
+        if !self.satisfied_goals_by_root.is_empty() {
+            info!(
+                "Cartesian collection: progressive root goal coverage={:?}/{goal_count}",
+                self.satisfied_goals_by_root
             );
         }
-        if !initial_root_goal_covered.is_empty() {
+        if !self.initial_root_goal_covered.is_empty() {
             info!(
-                "Cartesian collection: initial-root goal coverage={}/{}",
-                initial_root_goal_covered
+                "Cartesian collection: initial-root goal coverage={}/{goal_count}",
+                self.initial_root_goal_covered
                     .iter()
                     .filter(|covered| **covered)
                     .count(),
-                goal_count
             );
         }
-        Ok(abstractions)
     }
 }
 
