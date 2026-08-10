@@ -66,10 +66,34 @@ jobs:
       # length of every fixture in tests/assets/numeric-pddl-files,
       # .../sailing-simple, .../strips-pddl-files and .../numeric-conditions,
       # and each table is compared set-wise against the fixtures on disk. A
-      # planner regression changes a plan cost and this fails. Re-running the
-      # same instances through a release build would cost minutes per push and
-      # add nothing this does not already catch.
+      # planner regression changes a plan cost and this fails.
+      #
+      # Three sailing-simple optima are the exception and are covered by
+      # `release-test` below, not here. The set-wise comparison that makes those
+      # tables load-bearing still runs in this job, so an unpinned fixture fails
+      # here regardless.
       - run: cargo test --workspace --exclude planforge-cplex
+
+  release-test:
+    name: release tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `blind_astar_reproduces_every_costly_sailing_simple_optimum` is
+      # `cfg(not(debug_assertions))`, so the unoptimized `test` job above does not
+      # compile it and this is the only job that runs it. It verifies the three
+      # sailing-simple instances that are 87% of that corpus's 883_859 blind-A*
+      # expansions: 66s of search unoptimized against 3.5s optimized, which is
+      # why it is here rather than there.
+      #
+      # `-p tests` rather than the whole workspace because that is the only crate
+      # with optimized-only cases, and the whole `tests` crate optimized is 8s of
+      # test time -- the cost of this job is the build, which the cache absorbs.
+      # Not `#[ignore]`: an earlier audit removed six ignored tests, two of which
+      # had been silently broken for a long time, so nothing here is opt-in.
+      - run: cargo test -p tests --release
 
   features:
     name: optional features
