@@ -40,6 +40,19 @@ pub fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
     translate_to_sas_to_path(domain, problem, std::path::Path::new("output.sas"))
 }
 
+/// Whether the translation reorders and prunes the SAS variables by their
+/// causal graph before writing them.
+///
+/// Pruning drops every variable no goal, global constraint or metric depends
+/// on. Only diagnostics that want to see the untouched encoding turn it off;
+/// the reordering itself always happens, because the search reads variables in
+/// causal-graph order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Relevance {
+    Prune,
+    KeepEveryVariable,
+}
+
 pub fn translate_to_sas_to_path(
     domain: &str,
     problem: &str,
@@ -77,6 +90,18 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     fast_groups: bool,
     out: &mut W,
 ) -> anyhow::Result<()> {
+    translate_with_relevance(domain, problem, fast_groups, Relevance::Prune, out)
+}
+
+/// As [`translate_to_sas_writer`], but with explicit control over the
+/// relevance analysis.
+pub fn translate_with_relevance<W: std::io::Write>(
+    domain: &str,
+    problem: &str,
+    fast_groups: bool,
+    relevance: Relevance,
+    out: &mut W,
+) -> anyhow::Result<()> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))
         .map_err(|e| anyhow::anyhow!(e))?;
     let parsed_task = task.to_task();
@@ -98,6 +123,10 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     )
     .map_err(|err| anyhow::anyhow!(err))?;
 
-    planforge_translate::sas_tasks::from_internal(&sastask).output(out)?;
+    planforge_translate::preprocess::write_reordered_sas(
+        &sastask,
+        relevance == Relevance::Prune,
+        out,
+    );
     Ok(())
 }

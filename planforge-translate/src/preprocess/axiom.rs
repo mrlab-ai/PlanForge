@@ -2,9 +2,9 @@ use std::io::Write;
 
 use tracing::debug;
 
-use super::helper_functions::{InputStream, check_magic};
 use super::operator::{CompOperator, FOperator, stringify};
 use super::variable::{ExplicitVariable, NumericVariable};
+use crate::sas_tasks::{SASAxiom, SASCompareAxiom, SASNumericAxiom};
 
 #[derive(Debug, Clone)]
 pub struct AxiomRelationalCondition {
@@ -27,23 +27,17 @@ pub struct AxiomRelational {
 }
 
 impl AxiomRelational {
-    pub fn from_stream(stream: &mut InputStream) -> Self {
-        check_magic(stream, "begin_rule");
-        let count = stream.read_i32();
-        let mut conditions = Vec::new();
-        for _ in 0..count {
-            let var_no = stream.read_usize();
-            let val = stream.read_usize();
-            conditions.push(AxiomRelationalCondition::new(var_no, val));
-        }
-        let var_no = stream.read_usize();
-        let old_val = stream.read_usize();
-        let new_val = stream.read_usize();
-        check_magic(stream, "end_rule");
+    pub fn from_sas(axiom: &SASAxiom) -> Self {
+        let conditions = axiom
+            .condition
+            .iter()
+            .map(|&(var, value)| AxiomRelationalCondition::new(var, value))
+            .collect();
+        let (effect_var, effect_val) = axiom.effect;
         Self {
-            effect_var: var_no,
-            old_val,
-            effect_val: new_val,
+            effect_var,
+            old_val: 1 - effect_val,
+            effect_val,
             conditions,
         }
     }
@@ -110,17 +104,24 @@ pub struct AxiomFunctionalComparison {
 }
 
 impl AxiomFunctionalComparison {
-    pub fn from_stream(
-        stream: &mut InputStream,
+    /// Renaming the effect variable's two facts is not cosmetic: a comparison
+    /// variable arrives from the translation named after its own index, and the
+    /// SAS file is expected to spell out the comparison it stands for.
+    pub fn from_sas(
+        axiom: &SASCompareAxiom,
         variables: &mut [ExplicitVariable],
         numeric_variables: &[NumericVariable],
     ) -> Self {
-        let var_no = stream.read_usize();
-        let coper_str = stream.read_token();
-        let coper = CompOperator::from_string(&coper_str);
-        let var_no1 = stream.read_usize();
-        let var_no2 = stream.read_usize();
-        stream.skip_ws();
+        let var_no = axiom.effect;
+        let coper = CompOperator::from_string(&axiom.comp);
+        assert_eq!(
+            axiom.parts.len(),
+            2,
+            "comparison axiom for var {var_no} compares {} operands, not 2",
+            axiom.parts.len()
+        );
+        let var_no1 = axiom.parts[0];
+        let var_no2 = axiom.parts[1];
 
         assert!(variables.len() > var_no);
         assert!(numeric_variables.len() > var_no1);
@@ -222,16 +223,17 @@ pub struct AxiomNumericComputation {
 }
 
 impl AxiomNumericComputation {
-    pub fn from_stream(
-        stream: &mut InputStream,
-        numeric_variables: &mut [NumericVariable],
-    ) -> Self {
-        let var_no = stream.read_usize();
-        let fop_str = stream.read_token();
-        let foper = FOperator::from_string(&fop_str);
-        let var_no1 = stream.read_usize();
-        let var_no2 = stream.read_usize();
-        stream.skip_ws();
+    pub fn from_sas(axiom: &SASNumericAxiom, numeric_variables: &mut [NumericVariable]) -> Self {
+        let var_no = axiom.effect;
+        let foper = FOperator::from_string(&axiom.op);
+        assert_eq!(
+            axiom.parts.len(),
+            2,
+            "numeric axiom for var {var_no} combines {} operands, not 2",
+            axiom.parts.len()
+        );
+        let var_no1 = axiom.parts[0];
+        let var_no2 = axiom.parts[1];
 
         assert!(numeric_variables.len() > var_no);
         assert!(numeric_variables.len() > var_no1);

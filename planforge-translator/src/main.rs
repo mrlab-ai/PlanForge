@@ -39,18 +39,6 @@ enum Commands {
         #[arg(long = "log-level")]
         log_level: Option<tracing_subscriber::filter::LevelFilter>,
     },
-    /// Translate DOMAIN and PROBLEM PDDL, then preprocess the generated SAS task.
-    Preprocess {
-        /// Domain PDDL file
-        domain: PathBuf,
-        /// Problem PDDL file
-        problem: PathBuf,
-        /// Optional preprocessed output file (default: output)
-        #[clap(short, long)]
-        output: Option<PathBuf>,
-        #[arg(long = "log-level")]
-        log_level: Option<tracing_subscriber::filter::LevelFilter>,
-    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -72,24 +60,6 @@ fn main() -> anyhow::Result<()> {
                 out_path.display(),
                 start.elapsed()
             );
-        }
-        Commands::Preprocess {
-            domain,
-            problem,
-            output,
-            log_level,
-        } => {
-            init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
-
-            let sas_path = PathBuf::from("output.sas");
-            translate_to_sas_to_path(as_str(&domain)?, as_str(&problem)?, &sas_path)?;
-
-            let args = [
-                "planforge-translator preprocess".to_string(),
-                sas_path.display().to_string(),
-            ];
-            let out_path = output.unwrap_or_else(|| PathBuf::from("output"));
-            planforge_translate::preprocess::run_preprocess_to_output(&args, &out_path);
         }
     }
 

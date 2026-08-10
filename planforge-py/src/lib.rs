@@ -248,14 +248,11 @@ impl Task {
     ) -> PyResult<Self> {
         let text = py
             .allow_threads(|| -> Result<String, String> {
-                let raw = planforge_translator::translate_to_sas_string(
+                planforge_translator::translate_to_sas_string(
                     &domain.to_string_lossy(),
                     &problem.to_string_lossy(),
                 )
-                .map_err(|e| e.to_string())?;
-                Ok(planforge_translate::preprocess::run_preprocess_to_string(
-                    &raw,
-                ))
+                .map_err(|e| e.to_string())
             })
             .map_err(TranslateError::new_err)?;
         Self::from_sas_text(&text, restrict_task)
@@ -520,12 +517,11 @@ fn solve(
 
     let outcome: Result<SearchResult, SolveError> = py.allow_threads(|| {
         let sas_text: String = if let (Some(domain), Some(problem)) = (&domain, &problem) {
-            let raw = planforge_translator::translate_to_sas_string(
+            planforge_translator::translate_to_sas_string(
                 &domain.to_string_lossy(),
                 &problem.to_string_lossy(),
             )
-            .map_err(|err| SolveError::Translate(err.to_string()))?;
-            planforge_translate::preprocess::run_preprocess_to_string(&raw)
+            .map_err(|err| SolveError::Translate(err.to_string()))?
         } else if let Some(path) = &sas {
             std::fs::read_to_string(path).map_err(|err| match err.kind() {
                 std::io::ErrorKind::NotFound => {

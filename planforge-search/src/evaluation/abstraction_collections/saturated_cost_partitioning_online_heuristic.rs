@@ -5148,7 +5148,6 @@ mod handcrafted_sailing_tests {
         AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
         NumericVariable, Operator,
     };
-    use planforge_translate::preprocess::run_preprocess_to_output;
     use planforge_translator::translate_to_sas_to_path_fast;
 
     use super::*;
@@ -5774,21 +5773,13 @@ mod handcrafted_sailing_tests {
         assert!(problem.is_file(), "missing {}", problem.display());
         let temp_dir = unique_temp_dir("sailing_handcrafted_full_task_scp")
             .expect("failed to create sailing diagnostic temp dir");
-        let output_sas = temp_dir.join("output.sas");
         let preprocessed = temp_dir.join("output");
         translate_to_sas_to_path_fast(
             domain.to_str().expect("non-utf8 sailing domain path"),
             problem.to_str().expect("non-utf8 sailing problem path"),
-            &output_sas,
+            &preprocessed,
         )
         .expect("sailing translation failed");
-        run_preprocess_to_output(
-            &[
-                "preprocess".to_string(),
-                output_sas.to_string_lossy().to_string(),
-            ],
-            &preprocessed,
-        );
         NumericRootTask::from_file(&preprocessed)
     }
 

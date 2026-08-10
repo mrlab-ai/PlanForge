@@ -3,9 +3,6 @@ use std::io::Write;
 
 use tracing::debug;
 
-use super::helper_functions::InputStream;
-use super::helper_functions::check_magic;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumType {
     Unknown = 0,
@@ -65,20 +62,13 @@ impl Ord for ExplicitVariable {
 }
 
 impl ExplicitVariable {
-    pub fn from_stream(stream: &mut InputStream, index: usize) -> Self {
-        check_magic(stream, "begin_variable");
-        let name = stream.read_token();
-        let layer = stream.read_i32();
-        let range = stream.read_usize();
-        stream.skip_ws();
-        let mut values = Vec::with_capacity(range);
-        for _ in 0..range {
-            values.push(stream.read_line());
-        }
-        check_magic(stream, "end_variable");
+    /// The variable is named after the position it had before the causal graph
+    /// reordered it, which is how the SAS file keeps a variable identifiable
+    /// across the reordering.
+    pub fn new(index: usize, layer: i32, values: Vec<String>) -> Self {
         Self {
             index,
-            name,
+            name: format!("var{index}"),
             values,
             layer,
             level: -1,
@@ -205,25 +195,17 @@ impl Ord for NumericVariable {
 }
 
 impl NumericVariable {
-    pub fn from_stream(stream: &mut InputStream, index: usize) -> Self {
-        let nvtype = stream.read_char();
-        stream.skip_ws();
-        let layer_str = stream.read_until(' ');
-        // Layer 0 is a real layer and -1 means "not derived", so a default
-        // here would silently promote a non-derived variable into layer 0 and
-        // change the axiom stratification.
-        let layer = layer_str.parse::<i32>().unwrap_or_else(|e| {
-            panic!("numeric variable {index} has a malformed axiom layer {layer_str:?}: {e}")
-        });
-        let name = stream.read_line();
-
-        let mut ntype = NumType::Unknown;
-        if nvtype == 'C' {
-            ntype = NumType::Constant;
-        }
-        if nvtype == 'D' {
-            ntype = NumType::Derived;
-        }
+    /// `R` and `I` deliberately arrive as `Unknown`: which numeric variables
+    /// are regular and which are instrumentation is decided again here, from
+    /// the metric and the assignment axioms that feed it, not taken from the
+    /// translation.
+    pub fn new(index: usize, sas_type: &str, layer: i32, name: String) -> Self {
+        let ntype = match sas_type {
+            "C" => NumType::Constant,
+            "D" => NumType::Derived,
+            "R" | "I" => NumType::Unknown,
+            other => panic!("numeric variable {index} has an unknown type {other:?}"),
+        };
 
         Self {
             index,

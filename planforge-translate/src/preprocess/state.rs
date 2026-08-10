@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use tracing::debug;
 
-use super::helper_functions::InputStream;
-use super::helper_functions::check_magic;
 use super::variable::{ExplicitVariable, NumericVariable};
+use crate::sas_tasks::SASInit;
 
 #[derive(Debug, Clone, Default)]
 pub struct State {
@@ -17,26 +16,19 @@ impl State {
         Self::default()
     }
 
-    pub fn from_stream(
-        stream: &mut InputStream,
-        variables: &[ExplicitVariable],
-        numeric_variables: &[NumericVariable],
-    ) -> Self {
-        check_magic(stream, "begin_state");
-        let mut values: HashMap<usize, usize> = HashMap::new();
-        for var in variables {
-            let value = stream.read_usize();
-            values.insert(var.index, value);
-        }
-        check_magic(stream, "end_state");
-
-        check_magic(stream, "begin_numeric_state");
-        let mut numeric_values: HashMap<usize, f64> = HashMap::new();
-        for numvar in numeric_variables {
-            numeric_values.insert(numvar.index, stream.read_f64());
-        }
-        check_magic(stream, "end_numeric_state");
-
+    pub fn from_sas(init: &SASInit) -> Self {
+        let values = init
+            .values
+            .iter()
+            .enumerate()
+            .map(|(var, &value)| {
+                let value = usize::try_from(value).unwrap_or_else(|_| {
+                    panic!("variable {var} has no initial value (got {value})")
+                });
+                (var, value)
+            })
+            .collect();
+        let numeric_values = init.num_values.iter().copied().enumerate().collect();
         Self {
             values,
             numeric_values,

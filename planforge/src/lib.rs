@@ -265,12 +265,11 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let (mut task, sas_label) = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
-        // In-memory pipeline: translate → preprocess → parse, no disk I/O.
+        // In-memory pipeline: translate → parse, no disk I/O.
         let sas_text = planforge_translator::translate_to_sas_string(domain, problem)
             .map_err(|err| std::io::Error::other(err.to_string()))?;
-        let preprocessed = planforge_translate::preprocess::run_preprocess_to_string(&sas_text);
         (
-            NumericRootTask::from_str(&preprocessed),
+            NumericRootTask::from_str(&sas_text),
             format!("{domain} + {problem} (in-memory)"),
         )
     } else {

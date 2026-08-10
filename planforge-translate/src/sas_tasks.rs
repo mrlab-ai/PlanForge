@@ -615,14 +615,18 @@ impl SASOperator {
         debug!("  {}", self.cost);
     }
 
+    /// The name the SAS file carries: grounded operator names are parenthesized
+    /// in PDDL, the file format is not.
+    pub fn output_name(&self) -> &str {
+        self.name
+            .strip_prefix('(')
+            .and_then(|name| name.strip_suffix(')'))
+            .unwrap_or(&self.name)
+    }
+
     pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
         writeln!(stream, "begin_operator")?;
-        let name = if self.name.starts_with('(') && self.name.ends_with(')') {
-            &self.name[1..self.name.len() - 1]
-        } else {
-            &self.name
-        };
-        writeln!(stream, "{}", name)?;
+        writeln!(stream, "{}", self.output_name())?;
         writeln!(stream, "{}", self.prevail.len())?;
         for (var, val) in &self.prevail {
             writeln!(stream, "{} {}", var, val)?;

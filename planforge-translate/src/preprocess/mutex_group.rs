@@ -3,8 +3,8 @@ use std::io::Write;
 use tracing::debug;
 
 use super::fact::ExplicitFact;
-use super::helper_functions::{InputStream, check_magic};
 use super::variable::ExplicitVariable;
+use crate::sas_tasks::SASMutexGroup;
 
 #[derive(Debug, Clone)]
 pub struct MutexGroup {
@@ -12,16 +12,12 @@ pub struct MutexGroup {
 }
 
 impl MutexGroup {
-    pub fn from_stream(stream: &mut InputStream) -> Self {
-        check_magic(stream, "begin_mutex_group");
-        let size = stream.read_usize();
-        let mut facts = Vec::with_capacity(size);
-        for _ in 0..size {
-            let var_no = stream.read_usize();
-            let value = stream.read_usize();
-            facts.push(ExplicitFact { var: var_no, value });
-        }
-        check_magic(stream, "end_mutex_group");
+    pub fn from_sas(group: &SASMutexGroup) -> Self {
+        let facts = group
+            .facts
+            .iter()
+            .map(|&(var, value)| ExplicitFact { var, value })
+            .collect();
         Self { facts }
     }
 

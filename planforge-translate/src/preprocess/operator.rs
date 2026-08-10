@@ -2,8 +2,8 @@ use std::io::Write;
 
 use tracing::debug;
 
-use super::helper_functions::{InputStream, check_magic};
 use super::variable::{ExplicitVariable, NumType, NumericVariable};
+use crate::sas_tasks::{SASOperator, SasFact};
 
 #[cfg(test)]
 mod tests;
@@ -196,78 +196,57 @@ pub struct Operator {
 }
 
 impl Operator {
-    pub fn from_stream(stream: &mut InputStream) -> Self {
-        check_magic(stream, "begin_operator");
-        stream.skip_ws();
-        let name = stream.read_line();
-
-        let mut prevail: Vec<Prevail> = Vec::new();
-        let count = stream.read_usize();
-        for _ in 0..count {
-            let var_no = stream.read_usize();
-            let val = stream.read_usize();
-            prevail.push(Prevail::new(var_no, val));
+    pub fn from_sas(op: &SASOperator) -> Self {
+        fn effect_conditions(conditions: &[SasFact]) -> Vec<EffCond> {
+            conditions
+                .iter()
+                .map(|&(var, value)| EffCond::new(var, value))
+                .collect()
         }
 
-        let mut pre_post: Vec<PrePost> = Vec::new();
-        let count = stream.read_usize();
-        for _ in 0..count {
-            let eff_conds = stream.read_usize();
-            let mut ecs: Vec<EffCond> = Vec::new();
-            for _ in 0..eff_conds {
-                let var = stream.read_usize();
-                let value = stream.read_usize();
-                ecs.push(EffCond::new(var, value));
-            }
-            let var_no = stream.read_usize();
-            let val = stream.read_i32();
-            let pre = if val >= 0 { Some(val as usize) } else { None };
-            let new_val = stream.read_usize();
-            if eff_conds != 0 {
-                pre_post.push(PrePost::new_conditional(var_no, ecs, pre, new_val));
-            } else {
-                pre_post.push(PrePost::new(var_no, pre, new_val));
-            }
-        }
+        let prevail = op
+            .prevail
+            .iter()
+            .map(|&(var, value)| Prevail::new(var, value))
+            .collect();
 
-        let mut assign_effects: Vec<NumericEffect> = Vec::new();
-        let count = stream.read_usize();
-        for _ in 0..count {
-            let eff_conds = stream.read_usize();
-            let mut ecs: Vec<EffCond> = Vec::new();
-            for _ in 0..eff_conds {
-                let var = stream.read_usize();
-                let value = stream.read_usize();
-                ecs.push(EffCond::new(var, value));
-            }
-            let af_var = stream.read_usize();
-            let op_str = stream.read_token();
-            let operator = FOperator::from_string(&op_str);
-            let ex_var = stream.read_usize();
-            stream.skip_ws();
+        let pre_post = op
+            .pre_post
+            .iter()
+            .map(|(var, pre, post, conditions)| {
+                let pre = usize::try_from(*pre).ok();
+                if conditions.is_empty() {
+                    PrePost::new(*var, pre, *post)
+                } else {
+                    PrePost::new_conditional(*var, effect_conditions(conditions), pre, *post)
+                }
+            })
+            .collect();
 
-            if eff_conds != 0 {
-                assign_effects.push(NumericEffect::new_conditional(
-                    af_var, ecs, operator, ex_var,
-                ));
-            } else {
-                assign_effects.push(NumericEffect::new(af_var, operator, ex_var));
-            }
-        }
-
-        let cost_str = stream.read_token();
-        let cost = cost_str
-            .parse::<f64>()
-            .unwrap_or_else(|e| panic!("operator {name} has a malformed cost {cost_str:?}: {e}"));
-        stream.skip_ws();
-        check_magic(stream, "end_operator");
+        let assign_effects = op
+            .assign_effects
+            .iter()
+            .map(|(var, fop, operand, conditions)| {
+                let fop = FOperator::from_string(fop);
+                if conditions.is_empty() {
+                    NumericEffect::new(*var, fop, *operand)
+                } else {
+                    NumericEffect::new_conditional(
+                        *var,
+                        effect_conditions(conditions),
+                        fop,
+                        *operand,
+                    )
+                }
+            })
+            .collect();
 
         Self {
-            name,
+            name: op.output_name().to_owned(),
             prevail,
             pre_post,
             assign_effects,
-            cost,
+            cost: op.cost,
         }
     }
 

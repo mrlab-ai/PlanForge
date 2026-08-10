@@ -21,7 +21,6 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::NumericRootTask;
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
-use planforge_translate::preprocess::{run_preprocess_to_output, run_preprocess_to_string};
 use planforge_translator::{translate_to_sas_string, translate_to_sas_to_path_fast};
 
 /// Root of the checked-in fixture tree.
@@ -68,39 +67,30 @@ impl Drop for Scratch {
     }
 }
 
-/// Translates and preprocesses through the on-disk `..._fast` path, which
-/// requests singleton fact groups.
+/// Translates through the on-disk `..._fast` path, which requests singleton
+/// fact groups.
 ///
 /// The returned [`Scratch`] owns the temporary files and must stay alive for as
 /// long as the caller wants them.
 pub fn translate_to_disk(domain: &Path, problem: &Path, scratch: &Scratch) -> NumericRootTask {
-    let output_sas = scratch.path().join("output.sas");
-    let preprocessed = scratch.path().join("output");
+    let output = scratch.path().join("output.sas");
 
-    translate_to_sas_to_path_fast(path_str(domain), path_str(problem), &output_sas)
+    translate_to_sas_to_path_fast(path_str(domain), path_str(problem), &output)
         .unwrap_or_else(|e| panic!("translate failed for {problem:?}: {e}"));
-    run_preprocess_to_output(
-        &[
-            "preprocess".to_string(),
-            output_sas.to_string_lossy().into_owned(),
-        ],
-        &preprocessed,
-    );
 
-    NumericRootTask::from_file(&preprocessed)
+    NumericRootTask::from_file(&output)
 }
 
-/// Translates and preprocesses entirely in memory, the way the `planforge`
-/// binary does for a two-argument PDDL invocation. Keeps multi-valued variables.
+/// Translates entirely in memory, the way the `planforge` binary does for a
+/// two-argument PDDL invocation. Keeps multi-valued variables.
 pub fn translate_in_memory(domain: &Path, problem: &Path) -> NumericRootTask {
     assert!(domain.is_file(), "missing fixture {domain:?}");
     assert!(problem.is_file(), "missing fixture {problem:?}");
 
     let sas = translate_to_sas_string(path_str(domain), path_str(problem))
         .unwrap_or_else(|e| panic!("translate failed for {problem:?}: {e}"));
-    let preprocessed = run_preprocess_to_string(&sas);
-    NumericRootTask::try_from_str(&preprocessed)
-        .unwrap_or_else(|e| panic!("parsing the preprocessed {problem:?} failed: {e}"))
+    NumericRootTask::try_from_str(&sas)
+        .unwrap_or_else(|e| panic!("parsing the translated {problem:?} failed: {e}"))
 }
 
 fn path_str(path: &Path) -> &str {
