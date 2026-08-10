@@ -28,9 +28,3 @@ impl PddlTask {
         parsing_functions::parse_task(&self.domain_forms, &self.problem_forms)
     }
 }
-
-/// Convenience function matching Python's pddl_parser.open().
-pub fn open(domain_filename: &str, task_filename: &str) -> Result<Task, String> {
-    let task = PddlTask::from_files(Path::new(domain_filename), Path::new(task_filename))?;
-    Ok(task.to_task())
-}

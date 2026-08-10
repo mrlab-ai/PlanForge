@@ -8,6 +8,14 @@ license = "GPL-3.0"
 name = "planforge"
 doc = false
 
+# Translate-only staging binary. It is a target of this crate rather than a
+# crate of its own so that the CLI dependencies (clap, tracing-subscriber) stay
+# out of the library graph `planforge-search` waits on.
+[[bin]]
+name = "planforge-translator"
+path = "src/bin/planforge-translator.rs"
+doc = false
+
 [features]
 # Forward to every LP-backed component.
 cplex = ["planforge-searcher/cplex", "planforge-search/cplex"]
@@ -17,10 +25,10 @@ sgd = ["planforge-searcher/sgd"]
 [dependencies]
 planforge-sas = { path = "../planforge-sas" }
 planforge-translate = { path = "../planforge-translate" }
-planforge-translator = { path = "../planforge-translator" }
 planforge-search = { path = "../planforge-search" }
 planforge-searcher = { path = "../planforge-searcher" }
 planforge-cli-utils = { path = "../planforge-cli-utils" }
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 time = "0.3"

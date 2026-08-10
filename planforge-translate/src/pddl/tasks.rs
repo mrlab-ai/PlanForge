@@ -20,27 +20,16 @@ fn prettyprint(symbol: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Requirements {
-    pub requirements: Vec<String>,
-}
-
-impl Requirements {
-    pub fn new(requirements: Vec<String>) -> Self {
-        Requirements { requirements }
-    }
-}
-
 /// The main PDDL task structure, aggregating everything parsed.
+///
+/// It keeps what the translation reads. The domain and problem names and the
+/// `:requirements` list are parsed for their shape and then dropped, because
+/// nothing downstream of here consults them.
 #[derive(Debug, Clone)]
 pub struct Task {
-    pub domain_name: String,
-    pub task_name: String,
-    pub requirements: Requirements,
     pub types: Vec<Type>,
     pub objects: Vec<TypedObject>,
     pub predicates: Vec<Predicate>,
-    pub functions: Vec<Function>,
     pub init: Vec<Atom>,
     pub num_init: Vec<FunctionAssignment>,
     pub goal: Condition,
@@ -134,8 +123,6 @@ pub struct GroundingTables<'a> {
 
 /// What the `(define (domain ...))` form declares.
 pub struct DomainDefinition {
-    pub domain_name: String,
-    pub requirements: Requirements,
     pub types: Vec<Type>,
     pub constants: Vec<TypedObject>,
     pub predicates: Vec<Predicate>,
@@ -146,7 +133,6 @@ pub struct DomainDefinition {
 
 /// What the `(define (problem ...))` form declares.
 pub struct ProblemDefinition {
-    pub task_name: String,
     pub objects: Vec<TypedObject>,
     pub init: Vec<Atom>,
     pub num_init: Vec<FunctionAssignment>,
@@ -194,13 +180,9 @@ impl Task {
         }
 
         Task {
-            domain_name: domain.domain_name,
-            task_name: problem.task_name,
-            requirements: domain.requirements,
             types: domain.types,
             objects,
             predicates: domain.predicates,
-            functions,
             init,
             num_init: problem.num_init,
             goal: problem.goal,

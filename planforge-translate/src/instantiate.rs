@@ -42,7 +42,6 @@ fn collect_used_derived_pnes_from_condition(
 
 /// Result of the exploration/instantiation process.
 pub struct ExploreResult {
-    pub relaxed_reachable: bool,
     pub atoms: Vec<Atom>,
     pub num_fluents: Vec<PrimitiveNumericExpression>,
     pub grounded_ops: Vec<PropositionalAction>,
@@ -188,7 +187,6 @@ pub fn explore(task: &Task) -> ExploreResult {
     let mut reachable_atoms: Vec<Atom> = vec![];
     let mut reachable_action_params: HashMap<String, Vec<Rc<[ObjectId]>>> = HashMap::new();
     let mut axiom_instances: Vec<(&str, Vec<String>)> = vec![];
-    let mut relaxed_reachable = false;
     for atom in &model.atoms {
         let args = || -> Vec<String> {
             atom.args
@@ -217,7 +215,12 @@ pub fn explore(task: &Task) -> ExploreResult {
                 .or_default()
                 .push(Rc::clone(&atom.args)),
             Bookkeeping::FunctionAxiom(name) => axiom_instances.push((name, args())),
-            Bookkeeping::GoalReachable => relaxed_reachable = true,
+            // The goal atom being derived means the delete-relaxation reaches
+            // the goal. Nothing here needs that: the translation of the
+            // grounded task already answers with a trivial task when the goal
+            // is out of reach, and it does so on the real task rather than the
+            // relaxation.
+            Bookkeeping::GoalReachable => {}
         }
     }
 
@@ -366,7 +369,6 @@ pub fn explore(task: &Task) -> ExploreResult {
     let num_fluents: Vec<PrimitiveNumericExpression> = fluent_functions.iter().cloned().collect();
 
     ExploreResult {
-        relaxed_reachable,
         atoms: reachable_atoms,
         num_fluents,
         grounded_ops,

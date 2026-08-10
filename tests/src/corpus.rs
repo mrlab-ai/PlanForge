@@ -26,7 +26,7 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::NumericRootTask;
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
-use planforge_translator::{translate_to_sas_to_path_fast, translate_to_task};
+use planforge_translate::{translate_to_sas_to_path_fast, translate_to_task};
 
 /// Root of the checked-in fixture tree.
 pub fn assets() -> PathBuf {

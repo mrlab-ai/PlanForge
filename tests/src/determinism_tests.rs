@@ -13,7 +13,7 @@
 //! numbers that move first, so those are the numbers pinned.
 //!
 //! Two neighbours of this file cover the ends of the same pipeline:
-//! `planforge-translator/tests/determinism.rs` pins that the SAS+ *text* of a
+//! `planforge-translate/tests/determinism.rs` pins that the SAS+ *text* of a
 //! translation is reproducible, and `planforge/tests/determinism.rs` pins that a
 //! whole *process* is, which is what catches a dependence on something seeded
 //! once per process rather than once per map.

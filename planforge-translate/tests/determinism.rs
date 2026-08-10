@@ -23,10 +23,10 @@ fn fixture(domain_dir: &str, problem: &str) -> (String, String) {
 
 fn assert_translation_is_reproducible(domain_dir: &str, problem: &str) {
     let (domain, problem) = fixture(domain_dir, problem);
-    let first = planforge_translator::translate_to_sas_string(&domain, &problem)
+    let first = planforge_translate::translate_to_sas_string(&domain, &problem)
         .expect("translation failed");
     for run in 2..=4 {
-        let again = planforge_translator::translate_to_sas_string(&domain, &problem)
+        let again = planforge_translate::translate_to_sas_string(&domain, &problem)
             .expect("translation failed");
         assert_eq!(
             first, again,

@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use tracing::debug;
-
 use super::conditions::{Atom, Condition};
 use super::f_expression::{
     FunctionalExpression, PrimitiveNumericExpression, instantiate_expression,
@@ -48,16 +46,6 @@ impl Axiom {
             condition,
             is_global_constraint: true,
         }
-    }
-
-    pub fn dump(&self) {
-        debug!(
-            "Axiom {} ({} params, global={})",
-            self.name,
-            self.parameters.len(),
-            self.is_global_constraint
-        );
-        debug!("  condition: {}", self.condition);
     }
 
     pub fn uniquify_variables(&mut self) {
@@ -119,15 +107,6 @@ impl PropositionalAxiom {
 
     pub fn clone_axiom(&self) -> Self {
         self.clone()
-    }
-
-    pub fn dump(&self) {
-        debug!("PropositionalAxiom");
-        debug!("  effect: {}", self.effect);
-        debug!("  conditions:");
-        for c in &self.condition {
-            debug!("    {}", c);
-        }
     }
 }
 
@@ -210,13 +189,6 @@ impl NumericAxiom {
             effect,
         }
     }
-
-    pub fn dump(&self) {
-        debug!("NumericAxiom {} op={}", self.name, self.op);
-        for p in &self.parts {
-            debug!("  part: {}", p);
-        }
-    }
 }
 
 impl fmt::Display for NumericAxiom {
@@ -231,30 +203,6 @@ pub struct InstantiatedNumericAxiom {
     pub op: String,
     pub parts: Vec<FunctionalExpression>,
     pub effect: PrimitiveNumericExpression,
-}
-
-impl InstantiatedNumericAxiom {
-    pub fn new(
-        name: String,
-        op: String,
-        parts: Vec<FunctionalExpression>,
-        effect: PrimitiveNumericExpression,
-    ) -> Self {
-        InstantiatedNumericAxiom {
-            name,
-            op,
-            parts,
-            effect,
-        }
-    }
-
-    pub fn dump(&self) {
-        debug!("InstantiatedNumericAxiom {} op={}", self.name, self.op);
-        debug!("  effect: {}", self.effect);
-        for p in &self.parts {
-            debug!("  part: {}", p);
-        }
-    }
 }
 
 impl fmt::Display for InstantiatedNumericAxiom {

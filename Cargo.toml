@@ -2,7 +2,6 @@
 default-members = [
     "planforge-sas",
     "planforge-translate",
-    "planforge-translator",
     "planforge-search",
     "planforge-searcher",
     "planforge",
@@ -15,7 +14,6 @@ default-members = [
 members = [
     "planforge-sas",
     "planforge-translate",
-    "planforge-translator",
     "planforge-search",
     "planforge-searcher",
     "planforge",

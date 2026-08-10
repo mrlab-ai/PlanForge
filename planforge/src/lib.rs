@@ -286,7 +286,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         // The default path: the translation hands over the task it built, with
         // no SAS+ text in between.
         (
-            planforge_translator::translate_to_task(domain, problem)
+            planforge_translate::translate_to_task(domain, problem)
                 .map_err(|err| std::io::Error::other(err.to_string()))?,
             format!("{domain} + {problem} (in-memory)"),
         )

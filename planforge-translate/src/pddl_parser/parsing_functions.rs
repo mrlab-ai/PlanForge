@@ -12,7 +12,7 @@ use crate::pddl::f_expression::*;
 use crate::pddl::functions::Function;
 use crate::pddl::pddl_types::{Type, TypedObject};
 use crate::pddl::predicates::Predicate;
-use crate::pddl::tasks::{DomainDefinition, ProblemDefinition, Requirements, Task};
+use crate::pddl::tasks::{DomainDefinition, ProblemDefinition, Task};
 
 /// Parses a list of typed items: "?x ?y - type ?z - type2"
 pub fn parse_typed_list(
@@ -517,9 +517,7 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
 
     let domain_name_list = items[1].as_list();
     assert_eq!(domain_name_list[0].as_atom(), "domain");
-    let domain_name = domain_name_list[1].as_atom().to_string();
 
-    let mut requirements = Requirements::new(vec![]);
     let mut types: Vec<Type> = vec![];
     let mut type_dict: HashMap<String, Vec<String>> = HashMap::new();
     type_dict.insert("object".to_string(), vec!["object".to_string()]);
@@ -536,13 +534,11 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
         }
         let tag = section[0].as_atom();
         match tag {
-            ":requirements" => {
-                let reqs: Vec<String> = section[1..]
-                    .iter()
-                    .map(|s| s.as_atom().to_string())
-                    .collect();
-                requirements = Requirements::new(reqs);
-            }
+            // The translation supports one PDDL fragment and reports what it
+            // cannot handle when it meets the construct itself, so the declared
+            // requirement list adds nothing. It still has to be matched here,
+            // or it would be reported as an unknown section.
+            ":requirements" => {}
             ":types" => {
                 types = parse_type_list(&section[1..]);
                 type_dict = set_supertypes(&types);
@@ -585,8 +581,6 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
 
     (
         DomainDefinition {
-            domain_name,
-            requirements,
             types,
             constants,
             predicates,
@@ -636,7 +630,6 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
 
     let problem_list = items[1].as_list();
     assert_eq!(problem_list[0].as_atom(), "problem");
-    let task_name = problem_list[1].as_atom().to_string();
 
     let mut objects: Vec<TypedObject> = vec![];
     let mut init: Vec<Atom> = vec![];
@@ -711,24 +704,10 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
     }
 
     ProblemDefinition {
-        task_name,
         objects,
         init,
         num_init,
         goal,
         metric,
-    }
-}
-
-pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
-    use std::collections::HashSet;
-    let mut seen = HashSet::new();
-    for item in lst {
-        if !seen.insert(item) {
-            warn!(
-                "Warning: duplicate {} in {}: {}",
-                what_type, what_list, item
-            );
-        }
     }
 }

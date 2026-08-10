@@ -338,17 +338,17 @@ mod tests {
     use super::*;
 
     fn derived_axiom(symbol: &str, operand: &str) -> InstantiatedNumericAxiom {
-        InstantiatedNumericAxiom::new(
-            format!("derive-{symbol}"),
-            "+".to_string(),
-            vec![
+        InstantiatedNumericAxiom {
+            name: format!("derive-{symbol}"),
+            op: "+".to_string(),
+            parts: vec![
                 FunctionalExpression::PrimitiveNumericExpression(
                     PrimitiveNumericExpression::with_type(operand.to_string(), Vec::new(), 'R'),
                 ),
                 FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
             ],
-            PrimitiveNumericExpression::with_type(symbol.to_string(), Vec::new(), 'D'),
-        )
+            effect: PrimitiveNumericExpression::with_type(symbol.to_string(), Vec::new(), 'D'),
+        }
     }
 
     #[test]

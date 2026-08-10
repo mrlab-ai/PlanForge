@@ -473,7 +473,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                 get_action_predicate(&action.name),
                 action.parameters.iter().map(|p| p.name.clone()).collect(),
             )),
-            parameters: vec![],
         });
 
         let action_head = Condition::Atom(Atom::new(
@@ -493,7 +492,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
             rules.push(ExplorationRule {
                 conditions,
                 effect: effect.peffect.clone(),
-                parameters: vec![],
             });
         }
 
@@ -507,7 +505,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                     get_function_predicate(&assignment.fluent.symbol),
                     assignment.fluent.args.clone(),
                 )),
-                parameters: vec![],
             });
 
             rules.push(ExplorationRule {
@@ -516,7 +513,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                     get_fluent_function_predicate(&assignment.fluent.symbol),
                     assignment.fluent.args.clone(),
                 )),
-                parameters: vec![],
             });
         }
     }
@@ -529,7 +525,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                 get_axiom_predicate(&axiom.name),
                 axiom.parameters.iter().map(|p| p.name.clone()).collect(),
             )),
-            parameters: vec![],
         });
         rules.push(ExplorationRule {
             conditions: vec![Condition::Atom(Atom::new(
@@ -543,14 +538,12 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                     .map(|p| p.name.clone())
                     .collect(),
             )),
-            parameters: vec![],
         });
     }
 
     rules.push(ExplorationRule {
         conditions: condition_to_rule_body(&[], &task.goal),
         effect: Condition::Atom(Atom::new("@goal-reachable".to_string(), vec![])),
-        parameters: vec![],
     });
 
     for axiom in task.function_administrator.get_all_axioms() {
@@ -584,7 +577,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
         rules.push(ExplorationRule {
             conditions: applicability_conditions,
             effect: applicability_head.clone(),
-            parameters: vec![],
         });
 
         let head = axiom.get_head();
@@ -594,7 +586,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                 get_function_predicate(&head.symbol),
                 head.args.clone(),
             )),
-            parameters: vec![],
         });
 
         for part in &axiom.parts {
@@ -611,7 +602,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
                         get_fluent_function_predicate(&head.symbol),
                         head.args.clone(),
                     )),
-                    parameters: vec![],
                 });
             }
         }
@@ -625,7 +615,6 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
 pub struct ExplorationRule {
     pub conditions: Vec<Condition>,
     pub effect: Condition,
-    pub parameters: Vec<TypedObject>,
 }
 
 // ==================== Helper predicates ====================

@@ -39,21 +39,7 @@ pub fn substitute(args: &[String], substitution: &impl Substitution) -> Vec<Stri
         .collect()
 }
 
-// Re-export the types the translation pipeline names most often.
-pub use actions::{Action, PropositionalAction};
-pub use axioms::{Axiom, InstantiatedNumericAxiom, NumericAxiom, PropositionalAxiom};
-pub use conditions::{
-    Atom, Comparison, Condition, Conjunction, Disjunction, ExistentialCondition, NegatedAtom,
-    UniversalCondition,
-};
-pub use effects::{
-    ConditionalEffect, ConjunctiveEffect, Effect, NumericEffect, SimpleEffect, UniversalEffect,
-};
-pub use f_expression::{
-    AdditiveInverse, ArithmeticExpression, FunctionAssignment, FunctionalExpression,
-    NumericConstant, PrimitiveNumericExpression,
-};
-pub use functions::Function;
-pub use pddl_types::{Type, TypedObject};
-pub use predicates::Predicate;
-pub use tasks::{DerivedFunctionAdministrator, Requirements, Task};
+// The two types the pipeline names often enough to be worth shortening; every
+// other PDDL type is reached through its own module.
+pub use conditions::Atom;
+pub use f_expression::FunctionalExpression;

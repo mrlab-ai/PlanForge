@@ -124,10 +124,11 @@ Common options:
 
 Workspace crates:
 
-- `planforge` — the planner binary: CLI, resource limits, portfolio, plan output.
+- `planforge` — both binaries: the planner (`planforge`) and the translate-only
+  staging tool (`planforge-translator`), plus CLI, resource limits, portfolio
+  and plan output.
 - `planforge-searcher` — the `--search` grammar and heuristic construction.
 - `planforge-translate`, `planforge-search`, `planforge-sas` — translation, search and task libraries.
-- `planforge-translator` — translate-only binary, for inspecting SAS+ output.
 - `planforge-cli-utils` — shared CLI plumbing (exit codes, resource limits, allocator).
 - `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.

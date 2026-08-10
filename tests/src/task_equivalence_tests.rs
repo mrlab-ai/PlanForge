@@ -23,7 +23,7 @@ use std::path::Path;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, NumericRootTask, assert_fact_namespaces,
 };
-use planforge_translator::{translate_to_sas_string, translate_to_task};
+use planforge_translate::{translate_to_sas_string, translate_to_task};
 
 use crate::corpus::{self, assert_fixture_set_is_pinned, problem_file_names, subdirectory_names};
 

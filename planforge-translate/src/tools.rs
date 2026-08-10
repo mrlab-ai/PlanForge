@@ -64,18 +64,6 @@ impl<T: Eq + Hash> OrderedSet<T> {
         }
     }
 
-    pub fn contains(&self, value: &T) -> bool {
-        self.positions.contains_key(value)
-    }
-
-    pub fn len(&self) -> usize {
-        self.positions.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.positions.is_empty()
-    }
-
     /// The elements, in insertion order.
     pub fn into_vec(self) -> Vec<T> {
         let mut values: Vec<(T, usize)> = self.positions.into_iter().collect();
@@ -136,24 +124,6 @@ pub fn cartesian_product<T: Clone>(sequences: &[Vec<Vec<T>>]) -> Vec<Vec<T>> {
     for item in &sequences[0] {
         for sequence in &rest {
             let mut combined = item.clone();
-            combined.extend(sequence.iter().cloned());
-            result.push(combined);
-        }
-    }
-    result
-}
-
-/// Standard cartesian product (itertools.product equivalent)
-pub fn product<T: Clone>(sequences: &[Vec<T>]) -> Vec<Vec<T>> {
-    if sequences.is_empty() {
-        return vec![vec![]];
-    }
-
-    let rest = product(&sequences[1..]);
-    let mut result = vec![];
-    for item in &sequences[0] {
-        for sequence in &rest {
-            let mut combined = vec![item.clone()];
             combined.extend(sequence.iter().cloned());
             result.push(combined);
         }

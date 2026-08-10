@@ -202,7 +202,7 @@ impl GilReleasedTask {
 /// The default way from PDDL to a task: no SAS+ text in between. `from_sas` and
 /// `from_sas_text` remain for a file produced earlier or by another tool.
 fn translate_pddl_to_task(domain: &Path, problem: &Path) -> Result<NumericRootTask, String> {
-    planforge_translator::translate_to_task(&domain.to_string_lossy(), &problem.to_string_lossy())
+    planforge_translate::translate_to_task(&domain.to_string_lossy(), &problem.to_string_lossy())
         .map_err(|err| err.to_string())
 }
 

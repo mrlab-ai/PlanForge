@@ -5150,7 +5150,7 @@ mod handcrafted_sailing_tests {
         AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
         NumericVariable, Operator,
     };
-    use planforge_translator::translate_to_sas_to_path_fast;
+    use planforge_translate::translate_to_sas_to_path_fast;
 
     use super::*;
     use crate::evaluation::cartesian_abstractions::{

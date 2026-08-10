@@ -441,15 +441,6 @@ impl Condition {
         }
     }
 
-    /// Get the arguments if this is a literal
-    pub fn literal_args(&self) -> Option<&[String]> {
-        match self {
-            Condition::Atom(a) => Some(&a.args),
-            Condition::NegatedAtom(a) => Some(&a.args),
-            _ => None,
-        }
-    }
-
     /// Get positive version of a literal
     pub fn literal_positive(&self) -> Option<Atom> {
         match self {

@@ -990,6 +990,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "planforge"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "libc",
  "planforge-cli-utils",
@@ -997,7 +998,6 @@ dependencies = [
  "planforge-search",
  "planforge-searcher",
  "planforge-translate",
- "planforge-translator",
  "time",
  "tracing",
  "tracing-subscriber",
@@ -1036,7 +1036,6 @@ dependencies = [
  "planforge-search",
  "planforge-searcher",
  "planforge-translate",
- "planforge-translator",
  "pyo3",
 ]
 
@@ -1061,7 +1060,6 @@ dependencies = [
  "planforge-cplex",
  "planforge-sas",
  "planforge-translate",
- "planforge-translator",
  "rand 0.8.5",
  "rustc-hash",
  "serde",
@@ -1094,26 +1092,13 @@ dependencies = [
 name = "planforge-translate"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "itertools 0.13.0",
  "libc",
  "nom 7.1.3",
  "ordered-float",
  "planforge-sas",
  "tracing",
-]
-
-[[package]]
-name = "planforge-translator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "planforge-cli-utils",
- "planforge-sas",
- "planforge-translate",
- "time",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1625,7 +1610,6 @@ dependencies = [
  "planforge-search",
  "planforge-sgd",
  "planforge-translate",
- "planforge-translator",
  "serde_json",
 ]
 

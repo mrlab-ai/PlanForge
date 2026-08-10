@@ -1,9 +1,16 @@
+//! Translate-only entry point: PDDL in, a SAS+ file out, no search.
+//!
+//! The planner itself never writes SAS+ text -- `planforge` translates straight
+//! into the task it searches. This binary exists for the cases where the text is
+//! the point: handing the task to another planner, or reading it in a bug report.
+
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use planforge_translator::{init_logger, translate_to_sas_to_path};
+use planforge::init_logger;
+use planforge_translate::translate_to_sas_to_path;
 use tracing::info;
 
 /// The translator's entry points name files, and a path that is not valid
@@ -16,9 +23,9 @@ fn as_str(path: &Path) -> anyhow::Result<&str> {
 /// CLI for the numeric PDDL to SAS+ pipeline.
 #[derive(Parser)]
 #[clap(
-    name = "translator",
-    version = "0.1",
-    about = "Rust translator for numeric PDDL (minimal stub)"
+    name = "planforge-translator",
+    version,
+    about = "Rust translator for numeric PDDL"
 )]
 struct Cli {
     #[clap(subcommand)]
