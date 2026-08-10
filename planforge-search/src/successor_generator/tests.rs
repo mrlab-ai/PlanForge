@@ -70,9 +70,10 @@ fn get_root_task() -> NumericRootTask {
     )
 }
 
-/// A task whose emission order the decision tree cannot get right by itself:
-/// one variable, and three operators whose ids straddle the branch's shared
-/// immediate list — `0` needs `v=0`, `1` needs nothing, `2` needs `v=1`.
+/// A task whose emission order no ordering chosen at construction time can make
+/// ascending in operator id: one variable, and three operators whose ids straddle
+/// the branch's shared immediate list — `0` needs `v=0`, `1` needs nothing, `2`
+/// needs `v=1`.
 fn immediate_list_straddling_task() -> NumericRootTask {
     let variables = vec![ExplicitVariable::new(
         2,
@@ -115,29 +116,30 @@ fn immediate_list_straddling_task() -> NumericRootTask {
     )
 }
 
-/// Emission is in ascending operator-id order, which is what keeps A*
-/// tie-breaking independent of how the task numbers its variables.
+/// Emission is the walk's order — a branch's shared immediate operators, then
+/// the child the tested variable's value selects — and not ascending operator id.
 ///
-/// The fixture pins that this cannot be achieved by ordering the tree at
-/// construction time: `needs_nothing` sits in the root branch's immediate
-/// list, so it is emitted either before or after both value children. State
-/// `v=0` wants it emitted last, state `v=1` wants it emitted first, and one
-/// tree has to serve both.
+/// The fixture pins both halves of that: the two orders differ, and no ordering
+/// chosen at construction time could reconcile them. `needs_nothing` sits in the
+/// root branch's immediate list, so it is emitted either before or after both
+/// value children, while ascending id wants it last for state `v=0` and first for
+/// state `v=1`, and one tree has to serve both.
 #[test]
-fn applicable_operators_are_emitted_in_operator_id_order() {
+fn applicable_operators_are_emitted_in_tree_walk_order() {
     let task = immediate_list_straddling_task();
     let tree = SuccessorTree::new(&task);
 
     let mut applicable: Vec<u32> = Vec::new();
     tree.get_applicable_operators(&[0], &mut applicable);
-    assert_eq!(applicable, vec![0, 1]);
+    assert_eq!(applicable, vec![1, 0]);
 
     applicable.clear();
     tree.get_applicable_operators(&[1], &mut applicable);
     assert_eq!(applicable, vec![1, 2]);
 }
 
-/// `get_applicable_operators` appends, so it may only order what it appended.
+/// `get_applicable_operators` appends, so a caller may collect several states'
+/// operators into one buffer and what is already there stays untouched.
 #[test]
 fn applicable_operators_leave_the_caller_s_prefix_alone() {
     let task = immediate_list_straddling_task();
@@ -145,7 +147,7 @@ fn applicable_operators_leave_the_caller_s_prefix_alone() {
 
     let mut applicable: Vec<u32> = vec![7, 3];
     tree.get_applicable_operators(&[0], &mut applicable);
-    assert_eq!(applicable, vec![7, 3, 0, 1]);
+    assert_eq!(applicable, vec![7, 3, 1, 0]);
 }
 
 #[test]

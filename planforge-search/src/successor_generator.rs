@@ -117,33 +117,28 @@ impl SuccessorTree {
         }
     }
 
-    /// Append the ids of all operators applicable in `state` to `out`, in
-    /// ascending operator-id order.
+    /// Append the ids of all operators applicable in `state` to `out`, in the
+    /// order the walk reaches them: a branch's shared immediate operators, then
+    /// the child its tested variable's value selects, then the default child.
     ///
-    /// The order is part of the contract: the search inserts successors into
-    /// the open list as they arrive, so emission order decides A* tie-breaking
-    /// and therefore expansion counts. Ascending operator id is the one order
-    /// that does not depend on how the task numbers its variables.
+    /// That order is a function of the task alone, so it is reproducible, but it
+    /// is not ascending operator id. It cannot be made so by ordering the tree at
+    /// construction time: with operators `0: v=0`, `1: (no condition)`, `2: v=1`
+    /// the root branches on `v` with `immediate = [1]` and `value_children =
+    /// [[0], [2]]`, and one tree serves both states, so the immediate list is
+    /// emitted either before or after both children while ascending id wants it
+    /// last for `v=0` and first for `v=1`. Only sorting each expansion's output
+    /// would give ascending id, and that costs about a percent of the operators
+    /// emitted on the corpus's widest instance to buy nothing the search needs.
     ///
-    /// The tree cannot be built to emit that order for free. A branch emits
-    /// its immediate operators, then the subtree for the tested variable's
-    /// value, then the default subtree, and the immediate list is shared by
-    /// every value. Take operators `0: v=0`, `1: (no condition)`, `2: v=1`:
-    /// the root branches on `v` with `immediate = [1]`, `value_children =
-    /// [[0], [2]]`. State `v=0` needs `0, 1` — immediate last; state `v=1`
-    /// needs `1, 2` — immediate first. No construction-time ordering satisfies
-    /// both, so the walk's output is ordered here instead. On the corpus's
-    /// widest instance (minecraft-pogo-advanced, 227 successors per expansion)
-    /// that costs under 1% of search time, interleaved over 24 runs.
+    /// Emission order is not free of consequence: the search inserts successors
+    /// into the open list as they arrive, so it settles A* tie-breaking among
+    /// nodes of equal f and therefore how many states are expanded. It follows
+    /// that renumbering a task's variables reshapes the tree and moves expansion
+    /// counts — in either direction, and by a lot. Plan cost and plan length are
+    /// what a renumbering may not touch.
     pub fn get_applicable_operators(&self, state: &[usize], out: &mut Vec<u32>) {
-        let appended_from = out.len();
         self.walk(self.root, state, out);
-        // Each visited node contributes an ascending run — operators enter the
-        // build queue in id order and every split preserves it — so this sorts
-        // a concatenation of sorted runs of distinct ids. Stability is
-        // therefore meaningless, and `sort_unstable` keeps the hot path
-        // allocation-free.
-        out[appended_from..].sort_unstable();
     }
 
     fn walk(&self, id: NodeId, state: &[usize], out: &mut Vec<u32>) {
