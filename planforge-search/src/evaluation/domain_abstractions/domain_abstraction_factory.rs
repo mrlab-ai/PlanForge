@@ -71,6 +71,20 @@ struct ComparisonBranchingLayout<'a> {
     comparison_var_ids: &'a [usize],
 }
 
+/// The abstract state space a backward goal-distance Dijkstra runs over: the
+/// task the abstraction was built from, its abstract operators together with
+/// the match tree indexing them, the abstract goal facts, the hash layout, and
+/// how many states that layout spans.
+#[derive(Clone, Copy)]
+struct AbstractGoalDistanceSpace<'a> {
+    task: &'a dyn AbstractNumericTask,
+    operators: &'a [AbstractOperator],
+    match_tree: &'a MatchTree,
+    goal_facts: &'a [ExplicitFact],
+    layout: ComparisonBranchingLayout<'a>,
+    num_states: usize,
+}
+
 /// What one comparison-enumeration loop remembers across calls: the resolved
 /// successor sets, how many states they hold, and the buffer that serves a
 /// result too large to keep.
@@ -842,7 +856,6 @@ impl DomainAbstractionFactory {
         Ok((table, tcf))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn build_precise_regional_cost_partitioned_distance_table_with_deadline(
         &self,
         transition_system: &AbstractTransitionSystem,
@@ -1556,15 +1569,19 @@ impl DomainAbstractionFactory {
             &comparison_var_ids,
         );
         self.compute_distance_to_goal_state(
-            task,
-            operators,
-            &match_tree,
-            &goal_facts,
+            AbstractGoalDistanceSpace {
+                task,
+                operators,
+                match_tree: &match_tree,
+                goal_facts: &goal_facts,
+                layout: ComparisonBranchingLayout {
+                    numeric_domain_sizes,
+                    hash_multipliers,
+                    comparison_var_ids: &comparison_var_ids,
+                },
+                num_states,
+            },
             target_state_hash,
-            numeric_domain_sizes,
-            hash_multipliers,
-            &comparison_var_ids,
-            num_states,
             deadline,
         )
     }
@@ -1631,15 +1648,18 @@ impl DomainAbstractionFactory {
         };
         let match_tree = prebuilt_match_tree.unwrap_or_else(|| owned_match_tree.as_ref().unwrap());
         let (distances, generating_op_ids) = self.compute_distances_and_generating_ops(
-            task,
-            operators,
-            match_tree,
-            goal_facts,
-            init_hash,
-            numeric_domain_sizes,
-            hash_multipliers,
-            &comparison_var_ids,
-            num_states,
+            AbstractGoalDistanceSpace {
+                task,
+                operators,
+                match_tree,
+                goal_facts,
+                layout: ComparisonBranchingLayout {
+                    numeric_domain_sizes,
+                    hash_multipliers,
+                    comparison_var_ids: &comparison_var_ids,
+                },
+                num_states,
+            },
             deadline,
         )?;
 
@@ -3249,20 +3269,24 @@ impl DomainAbstractionFactory {
         }))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn compute_distances_and_generating_ops(
         &self,
-        task: &dyn AbstractNumericTask,
-        operators: &[AbstractOperator],
-        match_tree: &MatchTree,
-        goal_facts: &[ExplicitFact],
-        _initial_state_hash: usize,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
-        num_states: usize,
+        space: AbstractGoalDistanceSpace<'_>,
         deadline: Option<Instant>,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
+        let AbstractGoalDistanceSpace {
+            task,
+            operators,
+            match_tree,
+            goal_facts,
+            layout,
+            num_states,
+        } = space;
+        let ComparisonBranchingLayout {
+            numeric_domain_sizes,
+            hash_multipliers,
+            comparison_var_ids,
+        } = layout;
         ensure_online_scp_deadline(deadline)?;
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
@@ -3286,11 +3310,7 @@ impl DomainAbstractionFactory {
                 let alts = self.enumerate_states_with_evaluated_comparisons_cached(
                     state_hash,
                     task,
-                    ComparisonBranchingLayout {
-                        numeric_domain_sizes,
-                        hash_multipliers,
-                        comparison_var_ids,
-                    },
+                    layout,
                     &[],
                     &mut comparison_enumeration_memo,
                 )?;
@@ -3341,11 +3361,7 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             predecessor_i64 as usize,
                             task,
-                            ComparisonBranchingLayout {
-                                numeric_domain_sizes,
-                                hash_multipliers,
-                                comparison_var_ids,
-                            },
+                            layout,
                             &comparison_preconditions[op_id],
                             &mut comparison_enumeration_memo,
                         )?;
@@ -3384,20 +3400,25 @@ impl DomainAbstractionFactory {
         Ok((distances, generating_op_ids))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn compute_distance_to_goal_state(
         &self,
-        task: &dyn AbstractNumericTask,
-        operators: &[AbstractOperator],
-        match_tree: &MatchTree,
-        goal_facts: &[ExplicitFact],
+        space: AbstractGoalDistanceSpace<'_>,
         target_state_hash: usize,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
-        num_states: usize,
         deadline: Option<Instant>,
     ) -> Result<f64> {
+        let AbstractGoalDistanceSpace {
+            task,
+            operators,
+            match_tree,
+            goal_facts,
+            layout,
+            num_states,
+        } = space;
+        let ComparisonBranchingLayout {
+            numeric_domain_sizes,
+            hash_multipliers,
+            comparison_var_ids,
+        } = layout;
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
         let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
@@ -3419,11 +3440,7 @@ impl DomainAbstractionFactory {
                 let alts = self.enumerate_states_with_evaluated_comparisons_cached(
                     state_hash,
                     task,
-                    ComparisonBranchingLayout {
-                        numeric_domain_sizes,
-                        hash_multipliers,
-                        comparison_var_ids,
-                    },
+                    layout,
                     &[],
                     &mut comparison_enumeration_memo,
                 )?;
@@ -3475,11 +3492,7 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             predecessor_base,
                             task,
-                            ComparisonBranchingLayout {
-                                numeric_domain_sizes,
-                                hash_multipliers,
-                                comparison_var_ids,
-                            },
+                            layout,
                             &comparison_preconditions[op_id],
                             &mut comparison_enumeration_memo,
                         )?;

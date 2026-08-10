@@ -399,6 +399,26 @@ struct CandidateCostPartitions {
     best_index: usize,
 }
 
+/// Everything a cost partitioning over this collection needs except the order
+/// it is built in: the task, the domain abstractions and how many leading
+/// positions of an order they occupy (the rest are Cartesian abstractions and
+/// PDBs), where one state lands in every abstraction of the collection and what
+/// each scores there standalone, and the original operator costs the partition
+/// divides up.
+///
+/// Diversification evaluates the same collection at a sample rather than at the
+/// state being expanded, which is `PartitionedCollection { abstract_state_ids,
+/// standalone_current_h, ..collection }`.
+#[derive(Clone, Copy)]
+struct PartitionedCollection<'a> {
+    task: &'a dyn AbstractNumericTask,
+    abstractions: &'a [DomainAbstraction],
+    abstract_state_ids: &'a [Option<usize>],
+    standalone_current_h: &'a [f64],
+    num_domain_abstractions: usize,
+    original_costs: &'a [f64],
+}
+
 impl CostPartitioningHeuristic {
     fn is_empty(&self) -> bool {
         self.lookup_tables.is_empty()
@@ -590,30 +610,25 @@ impl<'task> FillScpHeuristic<'task> {
             let state = temp.state.borrow();
             standalone_current_h_values(&state, &abstract_state_ids, num_domain_abstractions)
         };
+        let collection = PartitionedCollection {
+            task,
+            abstractions: &abstractions,
+            abstract_state_ids: &abstract_state_ids,
+            standalone_current_h: &standalone_current_h,
+            num_domain_abstractions,
+            original_costs: &original_costs,
+        };
         let (mut cp_heuristic, mut residual_costs, mut residual_partitions) =
             if config.partitioning.uses_regions() {
                 let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
-                    task,
-                    &abstractions,
+                    collection,
                     &order,
-                    &abstract_state_ids,
-                    &standalone_current_h,
-                    num_domain_abstractions,
-                    &original_costs,
                     deadline,
                     config.saturator,
                 )?;
                 (cp, costs, Some(partitions))
             } else {
-                let (cp, costs) = temp.build_label_fill_scp(
-                    task,
-                    &abstractions,
-                    &order,
-                    &abstract_state_ids,
-                    num_domain_abstractions,
-                    &original_costs,
-                    deadline,
-                )?;
+                let (cp, costs) = temp.build_label_fill_scp(collection, &order, deadline)?;
                 (cp, costs, None)
             };
         if config.order_optimization_max_time > 0.0 {
@@ -621,12 +636,7 @@ impl<'task> FillScpHeuristic<'task> {
                 Instant::now() + Duration::from_secs_f64(config.order_optimization_max_time)
             });
             temp.optimize_order_with_hill_climbing(
-                task,
-                &abstractions,
-                &standalone_current_h,
-                num_domain_abstractions,
-                &original_costs,
-                &abstract_state_ids,
+                collection,
                 &mut order,
                 &mut cp_heuristic,
                 optimization_deadline,
@@ -634,27 +644,14 @@ impl<'task> FillScpHeuristic<'task> {
             (cp_heuristic, residual_costs, residual_partitions) =
                 if config.partitioning.uses_regions() {
                     let (cp, costs, partitions) = temp.build_abstract_operator_fill_scp(
-                        task,
-                        &abstractions,
+                        collection,
                         &order,
-                        &abstract_state_ids,
-                        &standalone_current_h,
-                        num_domain_abstractions,
-                        &original_costs,
                         deadline,
                         config.saturator,
                     )?;
                     (cp, costs, Some(partitions))
                 } else {
-                    let (cp, costs) = temp.build_label_fill_scp(
-                        task,
-                        &abstractions,
-                        &order,
-                        &abstract_state_ids,
-                        num_domain_abstractions,
-                        &original_costs,
-                        deadline,
-                    )?;
+                    let (cp, costs) = temp.build_label_fill_scp(collection, &order, deadline)?;
                     (cp, costs, None)
                 };
         }
@@ -776,7 +773,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new_with_cartesian_and_sampling_task(
         name: Option<String>,
         abstractions: Vec<DomainAbstraction>,
@@ -1790,6 +1786,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             });
         let standalone_current_h =
             standalone_current_h_values(state, abstract_state_ids, num_domain_abstractions);
+        let collection = PartitionedCollection {
+            task,
+            abstractions,
+            abstract_state_ids,
+            standalone_current_h: &standalone_current_h,
+            num_domain_abstractions,
+            original_costs,
+        };
         let mut order = self.compute_order_for_state(
             task,
             state,
@@ -1831,25 +1835,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         };
         let mut candidates = if self.config.partitioning.uses_regions() {
             self.build_best_abstract_operator_cp_from_candidate_orders(
-                task,
-                abstractions,
+                collection,
                 &mut order,
-                abstract_state_ids,
-                &standalone_current_h,
-                num_domain_abstractions,
-                original_costs,
                 deadline,
                 initial_order_generation_max_time,
             )?
         } else {
             self.build_best_label_cp_from_candidate_orders(
-                task,
-                abstractions,
+                collection,
                 &mut order,
-                abstract_state_ids,
-                &standalone_current_h,
-                num_domain_abstractions,
-                original_costs,
                 deadline,
                 initial_order_generation_max_time,
             )?
@@ -1858,12 +1852,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         if self.config.order_optimization_max_time > 0.0 {
             let local_deadline = optimization_deadline(self.config.order_optimization_max_time);
             self.optimize_order_with_hill_climbing(
-                task,
-                abstractions,
-                &standalone_current_h,
-                num_domain_abstractions,
-                original_costs,
-                abstract_state_ids,
+                collection,
                 &mut order,
                 &mut candidates.partitions[candidates.best_index],
                 earliest_deadline(deadline, local_deadline),
@@ -1891,11 +1880,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
             initial_candidates.extend(candidates.partitions);
             return self.build_offline_diversified_portfolio(
-                task,
+                collection,
                 state,
-                abstractions,
-                num_domain_abstractions,
-                abstract_state_ids,
                 initial_candidates,
                 deadline,
             );
@@ -1912,17 +1898,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(candidates.partitions)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_offline_diversified_portfolio(
         &self,
-        task: &dyn AbstractNumericTask,
+        collection: PartitionedCollection<'_>,
         state: &mut ScpOnlineState,
-        abstractions: &[DomainAbstraction],
-        num_domain_abstractions: usize,
-        initial_abstract_state_ids: &[Option<usize>],
         initial_candidates: Vec<CostPartitioningHeuristic>,
         table_deadline: Option<Instant>,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
+        let PartitionedCollection {
+            task,
+            abstractions,
+            abstract_state_ids: initial_abstract_state_ids,
+            num_domain_abstractions,
+            ..
+        } = collection;
         assert!(!self.config.online);
         assert!(self.config.diversify);
         assert!(!initial_candidates.is_empty());
@@ -2022,7 +2011,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             "the global best SCP must be retained"
         );
 
-        let original_costs = self.original_operator_costs.as_slice();
         for sample_index in 1..state.offline_sample_ids.len() {
             if portfolio.len() >= self.config.max_orders
                 || portfolio_size_kb >= self.config.max_size
@@ -2033,6 +2021,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let sample_ids = state.offline_sample_ids[sample_index].clone();
             let standalone_h =
                 standalone_current_h_values(state, &sample_ids, num_domain_abstractions);
+            // The same collection, evaluated at this sample rather than at the
+            // state the portfolio was seeded from.
+            let sample_collection = PartitionedCollection {
+                abstract_state_ids: &sample_ids,
+                standalone_current_h: &standalone_h,
+                ..collection
+            };
             let orders = self.compute_diversification_orders(
                 task,
                 state,
@@ -2050,26 +2045,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 }
                 let candidate = if self.config.partitioning.uses_regions() {
                     self.build_abstract_operator_cp(
-                        task,
-                        abstractions,
+                        sample_collection,
                         &order,
-                        &sample_ids,
-                        &standalone_h,
-                        num_domain_abstractions,
-                        original_costs,
                         deadline,
                         self.config.saturator,
                     )
                 } else {
-                    self.build_label_cp(
-                        task,
-                        abstractions,
-                        &order,
-                        &sample_ids,
-                        num_domain_abstractions,
-                        original_costs,
-                        deadline,
-                    )
+                    self.build_label_cp(sample_collection, &order, deadline)
                 };
                 let mut candidate = match candidate {
                     Ok(candidate) => candidate,
@@ -2082,12 +2064,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     let local_deadline =
                         optimization_deadline(self.config.order_optimization_max_time);
                     self.optimize_order_with_hill_climbing(
-                        task,
-                        abstractions,
-                        &standalone_h,
-                        num_domain_abstractions,
-                        original_costs,
-                        &sample_ids,
+                        sample_collection,
                         &mut order,
                         &mut candidate,
                         earliest_deadline(deadline, local_deadline),
@@ -2221,29 +2198,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_best_label_cp_from_candidate_orders(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
+        collection: PartitionedCollection<'_>,
         incumbent_order: &mut Vec<usize>,
-        abstract_state_ids: &[Option<usize>],
-        standalone_current_h: &[f64],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
         baseline_deadline: Option<Instant>,
         optimization_max_time: f64,
     ) -> Result<CandidateCostPartitions, EvaluationError> {
-        let mut best_order = incumbent_order.clone();
-        let baseline = self.build_label_cp(
-            task,
-            abstractions,
-            &best_order,
+        let PartitionedCollection {
             abstract_state_ids,
-            num_domain_abstractions,
-            original_costs,
-            baseline_deadline,
-        )?;
+            standalone_current_h,
+            ..
+        } = collection;
+        let mut best_order = incumbent_order.clone();
+        let baseline = self.build_label_cp(collection, &best_order, baseline_deadline)?;
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
@@ -2264,15 +2232,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             if candidate == best_order {
                 continue;
             }
-            let candidate_cp = match self.build_label_cp(
-                task,
-                abstractions,
-                &candidate,
-                abstract_state_ids,
-                num_domain_abstractions,
-                original_costs,
-                candidate_deadline,
-            ) {
+            let candidate_cp = match self.build_label_cp(collection, &candidate, candidate_deadline)
+            {
                 Ok(cp) => cp,
                 Err(error) if Self::is_online_deadline_error_eval(&error) => {
                     info!(
@@ -2306,28 +2267,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_best_abstract_operator_cp_from_candidate_orders(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
+        collection: PartitionedCollection<'_>,
         incumbent_order: &mut Vec<usize>,
-        abstract_state_ids: &[Option<usize>],
-        standalone_current_h: &[f64],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
         baseline_deadline: Option<Instant>,
         optimization_max_time: f64,
     ) -> Result<CandidateCostPartitions, EvaluationError> {
-        let mut best_order = incumbent_order.clone();
-        let mut baseline = self.build_abstract_operator_cp(
-            task,
+        let PartitionedCollection {
             abstractions,
-            &best_order,
             abstract_state_ids,
             standalone_current_h,
             num_domain_abstractions,
-            original_costs,
+            ..
+        } = collection;
+        let mut best_order = incumbent_order.clone();
+        let mut baseline = self.build_abstract_operator_cp(
+            collection,
+            &best_order,
             baseline_deadline,
             self.config.saturator,
         )?;
@@ -2360,13 +2317,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 continue;
             }
             let mut candidate_cp = match self.build_abstract_operator_cp(
-                task,
-                abstractions,
+                collection,
                 &candidate,
-                abstract_state_ids,
-                standalone_current_h,
-                num_domain_abstractions,
-                original_costs,
                 candidate_deadline,
                 self.config.saturator,
             ) {
@@ -2510,19 +2462,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ])
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn optimize_order_with_hill_climbing(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
-        standalone_current_h: &[f64],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
-        abstract_state_ids: &[Option<usize>],
+        collection: PartitionedCollection<'_>,
         incumbent_order: &mut [usize],
         incumbent_cp: &mut CostPartitioningHeuristic,
         optimization_deadline: Option<Instant>,
     ) -> Result<(), EvaluationError> {
+        let abstract_state_ids = collection.abstract_state_ids;
         let mut incumbent_h = incumbent_cp.compute_heuristic(abstract_state_ids);
         if self.config.collection_config.debug {
             info!("scp_online: order optimization incumbent_h={incumbent_h}");
@@ -2542,26 +2489,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     incumbent_order.swap(i, j);
                     let neighbor_result = if self.config.partitioning.uses_regions() {
                         self.build_abstract_operator_cp(
-                            task,
-                            abstractions,
+                            collection,
                             incumbent_order,
-                            abstract_state_ids,
-                            standalone_current_h,
-                            num_domain_abstractions,
-                            original_costs,
                             optimization_deadline,
                             self.config.saturator,
                         )
                     } else {
-                        self.build_label_cp(
-                            task,
-                            abstractions,
-                            incumbent_order,
-                            abstract_state_ids,
-                            num_domain_abstractions,
-                            original_costs,
-                            optimization_deadline,
-                        )
+                        self.build_label_cp(collection, incumbent_order, optimization_deadline)
                     };
                     let neighbor_cp = match neighbor_result {
                         Ok(cp) => cp,
@@ -2603,19 +2537,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_abstract_operator_cp(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
+        collection: PartitionedCollection<'_>,
         order: &[usize],
-        abstract_state_ids: &[Option<usize>],
-        standalone_current_h: &[f64],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
         deadline: Option<Instant>,
         saturator: Saturator,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        let PartitionedCollection {
+            task,
+            abstractions,
+            abstract_state_ids,
+            standalone_current_h,
+            num_domain_abstractions,
+            original_costs,
+        } = collection;
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
 
@@ -3198,17 +3134,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_label_cp(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
+        collection: PartitionedCollection<'_>,
         order: &[usize],
-        abstract_state_ids: &[Option<usize>],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
         deadline: Option<Instant>,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        let PartitionedCollection {
+            task,
+            abstractions,
+            abstract_state_ids,
+            num_domain_abstractions,
+            original_costs,
+            ..
+        } = collection;
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs: Vec<f64> = original_costs.to_vec();
 
@@ -3393,17 +3332,20 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(cp)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_label_fill_scp(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
+        collection: PartitionedCollection<'_>,
         order: &[usize],
-        abstract_state_ids: &[Option<usize>],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
         deadline: Option<Instant>,
     ) -> Result<(CostPartitioningHeuristic, Vec<f64>), EvaluationError> {
+        let PartitionedCollection {
+            task,
+            abstractions,
+            abstract_state_ids,
+            num_domain_abstractions,
+            original_costs,
+            ..
+        } = collection;
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs: Vec<f64> = original_costs.to_vec();
 
@@ -3552,16 +3494,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok((cp, remaining_costs))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build_abstract_operator_fill_scp(
         &self,
-        task: &dyn AbstractNumericTask,
-        abstractions: &[DomainAbstraction],
+        collection: PartitionedCollection<'_>,
         order: &[usize],
-        abstract_state_ids: &[Option<usize>],
-        _standalone_current_h: &[f64],
-        num_domain_abstractions: usize,
-        original_costs: &[f64],
         deadline: Option<Instant>,
         saturator: Saturator,
     ) -> Result<
@@ -3572,6 +3508,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ),
         EvaluationError,
     > {
+        let PartitionedCollection {
+            task,
+            abstractions,
+            abstract_state_ids,
+            num_domain_abstractions,
+            original_costs,
+            ..
+        } = collection;
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
 
