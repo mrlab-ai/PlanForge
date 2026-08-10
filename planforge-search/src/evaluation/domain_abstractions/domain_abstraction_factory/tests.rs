@@ -1175,8 +1175,8 @@ fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1207,8 +1207,8 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1235,8 +1235,8 @@ fn footprint_active_preimage_allows_boundary_charge() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1262,8 +1262,8 @@ fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1285,8 +1285,8 @@ fn abstract_operator_footprint_allocates_unbounded_changed_tail() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1426,12 +1426,12 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         cost: 1.0,
         hash_effect: 0,
         regression_preconditions: vec![
-            ExplicitFact::propositional(x_abs_var, 1),
-            ExplicitFact::propositional(y_abs_var, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 1),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
         preconditions: vec![
-            ExplicitFact::propositional(x_abs_var, 0),
-            ExplicitFact::propositional(y_abs_var, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
     };
@@ -1544,12 +1544,12 @@ fn footprint_one_finite_dim_suffices() {
         cost: 1.0,
         hash_effect: 0,
         regression_preconditions: vec![
-            ExplicitFact::propositional(x_abs_var, 1),
-            ExplicitFact::propositional(y_abs_var, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 1),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
         preconditions: vec![
-            ExplicitFact::propositional(x_abs_var, 0),
-            ExplicitFact::propositional(y_abs_var, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
     };
@@ -1635,12 +1635,12 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
         cost: 1.0,
         hash_effect: 0,
         regression_preconditions: vec![
-            ExplicitFact::propositional(x_abs_var, 1),
-            ExplicitFact::propositional(y_abs_var, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 1),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
         preconditions: vec![
-            ExplicitFact::propositional(x_abs_var, 0),
-            ExplicitFact::propositional(y_abs_var, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
     };
@@ -1679,8 +1679,8 @@ fn footprint_width_does_not_change_valid_preimage() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1707,8 +1707,8 @@ fn singleton_preimage_is_preserved_exactly() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 

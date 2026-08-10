@@ -829,7 +829,21 @@ impl NumericConditions {
         matches!(self.by_prop_var.get(prop_var_id), Some(Some(_)))
     }
 
+    /// Number of propositional variables the task has, condition-carrying ones
+    /// included.
+    #[inline]
+    pub fn num_propositional_vars(&self) -> usize {
+        self.by_prop_var.len()
+    }
+
     /// The namespace variable `prop_var_id` belongs to.
+    ///
+    /// Only variables of *this* task have a namespace here; ids past the
+    /// task's propositional variables belong to some other id space — a
+    /// domain abstraction's [`FactNamespace::NumericVariable`] ids being the
+    /// one that exists — and answering for them would be a guess.
+    /// [`assert_fact_namespaces`](crate::numeric_task::assert_fact_namespaces)
+    /// rejects them before they get here.
     #[inline]
     pub fn namespace_of(&self, prop_var_id: usize) -> FactNamespace {
         if self.is_condition_var(prop_var_id) {

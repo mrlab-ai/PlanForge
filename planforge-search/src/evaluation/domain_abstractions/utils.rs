@@ -9,6 +9,7 @@ use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 use tracing::debug;
 
+use super::abstraction_numeric_var;
 use super::cegar::flaw_search::Flaw;
 use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{
@@ -1199,7 +1200,7 @@ pub(crate) fn dump_distances(
         line.push_str(&format!("{state_hash:>5} | {flags:>5} | {dist_cell} | "));
 
         for (i, &num_var_id) in refined_numeric_vars.iter().enumerate() {
-            let abs_var_id = num_prop_vars + num_var_id;
+            let abs_var_id = abstraction_numeric_var(num_prop_vars, num_var_id);
             let mult = table.hash_multipliers[abs_var_id] as i64;
             let dom = table.numeric_domain_sizes[num_var_id] as i64;
             let part = ((state_hash as i64) / mult) % dom;

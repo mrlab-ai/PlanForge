@@ -765,7 +765,7 @@ fn additive_view_filters_false_equality_precondition() {
     assert!(transitions.iter().all(|transition| {
         !transition
             .source_partition_facts
-            .contains(&ExplicitFact::propositional(derived_abs_var, 0))
+            .contains(&ExplicitFact::numeric_variable(derived_abs_var, 0))
     }));
 }
 

@@ -17,6 +17,7 @@ use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstraction_task::validate_abstraction_operator;
 
+use super::abstraction_numeric_var;
 use super::additive_numeric_views::{AdditiveNumericViews, active_comparison_dimensions};
 use super::domain_abstraction::NumericPartitions;
 use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
@@ -1535,13 +1536,10 @@ fn enumerate_partition_combos(
 
     let (var_id, transitions) = &per_var[pos];
     let var_id = *var_id;
-    // Abstraction-internal id space: numeric variables are addressed past the
-    // propositional ones. That offset encoding is not one of the task's fact
-    // namespaces, so these facts carry no namespace of their own.
-    let abs_var_id = num_props + var_id;
+    let abs_var_id = abstraction_numeric_var(num_props, var_id);
     for &(src, tgt) in transitions {
-        source_partition_facts.push(ExplicitFact::propositional(abs_var_id, src));
-        target_partition_facts.push(ExplicitFact::propositional(abs_var_id, tgt));
+        source_partition_facts.push(ExplicitFact::numeric_variable(abs_var_id, src));
+        target_partition_facts.push(ExplicitFact::numeric_variable(abs_var_id, tgt));
         combo_scratch.push((var_id, src, tgt));
         // `changed_numeric_vars` is seeded with the full set of affected
         // numeric vars at the top of the operator (see

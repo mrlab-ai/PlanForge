@@ -10,6 +10,7 @@ use crate::evaluation::heuristic::Heuristic;
 use planforge_sas::numeric_task::Operator;
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
+use super::abstraction_numeric_var;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
@@ -431,7 +432,7 @@ impl DomainAbstractionHeuristic {
         for &num_var_id in &self.active_numeric_vars {
             let part =
                 self.numeric_partition_for_projected_value(num_var_id, numeric_values[num_var_id])?;
-            let abs_var = num_props + num_var_id;
+            let abs_var = abstraction_numeric_var(num_props, num_var_id);
             index += multipliers[abs_var] * part;
         }
 

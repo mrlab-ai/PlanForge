@@ -482,6 +482,18 @@ impl NumericVariable {
 pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
     let conditions = task.numeric_conditions();
     let check = |fact: &ExplicitFact, origin: &dyn fmt::Display| {
+        assert_ne!(
+            fact.namespace(),
+            FactNamespace::NumericVariable,
+            "{origin}: {fact:?} names a domain abstraction's private numeric id space, \
+             which is not a variable of this task at all"
+        );
+        assert!(
+            fact.var() < conditions.num_propositional_vars(),
+            "{origin}: {fact:?} names variable {}, past the task's {} propositional variables",
+            fact.var(),
+            conditions.num_propositional_vars()
+        );
         let expected = conditions.namespace_of(fact.var());
         assert_eq!(
             fact.namespace(),
@@ -530,10 +542,11 @@ pub fn debug_assert_fact_namespaces(task: &dyn AbstractNumericTask) {
 
 /// Which id space a fact's variable belongs to.
 ///
-/// A propositional variable and a numeric condition are different kinds of
-/// thing that happen to share the packed-state buffer, so a fact carries the
-/// answer instead of leaving callers to rediscover it from
-/// [`NumericConditions::is_condition_var`].
+/// A propositional variable, a numeric condition and a domain abstraction's
+/// numeric variable are different kinds of thing that happen to share the
+/// `(variable, value)` shape, so a fact carries the answer instead of leaving
+/// callers to rediscover it from [`NumericConditions::is_condition_var`] or
+/// from an unlabelled `num_propositional_vars + numeric_var_id` offset.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
 #[repr(u32)]
 pub enum FactNamespace {
@@ -541,6 +554,16 @@ pub enum FactNamespace {
     Propositional = 0,
     /// The fact's variable carries the truth value of a numeric condition.
     Condition = 1,
+    /// The fact's variable is a *numeric* variable, addressed in a domain
+    /// abstraction's own id space: propositional variables occupy
+    /// `[0, num_propositional_vars)` and numeric variables follow them, so the
+    /// id is `num_propositional_vars + numeric_var_id` and the value is a
+    /// partition index rather than a propositional value.
+    ///
+    /// That id space is private to the abstraction machinery. No fact a task
+    /// exposes may carry this tag, which is what
+    /// [`assert_fact_namespaces`] checks.
+    NumericVariable = 2,
 }
 
 impl FactNamespace {
@@ -552,6 +575,7 @@ impl FactNamespace {
         match tag {
             0 => FactNamespace::Propositional,
             1 => FactNamespace::Condition,
+            2 => FactNamespace::NumericVariable,
             // Only `ExplicitFact`'s constructors write the tag, and they only
             // ever write a discriminant of this enum.
             _ => unreachable!(),
@@ -594,6 +618,16 @@ impl ExplicitFact {
     #[inline]
     pub fn condition(var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::Condition, var, value)
+    }
+
+    /// Fact on a numeric variable in a domain abstraction's id space.
+    ///
+    /// `abstraction_var` is the abstraction id, not the numeric variable id;
+    /// see [`FactNamespace::NumericVariable`] for the offset encoding. `value`
+    /// is a partition index of that numeric variable.
+    #[inline]
+    pub fn numeric_variable(abstraction_var: usize, value: usize) -> Self {
+        Self::in_namespace(FactNamespace::NumericVariable, abstraction_var, value)
     }
 
     /// Constructors accept `usize` to minimize call-site churn; values are
@@ -699,6 +733,9 @@ impl fmt::Debug for ExplicitFact {
             }
             FactNamespace::Condition => {
                 write!(f, "Fact(cond: {}, value: {})", self.var(), self.value())
+            }
+            FactNamespace::NumericVariable => {
+                write!(f, "Fact(num: {}, partition: {})", self.var(), self.value())
             }
         }
     }
@@ -1485,4 +1522,27 @@ fn assignment_effect_holds_values(propositional: &[usize], effect: &AssignmentEf
 fn overwrite_vec<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
     dst.clear();
     dst.extend_from_slice(src);
+}
+
+/// Lives here rather than in `crate::tests` because it has to plant a
+/// mistagged fact in a *built* task, and `goals` is private to this module.
+#[cfg(test)]
+mod namespace_assertion {
+    use super::{ExplicitFact, assert_fact_namespaces};
+
+    #[test]
+    #[should_panic(expected = "names a domain abstraction's private numeric id space")]
+    fn a_task_fact_may_not_name_the_abstraction_id_space() {
+        let mut task = crate::tests::get_root_task();
+        task.goals[0] = ExplicitFact::numeric_variable(1, 5);
+        assert_fact_namespaces(&task);
+    }
+
+    #[test]
+    #[should_panic(expected = "past the task's 3 propositional variables")]
+    fn a_task_fact_may_not_name_a_variable_the_task_does_not_have() {
+        let mut task = crate::tests::get_root_task();
+        task.goals[0] = ExplicitFact::propositional(3, 0);
+        assert_fact_namespaces(&task);
+    }
 }

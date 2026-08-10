@@ -2,6 +2,7 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType};
 use planforge_sas::utils::float_tolerance;
 
+use super::abstraction_numeric_var;
 use super::domain_abstraction::NumericPartitions;
 use planforge_sas::numeric_conditions::NumericCondition;
 use planforge_sas::utils::interval::Interval;
@@ -123,7 +124,7 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
             }
             NumericType::Derived if numeric_domain_sizes[numeric_var_id] == 1 => {}
             NumericType::Derived | NumericType::Regular => {
-                let abs_var = num_props + numeric_var_id;
+                let abs_var = abstraction_numeric_var(num_props, numeric_var_id);
                 ensure!(
                     abs_var < hash_multipliers.len(),
                     "missing hash multiplier for abstract numeric var {abs_var}"

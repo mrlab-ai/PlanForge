@@ -23,6 +23,7 @@ use planforge_sas::utils::float_tolerance;
 use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
 };
+use super::abstraction_numeric_var;
 use super::additive_numeric_views::AdditiveNumericViews;
 use super::domain_abstraction::NumericPartitions;
 use super::numeric_context::{
@@ -2193,7 +2194,7 @@ impl DomainAbstractionFactory {
                 domain_size > 0,
                 "numeric domain size must be > 0 for var {numeric_var_id}"
             );
-            let abs_var_id = num_props + numeric_var_id;
+            let abs_var_id = abstraction_numeric_var(num_props, numeric_var_id);
             let multiplier = *hash_multipliers.get(abs_var_id).with_context(|| {
                 format!("missing hash multiplier for numeric var {numeric_var_id}")
             })?;
@@ -2760,7 +2761,7 @@ impl DomainAbstractionFactory {
         }
 
         for num_var_id in 0..numeric_domain_sizes.len() {
-            let abs_var = num_props + num_var_id;
+            let abs_var = abstraction_numeric_var(num_props, num_var_id);
             let mult = hash_multipliers[abs_var];
             let concrete_value = self
                 .additive_numeric_views
@@ -3914,7 +3915,7 @@ fn decode_state_to_vectors(
     }
     let mut nums: Vec<usize> = Vec::with_capacity(numeric_domain_sizes.len());
     for (num_id, &dom_u) in numeric_domain_sizes.iter().enumerate() {
-        let abs_var = num_props + num_id;
+        let abs_var = abstraction_numeric_var(num_props, num_id);
         let mult = hash_multipliers[abs_var];
         let dom = dom_u;
         let part = (state_hash / mult) % dom;

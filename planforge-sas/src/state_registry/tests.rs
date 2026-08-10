@@ -264,11 +264,19 @@ fn compact_numeric_states_support_more_than_u16_distinct_values() {
     let task: TaskRef = Arc::new(NumericRootTask::new(
         1,
         Metric::new(false, None),
-        vec![],
+        // The global constraint below names variable 0, so the task has to
+        // have one.
+        vec![ExplicitVariable::new(
+            2,
+            "v0".into(),
+            vec!["off".into(), "on".into()],
+            None,
+            0,
+        )],
         vec![NumericVariable::new("x".into(), NumericType::Regular, None)],
         vec![],
         vec![],
-        vec![],
+        vec![0],
         vec![0.0],
         vec![],
         vec![],

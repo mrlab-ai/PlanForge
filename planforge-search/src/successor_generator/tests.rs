@@ -38,13 +38,7 @@ fn get_root_task() -> NumericRootTask {
         NumericVariable::new(String::from("derived!1.0()"), NumericType::Constant, None),
         NumericVariable::new(String::from("total_cost()"), NumericType::Cost, None),
     ];
-    let goals = vec![
-        ExplicitFact::propositional(9, 4),
-        ExplicitFact::propositional(10, 1),
-        ExplicitFact::propositional(11, 2),
-        ExplicitFact::propositional(12, 5),
-        ExplicitFact::propositional(13, 4),
-    ];
+    let goals = vec![ExplicitFact::propositional(1, 5)];
     let mutexes = Vec::new();
     let state = vec![1, 1];
     let numeric_state = vec![1f64, 0f64];
