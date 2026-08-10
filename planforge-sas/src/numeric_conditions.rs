@@ -58,6 +58,14 @@ impl ConditionValue {
     /// Domain size of a condition variable.
     pub const DOMAIN_SIZE: usize = 3;
 
+    /// Domain size of a condition variable in a *concrete* packed state.
+    ///
+    /// A concrete state fixes every numeric variable, so every comparison has
+    /// a verdict: only [`True`](Self::True) and [`False`](Self::False) occur
+    /// there. [`Unknown`](Self::Unknown) is what an *interval* evaluates to
+    /// and belongs to the abstract domain, which keeps all three values.
+    pub const CONCRETE_DOMAIN_SIZE: usize = 2;
+
     /// The domain of a condition variable, in value order.
     pub const DOMAIN: [ConditionValue; Self::DOMAIN_SIZE] =
         [Self::True, Self::False, Self::Unknown];

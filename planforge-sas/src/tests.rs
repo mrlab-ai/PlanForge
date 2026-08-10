@@ -14,8 +14,8 @@ pub(crate) fn get_root_task() -> NumericRootTask {
             2,
             String::from("var13"),
             vec![String::from("new-axiom"), String::from("not-new-axiom")],
-            Some(0),
-            0,
+            Some(1),
+            1,
         ),
         ExplicitVariable::new(
             7,
@@ -29,7 +29,21 @@ pub(crate) fn get_root_task() -> NumericRootTask {
                 String::from("ontable(d)"),
             ],
             None,
-            0,
+            1,
+        ),
+        // The comparison axiom's target: a derived variable carrying the
+        // verdict of `1.0 > total_cost`, three-valued like every numeric
+        // condition and defaulting to `Unknown`.
+        ExplicitVariable::new(
+            3,
+            String::from("var-cost-below-one"),
+            vec![
+                String::from("cost-below-one"),
+                String::from("not-cost-below-one"),
+                String::from("unknown-cost-below-one"),
+            ],
+            Some(0),
+            2,
         ),
     ];
     let numeric_variables = vec![
@@ -44,7 +58,7 @@ pub(crate) fn get_root_task() -> NumericRootTask {
         ExplicitFact::new(13, 4),
     ];
     let mutexes = Vec::new();
-    let state = vec![1, 1];
+    let state = vec![1, 1, 2];
     let numeric_state = vec![1f64, 0f64];
     // `drop` bumps the cost counter by one, which flips the comparison below
     // and therefore distinguishes the successor from the initial state.
@@ -63,7 +77,7 @@ pub(crate) fn get_root_task() -> NumericRootTask {
     )];
     let axioms = vec![PropositionalAxiom::new(vec![], 0, 0, 1)];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        1,
+        2,
         0,
         1,
         crate::axioms::ComparisonOperator::GreaterThan,

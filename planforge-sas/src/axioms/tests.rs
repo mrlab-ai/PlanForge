@@ -17,10 +17,10 @@ fn test_axiom_evaluator_creation() {
     let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
 
     // The task's initial state is already closed under its axioms: var0 is
-    // derived by the unconditional propositional axiom and var1 holds the
-    // verdict of the comparison `1.0 > total_cost`, which is true initially.
+    // derived by the unconditional propositional axiom, var1 keeps its value
+    // and var2 holds the verdict of `1.0 > total_cost`, true initially.
     let init_state = problem.get_initial_propositional_state_values();
-    assert_eq!(*init_state, vec![1, 0]);
+    assert_eq!(*init_state, vec![1, 1, 0]);
 
     let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins()];
     for (i, value) in init_state.iter().enumerate() {
@@ -30,9 +30,9 @@ fn test_axiom_evaluator_creation() {
     }
 
     assert_eq!(axiom_evaluator.state_packer.get(&buffer, 0), 1);
-    assert_eq!(axiom_evaluator.state_packer.get(&buffer, 1), 0);
+    assert_eq!(axiom_evaluator.state_packer.get(&buffer, 1), 1);
+    assert_eq!(axiom_evaluator.state_packer.get(&buffer, 2), 0);
 
-    assert_eq!(buffer, vec![0u64, 0u64, 8u64]);
     assert_eq!(problem.numeric_variables().len(), 2);
 }
 

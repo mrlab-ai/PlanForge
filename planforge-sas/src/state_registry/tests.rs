@@ -15,7 +15,7 @@ fn test_state_registry_initial_state() {
     let task: TaskRef = Arc::new(get_root_task());
     let mut state_registry = StateRegistry::for_task(task);
     let initial_state = state_registry.get_initial_state();
-    assert_eq!(initial_state.get_state(&state_registry), [1, 0]);
+    assert_eq!(initial_state.get_state(&state_registry), [1, 1, 0]);
 }
 
 #[test]
