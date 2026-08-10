@@ -28,33 +28,22 @@ jobs:
       - run: cargo fmt --all --check
 
   clippy:
-    name: clippy (advisory)
+    name: clippy
     runs-on: ubuntu-latest
-    # Advisory on purpose, and only until the backlog is gone. A blocking job
-    # would be red on its first run and would train everyone to ignore it.
+    # Blocking. The backlog reached zero across every crate, with no
+    # `#[allow]` added to get there -- the `too_many_arguments` cases were
+    # resolved by extracting parameter structs, and the 68
+    # `arc_with_non_send_sync` cases by making the task genuinely `Send + Sync`
+    # rather than by silencing the lint.
+    #
+    # Caveat worth knowing: roughly 70 `#[allow(clippy::...)]` attributes
+    # predate this gate, mostly `too_many_arguments` in planforge-search and
+    # planforge-sgd. A zero count therefore means "no new lints", not "no
+    # lints" -- this job will not catch anything hiding behind those. Clearing
+    # them means refactoring ~50 more 8-to-13-parameter functions.
     #
     # Re-measure with
     #   cargo clippy --workspace --exclude planforge-cplex --all-targets
-    # rather than trusting the counts below; they are dropping steadily. At the
-    # time of writing there are 110 distinct lints: 55 planforge-search, 18
-    # planforge-sas, 15 planforge-sgd, 15 tests, 3 planforge-py, 2
-    # planforge-searcher, 1 planforge, 1 tutorials. planforge-translate,
-    # planforge-translator and planforge-config-derive are clean, so the earlier
-    # note blaming the backlog on planforge-translate is out of date.
-    #
-    # 68 of the 110 are a single lint, `arc_with_non_send_sync`, and that one is
-    # not a backlog item: `TaskRef<'a> = Arc<dyn AbstractNumericTask + 'a>`
-    # while `NumericRootTask` holds `RefCell`s, so every call site that hands a
-    # task to a `StateRegistry` trips it. All 15 in `tests` are that lint.
-    # Making this job blocking therefore needs a planforge-sas decision - make
-    # the task `Send + Sync`, or make `TaskRef` an `Rc` - not an `allow` at a
-    # hundred call sites. The remaining 42 are ordinary lints with mechanical
-    # fixes, mostly `field_reassign_with_default` (14), `too_many_arguments`
-    # (12) and `needless_range_loop` (7).
-    #
-    # Burn that down, then delete this line and fold `-D warnings` in below. Do
-    # not silence individual lints to get there.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
