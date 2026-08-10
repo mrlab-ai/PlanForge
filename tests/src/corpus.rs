@@ -166,7 +166,11 @@ pub fn assert_fixture_set_is_pinned(what: &str, discovered: &[String], pinned: &
         "{what}: the pinned table lists a name twice"
     );
 
-    let discovered: Vec<&str> = discovered.iter().map(String::as_str).collect();
+    // Sorted here rather than assumed of the caller: the comparison is about the
+    // two sets, and an unsorted argument would otherwise fail with a diff that
+    // looks like a missing fixture.
+    let mut discovered: Vec<&str> = discovered.iter().map(String::as_str).collect();
+    discovered.sort_unstable();
     assert_eq!(
         discovered, expected,
         "{what}: the fixtures on disk do not match the pinned table"
