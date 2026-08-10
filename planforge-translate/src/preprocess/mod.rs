@@ -11,15 +11,17 @@
 
 pub mod causal_graph;
 pub mod max_dag;
+pub mod numeric_task;
 pub mod output;
 pub mod scc;
 
 use std::io::Write;
 
+use planforge_sas::numeric_task::NumericType;
 use tracing::{debug, info};
 
 use self::causal_graph::CausalGraph;
-use crate::sas_tasks::{SASTask, inverted_comparator};
+use crate::sas_tasks::{SASGoal, SASTask, SasFact, inverted_comparator};
 
 /// The level of a variable the reordering has not placed: either because the
 /// analysis has not run yet, or because the variable was pruned.
@@ -72,12 +74,16 @@ pub enum NumType {
 }
 
 impl NumType {
-    fn as_sas(self) -> &'static str {
+    /// The type the search knows this variable by. The two enums differ in
+    /// exactly one place — [`NumType::Unknown`] is a state of the analysis and
+    /// not a kind of variable — so the classification has to be finished by the
+    /// time a variable reaches either consumer.
+    fn as_numeric_type(self) -> NumericType {
         match self {
-            NumType::Constant => "C",
-            NumType::Derived => "D",
-            NumType::Instrumentation => "I",
-            NumType::Regular => "R",
+            NumType::Constant => NumericType::Constant,
+            NumType::Derived => NumericType::Derived,
+            NumType::Instrumentation => NumericType::Cost,
+            NumType::Regular => NumericType::Regular,
             NumType::Unknown => {
                 unreachable!("a numeric variable reached the output unclassified")
             }
@@ -321,6 +327,57 @@ pub struct ReorderedTask {
 }
 
 impl ReorderedTask {
+    /// The new id of a propositional variable reference.
+    ///
+    /// A reference to a variable the reordering pruned would silently change
+    /// the task, so it is an error rather than something to leave out.
+    pub fn prop_level(&self, var: usize) -> usize {
+        placed(self.task.vars[var].level(), "variable")
+    }
+
+    /// The new id of a numeric variable reference.
+    pub fn numeric_level(&self, var: usize) -> usize {
+        placed(self.task.numeric_vars[var].level(), "numeric variable")
+    }
+
+    /// One fact of the reordered task.
+    pub fn prop_fact(&self, &(var, value): &SasFact) -> SasFact {
+        (self.prop_level(var), value)
+    }
+
+    /// What the file spells for numeric variable `var`: its type, its axiom
+    /// layer as an `i32`, and its name.
+    pub fn numeric_variable(&self, var: usize) -> (NumericType, i32, &str) {
+        let sas = &self.task.sas;
+        let state = self.task.numeric_vars[var];
+        assert!(state.is_necessary());
+        let layer = sas.numeric_variables.axiom_layers[var];
+        assert!(layer >= NO_LAYER);
+        (
+            state.ntype().as_numeric_type(),
+            layer,
+            &sas.numeric_variables.variable_names[var],
+        )
+    }
+
+    /// The goal in the new variable order.
+    ///
+    /// A goal variable is necessary by definition, so the reordering always gave
+    /// it a level; a goal that lost its variable would silently weaken the task.
+    pub fn ordered_goal(&self) -> Vec<SasFact> {
+        let SASGoal { pairs } = &self.task.sas.goal;
+        let mut goal: Vec<SasFact> = pairs.iter().map(|pair| self.prop_fact(pair)).collect();
+        goal.sort_unstable();
+        // Two goals on one variable disagree about it unless they are the same
+        // goal twice, and both readings of the file take the goal to name each
+        // of its variables once.
+        assert!(
+            goal.windows(2).all(|pair| pair[0].0 != pair[1].0),
+            "the goal names one variable twice: {goal:?}"
+        );
+        goal
+    }
+
     /// The number of facts, variables, goals and effects the search will hold,
     /// which is what "how big is this task" means in the logs.
     fn encoding_size(&self) -> usize {
@@ -362,9 +419,32 @@ impl ReorderedTask {
     }
 }
 
+/// The level a variable reference maps to.
+fn placed(level: i32, what: &str) -> usize {
+    assert_ne!(level, NO_LEVEL, "{what} was pruned");
+    usize::try_from(level).expect("a placed variable's level is its position")
+}
+
 /// Orders and prunes the variables of `sas` by its causal graph, and writes the
 /// result as the SAS+ file the search reads.
 pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::Result<()> {
+    output::write_sas(&reorder(sas), outfile)
+}
+
+/// Orders and prunes the variables of `sas` by its causal graph, and builds the
+/// task the search reads straight from the result.
+///
+/// The default path from PDDL to a search task. Writing the SAS+ file and
+/// reading it back produces the same task — `tests/src/task_equivalence_tests`
+/// holds both paths to that — but the file itself is for interoperating with
+/// other planners and for reading by hand, not for getting a task from one part
+/// of this process to another.
+pub fn reordered_numeric_task(sas: SASTask) -> planforge_sas::numeric_task::NumericRootTask {
+    numeric_task::build(&reorder(sas))
+}
+
+/// Orders and prunes the variables of `sas` by its causal graph.
+fn reorder(sas: SASTask) -> ReorderedTask {
     let task = PreprocessedTask::new(sas);
     let metric_index_before = task.metric.index;
 
@@ -388,9 +468,5 @@ pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::
         reordered.derived_variable_count()
     );
     info!("Preprocessor task size: {}", reordered.encoding_size());
-
-    info!("Writing output...");
-    output::write_sas(&reordered, outfile)?;
-    info!("done");
-    Ok(())
+    reordered
 }

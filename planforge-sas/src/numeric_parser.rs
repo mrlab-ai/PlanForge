@@ -621,8 +621,8 @@ mod tests {
     /// propositional variables, which is how a SAS file writes them: `cond_ge`
     /// on var1 and `cond_lt` on var3, with `a`, `b`, `c` and the derived `d`
     /// around them. Every place a propositional variable id can hide is used
-    /// exactly once, so a retargeting this fixture does not cover is a site
-    /// `renumber_condition_variables_last` forgot.
+    /// exactly once, so a site that reads an id from the wrong place shows up
+    /// here.
     ///
     /// Numerically: `x = 5`, `three = 3`, so `cond_ge` (`x >= three`) holds and
     /// `cond_lt` (`x < three`) does not. A condition variable is three-valued
@@ -750,26 +750,24 @@ end_global_constraint
 begin_SG
 ";
 
-    /// The SAS entry point moves the condition variables to the end of the
-    /// propositional id space, keeping the relative order inside each group, and
-    /// retargets everything that names a variable.
+    /// A parsed task numbers its propositional variables exactly as the file
+    /// does, conditions interleaved and all, and every site that names a
+    /// variable reads the id the file wrote.
     ///
     /// Only *some* of these sites are covered by a plan cost: nothing in the
-    /// search reads a mutex group, so a forgotten mutex retargeting would leave
-    /// every benchmark's plan intact and silently mislead the potential
-    /// heuristic, which is the one consumer of `are_facts_mutex`.
+    /// search reads a mutex group, so a mutex group parsed against the wrong
+    /// ids would leave every benchmark's plan intact and silently mislead the
+    /// potential heuristic, which is the one consumer of `are_facts_mutex`.
     #[test]
-    fn parsing_a_sas_task_puts_its_condition_variables_last() {
+    fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
         let (rest, task) =
             parse_numeric_sas_output(INTERLEAVED_CONDITIONS_SAS).expect("the fixture parses");
         assert_eq!(rest, "");
 
-        // var0, var2, var4, var5 keep their order and are followed by the two
-        // conditions, also in their original order.
         let names: Vec<&str> = (0..task.get_num_variables())
             .map(|var_id| task.get_variable_name(var_id).expect("variable in range"))
             .collect();
-        assert_eq!(names, ["var0", "var2", "var4", "var5", "var1", "var3"]);
+        assert_eq!(names, ["var0", "var1", "var2", "var3", "var4", "var5"]);
         let conditions = task.numeric_conditions();
         assert_eq!(conditions.len(), 2);
         assert_eq!(
@@ -777,30 +775,30 @@ begin_SG
                 .iter()
                 .map(|condition| condition.prop_var_id())
                 .collect::<Vec<_>>(),
-            [4, 5]
+            [1, 3]
         );
         for var_id in 0..task.variables().len() {
             assert_eq!(
                 conditions.is_condition_var(var_id),
-                var_id >= 4,
-                "variable {var_id} is on the wrong side of the condition block"
+                var_id == 1 || var_id == 3,
+                "variable {var_id} is taken for the wrong kind"
             );
         }
 
-        // The variable's own metadata travels with it: `var1` is the only
-        // three-valued variable at its new id, and `var5` keeps its axiom layer.
-        assert_eq!(task.get_variable_domain_size(4), Ok(3));
-        assert_eq!(task.get_variable_default_axiom_value(4), Ok(2));
-        assert_eq!(task.get_variable_axiom_layer(3), Ok(Some(1)));
-        assert_eq!(task.get_variable_name(3), Ok("var5"));
+        // Each variable keeps its own metadata: `var1` is three-valued and
+        // defaults to `unknown`, `var5` is the derived one.
+        assert_eq!(task.get_variable_domain_size(1), Ok(3));
+        assert_eq!(task.get_variable_default_axiom_value(1), Ok(2));
+        assert_eq!(task.get_variable_axiom_layer(5), Ok(Some(1)));
+        assert_eq!(task.get_variable_name(5), Ok("var5"));
 
-        // The initial state follows the renumbering, then the axiom closure:
-        // `cond_ge` holds, `cond_lt` does not, and `d` is proven by the rule
-        // that reads `cond_ge`.
+        // The initial state is the file's, closed under the axioms: `cond_ge`
+        // holds, `cond_lt` does not, and `d` is proven by the rule that reads
+        // `cond_ge`.
         assert_eq!(
             task.get_initial_propositional_state_values(),
-            // a=0, b=0, c=0, d=true, cond_ge=true, cond_lt=false
-            [0, 0, 0, 0, 0, 1]
+            // a=0, cond_ge=true, b=0, cond_lt=false, c=0, d=true
+            [0, 0, 0, 1, 0, 0]
         );
 
         // Goals, mutex groups and the global constraint.
@@ -811,21 +809,20 @@ begin_SG
             goals,
             [
                 ExplicitFact::propositional(0, 1),
-                ExplicitFact::propositional(3, 0),
+                ExplicitFact::propositional(5, 0),
             ]
         );
         // Read through `are_facts_mutex`, the only consumer there is: the group
-        // is `{cond_ge = true, cond_lt = true}`, so it has to survive on the
-        // renumbered ids and nowhere else.
+        // is `{cond_ge = true, cond_lt = true}`.
         assert!(task.are_facts_mutex(
-            &ExplicitFact::condition(4, 0),
-            &ExplicitFact::condition(5, 0)
+            &ExplicitFact::condition(1, 0),
+            &ExplicitFact::condition(3, 0)
         ));
         assert!(!task.are_facts_mutex(
-            &ExplicitFact::propositional(1, 0),
-            &ExplicitFact::propositional(3, 0)
+            &ExplicitFact::propositional(0, 0),
+            &ExplicitFact::propositional(2, 0)
         ));
-        assert_eq!(task.global_constraint(), &ExplicitFact::propositional(3, 0));
+        assert_eq!(task.global_constraint(), &ExplicitFact::propositional(5, 0));
 
         // Operator preconditions and effects, including the effect condition and
         // the guard of an assignment effect. `raise_x` gains a precondition on
@@ -835,35 +832,35 @@ begin_SG
         assert_eq!(
             raise_x.preconditions(),
             &vec![
-                ExplicitFact::condition(4, 0),
-                ExplicitFact::propositional(2, 0),
+                ExplicitFact::condition(1, 0),
+                ExplicitFact::propositional(4, 0),
             ]
         );
-        assert_eq!(raise_x.effects()[0].var_id(), 2);
+        assert_eq!(raise_x.effects()[0].var_id(), 4);
         assert_eq!(raise_x.assignment_effects()[0].affected_var_id(), 0);
 
         let guarded = &task.get_operators()[1];
         assert_eq!(
             guarded.effects()[0].conditions(),
-            &vec![ExplicitFact::condition(5, 0)]
+            &vec![ExplicitFact::condition(3, 0)]
         );
-        assert_eq!(guarded.effects()[0].var_id(), 1);
+        assert_eq!(guarded.effects()[0].var_id(), 2);
         assert_eq!(
             guarded.assignment_effects()[0].conditions(),
-            &vec![ExplicitFact::condition(4, 0)]
+            &vec![ExplicitFact::condition(1, 0)]
         );
 
         // The propositional axiom's head and its condition.
         let rule = &task.axioms()[0];
-        assert_eq!(rule.var_id(), 3);
-        assert_eq!(rule.conditions(), &vec![ExplicitFact::condition(4, 0)]);
+        assert_eq!(rule.var_id(), 5);
+        assert_eq!(rule.conditions(), &vec![ExplicitFact::condition(1, 0)]);
 
-        // The comparison axioms still name the variables they write.
+        // The comparison axioms name the variables they write.
         let heads: Vec<usize> = task
             .comparison_axioms()
             .iter()
             .map(|axiom| axiom.get_affected_var_id())
             .collect();
-        assert_eq!(heads, [4, 5]);
+        assert_eq!(heads, [1, 3]);
     }
 }

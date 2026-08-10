@@ -367,7 +367,7 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Metric {
     is_min: bool,
     var_id: Option<usize>,
@@ -392,7 +392,7 @@ impl Metric {
 }
 
 #[allow(unused)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExplicitVariable {
     domain_size: usize,
     name: String,
@@ -444,7 +444,7 @@ impl ExplicitVariable {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NumericVariable {
     name: String,
     numeric_type: NumericType,
@@ -1078,7 +1078,7 @@ impl Operator {
 }
 
 #[allow(unused)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct NumericRootTask {
     version: u32,
     metric: Metric,
@@ -1150,119 +1150,6 @@ impl NumericRootTask {
         task
     }
 
-    /// Renumber the propositional variables so that the ones carrying numeric
-    /// conditions form the block `[genuine_variable_count, variables().len())`,
-    /// keeping the relative order inside each of the two groups.
-    ///
-    /// A SAS file interleaves the two kinds, so on the way in a condition slot
-    /// can only be told from a genuine propositional one by a per-variable
-    /// lookup. Afterwards the conditions are a contiguous suffix, which is what
-    /// lets the packed-state layout name a condition section rather than test
-    /// every slot for one.
-    ///
-    /// Only the SAS entry point may run this, which is why it is not part of
-    /// [`Self::new`]: a task derived from another one — a projection, a
-    /// restriction — keeps its own map from its variable ids back to the
-    /// original's, and renumbering underneath it would desynchronize the two
-    /// silently rather than loudly.
-    ///
-    /// Variable ids reach the search through the packer's bin layout and the
-    /// successor tree's shape, so this pass is only behaviour-preserving
-    /// because `SuccessorTree::get_applicable_operators` emits in
-    /// operator-id order. Without that it moves A* tie-breaking.
-    pub(crate) fn renumber_condition_variables_last(&mut self) {
-        let num_variables = self.variables.len();
-        let genuine_count = num_variables - self.numeric_conditions.len();
-
-        let mut new_id = vec![usize::MAX; num_variables];
-        let mut next_genuine = 0;
-        let mut next_condition = genuine_count;
-        for (old_id, slot) in new_id.iter_mut().enumerate() {
-            if self.numeric_conditions.is_condition_var(old_id) {
-                *slot = next_condition;
-                next_condition += 1;
-            } else {
-                *slot = next_genuine;
-                next_genuine += 1;
-            }
-        }
-        // Cross-checks `by_prop_var` against the condition list: every condition
-        // owns exactly one variable, so the two counts have to add up -- and if
-        // they do, `next_condition` has reached `num_variables` as well, which is
-        // what makes `new_id` a permutation.
-        assert_eq!(
-            next_genuine,
-            genuine_count,
-            "{next_genuine} of {num_variables} propositional variables carry no numeric \
-             condition, but the task holds {} conditions",
-            self.numeric_conditions.len()
-        );
-
-        let mut old_id_of = vec![usize::MAX; num_variables];
-        for (old_id, &id) in new_id.iter().enumerate() {
-            old_id_of[id] = old_id;
-        }
-
-        let old_variables = std::mem::take(&mut self.variables);
-        self.variables = old_id_of
-            .iter()
-            .map(|&old_id| old_variables[old_id].clone())
-            .collect();
-        let old_state = std::mem::take(&mut self.state);
-        self.state = old_id_of.iter().map(|&old_id| old_state[old_id]).collect();
-
-        // The namespace is a function of the variable, and a condition variable
-        // stays one, so the tags survive the renumbering unchanged.
-        let retarget = |fact: &mut ExplicitFact| {
-            *fact = ExplicitFact::in_namespace(fact.namespace(), new_id[fact.var()], fact.value());
-        };
-        self.goals.iter_mut().for_each(retarget);
-        self.mutexes.iter_mut().flatten().for_each(retarget);
-        retarget(&mut self.global_constraint);
-        for operator in &mut self.operators {
-            operator.preconditions.iter_mut().for_each(retarget);
-            for effect in &mut operator.effects {
-                effect.var_id = new_id[effect.var_id];
-                effect.conditions.iter_mut().for_each(retarget);
-            }
-            // An assignment effect's own variables are numeric; only its
-            // guard names propositional ones.
-            for effect in &mut operator.assignment_effects {
-                effect.conditions.iter_mut().for_each(retarget);
-            }
-        }
-        for axiom in &mut self.axioms {
-            axiom.set_var_id(new_id[axiom.var_id()]);
-            axiom.conditions_mut().iter_mut().for_each(retarget);
-        }
-        for axiom in &mut self.comparison_axioms {
-            axiom.affected_var_id = new_id[axiom.affected_var_id];
-        }
-
-        // `numeric_conditions` indexes conditions by the variable carrying
-        // them, so it is rebuilt rather than patched: the rebuild re-validates
-        // the renumbered axioms instead of trusting them.
-        self.numeric_conditions = Arc::new(
-            NumericConditions::build(
-                self.variables.len(),
-                &self.numeric_variables,
-                &self.comparison_axioms,
-                &self.assignment_axioms,
-            )
-            .unwrap_or_else(|error| panic!("renumbering broke the numeric conditions: {error}")),
-        );
-        for condition in self.numeric_conditions.iter() {
-            assert!(
-                condition.prop_var_id() >= genuine_count,
-                "condition {:?} still sits on variable {}, below the condition block at \
-                 {genuine_count}",
-                condition.id(),
-                condition.prop_var_id()
-            );
-        }
-        debug_assert_fact_namespaces(self);
-    }
-
     /// Tag every fact the task stores with the namespace of its variable.
     ///
     /// The parser cannot do this: which propositional variables carry numeric
@@ -1314,6 +1201,15 @@ impl NumericRootTask {
             });
         self.state = propositional;
         self.numeric_state = numeric;
+    }
+
+    /// The task's mutex groups.
+    ///
+    /// The search only ever asks whether two given facts are mutex, which is
+    /// what [`AbstractNumericTask::are_facts_mutex`] answers; this is for the
+    /// one caller that has to see the groups themselves rather than query them.
+    pub fn mutexes(&self) -> &[Vec<ExplicitFact>] {
+        &self.mutexes
     }
 
     /// The fact that must hold in every reachable state.

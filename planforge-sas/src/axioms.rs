@@ -9,7 +9,7 @@ use crate::numeric_task::{AbstractNumericTask, ExplicitFact, TaskRef};
 use crate::utils::errors::{AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use crate::utils::int_packer::IntDoublePacker;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PropositionalAxiom {
     conditions: Vec<ExplicitFact>,
     var_id: usize,
@@ -49,27 +49,20 @@ impl PropositionalAxiom {
     }
 
     /// Only for `NumericRootTask::assign_fact_namespaces`, the single pass that
-    /// owns fact namespace assignment, and for
-    /// `NumericRootTask::renumber_condition_variables_last`.
+    /// owns fact namespace assignment.
     pub(crate) fn conditions_mut(&mut self) -> &mut Vec<ExplicitFact> {
         &mut self.conditions
     }
-
-    /// Only for `NumericRootTask::renumber_condition_variables_last`, the single
-    /// pass that assigns propositional variable ids.
-    pub(crate) fn set_var_id(&mut self, var_id: usize) {
-        self.var_id = var_id;
-    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CalOperator {
     Sum,
     Difference,
     Product,
     Division,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentAxiom {
     pub affected_var_id: usize,
     pub operator: CalOperator,
@@ -143,7 +136,7 @@ impl AssignmentAxiom {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComparisonOperator {
     LessThan,
     LessThanOrEqual,
@@ -167,7 +160,7 @@ impl ComparisonOperator {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonAxiom {
     pub affected_var_id: usize,
     pub left_hand_side: usize,

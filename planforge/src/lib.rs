@@ -265,11 +265,11 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let (mut task, sas_label) = if cli.inputs.len() == 2 {
         let domain = &cli.inputs[0];
         let problem = &cli.inputs[1];
-        // In-memory pipeline: translate → parse, no disk I/O.
-        let sas_text = planforge_translator::translate_to_sas_string(domain, problem)
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        // The default path: the translation hands over the task it built, with
+        // no SAS+ text in between.
         (
-            NumericRootTask::try_from_str(&sas_text).map_err(std::io::Error::other)?,
+            planforge_translator::translate_to_task(domain, problem)
+                .map_err(|err| std::io::Error::other(err.to_string()))?,
             format!("{domain} + {problem} (in-memory)"),
         )
     } else {

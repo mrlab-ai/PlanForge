@@ -9,10 +9,15 @@
 //! Two translation paths are exposed on purpose, because they produce different
 //! tasks and both are exercised elsewhere in the planner:
 //!
-//! * [`translate_to_disk`] mirrors `translate_to_sas_to_path_fast`, which asks
-//!   for singleton fact groups. Every propositional variable ends up binary.
+//! * [`translate_to_disk`] asks for singleton fact groups, and goes through the
+//!   SAS+ file: it is the write-then-read path other planners interoperate on.
+//!   Every propositional variable ends up binary.
 //! * [`translate_in_memory`] mirrors what the `planforge` binary does for a
-//!   two-argument PDDL invocation, and builds genuine multi-valued variables.
+//!   two-argument PDDL invocation, and builds genuine multi-valued variables
+//!   without going through text at all.
+//!
+//! That the two ways of getting a task out of one translation agree is the
+//! subject of `task_equivalence_tests`, not of the harness here.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -21,7 +26,7 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::NumericRootTask;
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
-use planforge_translator::{translate_to_sas_string, translate_to_sas_to_path_fast};
+use planforge_translator::{translate_to_sas_to_path_fast, translate_to_task};
 
 /// Root of the checked-in fixture tree.
 pub fn assets() -> PathBuf {
@@ -87,10 +92,8 @@ pub fn translate_in_memory(domain: &Path, problem: &Path) -> NumericRootTask {
     assert!(domain.is_file(), "missing fixture {domain:?}");
     assert!(problem.is_file(), "missing fixture {problem:?}");
 
-    let sas = translate_to_sas_string(path_str(domain), path_str(problem))
-        .unwrap_or_else(|e| panic!("translate failed for {problem:?}: {e}"));
-    NumericRootTask::try_from_str(&sas)
-        .unwrap_or_else(|e| panic!("parsing the translated {problem:?} failed: {e}"))
+    translate_to_task(path_str(domain), path_str(problem))
+        .unwrap_or_else(|e| panic!("translate failed for {problem:?}: {e}"))
 }
 
 fn path_str(path: &Path) -> &str {

@@ -4,8 +4,6 @@
 /// graph has reordered its variables; nothing here formats itself.
 use tracing::debug;
 
-pub const SAS_FILE_VERSION: i32 = 4;
-
 /// The comparator that holds exactly when `comp` does not.
 pub fn inverted_comparator(comp: &str) -> &'static str {
     match comp {

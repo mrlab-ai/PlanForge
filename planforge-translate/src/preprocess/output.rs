@@ -5,8 +5,11 @@
 
 use std::io::{self, Write};
 
-use crate::preprocess::{NO_LAYER, NO_LEVEL, PreprocessedTask, ReorderedTask};
-use crate::sas_tasks::{SAS_FILE_VERSION, SasFact, assignment_operator};
+use planforge_sas::sas_format::{SAS_FILE_VERSION, operator_cost_from_sas};
+use tracing::info;
+
+use crate::preprocess::{PreprocessedTask, ReorderedTask};
+use crate::sas_tasks::{SasFact, assignment_operator};
 
 /// The two shapes the SAS+ file is built out of, as methods on whatever the
 /// task is written to.
@@ -57,29 +60,15 @@ trait SasSink: Write {
 
 impl<W: Write> SasSink for W {}
 
-/// The level a variable reference maps to. A reference to a pruned variable
-/// would silently change the task, so it is an error rather than something to
-/// leave out.
-fn placed(level: i32, what: &str) -> i32 {
-    assert_ne!(level, NO_LEVEL, "{what} was pruned");
-    level
-}
-
 pub fn write_sas<W: Write>(reordered: &ReorderedTask, out: &mut W) -> io::Result<()> {
     let ReorderedTask {
-        task:
-            PreprocessedTask {
-                sas,
-                metric,
-                vars,
-                numeric_vars,
-            },
+        task: PreprocessedTask { sas, metric, .. },
         prop_order,
         numeric_order,
     } = reordered;
 
-    let var_level = |var: usize| placed(vars[var].level(), "variable");
-    let numeric_level = |var: usize| placed(numeric_vars[var].level(), "numeric variable");
+    let var_level = |var: usize| reordered.prop_level(var);
+    let numeric_level = |var: usize| reordered.numeric_level(var);
     // A fact list inside an effect is written on the effect's own line, so each
     // pair is preceded by its separator rather than followed by a newline.
     let inline_conditions = |out: &mut W, conditions: &[SasFact]| -> io::Result<()> {
@@ -93,6 +82,8 @@ pub fn write_sas<W: Write>(reordered: &ReorderedTask, out: &mut W) -> io::Result
             writeln!(out, "{} {}", var_level(var), value)
         })
     };
+
+    info!("Writing output...");
 
     out.block("version", |out| writeln!(out, "{SAS_FILE_VERSION}"))?;
     out.block("metric", |out| {
@@ -112,17 +103,8 @@ pub fn write_sas<W: Write>(reordered: &ReorderedTask, out: &mut W) -> io::Result
     writeln!(out, "{}", numeric_order.len())?;
     out.block("numeric_variables", |out| {
         numeric_order.iter().try_for_each(|&var| {
-            let state = numeric_vars[var];
-            assert!(state.is_necessary());
-            let layer = sas.numeric_variables.axiom_layers[var];
-            assert!(layer >= NO_LAYER);
-            writeln!(
-                out,
-                "{} {} {}",
-                state.ntype().as_sas(),
-                layer,
-                sas.numeric_variables.variable_names[var]
-            )
+            let (numeric_type, layer, name) = reordered.numeric_variable(var);
+            writeln!(out, "{} {layer} {name}", numeric_type.as_sas())
         })
     })?;
 
@@ -141,20 +123,12 @@ pub fn write_sas<W: Write>(reordered: &ReorderedTask, out: &mut W) -> io::Result
             .try_for_each(|&var| writeln!(out, "{}", sas.init.num_values[var]))
     })?;
 
-    // The goal is written in the new variable order. A goal variable is
-    // necessary by definition, so the reordering always gave it a level; a goal
-    // that lost its variable would silently weaken the task.
-    let mut goal_values: Vec<Option<usize>> = vec![None; prop_order.len()];
-    for &(var, value) in &sas.goal.pairs {
-        goal_values[var_level(var) as usize] = Some(value);
-    }
+    // The goal's facts already name their new variables, so they are written
+    // rather than mapped a second time.
     out.block("goal", |out| {
-        writeln!(out, "{}", sas.goal.pairs.len())?;
-        goal_values
-            .iter()
-            .enumerate()
-            .filter_map(|(var, value)| value.map(|value| (var, value)))
-            .try_for_each(|(var, value)| writeln!(out, "{var} {value}"))
+        out.counted(&reordered.ordered_goal(), |out, &(var, value)| {
+            writeln!(out, "{var} {value}")
+        })
     })?;
 
     out.counted(&sas.operators, |out, op| {
@@ -184,7 +158,7 @@ pub fn write_sas<W: Write>(reordered: &ReorderedTask, out: &mut W) -> io::Result
                 },
             )?;
 
-            writeln!(out, "{}", op.cost)
+            writeln!(out, "{}", operator_cost_from_sas(op.cost))
         })
     })?;
 
@@ -239,5 +213,7 @@ pub fn write_sas<W: Write>(reordered: &ReorderedTask, out: &mut W) -> io::Result
 
     // The successor generator the search builds itself starts here, so this
     // marker has no `end_` of its own.
-    writeln!(out, "begin_SG")
+    writeln!(out, "begin_SG")?;
+    info!("done");
+    Ok(())
 }

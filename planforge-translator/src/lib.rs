@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::NumericRootTask;
+use planforge_translate::sas_tasks::SASTask;
 use planforge_translate::{normalize, pddl_parser::PddlTask};
 use std::num::NonZero;
 use time::format_description::well_known::iso8601::{Config, TimePrecision};
@@ -72,8 +74,10 @@ fn write_sas_file(
 }
 
 /// In-memory entry point: emit the translator's SAS+ text as a `String`.
-/// Used by the in-process planforge pipeline so the `output.sas` file
-/// never has to materialize on disk.
+///
+/// The text format is how the task reaches *other* planners and the reader of a
+/// bug report; a search in this process gets its task from
+/// [`translate_to_task`] instead, which does not go through text at all.
 pub fn translate_to_sas_string(domain: &str, problem: &str) -> anyhow::Result<String> {
     let mut buf: Vec<u8> = Vec::new();
     translate_to_sas_writer(domain, problem, false, &mut buf)?;
@@ -88,6 +92,42 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     fast_groups: bool,
     out: &mut W,
 ) -> anyhow::Result<()> {
+    let sas_task = translate_to_sas_task(domain, problem, fast_groups)?;
+    planforge_translate::preprocess::write_reordered_sas(sas_task, out)?;
+    Ok(())
+}
+
+/// Translate the (domain, problem) PDDL pair into the task the search reads.
+///
+/// The default way in: no SAS+ text is produced, and nothing is parsed.
+pub fn translate_to_task(domain: &str, problem: &str) -> anyhow::Result<NumericRootTask> {
+    translate_to_task_with_groups(domain, problem, false)
+}
+
+/// As [`translate_to_task`], but with one SAS variable per fact instead of the
+/// invariant-based encoding.
+pub fn translate_to_task_fast(domain: &str, problem: &str) -> anyhow::Result<NumericRootTask> {
+    translate_to_task_with_groups(domain, problem, true)
+}
+
+fn translate_to_task_with_groups(
+    domain: &str,
+    problem: &str,
+    fast_groups: bool,
+) -> anyhow::Result<NumericRootTask> {
+    let sas_task = translate_to_sas_task(domain, problem, fast_groups)?;
+    Ok(planforge_translate::preprocess::reordered_numeric_task(
+        sas_task,
+    ))
+}
+
+/// PDDL to the translation's own task, which is what both the file and the
+/// search task are built from.
+fn translate_to_sas_task(
+    domain: &str,
+    problem: &str,
+    fast_groups: bool,
+) -> anyhow::Result<SASTask> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))
         .map_err(|e| anyhow::anyhow!(e))?;
     let parsed_task = task.to_task();
@@ -101,13 +141,10 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     // `translate_task_from_grounded_internal` already filters unreachable
     // propositions and answers with a trivial task when that proves the task
     // impossible or trivially solvable, so nothing is left to simplify here.
-    let sastask = planforge_translate::translate::translate_task_from_grounded_internal(
+    planforge_translate::translate::translate_task_from_grounded_internal(
         &result,
         &norm_task,
         fast_groups,
     )
-    .map_err(|err| anyhow::anyhow!(err))?;
-
-    planforge_translate::preprocess::write_reordered_sas(sastask, out)?;
-    Ok(())
+    .map_err(|err| anyhow::anyhow!(err))
 }

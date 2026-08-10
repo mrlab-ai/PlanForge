@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -199,6 +199,13 @@ impl GilReleasedTask {
     }
 }
 
+/// The default way from PDDL to a task: no SAS+ text in between. `from_sas` and
+/// `from_sas_text` remain for a file produced earlier or by another tool.
+fn translate_pddl_to_task(domain: &Path, problem: &Path) -> Result<NumericRootTask, String> {
+    planforge_translator::translate_to_task(&domain.to_string_lossy(), &problem.to_string_lossy())
+        .map_err(|err| err.to_string())
+}
+
 fn restrict_numeric_task(
     task: NumericRootTask,
     restrict_task: bool,
@@ -245,16 +252,13 @@ impl Task {
         problem: PathBuf,
         restrict_task: bool,
     ) -> PyResult<Self> {
-        let text = py
-            .allow_threads(|| -> Result<String, String> {
-                planforge_translator::translate_to_sas_string(
-                    &domain.to_string_lossy(),
-                    &problem.to_string_lossy(),
-                )
-                .map_err(|e| e.to_string())
+        let task = py
+            .allow_threads(|| -> Result<NumericRootTask, String> {
+                translate_pddl_to_task(&domain, &problem)
             })
             .map_err(TranslateError::new_err)?;
-        Self::from_sas_text(&text, restrict_task)
+        let task = restrict_numeric_task(task, restrict_task).map_err(PlanforgeError::new_err)?;
+        Ok(Self::build(Arc::new(task)))
     }
 
     #[getter]
@@ -515,26 +519,24 @@ fn solve(
     let memory_limit = max_memory;
 
     let outcome: Result<SearchResult, SolveError> = py.allow_threads(|| {
-        let sas_text: String = if let (Some(domain), Some(problem)) = (&domain, &problem) {
-            planforge_translator::translate_to_sas_string(
-                &domain.to_string_lossy(),
-                &problem.to_string_lossy(),
-            )
-            .map_err(|err| SolveError::Translate(err.to_string()))?
-        } else if let Some(path) = &sas {
-            std::fs::read_to_string(path).map_err(|err| match err.kind() {
-                std::io::ErrorKind::NotFound => {
-                    SolveError::FileNotFound(format!("{}: {err}", path.display()))
-                }
-                _ => SolveError::Parse(format!("failed to read {}: {err}", path.display())),
-            })?
+        let task = if let (Some(domain), Some(problem)) = (&domain, &problem) {
+            translate_pddl_to_task(domain, problem).map_err(SolveError::Translate)?
         } else {
-            sas_text
-                .clone()
-                .expect("validated: exactly one source was provided")
+            let sas_text: String = if let Some(path) = &sas {
+                std::fs::read_to_string(path).map_err(|err| match err.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        SolveError::FileNotFound(format!("{}: {err}", path.display()))
+                    }
+                    _ => SolveError::Parse(format!("failed to read {}: {err}", path.display())),
+                })?
+            } else {
+                sas_text
+                    .clone()
+                    .expect("validated: exactly one source was provided")
+            };
+            NumericRootTask::try_from_str(&sas_text).map_err(SolveError::Parse)?
         };
 
-        let task = NumericRootTask::try_from_str(&sas_text).map_err(SolveError::Parse)?;
         let task = restrict_numeric_task(task, restrict_task).map_err(SolveError::Restrict)?;
         let task: TaskRef<'static> = Arc::new(task);
         planforge_core::solve_task(task, &spec, time_limit, memory_limit)

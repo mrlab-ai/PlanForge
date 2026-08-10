@@ -21,3 +21,5 @@ mod sgd_engine_tests;
 mod sgd_transcription_tests;
 #[cfg(test)]
 mod strips_corpus_tests;
+#[cfg(test)]
+mod task_equivalence_tests;

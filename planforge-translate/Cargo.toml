@@ -5,6 +5,7 @@ edition = "2024"
 license = "LGPL-3.0"
 
 [dependencies]
+planforge-sas = { path = "../planforge-sas" }
 tracing = "0.1"
 libc = "0.2"
 nom = "7"

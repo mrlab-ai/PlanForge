@@ -4,9 +4,8 @@
 //! [`crate::numeric_parser`], or handed over directly by the translator, which
 //! holds the same task in its own representation. Both must produce the same
 //! task, so everything the format leaves implicit lives here rather than in
-//! either producer: the token tables, the axiom default a derived variable
-//! takes from the initial state, and the renumbering that moves the numeric
-//! conditions to the end of the variable id space.
+//! either producer: the token tables, the two ways it spells an absent value,
+//! and the axiom default a derived variable takes from the initial state.
 //!
 //! [`crate::numeric_parser`] owns the text syntax and nothing else.
 
@@ -176,13 +175,11 @@ pub struct SasTaskParts {
 impl NumericRootTask {
     /// The one way into a root task from the SAS+ shape.
     ///
-    /// Two things the format states only implicitly are established here:
-    /// a derived variable's axiom default, which it writes into the initial
-    /// state, and the position of the numeric conditions in the variable id
-    /// space, which it leaves interleaved with the genuine propositional
-    /// variables. [`NumericRootTask::new`] takes care of the rest — fact
-    /// namespaces and the axiom closure of the initial state — for every task,
-    /// however built.
+    /// The one thing the format states only implicitly is established here: a
+    /// derived variable's axiom default, which it writes into the initial state
+    /// rather than into the variable's own block. [`NumericRootTask::new`] takes
+    /// care of the rest — fact namespaces and the axiom closure of the initial
+    /// state — for every task, however built.
     pub fn from_sas_parts(parts: SasTaskParts) -> Self {
         let SasTaskParts {
             version,
@@ -200,7 +197,7 @@ impl NumericRootTask {
             global_constraint,
         } = parts;
 
-        let mut task = NumericRootTask::new(
+        NumericRootTask::new(
             version,
             metric,
             build_variables(variables, &state),
@@ -214,12 +211,7 @@ impl NumericRootTask {
             comparison_axioms,
             assignment_axioms,
             global_constraint,
-        );
-        // A task in the SAS+ shape owns its variable ids, unlike one derived
-        // from another task, so this is the only place the renumbering may
-        // happen.
-        task.renumber_condition_variables_last();
-        task
+        )
     }
 }
 
