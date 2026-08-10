@@ -15,14 +15,6 @@ pub struct NormalizableTask {
 }
 
 impl NormalizableTask {
-    pub fn from_ast(
-        _dom: &super::pddl_parser::lisp_parser::SExpr,
-        _prob: &super::pddl_parser::lisp_parser::SExpr,
-    ) -> Self {
-        // This will be called from main.rs; for now build the task through the parser
-        unimplemented!("Use from_task instead")
-    }
-
     pub fn from_task(task: Task) -> Self {
         let goal = task.goal.clone();
         NormalizableTask { task, goal }
@@ -55,21 +47,17 @@ pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
     // Step 4: Substitute complicated goals
     substitute_complicated_goal(t);
 
-    // Step 5: Build DNF for disjunctive conditions, then split
-    build_dnf(t);
+    // Step 5: Split disjunctive preconditions into one action each
     split_disjunctions(t);
 
     // Step 6: Move and eliminate existential quantifiers
     move_existential_quantifiers(t);
     eliminate_existential_quantifiers(t);
 
-    // Step 7: Verify and fix arithmetic expressions
-    verify_and_fix_arithmetic_expressions(t);
-
-    // Step 8: Remove arithmetic expressions (create numeric axioms)
+    // Step 7: Remove arithmetic expressions (create numeric axioms)
     remove_arithmetic_expressions(t);
 
-    // Step 9: Verify axiom predicates
+    // Step 8: Verify axiom predicates
     verify_axiom_predicates(t);
 
     task.goal = t.goal.clone();
@@ -187,11 +175,6 @@ fn substitute_complicated_goal(task: &mut Task) {
         task.axioms.push(axiom);
         task.goal = Condition::Atom(Atom::new(new_pred, vec![]));
     }
-}
-
-fn build_dnf(_task: &mut Task) {
-    // For each action, if precondition has disjunctions, convert to DNF
-    // This is handled during split_disjunctions
 }
 
 fn split_disjunctions(task: &mut Task) {
@@ -357,7 +340,6 @@ fn eliminate_existential_quantifiers(task: &mut Task) {
 fn eliminate_existential_quantifiers_from_preconditions(task: &mut Task) {
     for action in &mut task.actions {
         if let Condition::ExistentialCondition(ec) = &action.precondition {
-            action.parameters = action.parameters.clone();
             action.parameters.extend(ec.parameters.clone());
             action.precondition = existential_body(ec);
         }
@@ -366,24 +348,18 @@ fn eliminate_existential_quantifiers_from_preconditions(task: &mut Task) {
 
 fn eliminate_existential_quantifiers_from_conditional_effects(task: &mut Task) {
     for action in &mut task.actions {
-        let mut new_effects = Vec::with_capacity(action.effects.len());
-        for eff in &action.effects {
-            let mut new_eff = eff.clone();
+        for eff in &mut action.effects {
             if let Condition::ExistentialCondition(ec) = &eff.condition {
-                new_eff.parameters = new_eff.parameters.clone();
-                new_eff.parameters.extend(ec.parameters.clone());
-                new_eff.condition = existential_body(ec);
+                eff.parameters.extend(ec.parameters.clone());
+                eff.condition = existential_body(ec);
             }
-            new_effects.push(new_eff);
         }
-        action.effects = new_effects;
     }
 }
 
 fn eliminate_existential_quantifiers_from_axioms(task: &mut Task) {
     for axiom in &mut task.axioms {
         if let Condition::ExistentialCondition(ec) = &axiom.condition {
-            axiom.parameters = axiom.parameters.clone();
             axiom.parameters.extend(ec.parameters.clone());
             axiom.condition = existential_body(ec);
         }
@@ -396,11 +372,6 @@ fn existential_body(ec: &ExistentialCondition) -> Condition {
     } else {
         Condition::Conjunction(Conjunction::new(ec.parts.clone()))
     }
-}
-
-fn verify_and_fix_arithmetic_expressions(_task: &mut Task) {
-    // Verify that arithmetic expressions are well-formed
-    // This step mainly checks for issues in the PDDL
 }
 
 /// Creates numeric axioms for complex arithmetic expressions.
@@ -741,18 +712,6 @@ pub fn get_fluent_function_predicate(func_name: &str) -> String {
 
 pub fn get_function_axiom_predicate(axiom_name: &str) -> String {
     format!("@function-axiom-{}", axiom_name)
-}
-
-pub fn get_fluent_predicates(task: &Task) -> HashSet<String> {
-    let mut result = HashSet::new();
-    for action in &task.actions {
-        for eff in &action.effects {
-            if let Some(pred) = eff.peffect.literal_predicate() {
-                result.insert(pred.to_string());
-            }
-        }
-    }
-    result
 }
 
 pub fn condition_to_rule_body(parameters: &[TypedObject], condition: &Condition) -> Vec<Condition> {

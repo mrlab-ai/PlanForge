@@ -1,5 +1,5 @@
 /// Full condition hierarchy for PDDL conditions.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 
 /// The root condition enum, mirroring Python's Condition class hierarchy.
@@ -16,17 +16,6 @@ pub enum Condition {
     NegatedAtom(NegatedAtom),
     FunctionComparison(FunctionComparison),
     NegatedFunctionComparison(NegatedFunctionComparison),
-}
-
-// Type aliases for cleaner references
-pub type Truth = ();
-pub type Falsity = ();
-
-/// Helper enum for ConstantCondition
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ConstantCondition {
-    Truth,
-    Falsity,
 }
 
 // ----- Conjunction -----
@@ -98,10 +87,6 @@ impl Atom {
             args: self.args.clone(),
         }
     }
-
-    pub fn positive(&self) -> Atom {
-        self.clone()
-    }
 }
 
 impl fmt::Display for Atom {
@@ -152,70 +137,6 @@ impl fmt::Display for NegatedAtom {
             self.predicate,
             self.args.join(", ")
         )
-    }
-}
-
-/// Unified Literal type that wraps both Atom and NegatedAtom
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Literal {
-    Positive(Atom),
-    Negative(NegatedAtom),
-}
-
-impl Literal {
-    pub fn predicate(&self) -> &str {
-        match self {
-            Literal::Positive(a) => &a.predicate,
-            Literal::Negative(a) => &a.predicate,
-        }
-    }
-
-    pub fn args(&self) -> &[String] {
-        match self {
-            Literal::Positive(a) => &a.args,
-            Literal::Negative(a) => &a.args,
-        }
-    }
-
-    pub fn is_negated(&self) -> bool {
-        matches!(self, Literal::Negative(_))
-    }
-
-    pub fn negate(&self) -> Literal {
-        match self {
-            Literal::Positive(a) => Literal::Negative(a.negate()),
-            Literal::Negative(a) => Literal::Positive(a.negate()),
-        }
-    }
-
-    pub fn positive(&self) -> Atom {
-        match self {
-            Literal::Positive(a) => a.clone(),
-            Literal::Negative(a) => a.positive(),
-        }
-    }
-
-    pub fn as_atom(&self) -> Option<&Atom> {
-        match self {
-            Literal::Positive(a) => Some(a),
-            Literal::Negative(_) => None,
-        }
-    }
-
-    pub fn as_negated_atom(&self) -> Option<&NegatedAtom> {
-        match self {
-            Literal::Positive(_) => None,
-            Literal::Negative(a) => Some(a),
-        }
-    }
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Literal::Positive(a) => write!(f, "{}", a),
-            Literal::Negative(a) => write!(f, "{}", a),
-        }
     }
 }
 
@@ -371,77 +292,6 @@ impl Condition {
         }
     }
 
-    pub fn relaxed(&self) -> Condition {
-        match self {
-            Condition::Truth => Condition::Truth,
-            Condition::Falsity => Condition::Falsity,
-            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-                conj.parts.iter().map(|p| p.relaxed()).collect(),
-            )),
-            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-                disj.parts.iter().map(|p| p.relaxed()).collect(),
-            )),
-            Condition::UniversalCondition(uc) => {
-                Condition::UniversalCondition(UniversalCondition::new(
-                    uc.parameters.clone(),
-                    uc.parts.iter().map(|p| p.relaxed()).collect(),
-                ))
-            }
-            Condition::ExistentialCondition(ec) => {
-                Condition::ExistentialCondition(ExistentialCondition::new(
-                    ec.parameters.clone(),
-                    ec.parts.iter().map(|p| p.relaxed()).collect(),
-                ))
-            }
-            // NegatedAtom relaxes to Truth
-            Condition::NegatedAtom(_) => Condition::Truth,
-            // Everything else stays the same
-            other => other.clone(),
-        }
-    }
-
-    pub fn untyped(&self) -> Condition {
-        // Replaces typed quantifiers with untyped ones by adding type predicates.
-        match self {
-            Condition::UniversalCondition(uc) => {
-                let type_lits: Vec<Condition> = uc
-                    .parameters
-                    .iter()
-                    .map(|p| {
-                        let atom = p.get_atom();
-                        Condition::NegatedAtom(atom.negate())
-                    })
-                    .collect();
-                let mut parts: Vec<Condition> = type_lits;
-                parts.extend(uc.parts.iter().map(|p| p.untyped()));
-                Condition::UniversalCondition(UniversalCondition::new(
-                    uc.parameters.clone(),
-                    vec![Condition::Disjunction(Disjunction::new(parts))],
-                ))
-            }
-            Condition::ExistentialCondition(ec) => {
-                let type_lits: Vec<Condition> = ec
-                    .parameters
-                    .iter()
-                    .map(|p| Condition::Atom(p.get_atom()))
-                    .collect();
-                let mut parts: Vec<Condition> = type_lits;
-                parts.extend(ec.parts.iter().map(|p| p.untyped()));
-                Condition::ExistentialCondition(ExistentialCondition::new(
-                    ec.parameters.clone(),
-                    vec![Condition::Conjunction(Conjunction::new(parts))],
-                ))
-            }
-            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-                conj.parts.iter().map(|p| p.untyped()).collect(),
-            )),
-            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-                disj.parts.iter().map(|p| p.untyped()).collect(),
-            )),
-            other => other.clone(),
-        }
-    }
-
     pub fn uniquify_variables(
         &self,
         type_map: &mut HashMap<String, usize>,
@@ -526,72 +376,6 @@ impl Condition {
         }
     }
 
-    pub fn free_variables(&self) -> HashSet<String> {
-        match self {
-            Condition::Truth | Condition::Falsity => HashSet::new(),
-            Condition::Conjunction(conj) => {
-                let mut result = HashSet::new();
-                for p in &conj.parts {
-                    result.extend(p.free_variables());
-                }
-                result
-            }
-            Condition::Disjunction(disj) => {
-                let mut result = HashSet::new();
-                for p in &disj.parts {
-                    result.extend(p.free_variables());
-                }
-                result
-            }
-            Condition::UniversalCondition(uc) => {
-                let mut result = HashSet::new();
-                for p in &uc.parts {
-                    result.extend(p.free_variables());
-                }
-                for param in &uc.parameters {
-                    result.remove(&param.name);
-                }
-                result
-            }
-            Condition::ExistentialCondition(ec) => {
-                let mut result = HashSet::new();
-                for p in &ec.parts {
-                    result.extend(p.free_variables());
-                }
-                for param in &ec.parameters {
-                    result.remove(&param.name);
-                }
-                result
-            }
-            Condition::Atom(atom) => atom
-                .args
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .cloned()
-                .collect(),
-            Condition::NegatedAtom(natom) => natom
-                .args
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .cloned()
-                .collect(),
-            Condition::FunctionComparison(fc) => {
-                let mut result = HashSet::new();
-                for p in &fc.parts {
-                    result.extend(p.free_variables());
-                }
-                result
-            }
-            Condition::NegatedFunctionComparison(nfc) => {
-                let mut result = HashSet::new();
-                for p in &nfc.parts {
-                    result.extend(p.free_variables());
-                }
-                result
-            }
-        }
-    }
-
     pub fn has_disjunction(&self) -> bool {
         match self {
             Condition::Disjunction(_) => true,
@@ -612,26 +396,6 @@ impl Condition {
         }
     }
 
-    pub fn has_universal_part(&self) -> bool {
-        match self {
-            Condition::UniversalCondition(_) => true,
-            Condition::Conjunction(conj) => conj.parts.iter().any(|p| p.has_universal_part()),
-            Condition::Disjunction(disj) => disj.parts.iter().any(|p| p.has_universal_part()),
-            Condition::ExistentialCondition(ec) => ec.parts.iter().any(|p| p.has_universal_part()),
-            _ => false,
-        }
-    }
-
-    /// Check if this is an Atom
-    pub fn is_atom(&self) -> bool {
-        matches!(self, Condition::Atom(_))
-    }
-
-    /// Check if this is a NegatedAtom
-    pub fn is_negated_atom(&self) -> bool {
-        matches!(self, Condition::NegatedAtom(_))
-    }
-
     /// Check if this is a Literal (Atom or NegatedAtom)
     pub fn is_literal(&self) -> bool {
         matches!(self, Condition::Atom(_) | Condition::NegatedAtom(_))
@@ -649,22 +413,6 @@ impl Condition {
     pub fn as_atom(&self) -> Option<&Atom> {
         match self {
             Condition::Atom(a) => Some(a),
-            _ => None,
-        }
-    }
-
-    /// Get the NegatedAtom if this is Condition::NegatedAtom
-    pub fn as_negated_atom(&self) -> Option<&NegatedAtom> {
-        match self {
-            Condition::NegatedAtom(a) => Some(a),
-            _ => None,
-        }
-    }
-
-    /// Get the Conjunction if this is Condition::Conjunction
-    pub fn as_conjunction(&self) -> Option<&Conjunction> {
-        match self {
-            Condition::Conjunction(c) => Some(c),
             _ => None,
         }
     }

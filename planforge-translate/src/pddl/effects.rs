@@ -1,8 +1,6 @@
 /// Effect types for PDDL actions.
 use std::fmt;
 
-use tracing::debug;
-
 use super::conditions::{Condition, Conjunction};
 use super::f_expression::FunctionAssignment;
 use super::pddl_types::TypedObject;
@@ -22,46 +20,6 @@ impl Effect {
             parameters,
             condition,
             peffect,
-        }
-    }
-
-    pub fn dump(&self) {
-        let indent = "  ";
-        debug!("{}Effect(", indent);
-        if !self.parameters.is_empty() {
-            debug!("{}  parameters: {:?}", indent, self.parameters);
-        }
-        if !matches!(self.condition, Condition::Truth) {
-            debug!("{}  condition: {}", indent, self.condition);
-        }
-        debug!("{}  peffect: {}", indent, self.peffect);
-        debug!("{})", indent);
-    }
-
-    pub fn relaxed(&self) -> Effect {
-        if self.peffect.is_negated() {
-            // Delete effects are removed in relaxation
-            Effect::new(
-                self.parameters.clone(),
-                self.condition.relaxed(),
-                Condition::Truth,
-            )
-        } else {
-            Effect::new(
-                self.parameters.clone(),
-                self.condition.relaxed(),
-                self.peffect.relaxed(),
-            )
-        }
-    }
-
-    pub fn simplified(&self) -> Option<Effect> {
-        let new_cond = self.condition.simplified();
-        let new_peff = self.peffect.simplified();
-        if matches!(new_cond, Condition::Falsity) || matches!(new_peff, Condition::Truth) {
-            None
-        } else {
-            Some(Effect::new(self.parameters.clone(), new_cond, new_peff))
         }
     }
 }

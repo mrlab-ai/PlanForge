@@ -267,24 +267,6 @@ fn parse_function_comparison(
     Condition::FunctionComparison(FunctionComparison::new(comparator, vec![difference, zero]))
 }
 
-pub fn parse_literal(alist: &SExpr) -> Condition {
-    let items = alist.as_list();
-    if items.is_empty() {
-        return Condition::Truth;
-    }
-    let tag = items[0].as_atom();
-    if tag == "not" {
-        let inner = items[1].as_list();
-        let pred = inner[0].as_atom().to_string();
-        let args: Vec<String> = inner[1..].iter().map(|a| a.as_atom().to_string()).collect();
-        Condition::NegatedAtom(NegatedAtom::new(pred, args))
-    } else {
-        let pred = tag.to_string();
-        let args: Vec<String> = items[1..].iter().map(|a| a.as_atom().to_string()).collect();
-        Condition::Atom(Atom::new(pred, args))
-    }
-}
-
 pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {
     fn classify_pne(symbol: String, args: Vec<String>) -> PrimitiveNumericExpression {
         if symbol == "total-cost" && args.is_empty() {
@@ -749,18 +731,5 @@ pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
                 what_type, what_list, item
             );
         }
-    }
-}
-
-/// Resolves a predicate name to (id, arity) or creates a new one.
-pub fn get_predicate_id_and_arity(
-    text: &str,
-    predicate_dict: &HashMap<String, (usize, usize)>,
-    _n_predicates: usize,
-) -> (usize, usize) {
-    if let Some(&(id, arity)) = predicate_dict.get(text) {
-        (id, arity)
-    } else {
-        panic!("Unknown predicate: {}", text);
     }
 }

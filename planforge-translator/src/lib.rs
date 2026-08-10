@@ -36,10 +36,6 @@ pub fn init_logger(level: LevelFilter) {
         .init();
 }
 
-pub fn translate_to_sas(domain: &str, problem: &str) -> anyhow::Result<()> {
-    translate_to_sas_to_path(domain, problem, std::path::Path::new("output.sas"))
-}
-
 pub fn translate_to_sas_to_path(
     domain: &str,
     problem: &str,

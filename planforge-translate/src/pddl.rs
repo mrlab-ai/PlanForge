@@ -8,20 +8,19 @@ pub mod pddl_types;
 pub mod predicates;
 pub mod tasks;
 
-// Re-export commonly used types for convenience (mirrors Python pddl/__init__.py)
+// Re-export the types the translation pipeline names most often.
 pub use actions::{Action, PropositionalAction};
 pub use axioms::{Axiom, InstantiatedNumericAxiom, NumericAxiom, PropositionalAxiom};
 pub use conditions::{
-    Atom, Condition, Conjunction, ConstantCondition, Disjunction, ExistentialCondition, Falsity,
-    FunctionComparison, Literal, NegatedAtom, NegatedFunctionComparison, Truth, UniversalCondition,
+    Atom, Condition, Conjunction, Disjunction, ExistentialCondition, FunctionComparison,
+    NegatedAtom, NegatedFunctionComparison, UniversalCondition,
 };
 pub use effects::{
     ConditionalEffect, ConjunctiveEffect, Effect, NumericEffect, SimpleEffect, UniversalEffect,
 };
 pub use f_expression::{
-    AdditiveInverse, ArithmeticExpression, Assign, Decrease, Difference, FunctionAssignment,
-    FunctionalExpression, Increase, NumericConstant, PrimitiveNumericExpression, Product, Quotient,
-    ScaleDown, ScaleUp, Sum,
+    AdditiveInverse, ArithmeticExpression, FunctionAssignment, FunctionalExpression,
+    NumericConstant, PrimitiveNumericExpression,
 };
 pub use functions::Function;
 pub use pddl_types::{Type, TypedObject};

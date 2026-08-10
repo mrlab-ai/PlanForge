@@ -160,15 +160,3 @@ pub fn product<T: Clone>(sequences: &[Vec<T>]) -> Vec<Vec<T>> {
     }
     result
 }
-
-pub fn get_peak_memory_in_kb() -> Option<usize> {
-    if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 && parts[0] == "VmPeak:" {
-                return parts[1].parse().ok();
-            }
-        }
-    }
-    None
-}

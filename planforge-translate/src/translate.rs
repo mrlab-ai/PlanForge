@@ -1585,40 +1585,6 @@ pub fn translate_task_from_grounded_internal(
 }
 
 // ============================================================
-// dump_statistics
-// ============================================================
-
-pub fn dump_statistics(sas_task: &SASTask) {
-    info!("Translator variables: {}", sas_task.variables.ranges.len());
-    info!(
-        "Translator derived variables: {}",
-        sas_task
-            .variables
-            .axiom_layers
-            .iter()
-            .filter(|&&l| l >= 0)
-            .count()
-    );
-    info!(
-        "Translator facts: {}",
-        sas_task.variables.ranges.iter().sum::<usize>()
-    );
-    info!("Translator goal facts: {}", sas_task.goal.pairs.len());
-    info!("Translator mutex groups: {}", sas_task.mutexes.len());
-    info!(
-        "Translator total mutex groups size: {}",
-        sas_task
-            .mutexes
-            .iter()
-            .map(|m| m.get_encoding_size())
-            .sum::<usize>()
-    );
-    info!("Translator operators: {}", sas_task.operators.len());
-    info!("Translator axioms: {}", sas_task.axioms.len());
-    info!("Translator task size: {}", sas_task.get_encoding_size());
-}
-
-// ============================================================
 // Helper functions
 // ============================================================
 

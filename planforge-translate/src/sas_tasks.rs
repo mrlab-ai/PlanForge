@@ -1,6 +1,7 @@
 /// SAS+ task representation for the planner output format.
-use std::io::Write;
-
+///
+/// The task is written out by [`crate::preprocess::output`], after the causal
+/// graph has reordered its variables; nothing here formats itself.
 use tracing::debug;
 
 pub const SAS_FILE_VERSION: i32 = 4;
@@ -84,96 +85,6 @@ impl SASTask {
             self.metric.0
         );
         assert!(self.global_constraint.1 == 0);
-    }
-
-    pub fn dump(&self) {
-        debug!("variables:");
-        self.variables.dump();
-        debug!("{} mutex groups:", self.mutexes.len());
-        for mutex in &self.mutexes {
-            debug!("group:");
-            mutex.dump();
-        }
-        debug!("init:");
-        self.init.dump();
-        debug!("goal:");
-        self.goal.dump();
-        debug!("{} operators:", self.operators.len());
-        for op in &self.operators {
-            op.dump();
-        }
-        debug!("{} axioms:", self.axioms.len());
-        for axiom in &self.axioms {
-            axiom.dump();
-        }
-        debug!("metric: ({}, {})", self.metric.0, self.metric.1);
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "begin_version")?;
-        writeln!(stream, "{}", SAS_FILE_VERSION)?;
-        writeln!(stream, "end_version")?;
-        writeln!(stream, "begin_metric")?;
-        writeln!(stream, "{} {}", self.metric.0, self.metric.1)?;
-        writeln!(stream, "end_metric")?;
-        self.variables.output(stream)?;
-        self.numeric_variables.output(stream)?;
-        writeln!(stream, "{}", self.mutexes.len())?;
-        for mutex in &self.mutexes {
-            mutex.output(stream)?;
-        }
-        self.init.output(stream)?;
-        self.goal.output(stream)?;
-        writeln!(stream, "{}", self.operators.len())?;
-        for op in &self.operators {
-            op.output(stream)?;
-        }
-        writeln!(stream, "{}", self.axioms.len())?;
-        for axiom in &self.axioms {
-            axiom.output(stream)?;
-        }
-        writeln!(stream, "{}", self.comp_axioms.len())?;
-        writeln!(stream, "begin_comparison_axioms")?;
-        for cax in &self.comp_axioms {
-            cax.output(stream)?;
-        }
-        writeln!(stream, "end_comparison_axioms")?;
-        writeln!(stream, "{}", self.numeric_axioms.len())?;
-        writeln!(stream, "begin_numeric_axioms")?;
-        for nax in &self.numeric_axioms {
-            nax.output(stream)?;
-        }
-        writeln!(stream, "end_numeric_axioms")?;
-        writeln!(stream, "begin_global_constraint")?;
-        writeln!(
-            stream,
-            "{} {}",
-            self.global_constraint.0, self.global_constraint.1
-        )?;
-        writeln!(stream, "end_global_constraint")?;
-        Ok(())
-    }
-
-    pub fn get_encoding_size(&self) -> usize {
-        let mut task_size = 0;
-        task_size += self.variables.get_encoding_size();
-        for mutex in &self.mutexes {
-            task_size += mutex.get_encoding_size();
-        }
-        task_size += self.goal.get_encoding_size();
-        for op in &self.operators {
-            task_size += op.get_encoding_size();
-        }
-        for axiom in &self.axioms {
-            task_size += axiom.get_encoding_size();
-        }
-        for cax in &self.comp_axioms {
-            task_size += cax.get_encoding_size();
-        }
-        for nax in &self.numeric_axioms {
-            task_size += nax.get_encoding_size();
-        }
-        task_size
     }
 }
 
@@ -267,53 +178,6 @@ impl SASVariables {
             last_var = Some(var);
         }
     }
-
-    pub fn dump(&self) {
-        for (var, ((rang, names), axiom_layer)) in self
-            .ranges
-            .iter()
-            .zip(self.value_names.iter())
-            .zip(self.axiom_layers.iter())
-            .enumerate()
-        {
-            let axiom_str = if *axiom_layer != -1 {
-                format!(" [axiom layer {}]", axiom_layer)
-            } else {
-                String::new()
-            };
-            let vals: Vec<String> = (0..*rang)
-                .zip(names.iter())
-                .map(|(i, n)| format!("{}:{}", i, n))
-                .collect();
-            debug!("v{} in {{{}}}{}", var, vals.join(", "), axiom_str);
-        }
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "{}", self.ranges.len())?;
-        for (var, ((rang, axiom_layer), values)) in self
-            .ranges
-            .iter()
-            .zip(self.axiom_layers.iter())
-            .zip(self.value_names.iter())
-            .enumerate()
-        {
-            writeln!(stream, "begin_variable")?;
-            writeln!(stream, "var{}", var)?;
-            writeln!(stream, "{}", axiom_layer)?;
-            writeln!(stream, "{}", rang)?;
-            assert_eq!(*rang, values.len());
-            for value in values {
-                writeln!(stream, "{}", value)?;
-            }
-            writeln!(stream, "end_variable")?;
-        }
-        Ok(())
-    }
-
-    pub fn get_encoding_size(&self) -> usize {
-        self.ranges.len() + self.ranges.iter().sum::<usize>()
-    }
 }
 
 // ============================================================
@@ -334,22 +198,6 @@ impl SASNumericVariables {
             axiom_layers,
             types,
         }
-    }
-
-    pub fn dump(&self) {
-        for (v, nv) in self.variable_names.iter().enumerate() {
-            debug!("numv{}: {}", v, nv);
-        }
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "{}", self.variable_names.len())?;
-        writeln!(stream, "begin_numeric_variables")?;
-        for (v, nv) in self.variable_names.iter().enumerate() {
-            writeln!(stream, "{} {} {}", self.types[v], self.axiom_layers[v], nv)?;
-        }
-        writeln!(stream, "end_numeric_variables")?;
-        Ok(())
     }
 }
 
@@ -376,26 +224,6 @@ impl SASMutexGroup {
         sorted_unique.sort();
         sorted_unique.dedup();
         assert_eq!(self.facts, sorted_unique);
-    }
-
-    pub fn dump(&self) {
-        for (var, val) in &self.facts {
-            debug!("v{}: {}", var, val);
-        }
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "begin_mutex_group")?;
-        writeln!(stream, "{}", self.facts.len())?;
-        for (var, val) in &self.facts {
-            writeln!(stream, "{} {}", var, val)?;
-        }
-        writeln!(stream, "end_mutex_group")?;
-        Ok(())
-    }
-
-    pub fn get_encoding_size(&self) -> usize {
-        self.facts.len()
     }
 }
 
@@ -428,31 +256,6 @@ impl SASInit {
             }
         }
     }
-
-    pub fn dump(&self) {
-        for (var, val) in self.values.iter().enumerate() {
-            if *val != -1 {
-                debug!("v{}: {}", var, val);
-            }
-        }
-        for (var, val) in self.num_values.iter().enumerate() {
-            debug!("nv{}: {}", var, val);
-        }
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "begin_state")?;
-        for val in &self.values {
-            writeln!(stream, "{}", val)?;
-        }
-        writeln!(stream, "end_state")?;
-        writeln!(stream, "begin_numeric_state")?;
-        for val in &self.num_values {
-            writeln!(stream, "{}", val)?;
-        }
-        writeln!(stream, "end_numeric_state")?;
-        Ok(())
-    }
 }
 
 // ============================================================
@@ -473,26 +276,6 @@ impl SASGoal {
     pub fn validate(&self, variables: &SASVariables) {
         assert!(!self.pairs.is_empty(), "Empty goal");
         variables.validate_condition(&self.pairs);
-    }
-
-    pub fn dump(&self) {
-        for (var, val) in &self.pairs {
-            debug!("v{}: {}", var, val);
-        }
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "begin_goal")?;
-        writeln!(stream, "{}", self.pairs.len())?;
-        for (var, val) in &self.pairs {
-            writeln!(stream, "{} {}", var, val)?;
-        }
-        writeln!(stream, "end_goal")?;
-        Ok(())
-    }
-
-    pub fn get_encoding_size(&self) -> usize {
-        self.pairs.len()
     }
 }
 
@@ -604,41 +387,6 @@ impl SASOperator {
         }
     }
 
-    pub fn dump(&self) {
-        debug!("{}", self.name);
-        debug!("Prevail:");
-        for (var, val) in &self.prevail {
-            debug!("  v{}: {}", var, val);
-        }
-        debug!("Pre/Post:");
-        for (var, pre, post, cond) in &self.pre_post {
-            let cond_str = if cond.is_empty() {
-                String::new()
-            } else {
-                let parts: Vec<String> = cond
-                    .iter()
-                    .map(|(cv, cv2)| format!("{}: {}", cv, cv2))
-                    .collect();
-                format!(" [{}]", parts.join(", "))
-            };
-            debug!("  v{}: {} -> {}{}", var, pre, post, cond_str);
-        }
-        for (var, ass_op, ass_var, cond) in &self.assign_effects {
-            let cond_str = if cond.is_empty() {
-                String::new()
-            } else {
-                let parts: Vec<String> = cond
-                    .iter()
-                    .map(|(cv, cv2)| format!("{}: {}", cv, cv2))
-                    .collect();
-                format!(" [{}]", parts.join(", "))
-            };
-            debug!("  nv{}: {} nv{}{}", var, ass_op, ass_var, cond_str);
-        }
-        debug!("Cost:");
-        debug!("  {}", self.cost);
-    }
-
     /// The name the SAS file carries: grounded operator names are parenthesized
     /// in PDDL, the file format is not.
     pub fn output_name(&self) -> &str {
@@ -646,34 +394,6 @@ impl SASOperator {
             .strip_prefix('(')
             .and_then(|name| name.strip_suffix(')'))
             .unwrap_or(&self.name)
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "begin_operator")?;
-        writeln!(stream, "{}", self.output_name())?;
-        writeln!(stream, "{}", self.prevail.len())?;
-        for (var, val) in &self.prevail {
-            writeln!(stream, "{} {}", var, val)?;
-        }
-        writeln!(stream, "{}", self.pre_post.len())?;
-        for (var, pre, post, cond) in &self.pre_post {
-            write!(stream, "{} ", cond.len())?;
-            for (cvar, cval) in cond {
-                write!(stream, "{} {} ", cvar, cval)?;
-            }
-            writeln!(stream, "{} {} {}", var, pre, post)?;
-        }
-        writeln!(stream, "{}", self.assign_effects.len())?;
-        for (nvar, op, ass_var, cond) in &self.assign_effects {
-            write!(stream, "{} ", cond.len())?;
-            for (cvar, cval) in cond {
-                write!(stream, "{} {} ", cvar, cval)?;
-            }
-            writeln!(stream, "{} {} {}", nvar, op, ass_var)?;
-        }
-        writeln!(stream, "{}", self.cost)?;
-        writeln!(stream, "end_operator")?;
-        Ok(())
     }
 
     pub fn get_encoding_size(&self) -> usize {
@@ -770,18 +490,6 @@ impl SASAxiom {
         debug!("  v{}: {}", var, val);
     }
 
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        writeln!(stream, "begin_rule")?;
-        writeln!(stream, "{}", self.condition.len())?;
-        for (var, val) in &self.condition {
-            writeln!(stream, "{} {}", var, val)?;
-        }
-        let (var, val) = self.effect;
-        writeln!(stream, "{} {} {}", var, 1 - val, val)?;
-        writeln!(stream, "end_rule")?;
-        Ok(())
-    }
-
     pub fn get_encoding_size(&self) -> usize {
         1 + self.condition.len()
     }
@@ -814,31 +522,6 @@ impl SASCompareAxiom {
             self.effect,
         )
     }
-
-    pub fn dump(&self) {
-        let parts_str = self
-            .parts
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        debug!("v{}: {} {}", self.effect, self.comp, parts_str);
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        let parts_str = self
-            .parts
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        writeln!(stream, "{} {} {}", self.effect, self.comp, parts_str)?;
-        Ok(())
-    }
-
-    pub fn get_encoding_size(&self) -> usize {
-        1 + self.parts.len()
-    }
 }
 
 impl std::fmt::Display for SASCompareAxiom {
@@ -861,31 +544,6 @@ pub struct SASNumericAxiom {
 impl SASNumericAxiom {
     pub fn new(op: String, parts: Vec<usize>, effect: usize) -> Self {
         SASNumericAxiom { op, parts, effect }
-    }
-
-    pub fn dump(&self) {
-        let parts_str = self
-            .parts
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        debug!("nv{}: {} {}", self.effect, self.op, parts_str);
-    }
-
-    pub fn output<W: Write>(&self, stream: &mut W) -> std::io::Result<()> {
-        let parts_str = self
-            .parts
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<_>>()
-            .join(" ");
-        writeln!(stream, "{} {} {}", self.effect, self.op, parts_str)?;
-        Ok(())
-    }
-
-    pub fn get_encoding_size(&self) -> usize {
-        1 + self.parts.len()
     }
 }
 

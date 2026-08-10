@@ -14,9 +14,3 @@ pub const ADD_IMPLIED_PRECONDITIONS: bool = false;
 
 /// Whether to filter unreachable facts (default: true)
 pub const FILTER_UNREACHABLE_FACTS: bool = true;
-
-/// Whether to dump the task (default: false)
-pub const DUMP_TASK: bool = false;
-
-/// Whether to generate a relaxed task (default: false)
-pub const GENERATE_RELAXED_TASK: bool = false;

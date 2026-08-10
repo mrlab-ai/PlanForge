@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use tracing::debug;
-
 use super::conditions::{Atom, Condition, NegatedAtom};
 use super::effects::Effect;
 use super::f_expression::{
@@ -78,17 +76,6 @@ impl Action {
             new_assign_effects.push((new_params, new_cond, new_assign));
         }
         self.assign_effects = new_assign_effects;
-    }
-
-    pub fn dump(&self) {
-        debug!("Action {} ({} params)", self.name, self.parameters.len());
-        debug!("  precondition: {}", self.precondition);
-        for eff in &self.effects {
-            eff.dump();
-        }
-        if let Some(ref cost) = self.cost {
-            debug!("  cost: {}", cost);
-        }
     }
 
     /// Returns a PropositionalAction or None if the precondition is statically false.
@@ -233,46 +220,6 @@ pub struct PropositionalAction {
     pub del_effects: Vec<(Vec<Condition>, Atom)>,
     pub assign_effects: Vec<(Vec<Condition>, FunctionAssignment)>,
     pub cost: Option<FunctionAssignment>,
-}
-
-impl PropositionalAction {
-    pub fn new(
-        name: String,
-        precondition: Vec<Condition>,
-        add_effects: Vec<(Vec<Condition>, Atom)>,
-        del_effects: Vec<(Vec<Condition>, Atom)>,
-        assign_effects: Vec<(Vec<Condition>, FunctionAssignment)>,
-        cost: Option<FunctionAssignment>,
-    ) -> Self {
-        PropositionalAction {
-            name,
-            precondition,
-            add_effects,
-            del_effects,
-            assign_effects,
-            cost,
-        }
-    }
-
-    pub fn dump(&self) {
-        debug!("PropositionalAction {}", self.name);
-        debug!("  Preconditions:");
-        for p in &self.precondition {
-            debug!("    {}", p);
-        }
-        debug!("  Add effects:");
-        for (cond, atom) in &self.add_effects {
-            debug!("    {} <- {:?}", atom, cond);
-        }
-        debug!("  Del effects:");
-        for (cond, atom) in &self.del_effects {
-            debug!("    {} <- {:?}", atom, cond);
-        }
-        debug!("  Assign effects:");
-        for (cond, assign) in &self.assign_effects {
-            debug!("    {} <- {:?}", assign, cond);
-        }
-    }
 }
 
 // Add instantiate_action method to Condition

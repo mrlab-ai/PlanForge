@@ -3,7 +3,6 @@ use ordered_float::OrderedFloat;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use tracing::debug;
 
 /// Root enum for functional expressions
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,10 +61,6 @@ impl PrimitiveNumericExpression {
             ntype,
         }
     }
-
-    pub fn dump(&self) {
-        debug!("PNE {} {:?} [{}]", self.symbol, self.args, self.ntype);
-    }
 }
 
 impl fmt::Display for PrimitiveNumericExpression {
@@ -111,12 +106,6 @@ impl fmt::Display for ArithmeticExpression {
         write!(f, "ArithExpr({}, {:?})", self.op, self.parts)
     }
 }
-
-/// Convenience constructors matching Python subclasses
-pub type Difference = ArithmeticExpression;
-pub type Sum = ArithmeticExpression;
-pub type Product = ArithmeticExpression;
-pub type Quotient = ArithmeticExpression;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AdditiveInverse {
@@ -188,24 +177,6 @@ impl FunctionAssignment {
         FunctionAssignment::new(self.symbol.clone(), new_fluent, new_expr)
     }
 
-    pub fn instantiate_cost(
-        &self,
-        var_mapping: &super::tasks::VarMapping,
-        fluent_functions: &HashSet<PrimitiveNumericExpression>,
-        init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
-        task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-        new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
-    ) -> FunctionAssignment {
-        // Same as instantiate but for cost
-        self.instantiate(
-            var_mapping,
-            fluent_functions,
-            init_function_vals,
-            task_function_admin,
-            new_constant_axioms,
-        )
-    }
-
     pub fn rename_variables(&self, renamings: &HashMap<String, String>) -> FunctionAssignment {
         FunctionAssignment::new(
             self.symbol.clone(),
@@ -225,13 +196,6 @@ impl FunctionAssignment {
     pub fn is_cost_assignment(&self) -> bool {
         self.fluent.symbol == "total-cost"
     }
-
-    pub fn dump(&self) {
-        debug!(
-            "FunctionAssignment {} {} := {}",
-            self.symbol, self.fluent, self.expression
-        );
-    }
 }
 
 impl fmt::Display for FunctionAssignment {
@@ -243,13 +207,6 @@ impl fmt::Display for FunctionAssignment {
         )
     }
 }
-
-// Convenience type aliases for FunctionAssignment subclasses
-pub type Assign = FunctionAssignment;
-pub type Increase = FunctionAssignment;
-pub type Decrease = FunctionAssignment;
-pub type ScaleUp = FunctionAssignment;
-pub type ScaleDown = FunctionAssignment;
 
 // ============== Helper methods on FunctionalExpression ==============
 
@@ -310,65 +267,31 @@ impl FunctionalExpression {
         }
     }
 
-    pub fn free_variables(&self) -> HashSet<String> {
-        match self {
-            FunctionalExpression::NumericConstant(_) => HashSet::new(),
-            FunctionalExpression::PrimitiveNumericExpression(pne) => pne
-                .args
-                .iter()
-                .filter(|a| a.starts_with('?'))
-                .cloned()
-                .collect(),
-            FunctionalExpression::ArithmeticExpression(ae) => {
-                let mut result = HashSet::new();
-                for p in &ae.parts {
-                    result.extend(p.free_variables());
-                }
-                result
-            }
-            FunctionalExpression::AdditiveInverse(ai) => {
-                let mut result = HashSet::new();
-                for p in &ai.parts {
-                    result.extend(p.free_variables());
-                }
-                result
-            }
-        }
-    }
-
-    /// Compiles object functions into numeric axioms.
-    pub fn compile_objectfunctions_aux(
+    /// Replaces a nested arithmetic expression by the derived function that
+    /// stands for it, so that what is left is flat: a term, or an operator
+    /// applied to terms.
+    pub fn flattened(
         &self,
-        fluent_functions: &HashSet<PrimitiveNumericExpression>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
     ) -> FunctionalExpression {
+        let is_term = |part: &FunctionalExpression| {
+            matches!(
+                part,
+                FunctionalExpression::NumericConstant(_)
+                    | FunctionalExpression::PrimitiveNumericExpression(_)
+            )
+        };
         match self {
-            FunctionalExpression::NumericConstant(_) => self.clone(),
-            FunctionalExpression::PrimitiveNumericExpression(pne) => {
-                if fluent_functions.contains(pne) {
-                    self.clone()
-                } else {
-                    // Treat as constant
-                    self.clone()
-                }
+            FunctionalExpression::NumericConstant(_)
+            | FunctionalExpression::PrimitiveNumericExpression(_) => self.clone(),
+            FunctionalExpression::ArithmeticExpression(ae) if ae.parts.iter().all(is_term) => {
+                self.clone()
             }
-            FunctionalExpression::ArithmeticExpression(ae) => {
-                if ae.parts.iter().all(|p| {
-                    matches!(
-                        p,
-                        FunctionalExpression::NumericConstant(_)
-                            | FunctionalExpression::PrimitiveNumericExpression(_)
-                    )
-                }) {
-                    self.clone()
-                } else {
-                    let derived = task_function_admin.get_derived_function(self);
-                    FunctionalExpression::PrimitiveNumericExpression(derived)
-                }
-            }
-            FunctionalExpression::AdditiveInverse(_) => {
-                let derived = task_function_admin.get_derived_function(self);
-                FunctionalExpression::PrimitiveNumericExpression(derived)
+            FunctionalExpression::ArithmeticExpression(_)
+            | FunctionalExpression::AdditiveInverse(_) => {
+                FunctionalExpression::PrimitiveNumericExpression(
+                    task_function_admin.get_derived_function(self),
+                )
             }
         }
     }
@@ -450,7 +373,7 @@ pub fn instantiate_expression(
                 ae.op.clone(),
                 new_parts,
             ));
-            new_expr.compile_objectfunctions_aux(fluent_functions, task_function_admin)
+            new_expr.flattened(task_function_admin)
         }
         FunctionalExpression::AdditiveInverse(ai) => {
             let new_parts: Vec<FunctionalExpression> = ai
@@ -468,7 +391,7 @@ pub fn instantiate_expression(
                 })
                 .collect();
             let new_expr = FunctionalExpression::AdditiveInverse(AdditiveInverse::new(new_parts));
-            new_expr.compile_objectfunctions_aux(fluent_functions, task_function_admin)
+            new_expr.flattened(task_function_admin)
         }
     }
 }

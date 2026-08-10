@@ -11,10 +11,6 @@ impl Predicate {
     pub fn new(name: String, arguments: Vec<TypedObject>) -> Self {
         Predicate { name, arguments }
     }
-
-    pub fn get_arity(&self) -> usize {
-        self.arguments.len()
-    }
 }
 
 impl fmt::Display for Predicate {

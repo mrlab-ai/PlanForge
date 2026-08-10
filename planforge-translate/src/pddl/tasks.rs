@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use tracing::{debug, warn};
-
 use super::actions::Action;
 use super::axioms::{Axiom, NumericAxiom};
 use super::conditions::{Atom, Condition, Conjunction};
@@ -30,10 +28,6 @@ pub struct Requirements {
 impl Requirements {
     pub fn new(requirements: Vec<String>) -> Self {
         Requirements { requirements }
-    }
-
-    pub fn has(&self, req: &str) -> bool {
-        self.requirements.iter().any(|r| r == req)
     }
 }
 
@@ -270,19 +264,6 @@ impl Task {
             .push(Axiom::new(name, parameters, num_external, condition));
         effect
     }
-
-    pub fn dump(&self) {
-        debug!("Task: {} (domain: {})", self.task_name, self.domain_name);
-        debug!("  {} types", self.types.len());
-        debug!("  {} objects", self.objects.len());
-        debug!("  {} predicates", self.predicates.len());
-        debug!("  {} functions", self.functions.len());
-        debug!("  {} init facts", self.init.len());
-        debug!("  {} numeric init", self.num_init.len());
-        debug!("  goal: {}", self.goal);
-        debug!("  {} actions", self.actions.len());
-        debug!("  {} axioms", self.axioms.len());
-    }
 }
 
 /// Manages derived numeric functions (numeric axioms created during instantiation).
@@ -476,34 +457,6 @@ impl DerivedFunctionAdministrator {
         self.function_symbols.insert(name.clone());
         self.derived_functions.insert(key, axiom);
         PrimitiveNumericExpression::with_type(name, args, 'D')
-    }
-
-    pub fn dump(&self) {
-        debug!("DerivedFunctionAdministrator:");
-        for (key, axiom) in &self.derived_functions {
-            debug!("  {:?} -> {} ({})", key, axiom.get_head(), axiom);
-        }
-    }
-}
-
-pub fn check_atom_consistency(
-    atom: &Atom,
-    _same_truth_value: &HashSet<Atom>,
-    other_truth_value: &HashSet<Atom>,
-    _atom_is_true: bool,
-) -> bool {
-    !other_truth_value.contains(atom)
-}
-
-pub fn check_for_duplicates(lst: &[String], what_type: &str, what_list: &str) {
-    let mut seen = HashSet::new();
-    for item in lst {
-        if !seen.insert(item) {
-            warn!(
-                "Warning: duplicate {} in {}: {}",
-                what_type, what_list, item
-            );
-        }
     }
 }
 
