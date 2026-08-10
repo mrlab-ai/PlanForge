@@ -1,5 +1,12 @@
 /// Constraint system for invariant checking.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+/// The representative of `term`'s equivalence class under an assignment. A term
+/// that none of the equalities mentions forms its own class, so a missing entry
+/// stands for the term itself.
+pub fn class_of<'a>(representative: &'a HashMap<String, String>, term: &'a str) -> &'a str {
+    representative.get(term).map_or(term, String::as_str)
+}
 
 /// Represents a disjunction of inequalities: (v1 != v2) or (v3 != v4) or ...
 #[derive(Debug, Clone)]
@@ -13,194 +20,138 @@ impl NegativeClause {
         NegativeClause { parts }
     }
 
-    /// Returns true if at least one pair (v1, v2) has v1 != v2.
-    pub fn is_satisfiable(&self) -> bool {
-        for (v1, v2) in &self.parts {
-            if v1 != v2 {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn apply_mapping(&self, mapping: &HashMap<String, String>) -> NegativeClause {
-        let new_parts = self
-            .parts
+    /// Whether some pair of the clause falls into two different equivalence
+    /// classes.
+    fn is_satisfied_by(&self, representative: &HashMap<String, String>) -> bool {
+        self.parts
             .iter()
-            .map(|(v1, v2)| {
-                let new_v1 = mapping.get(v1).cloned().unwrap_or_else(|| v1.clone());
-                let new_v2 = mapping.get(v2).cloned().unwrap_or_else(|| v2.clone());
-                (new_v1, new_v2)
-            })
-            .collect();
-        NegativeClause::new(new_parts)
+            .any(|(v1, v2)| class_of(representative, v1) != class_of(representative, v2))
     }
 }
 
+/// The representative of every term of `equalities`: the object of its
+/// equivalence class if there is one, otherwise the smallest of its variables.
+///
+/// `None` if some class holds two objects, in which case no substitution can
+/// satisfy the conjunction.
+fn compute_representatives(equalities: &[(String, String)]) -> Option<HashMap<String, String>> {
+    // Union-find over the mentioned terms: `class` maps a term to the index of
+    // its class in `classes`, and merging empties the class that is given up.
+    let mut class: HashMap<&str, usize> = HashMap::new();
+    let mut classes: Vec<Vec<&str>> = Vec::new();
+    for (v1, v2) in equalities {
+        for term in [v1.as_str(), v2.as_str()] {
+            class.entry(term).or_insert_with(|| {
+                classes.push(vec![term]);
+                classes.len() - 1
+            });
+        }
+        let (mut keep, mut given_up) = (class[v1.as_str()], class[v2.as_str()]);
+        if keep == given_up {
+            continue;
+        }
+        if classes[keep].len() < classes[given_up].len() {
+            std::mem::swap(&mut keep, &mut given_up);
+        }
+        let merged = std::mem::take(&mut classes[given_up]);
+        for term in &merged {
+            class.insert(term, keep);
+        }
+        classes[keep].extend(merged);
+    }
+
+    let mut representative = HashMap::with_capacity(class.len());
+    for terms in classes.iter().filter(|terms| !terms.is_empty()) {
+        let mut objects = terms.iter().filter(|term| !term.starts_with('?'));
+        let chosen = match objects.next() {
+            Some(object) => {
+                if objects.next().is_some() {
+                    return None;
+                }
+                *object
+            }
+            None => terms.iter().min().copied().expect("classes are non-empty"),
+        };
+        for term in terms {
+            representative.insert((*term).to_string(), chosen.to_string());
+        }
+    }
+    Some(representative)
+}
+
 /// Represents a conjunction of equalities: (v1 = v2) and (v3 = v4) and ...
-/// Uses union-find equivalence classes to compute a mapping.
 #[derive(Debug, Clone)]
 pub struct Assignment {
     pub equalities: Vec<(String, String)>,
-    consistent: Option<bool>,
-    mapping: Option<HashMap<String, String>>,
+    /// The memoized result of `compute_representatives`, `None` until it is
+    /// first asked for. The inner `None` means inconsistent, and is why an
+    /// empty map -- the answer for a conjunction without equalities -- must not
+    /// be conflated with an absent one.
+    representative: Option<Option<HashMap<String, String>>>,
 }
 
 impl Assignment {
     pub fn new(equalities: Vec<(String, String)>) -> Self {
         Assignment {
             equalities,
-            consistent: None,
-            mapping: None,
+            representative: None,
         }
-    }
-
-    fn compute_equivalence_classes(&self) -> HashMap<String, HashSet<String>> {
-        // Union-find style equivalence class computation
-        let mut eq_classes: HashMap<String, HashSet<String>> = HashMap::new();
-
-        for (v1, v2) in &self.equalities {
-            let c1 = eq_classes
-                .entry(v1.clone())
-                .or_insert_with(|| {
-                    let mut s = HashSet::new();
-                    s.insert(v1.clone());
-                    s
-                })
-                .clone();
-            let c2 = eq_classes
-                .entry(v2.clone())
-                .or_insert_with(|| {
-                    let mut s = HashSet::new();
-                    s.insert(v2.clone());
-                    s
-                })
-                .clone();
-
-            // Check if they're already the same class (by pointer/content identity)
-            if c1 == c2 && c1.contains(v2) {
-                continue;
-            }
-
-            // Merge: always merge smaller into larger
-            let (big, small) = if c1.len() >= c2.len() {
-                (c1, c2)
-            } else {
-                (c2, c1)
-            };
-
-            let mut merged = big;
-            merged.extend(small.iter().cloned());
-
-            // Update all entries that point to either class
-            for elem in merged.iter() {
-                eq_classes.insert(elem.clone(), merged.clone());
-            }
-        }
-
-        eq_classes
-    }
-
-    fn compute_mapping(&mut self) {
-        let eq_classes = self.compute_equivalence_classes();
-
-        let mut mapping = HashMap::new();
-        let mut seen_classes: HashSet<Vec<String>> = HashSet::new();
-
-        for eq_class in eq_classes.values() {
-            let mut sorted_class: Vec<String> = eq_class.iter().cloned().collect();
-            sorted_class.sort();
-            if seen_classes.contains(&sorted_class) {
-                continue;
-            }
-            seen_classes.insert(sorted_class);
-
-            let variables: Vec<&String> = eq_class
-                .iter()
-                .filter(|item| item.starts_with('?'))
-                .collect();
-            let constants: Vec<&String> = eq_class
-                .iter()
-                .filter(|item| !item.starts_with('?'))
-                .collect();
-
-            if constants.len() >= 2 {
-                self.consistent = Some(false);
-                self.mapping = None;
-                return;
-            }
-
-            let set_val = if !constants.is_empty() {
-                constants[0].clone()
-            } else {
-                variables.iter().min().unwrap().to_string()
-            };
-
-            for entry in eq_class {
-                mapping.insert(entry.clone(), set_val.clone());
-            }
-        }
-
-        self.consistent = Some(true);
-        self.mapping = Some(mapping);
     }
 
     pub fn is_consistent(&mut self) -> bool {
-        self.get_mapping().is_some()
+        self.representative().is_some()
     }
 
-    ///
-    /// `None` exactly when the assignment is inconsistent, i.e. one equivalence
-    /// class contains two different constants and no substitution can satisfy
-    /// it. An empty mapping is a valid answer for an assignment without
-    /// equalities, so the two cases must not be conflated.
-    pub fn get_mapping(&mut self) -> Option<&HashMap<String, String>> {
-        if self.consistent.is_none() {
-            self.compute_mapping();
+    pub fn representative(&mut self) -> Option<&HashMap<String, String>> {
+        if self.representative.is_none() {
+            self.representative = Some(compute_representatives(&self.equalities));
         }
-        self.mapping.as_ref()
+        self.representative
+            .as_ref()
+            .expect("just computed")
+            .as_ref()
     }
 }
 
-#[derive(Debug, Clone)]
+/// A conjunction of an equality DNF, a set of inequality disjunctions, and a
+/// set of terms that may not become equivalent to an object.
+///
+/// The system is solvable if one `Assignment` can be picked from each entry of
+/// `combinatorial_assignments` such that the finest equivalence relation
+/// induced by all their equalities is consistent, leaves every `not_constant`
+/// term in a class without an object, and satisfies every negative clause.
+#[derive(Debug, Clone, Default)]
 pub struct ConstraintSystem {
     pub combinatorial_assignments: Vec<Vec<Assignment>>,
     pub neg_clauses: Vec<NegativeClause>,
-}
-
-impl Default for ConstraintSystem {
-    fn default() -> Self {
-        Self::new()
-    }
+    not_constant: Vec<String>,
 }
 
 impl ConstraintSystem {
     pub fn new() -> Self {
-        ConstraintSystem {
-            combinatorial_assignments: vec![],
-            neg_clauses: vec![],
-        }
+        Self::default()
     }
 
-    fn all_clauses_satisfiable(&self, assignment: &mut Assignment) -> bool {
-        let mapping = assignment
-            .get_mapping()
-            .expect("clauses are only checked against consistent assignments");
-        for neg_clause in &self.neg_clauses {
-            let clause = neg_clause.apply_mapping(mapping);
-            if !clause.is_satisfiable() {
-                return false;
-            }
-        }
-        true
+    fn is_satisfied_by(&self, assignment: &mut Assignment) -> bool {
+        let representative = assignment
+            .representative()
+            .expect("constraints are only checked against consistent assignments");
+        self.not_constant
+            .iter()
+            .all(|term| class_of(representative, term).starts_with('?'))
+            && self
+                .neg_clauses
+                .iter()
+                .all(|clause| clause.is_satisfied_by(representative))
     }
 
     fn combine_assignments(assignments: &[&Assignment]) -> Assignment {
-        let mut new_equalities = vec![];
-        for a in assignments {
-            new_equalities.extend(a.equalities.clone());
-        }
-        Assignment::new(new_equalities)
+        Assignment::new(
+            assignments
+                .iter()
+                .flat_map(|assignment| assignment.equalities.iter().cloned())
+                .collect(),
+        )
     }
 
     pub fn add_assignment(&mut self, assignment: Assignment) {
@@ -215,38 +166,26 @@ impl ConstraintSystem {
         self.neg_clauses.push(clause);
     }
 
-    pub fn combine(&self, other: &ConstraintSystem) -> ConstraintSystem {
-        let mut combined = ConstraintSystem::new();
-        combined.combinatorial_assignments = self.combinatorial_assignments.clone();
-        combined
-            .combinatorial_assignments
-            .extend(other.combinatorial_assignments.clone());
-        combined.neg_clauses = self.neg_clauses.clone();
-        combined.neg_clauses.extend(other.neg_clauses.clone());
-        combined
+    /// Forbids solutions that put `term` into the same equivalence class as an
+    /// object.
+    pub fn add_not_constant(&mut self, term: String) {
+        self.not_constant.push(term);
     }
 
-    pub fn copy(&self) -> Self {
-        let mut other = ConstraintSystem::new();
-        other.combinatorial_assignments = self.combinatorial_assignments.clone();
-        other.neg_clauses = self.neg_clauses.clone();
-        other
+    pub fn extend(&mut self, other: &ConstraintSystem) {
+        self.combinatorial_assignments
+            .extend_from_slice(&other.combinatorial_assignments);
+        self.neg_clauses.extend_from_slice(&other.neg_clauses);
+        self.not_constant.extend_from_slice(&other.not_constant);
     }
 
     pub fn is_solvable(&self) -> bool {
-        // Cartesian product of combinatorial_assignments
-        let combos = cartesian_product_refs(&self.combinatorial_assignments);
-        for combo in &combos {
-            let refs: Vec<&Assignment> = combo.to_vec();
-            let mut combined = Self::combine_assignments(&refs);
-            if !combined.is_consistent() {
-                continue;
-            }
-            if self.all_clauses_satisfiable(&mut combined) {
-                return true;
-            }
-        }
-        false
+        cartesian_product_refs(&self.combinatorial_assignments)
+            .into_iter()
+            .any(|combo| {
+                let mut combined = Self::combine_assignments(&combo);
+                combined.is_consistent() && self.is_satisfied_by(&mut combined)
+            })
     }
 }
 

@@ -2,9 +2,10 @@ use itertools::Itertools;
 /// Invariant parts and invariant checking for mutex group computation.
 use std::collections::{HashMap, HashSet};
 
-use super::constraints::{Assignment, ConstraintSystem, NegativeClause};
+use super::constraints::{Assignment, ConstraintSystem, NegativeClause, class_of};
 use super::pddl::actions::Action;
 use super::pddl::conditions::*;
+use super::pddl::effects::Effect;
 use super::tools;
 use super::tools::OrderedSet;
 
@@ -74,12 +75,23 @@ fn get_literals(condition: &Condition) -> Vec<&Condition> {
     }
 }
 
-/// Helper: get predicate and args from a literal condition
+/// Whether the condition is negated, its predicate and its arguments, or `None`
+/// if it is not a literal. Effects of numeric actions need not be literals, so
+/// the invariant analysis filters rather than asserts on them.
 fn literal_info(cond: &Condition) -> Option<(bool, &str, &[String])> {
     match cond {
         Condition::Atom(a) => Some((false, &a.predicate, &a.args)),
         Condition::NegatedAtom(na) => Some((true, &na.predicate, &na.args)),
         _ => None,
+    }
+}
+
+/// The arguments of a condition already known to be a literal.
+fn literal_args(cond: &Condition) -> &[String] {
+    match cond {
+        Condition::Atom(a) => &a.args,
+        Condition::NegatedAtom(na) => &na.args,
+        other => panic!("expected a literal, got {other}"),
     }
 }
 
@@ -137,9 +149,7 @@ fn ensure_cover(
     invariant: &Invariant,
     inv_vars: &[String],
 ) {
-    let a = invariant.get_covering_assignments(inv_vars, literal);
-    assert_eq!(a.len(), 1);
-    system.add_assignment_disjunction(a);
+    system.add_assignment(invariant.cover_equivalence_conjunction(inv_vars, literal));
 }
 
 fn ensure_inequality(system: &mut ConstraintSystem, literal1: &Condition, literal2: &Condition) {
@@ -178,24 +188,19 @@ impl InvariantPart {
     }
 
     pub fn get_assignment(&self, parameters: &[String], literal: &Condition) -> Assignment {
-        if let Some((_, _, args)) = literal_info(literal) {
-            let equalities: Vec<(String, String)> = parameters
+        let args = literal_args(literal);
+        Assignment::new(
+            parameters
                 .iter()
                 .zip(self.order.iter())
                 .map(|(param, &argpos)| (param.clone(), args[argpos].clone()))
-                .collect();
-            Assignment::new(equalities)
-        } else {
-            Assignment::new(vec![])
-        }
+                .collect(),
+        )
     }
 
     pub fn get_parameters(&self, literal: &Condition) -> Vec<String> {
-        if let Some((_, _, args)) = literal_info(literal) {
-            self.order.iter().map(|&pos| args[pos].clone()).collect()
-        } else {
-            vec![]
-        }
+        let args = literal_args(literal);
+        self.order.iter().map(|&pos| args[pos].clone()).collect()
     }
 
     pub fn instantiate(&self, parameters: &[String]) -> Atom {
@@ -215,10 +220,7 @@ impl InvariantPart {
         own_literal: &Condition,
         other_literal: &Condition,
     ) -> Vec<Vec<(usize, i32)>> {
-        let (_, _, other_args) = match literal_info(other_literal) {
-            Some(info) => info,
-            None => return vec![],
-        };
+        let other_args = literal_args(other_literal);
 
         let allowed_omissions_init = other_args.len() as i32 - self.order.len() as i32;
         if allowed_omissions_init != 0 && allowed_omissions_init != 1 {
@@ -262,10 +264,8 @@ impl InvariantPart {
         own_literal: &Condition,
         other_literal: &Condition,
     ) -> Vec<InvariantPart> {
-        let (_, other_pred, _) = match literal_info(other_literal) {
-            Some(info) => info,
-            None => return vec![],
-        };
+        let (_, other_pred, _) =
+            literal_info(other_literal).expect("matches are only sought between literals");
 
         let mut result = vec![];
         for mapping in self.possible_mappings(own_literal, other_literal) {
@@ -285,15 +285,6 @@ impl InvariantPart {
             ));
         }
         result
-    }
-
-    pub fn matches(
-        &self,
-        other: &InvariantPart,
-        own_literal: &Condition,
-        other_literal: &Condition,
-    ) -> bool {
-        self.get_parameters(own_literal) == other.get_parameters(other_literal)
     }
 }
 
@@ -352,25 +343,30 @@ impl Invariant {
     }
 
     pub fn get_parameters(&self, atom: &Condition) -> Vec<String> {
-        if let Some((_, pred, _)) = literal_info(atom)
-            && let Some(part) = self.predicate_to_part.get(pred)
-        {
-            return part.get_parameters(atom);
-        }
-        vec![]
+        self.part_for(atom).get_parameters(atom)
     }
 
-    pub fn get_covering_assignments(
+    /// The part covering `atom`'s predicate. There is at most one, which
+    /// `Invariant::new` asserts by comparing the number of parts with the
+    /// number of distinct predicates; several parts would make covering a
+    /// disjunction rather than a single equality conjunction.
+    fn part_for(&self, atom: &Condition) -> &InvariantPart {
+        let (_, predicate, _) =
+            literal_info(atom).expect("invariant parts are only matched against literals");
+        self.predicate_to_part
+            .get(predicate)
+            .expect("the invariant has a part for the atom's predicate")
+    }
+
+    /// The equality conjunction that makes the invariant cover `atom`: every
+    /// invariant parameter is equated with the corresponding argument of the
+    /// atom. Whether the literal is negated does not matter.
+    pub fn cover_equivalence_conjunction(
         &self,
         parameters: &[String],
         atom: &Condition,
-    ) -> Vec<Assignment> {
-        if let Some((_, pred, _)) = literal_info(atom)
-            && let Some(part) = self.predicate_to_part.get(pred)
-        {
-            return vec![part.get_assignment(parameters, atom)];
-        }
-        vec![]
+    ) -> Assignment {
+        self.part_for(atom).get_assignment(parameters, atom)
     }
 
     pub fn check_balance(
@@ -408,7 +404,7 @@ impl Invariant {
     }
 
     pub fn operator_too_heavy(&self, h_action: &Action) -> bool {
-        let add_effects: Vec<&super::pddl::effects::Effect> = h_action
+        let add_effects: Vec<&Effect> = h_action
             .effects
             .iter()
             .filter(|eff| {
@@ -464,7 +460,7 @@ impl Invariant {
         enqueue_func: &mut dyn FnMut(Invariant),
     ) -> bool {
         let inv_vars = find_unique_variables(action, self);
-        let relevant_effs: Vec<&super::pddl::effects::Effect> = action
+        let relevant_effs: Vec<&Effect> = action
             .effects
             .iter()
             .filter(|eff| {
@@ -476,7 +472,7 @@ impl Invariant {
             })
             .collect();
 
-        let add_effects: Vec<&&super::pddl::effects::Effect> = relevant_effs
+        let add_effects: Vec<&&Effect> = relevant_effs
             .iter()
             .filter(|eff| {
                 if let Some((negated, _, _)) = literal_info(&eff.peffect) {
@@ -487,7 +483,7 @@ impl Invariant {
             })
             .collect();
 
-        let del_effects: Vec<&&super::pddl::effects::Effect> = relevant_effs
+        let del_effects: Vec<&&Effect> = relevant_effs
             .iter()
             .filter(|eff| {
                 if let Some((negated, _, _)) = literal_info(&eff.peffect) {
@@ -506,77 +502,74 @@ impl Invariant {
         false
     }
 
-    fn minimal_covering_renamings(
-        &self,
-        action: &Action,
-        add_effect: &super::pddl::effects::Effect,
-        inv_vars: &[String],
-    ) -> Vec<ConstraintSystem> {
-        let mut assigs = self.get_covering_assignments(inv_vars, &add_effect.peffect);
-
-        let params: Vec<String> = action.parameters.iter().map(|p| p.name.clone()).collect();
-        let mut minimal_renamings = vec![];
-
-        for assignment in &mut assigs {
-            let mut system = ConstraintSystem::new();
-            system.add_assignment(assignment.clone());
-            // A covering assignment equates each invariant variable with one
-            // effect argument, so it can never place two constants in the same
-            // class.
-            let mapping = assignment
-                .get_mapping()
-                .expect("covering assignments are consistent by construction");
-            if params.len() > 1 {
-                for combo in params.iter().combinations(2) {
-                    let n1 = combo[0];
-                    let n2 = combo[1];
-                    let mapped_n1 = mapping.get(n1).unwrap_or(n1);
-                    let mapped_n2 = mapping.get(n2).unwrap_or(n2);
-                    if mapped_n1 != mapped_n2 {
-                        let neg = NegativeClause::new(vec![(n1.clone(), n2.clone())]);
-                        system.add_negative_clause(neg);
-                    }
-                }
-            }
-            minimal_renamings.push(system);
-        }
-        minimal_renamings
-    }
-
+    /// Whether `add_effect` can threaten the invariant in an application of
+    /// `action` that no delete effect of the same action balances. If so, the
+    /// refined candidates are enqueued.
     fn add_effect_unbalanced(
         &self,
         action: &Action,
-        add_effect: &super::pddl::effects::Effect,
-        del_effects: &[&&super::pddl::effects::Effect],
+        add_effect: &Effect,
+        del_effects: &[&&Effect],
         inv_vars: &[String],
         enqueue_func: &mut dyn FnMut(Invariant),
     ) -> bool {
-        let mut minimal_renamings = self.minimal_covering_renamings(action, add_effect, inv_vars);
-
-        let mut lhs_by_pred: HashMap<String, Vec<&Condition>> = HashMap::new();
+        // What must hold for the action to be applicable and to actually
+        // produce the add effect, indexed by predicate. The atom must not
+        // already be true, or the effect produces nothing.
+        let mut produced_by_pred: HashMap<&str, Vec<&Condition>> = HashMap::new();
         let precond_literals = get_literals(&action.precondition);
         let add_cond_literals = get_literals(&add_effect.condition);
         let add_neg = negate_literal(&add_effect.peffect);
-
-        for lit in precond_literals
+        for literal in precond_literals
             .iter()
             .chain(add_cond_literals.iter())
             .chain(std::iter::once(&&add_neg))
         {
-            if let Some((_, pred, _)) = literal_info(lit) {
-                lhs_by_pred.entry(pred.to_string()).or_default().push(lit);
+            let (_, predicate, _) = literal_info(literal).expect("get_literals yields literals");
+            produced_by_pred.entry(predicate).or_default().push(literal);
+        }
+
+        // Equating every invariant parameter with its value in the add effect
+        // is exactly the case in which the add effect threatens the invariant.
+        let mut add_cover = self.cover_equivalence_conjunction(inv_vars, &add_effect.peffect);
+
+        // The add effect has to be balanced in *every* threatening application,
+        // so a solution may not restrict the action parameters or the effect's
+        // quantified variables beyond what the threat itself forces: it may
+        // neither equate two of them nor bind one to an object.
+        let params: Vec<&str> = action
+            .parameters
+            .iter()
+            .chain(add_effect.parameters.iter())
+            .map(|param| param.name.as_str())
+            .collect();
+        let mut param_system = ConstraintSystem::new();
+        let representative = add_cover
+            .representative()
+            .expect("a cover equates each invariant parameter with one effect argument");
+        for &param in &params {
+            if class_of(representative, param).starts_with('?') {
+                param_system.add_not_constant(param.to_string());
+            }
+        }
+        for (&n1, &n2) in params.iter().tuple_combinations() {
+            if class_of(representative, n1) != class_of(representative, n2) {
+                param_system.add_negative_clause(NegativeClause::new(vec![(
+                    n1.to_string(),
+                    n2.to_string(),
+                )]));
             }
         }
 
         for del_effect in del_effects {
-            minimal_renamings = self.unbalanced_renamings(
+            if self.balances(
                 del_effect,
                 add_effect,
+                &produced_by_pred,
+                &add_cover,
+                &param_system,
                 inv_vars,
-                &lhs_by_pred,
-                minimal_renamings,
-            );
-            if minimal_renamings.is_empty() {
+            ) {
                 return false;
             }
         }
@@ -585,139 +578,103 @@ impl Invariant {
         true
     }
 
-    fn refine_candidate(
+    /// Whether `del_effect` is guaranteed to consume the atom that `add_effect`
+    /// produces, in every application in which the add effect threatens the
+    /// invariant.
+    ///
+    /// `add_cover` fixes the invariant parameters to the add effect's
+    /// arguments, and `param_system` keeps the action parameters and the add
+    /// effect's quantified variables unrestricted; both only depend on the add
+    /// effect and are therefore computed once by the caller.
+    fn balances(
         &self,
-        add_effect: &super::pddl::effects::Effect,
-        action: &Action,
-        enqueue_func: &mut dyn FnMut(Invariant),
-    ) {
-        if let Some((_, add_pred, _)) = literal_info(&add_effect.peffect)
-            && let Some(part) = self.predicate_to_part.get(add_pred)
-        {
-            for del_eff in &action.effects {
-                if let Some((negated, del_pred, _)) = literal_info(&del_eff.peffect)
-                    && negated
-                    && !self.predicate_to_part.contains_key(del_pred)
-                {
-                    for match_part in part.possible_matches(&add_effect.peffect, &del_eff.peffect) {
-                        let mut new_parts: HashSet<InvariantPart> = self.parts.clone();
-                        new_parts.insert(match_part);
-                        enqueue_func(Invariant::new(new_parts));
-                    }
-                }
-            }
-        }
-    }
-
-    fn unbalanced_renamings(
-        &self,
-        del_effect: &super::pddl::effects::Effect,
-        add_effect: &super::pddl::effects::Effect,
+        del_effect: &Effect,
+        add_effect: &Effect,
+        produced_by_pred: &HashMap<&str, Vec<&Condition>>,
+        add_cover: &Assignment,
+        param_system: &ConstraintSystem,
         inv_vars: &[String],
-        lhs_by_pred: &HashMap<String, Vec<&Condition>>,
-        unbalanced_renamings: Vec<ConstraintSystem>,
-    ) -> Vec<ConstraintSystem> {
-        let mut system = ConstraintSystem::new();
-        ensure_inequality(&mut system, &add_effect.peffect, &del_effect.peffect);
-        ensure_cover(&mut system, &del_effect.peffect, self, inv_vars);
-
-        // Check constants
-        let mut check_constants = false;
-        let mut constant_test_system = ConstraintSystem::new();
-
-        if !system.combinatorial_assignments.is_empty()
-            && !system.combinatorial_assignments[0].is_empty()
-        {
-            for (a, b) in &system.combinatorial_assignments[0][0].equalities {
-                if !b.starts_with('?') {
-                    check_constants = true;
-                    let neg = NegativeClause::new(vec![(a.clone(), b.clone())]);
-                    constant_test_system.add_negative_clause(neg);
-                }
-            }
-        }
-
-        ensure_inequality(&mut system, &add_effect.peffect, &del_effect.peffect);
-
-        let mut still_unbalanced = vec![];
-        for renaming in unbalanced_renamings {
-            if check_constants {
-                let new_sys = constant_test_system.combine(&renaming);
-                if new_sys.is_solvable() {
-                    still_unbalanced.push(renaming);
-                    continue;
-                }
-            }
-            let mut new_sys = system.combine(&renaming);
-            if self.lhs_satisfiable(&renaming, lhs_by_pred) {
-                if let Some(implies_system) = self.imply_del_effect(del_effect, lhs_by_pred) {
-                    new_sys = new_sys.combine(&implies_system);
-                } else {
-                    still_unbalanced.push(renaming);
-                    continue;
-                }
-            }
-            if !new_sys.is_solvable() {
-                still_unbalanced.push(renaming);
-            }
-        }
-        still_unbalanced
-    }
-
-    fn lhs_satisfiable(
-        &self,
-        renaming: &ConstraintSystem,
-        lhs_by_pred: &HashMap<String, Vec<&Condition>>,
     ) -> bool {
-        let mut system = renaming.copy();
-        let all_literals: Vec<&Condition> = lhs_by_pred
-            .values()
-            .flat_map(|v| v.iter().copied())
-            .collect();
-        let all_literals_ref: Vec<&[&Condition]> = vec![&all_literals[..]];
-        ensure_conjunction_sat(&mut system, &all_literals_ref);
+        let Some(balance_system) = self.balance_system(add_effect, del_effect, produced_by_pred)
+        else {
+            // No production by the add effect can imply a consumption.
+            return false;
+        };
+
+        let mut system = ConstraintSystem::new();
+        system.add_assignment(add_cover.clone());
+        ensure_cover(&mut system, &del_effect.peffect, self, inv_vars);
+        system.extend(&balance_system);
+        system.extend(param_system);
         system.is_solvable()
     }
 
-    fn imply_del_effect(
+    /// A system that is solvable if the conjunction in `produced_by_pred`
+    /// implies the consumption of the delete effect's atom, and the produced
+    /// and consumed atoms differ -- under add-after-delete semantics, deleting
+    /// the very atom the action adds balances nothing.
+    ///
+    /// `None` if no instantiation can make the implication hold.
+    fn balance_system(
         &self,
-        del_effect: &super::pddl::effects::Effect,
-        lhs_by_pred: &HashMap<String, Vec<&Condition>>,
+        add_effect: &Effect,
+        del_effect: &Effect,
+        produced_by_pred: &HashMap<&str, Vec<&Condition>>,
     ) -> Option<ConstraintSystem> {
-        let mut implies_system = ConstraintSystem::new();
-
+        let mut system = ConstraintSystem::new();
         let del_cond_literals = get_literals(&del_effect.condition);
         let del_neg = negate_literal(&del_effect.peffect);
-        let all_literals: Vec<&Condition> = del_cond_literals
-            .into_iter()
-            .chain(std::iter::once(&del_neg as &Condition))
-            .collect();
-
-        for literal in &all_literals {
-            if let Some((negated, pred, args)) = literal_info(literal) {
-                let matches = lhs_by_pred.get(pred).cloned().unwrap_or_default();
-                let mut poss_assignments = vec![];
-                for m in &matches {
-                    if let Some((m_negated, _, m_args)) = literal_info(m) {
-                        if m_negated != negated {
-                            continue;
-                        }
-                        let equalities: Vec<(String, String)> = args
-                            .iter()
-                            .zip(m_args.iter())
-                            .map(|(a, b)| (a.clone(), b.clone()))
-                            .collect();
-                        poss_assignments.push(Assignment::new(equalities));
-                    }
-                }
-                if poss_assignments.is_empty() {
-                    return None;
-                }
-                implies_system.add_assignment_disjunction(poss_assignments);
+        for literal in del_cond_literals.iter().chain(std::iter::once(&&del_neg)) {
+            let (negated, predicate, args) =
+                literal_info(literal).expect("get_literals yields literals");
+            // The ways in which one of the literals that hold on production
+            // implies this literal: they must agree on every argument.
+            let possibilities: Vec<Assignment> = produced_by_pred
+                .get(predicate)
+                .map_or(&[][..], Vec::as_slice)
+                .iter()
+                .filter_map(|candidate| {
+                    let (candidate_negated, _, candidate_args) =
+                        literal_info(candidate).expect("get_literals yields literals");
+                    (candidate_negated == negated).then(|| {
+                        Assignment::new(
+                            args.iter()
+                                .cloned()
+                                .zip(candidate_args.iter().cloned())
+                                .collect(),
+                        )
+                    })
+                })
+                .collect();
+            if possibilities.is_empty() {
+                return None;
             }
+            system.add_assignment_disjunction(possibilities);
         }
 
-        Some(implies_system)
+        ensure_inequality(&mut system, &add_effect.peffect, &del_effect.peffect);
+        Some(system)
+    }
+
+    fn refine_candidate(
+        &self,
+        add_effect: &Effect,
+        action: &Action,
+        enqueue_func: &mut dyn FnMut(Invariant),
+    ) {
+        let part = self.part_for(&add_effect.peffect);
+        for del_eff in &action.effects {
+            if let Some((negated, del_pred, _)) = literal_info(&del_eff.peffect)
+                && negated
+                && !self.predicate_to_part.contains_key(del_pred)
+            {
+                for match_part in part.possible_matches(&add_effect.peffect, &del_eff.peffect) {
+                    let mut new_parts: HashSet<InvariantPart> = self.parts.clone();
+                    new_parts.insert(match_part);
+                    enqueue_func(Invariant::new(new_parts));
+                }
+            }
+        }
     }
 }
 
@@ -798,5 +755,97 @@ impl BalanceChecker {
         self.action_to_heavy_action
             .get(&action_idx)
             .unwrap_or(&self.actions[action_idx])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pddl::pddl_types::TypedObject;
+
+    fn atom(predicate: &str, args: &[&str]) -> Condition {
+        Condition::Atom(Atom::new(
+            predicate.to_string(),
+            args.iter().map(|arg| arg.to_string()).collect(),
+        ))
+    }
+
+    /// The invariant "no object satisfies both P and Q".
+    fn no_object_is_p_and_q() -> Invariant {
+        Invariant::new([
+            InvariantPart::new("P".to_string(), vec![0], -1),
+            InvariantPart::new("Q".to_string(), vec![0], -1),
+        ])
+    }
+
+    fn action(parameters: &[&str], precondition: Condition, effects: Vec<Effect>) -> Action {
+        Action::new(
+            "a".to_string(),
+            parameters
+                .iter()
+                .map(|name| TypedObject::new(name, "object"))
+                .collect(),
+            parameters.len(),
+            precondition,
+            effects,
+            None,
+        )
+    }
+
+    fn is_unbalanced(action: &Action) -> bool {
+        no_object_is_p_and_q().operator_unbalanced(action, &mut |_: Invariant| {})
+    }
+
+    /// `a(?p)` adds `P(?p)` but deletes `Q(?p)` only where `R(?p)` holds, while
+    /// the precondition merely forces `R` on the object `c`. Every other binding
+    /// of `?p` leaves both `P(?p)` and `Q(?p)` true. The delete effect balances
+    /// the add effect only for `?p = c`, and a balance that needs a specific
+    /// object is no balance at all.
+    #[test]
+    fn a_delete_condition_may_not_bind_an_action_parameter_to_an_object() {
+        let action = action(
+            &["?p"],
+            Condition::Conjunction(Conjunction::new(vec![
+                atom("R", &["c"]),
+                atom("Q", &["?p"]),
+            ])),
+            vec![
+                Effect::new(vec![], Condition::Truth, atom("P", &["?p"])),
+                Effect::new(
+                    vec![],
+                    atom("R", &["?p"]),
+                    negate_literal(&atom("Q", &["?p"])),
+                ),
+            ],
+        );
+        assert!(is_unbalanced(&action));
+    }
+
+    /// `a(?p)` deletes `Q(?p)` but adds `P(?y)` for every `?y` satisfying the
+    /// effect condition, so any `?y` other than `?p` breaks the invariant. The
+    /// quantified variable of an add effect is as free as an action parameter,
+    /// so a balance may not equate it with one either.
+    #[test]
+    fn a_quantified_add_effect_variable_may_not_be_equated_with_an_action_parameter() {
+        let action = action(
+            &["?p"],
+            atom("Q", &["?p"]),
+            vec![
+                Effect::new(
+                    vec![TypedObject::new("?y", "object")],
+                    Condition::Conjunction(Conjunction::new(vec![
+                        atom("S", &["?y"]),
+                        atom("Q", &["?y"]),
+                    ])),
+                    atom("P", &["?y"]),
+                ),
+                Effect::new(
+                    vec![],
+                    Condition::Truth,
+                    negate_literal(&atom("Q", &["?p"])),
+                ),
+            ],
+        );
+        assert!(is_unbalanced(&action));
     }
 }
