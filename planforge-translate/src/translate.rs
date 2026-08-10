@@ -1080,7 +1080,10 @@ fn translate_task(
     }
 
     let goal_dict_list = goal_dict_list.unwrap();
-    assert!(goal_dict_list.len() == 1, "Negative goal not supported");
+    // A goal literal names one value of one variable: a positive one its own
+    // fact's value, a negative one the only other value of the binary variable
+    // that `compute_groups` reserved for it.
+    assert_eq!(goal_dict_list.len(), 1, "the goal is a single assignment");
 
     let goal_pairs: Vec<(usize, usize)> = goal_dict_list[0].iter().collect();
 
@@ -1440,6 +1443,23 @@ pub fn translate_task_from_grounded_internal(
     let num_fluents_set: HashSet<PrimitiveNumericExpression> =
         num_fluents_vec.iter().cloned().collect();
 
+    // Build goal list
+    let goal_list: Vec<Condition> = match goal {
+        Condition::Conjunction(conj) => conj.parts.clone(),
+        other => vec![other.clone()],
+    };
+
+    let mut negative_in_goal: HashSet<Atom> = HashSet::new();
+    for item in &goal_list {
+        match item {
+            Condition::Atom(_) => {}
+            Condition::NegatedAtom(negated) => {
+                negative_in_goal.insert(Atom::new(negated.predicate.clone(), negated.args.clone()));
+            }
+            _ => return Err(format!("Non-literal goal: {:?}", item)),
+        }
+    }
+
     // Compute fact groups
     let atoms_set: HashSet<Atom> = atoms.iter().cloned().collect();
     let fact_groups::FactGroups {
@@ -1447,11 +1467,12 @@ pub fn translate_task_from_grounded_internal(
         mutex_groups,
         translation_key,
     } = if singleton_groups {
-        // Fast path: skip invariant finding / mutex discovery.
-        // This preserves semantics but produces a less compact encoding.
+        // Fast path: skip invariant finding / mutex discovery. Every fact
+        // already gets a binary variable, so a negative goal needs nothing
+        // extra. This preserves semantics but produces a less compact encoding.
         fact_groups::compute_singleton_groups(&atoms_set)
     } else {
-        fact_groups::compute_groups(task, &atoms_set, reachable_action_params)
+        fact_groups::compute_groups(task, &atoms_set, reachable_action_params, &negative_in_goal)
     };
 
     let numeric_axioms = numeric_axiom_rules::handle_axioms(num_axioms);
@@ -1490,19 +1511,6 @@ pub fn translate_task_from_grounded_internal(
         simplified_effect_conditions: 0,
         added_implied_preconditions: 0,
     };
-
-    // Build goal list
-    let goal_list: Vec<Condition> = match goal {
-        Condition::Conjunction(conj) => conj.parts.clone(),
-        other => vec![other.clone()],
-    };
-
-    for item in &goal_list {
-        match item {
-            Condition::Atom(_) | Condition::NegatedAtom(_) => {}
-            _ => return Err(format!("Non-literal goal: {:?}", item)),
-        }
-    }
 
     let gc = &task.global_constraint;
     assert!(

@@ -98,10 +98,6 @@ impl Assignment {
         }
     }
 
-    pub fn is_consistent(&mut self) -> bool {
-        self.representative().is_some()
-    }
-
     pub fn representative(&mut self) -> Option<&HashMap<String, String>> {
         if self.representative.is_none() {
             self.representative = Some(compute_representatives(&self.equalities));
@@ -132,10 +128,12 @@ impl ConstraintSystem {
         Self::default()
     }
 
+    /// Whether the equivalence relation `assignment` induces is a solution. An
+    /// inconsistent conjunction induces none, so it is not one.
     fn is_satisfied_by(&self, assignment: &mut Assignment) -> bool {
-        let representative = assignment
-            .representative()
-            .expect("constraints are only checked against consistent assignments");
+        let Some(representative) = assignment.representative() else {
+            return false;
+        };
         self.not_constant
             .iter()
             .all(|term| class_of(representative, term).starts_with('?'))
@@ -182,10 +180,7 @@ impl ConstraintSystem {
     pub fn is_solvable(&self) -> bool {
         cartesian_product_refs(&self.combinatorial_assignments)
             .into_iter()
-            .any(|combo| {
-                let mut combined = Self::combine_assignments(&combo);
-                combined.is_consistent() && self.is_satisfied_by(&mut combined)
-            })
+            .any(|combo| self.is_satisfied_by(&mut Self::combine_assignments(&combo)))
     }
 }
 

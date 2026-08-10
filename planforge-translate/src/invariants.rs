@@ -17,50 +17,36 @@ fn invert_list(alist: &[String]) -> HashMap<String, Vec<usize>> {
     result
 }
 
+/// Every way of picking, for each pair, one bijection from its preimage to a
+/// permutation of its image, concatenated into a single mapping.
 fn instantiate_factored_mapping(pairs: &[(Vec<usize>, Vec<i32>)]) -> Vec<Vec<(usize, i32)>> {
     let part_mappings: Vec<Vec<Vec<(usize, i32)>>> = pairs
         .iter()
         .map(|(preimg, img)| {
-            // Generate all permutations of img and zip with preimg
-            let perms: Vec<Vec<i32>> = img.iter().cloned().permutations(img.len()).collect();
-            perms
-                .into_iter()
-                .map(|perm_img| {
-                    preimg
-                        .iter()
-                        .cloned()
-                        .zip(perm_img)
-                        .collect::<Vec<(usize, i32)>>()
-                })
+            img.iter()
+                .copied()
+                .permutations(img.len())
+                .map(|permuted| preimg.iter().copied().zip(permuted).collect())
                 .collect()
         })
         .collect();
-
-    // Cartesian product: concatenate lists
-    let as_vec_vecs: Vec<Vec<Vec<(usize, i32)>>> = part_mappings;
-    tools::cartesian_product(&as_vec_vecs)
+    tools::cartesian_product(&part_mappings)
 }
 
+/// One name per invariant parameter, none of them clashing with a variable the
+/// action already uses.
 fn find_unique_variables(action: &Action, invariant: &Invariant) -> Vec<String> {
-    let mut params: HashSet<String> = action.parameters.iter().map(|p| p.name.clone()).collect();
-    for eff in &action.effects {
-        for p in &eff.parameters {
-            params.insert(p.name.clone());
-        }
-    }
-    let mut inv_vars = vec![];
-    let mut counter = 0;
-    for _ in 0..invariant.arity() {
-        loop {
-            let new_name = format!("?v{}", counter);
-            counter += 1;
-            if !params.contains(&new_name) {
-                inv_vars.push(new_name);
-                break;
-            }
-        }
-    }
-    inv_vars
+    let taken: HashSet<&str> = action
+        .parameters
+        .iter()
+        .chain(action.effects.iter().flat_map(|eff| eff.parameters.iter()))
+        .map(|param| param.name.as_str())
+        .collect();
+    (0..)
+        .map(|index| format!("?v{index}"))
+        .filter(|name| !taken.contains(name.as_str()))
+        .take(invariant.arity())
+        .collect()
 }
 
 fn get_literals(condition: &Condition) -> Vec<&Condition> {
@@ -95,48 +81,43 @@ fn literal_args(cond: &Condition) -> &[String] {
     }
 }
 
+/// Constrains `system` so that it is only solvable if the conjunction of all
+/// parts is satisfiable: `(= x y)` and `(not (= x y))` become an equality and an
+/// inequality, and a predicate occurring both positively and negatively demands
+/// that the two occurrences differ in some argument.
 pub fn ensure_conjunction_sat(system: &mut ConstraintSystem, parts: &[&[&Condition]]) {
-    let mut pos: HashMap<String, Vec<&Condition>> = HashMap::new();
-    let mut neg: HashMap<String, Vec<&Condition>> = HashMap::new();
+    let mut pos: HashMap<&str, Vec<&[String]>> = HashMap::new();
+    let mut neg: HashMap<&str, Vec<&[String]>> = HashMap::new();
 
-    for part in parts {
-        for literal in *part {
-            if let Some((negated, predicate, args)) = literal_info(literal) {
-                if predicate == "=" {
-                    if args.len() == 2 {
-                        if negated {
-                            let n = NegativeClause::new(vec![(args[0].clone(), args[1].clone())]);
-                            system.add_negative_clause(n);
-                        } else {
-                            let a = Assignment::new(vec![(args[0].clone(), args[1].clone())]);
-                            system.add_assignment_disjunction(vec![a]);
-                        }
-                    }
-                } else if negated {
-                    neg.entry(predicate.to_string()).or_default().push(literal);
-                } else {
-                    pos.entry(predicate.to_string()).or_default().push(literal);
-                }
+    for literal in parts.iter().copied().flatten() {
+        let Some((negated, predicate, args)) = literal_info(literal) else {
+            continue;
+        };
+        if predicate == "=" {
+            assert_eq!(args.len(), 2, "an (in)equality relates two terms");
+            let pair = vec![(args[0].clone(), args[1].clone())];
+            if negated {
+                system.add_negative_clause(NegativeClause::new(pair));
+            } else {
+                system.add_assignment(Assignment::new(pair));
             }
+        } else if negated {
+            neg.entry(predicate).or_default().push(args);
+        } else {
+            pos.entry(predicate).or_default().push(args);
         }
     }
 
-    for (pred, posatoms) in &pos {
-        if let Some(negatoms) = neg.get(pred) {
-            for posatom in posatoms {
-                for negatom in negatoms {
-                    if let (Some((_, _, pos_args)), Some((_, _, neg_args))) =
-                        (literal_info(posatom), literal_info(negatom))
-                    {
-                        let parts: Vec<(String, String)> = neg_args
-                            .iter()
-                            .zip(pos_args.iter())
-                            .map(|(a, b)| (a.clone(), b.clone()))
-                            .collect();
-                        if !parts.is_empty() {
-                            system.add_negative_clause(NegativeClause::new(parts));
-                        }
-                    }
+    for (predicate, pos_occurrences) in &pos {
+        for neg_args in neg.get(predicate).into_iter().flatten() {
+            for pos_args in pos_occurrences {
+                let differ: Vec<(String, String)> = neg_args
+                    .iter()
+                    .cloned()
+                    .zip(pos_args.iter().cloned())
+                    .collect();
+                if !differ.is_empty() {
+                    system.add_negative_clause(NegativeClause::new(differ));
                 }
             }
         }
@@ -407,13 +388,7 @@ impl Invariant {
         let add_effects: Vec<&Effect> = h_action
             .effects
             .iter()
-            .filter(|eff| {
-                if let Some((negated, pred, _)) = literal_info(&eff.peffect) {
-                    !negated && self.predicate_to_part.contains_key(pred)
-                } else {
-                    false
-                }
-            })
+            .filter(|eff| self.covers(&eff.peffect) == Some(false))
             .collect();
 
         let inv_vars = find_unique_variables(h_action, self);
@@ -460,46 +435,25 @@ impl Invariant {
         enqueue_func: &mut dyn FnMut(Invariant),
     ) -> bool {
         let inv_vars = find_unique_variables(action, self);
-        let relevant_effs: Vec<&Effect> = action
+        let (add_effects, del_effects): (Vec<&Effect>, Vec<&Effect>) = action
             .effects
             .iter()
-            .filter(|eff| {
-                if let Some((_, pred, _)) = literal_info(&eff.peffect) {
-                    self.predicate_to_part.contains_key(pred)
-                } else {
-                    false
-                }
-            })
-            .collect();
+            .filter(|eff| self.covers(&eff.peffect).is_some())
+            .partition(|eff| self.covers(&eff.peffect) == Some(false));
 
-        let add_effects: Vec<&&Effect> = relevant_effs
-            .iter()
-            .filter(|eff| {
-                if let Some((negated, _, _)) = literal_info(&eff.peffect) {
-                    !negated
-                } else {
-                    false
-                }
-            })
-            .collect();
+        add_effects.iter().any(|add_effect| {
+            self.add_effect_unbalanced(action, add_effect, &del_effects, &inv_vars, enqueue_func)
+        })
+    }
 
-        let del_effects: Vec<&&Effect> = relevant_effs
-            .iter()
-            .filter(|eff| {
-                if let Some((negated, _, _)) = literal_info(&eff.peffect) {
-                    negated
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        for eff in &add_effects {
-            if self.add_effect_unbalanced(action, eff, &del_effects, &inv_vars, enqueue_func) {
-                return true;
-            }
-        }
-        false
+    /// Whether the effect is negated, or `None` if the invariant has no part for
+    /// it -- either because it is not a literal, which a numeric effect need not
+    /// be, or because its predicate does not occur in the invariant.
+    fn covers(&self, peffect: &Condition) -> Option<bool> {
+        let (negated, predicate, _) = literal_info(peffect)?;
+        self.predicate_to_part
+            .contains_key(predicate)
+            .then_some(negated)
     }
 
     /// Whether `add_effect` can threaten the invariant in an application of
@@ -509,7 +463,7 @@ impl Invariant {
         &self,
         action: &Action,
         add_effect: &Effect,
-        del_effects: &[&&Effect],
+        del_effects: &[&Effect],
         inv_vars: &[String],
         enqueue_func: &mut dyn FnMut(Invariant),
     ) -> bool {

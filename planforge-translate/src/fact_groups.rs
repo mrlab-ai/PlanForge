@@ -70,9 +70,20 @@ struct GroupCoverQueue {
 }
 
 impl GroupCoverQueue {
-    fn new(groups: &[Vec<Atom>]) -> Self {
-        let groups: Vec<HashSet<Atom>> =
-            groups.iter().map(|g| g.iter().cloned().collect()).collect();
+    /// Builds the queue over `groups`, leaving `excluded` facts out of every
+    /// one of them. A fact no group covers ends up in a binary variable of its
+    /// own.
+    fn new(groups: &[Vec<Atom>], excluded: &HashSet<Atom>) -> Self {
+        let groups: Vec<HashSet<Atom>> = groups
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .filter(|fact| !excluded.contains(*fact))
+                    .cloned()
+                    .collect()
+            })
+            .collect();
         let max_size = groups.iter().map(HashSet::len).max().unwrap_or(0);
         let mut by_size: Vec<Vec<usize>> = vec![vec![]; max_size + 1];
         let mut groups_by_fact: HashMap<Atom, Vec<usize>> = HashMap::new();
@@ -139,8 +150,12 @@ impl GroupCoverQueue {
     }
 }
 
-fn choose_groups(groups: &[Vec<Atom>], reachable_facts: &HashSet<Atom>) -> Vec<Vec<Atom>> {
-    let mut queue = GroupCoverQueue::new(groups);
+fn choose_groups(
+    groups: &[Vec<Atom>],
+    reachable_facts: &HashSet<Atom>,
+    negative_in_goal: &HashSet<Atom>,
+) -> Vec<Vec<Atom>> {
+    let mut queue = GroupCoverQueue::new(groups, negative_in_goal);
     let mut uncovered_facts = reachable_facts.clone();
     let mut result = vec![];
     while queue.is_active() {
@@ -226,10 +241,16 @@ pub struct FactGroups {
 }
 
 /// Builds the variables from the invariants the task admits.
+///
+/// An atom of `negative_in_goal` is kept out of every mutex group, which leaves
+/// it to a binary variable of its own. Only there is its negation a single
+/// variable/value pair; inside a larger group the negated goal would be a
+/// disjunction over the group's other facts, which a SAS goal cannot express.
 pub fn compute_groups(
     task: &Task,
     atoms: &HashSet<Atom>,
     reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
+    negative_in_goal: &HashSet<Atom>,
 ) -> FactGroups {
     let groups = invariant_finder::get_groups(task, reachable_action_params);
 
@@ -242,7 +263,7 @@ pub fn compute_groups(
     let mutex_groups = collect_all_mutex_groups(&groups, atoms);
 
     info!("Choosing groups...");
-    let groups = choose_groups(&groups, atoms);
+    let groups = choose_groups(&groups, atoms, negative_in_goal);
 
     let groups = sort_groups(groups);
 
@@ -271,11 +292,45 @@ pub fn compute_singleton_groups(atoms: &HashSet<Atom>) -> FactGroups {
 
 #[cfg(test)]
 mod tests {
-    use super::{Atom, choose_groups};
+    use super::{Atom, build_translation_key, choose_groups};
     use std::collections::HashSet;
 
     fn atom(predicate: &str, argument: &str) -> Atom {
         Atom::new(predicate.to_string(), vec![argument.to_string()])
+    }
+
+    /// No corpus task has a negative goal, so only a direct test pins the
+    /// encoding such an atom needs.
+    #[test]
+    fn an_atom_negated_in_the_goal_gets_a_binary_variable_of_its_own() {
+        let negated_in_goal = atom("tree", "cell6");
+        let group = vec![
+            negated_in_goal.clone(),
+            atom("tree", "cell5"),
+            atom("tree", "cell4"),
+        ];
+        let reachable: HashSet<Atom> = group.iter().cloned().collect();
+
+        let selected = choose_groups(
+            std::slice::from_ref(&group),
+            &reachable,
+            &HashSet::from([negated_in_goal.clone()]),
+        );
+        let key = build_translation_key(&selected);
+        let covering: Vec<usize> = (0..selected.len())
+            .filter(|&var| selected[var].contains(&negated_in_goal))
+            .collect();
+
+        // One variable covers the atom, and its only other value is the atom's
+        // negation rather than one of the facts it is mutex with.
+        assert_eq!(covering.len(), 1);
+        assert_eq!(
+            key[covering[0]],
+            [
+                format!("{negated_in_goal}"),
+                format!("{}", negated_in_goal.negate())
+            ]
+        );
     }
 
     #[test]
@@ -289,7 +344,7 @@ mod tests {
         ];
         let reachable = HashSet::from([shared.clone(), left, right]);
 
-        let selected = choose_groups(&groups, &reachable);
+        let selected = choose_groups(&groups, &reachable, &HashSet::new());
         let occurrences = selected
             .iter()
             .flatten()
