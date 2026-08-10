@@ -43,7 +43,7 @@ Stable Rust, no nightly features:
 
     cargo build --release
 
-The primary binary is `target/release/planforge`. Smaller-scope binaries (`planforge-translator`, `planforge-preprocessor`, `planforge-searcher`) are built alongside it and are useful for staging.
+The primary binary is `target/release/planforge`. Smaller-scope binaries (`planforge-translator`, `planforge-searcher`) are built alongside it and are useful for staging.
 
 ### CPLEX prerequisites
 
@@ -120,8 +120,8 @@ Common options:
 Workspace crates:
 
 - `planforge` — top-level entry point and CLI.
-- `planforge-translator`, `planforge-preprocessor`, `planforge-searcher` — staged binaries for translator-only, preprocessor-only, and search-only invocations.
-- `planforge-translate`, `planforge-preprocess`, `planforge-search`, `planforge-sas` — the corresponding libraries.
+- `planforge-translator`, `planforge-searcher` — staged binaries for translator-only and search-only invocations.
+- `planforge-translate`, `planforge-search`, `planforge-sas` — the corresponding libraries.
 - `planforge-cli-utils` — shared CLI plumbing (exit codes, resource limits, allocator).
 - `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.
