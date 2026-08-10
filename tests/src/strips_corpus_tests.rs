@@ -1,45 +1,55 @@
-//! Plan verification against real, fully translated STRIPS tasks.
+//! The STRIPS corpus under `assets/strips-pddl-files`.
 //!
-//! The unit tests in `planforge-sas` cover the replay logic on hand-built
-//! tasks. These tests exercise it on the output of the actual translator
-//! pipeline, so they also pin down that the pure `:strips` path (no
-//! `:functions`, no `:action-costs`) survives translation: such a task still
+//! Two things are pinned here. First, the optimum of every problem in the
+//! corpus, discovered from disk so an unpinned fixture fails. Second, plan
+//! verification and the task shape the gradient engine relies on: the unit
+//! tests in `planforge-sas` cover the replay logic on hand-built tasks, while
+//! these run it on the output of the real translator pipeline, so they also pin
+//! that a pure `:strips` task (no `:functions`, no `:action-costs`) still
 //! carries a `Cost` numeric variable, a per-operator `total-cost` assignment
 //! effect, and a derived global-constraint atom.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, Operator};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType, Operator};
 use planforge_sas::plan_verification::{PlanRejection, ReplayOutcome, replay_plan};
 use planforge_sas::state_registry::StateRegistry;
 
-fn fixture_dir(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("assets/strips-pddl-files")
-        .join(name)
+use crate::corpus::{
+    self, Solution, assert_fixture_set_is_pinned, blind_astar, problem_file_names,
+    subdirectory_names, translate_in_memory,
+};
+
+/// Optima of every problem in the corpus, measured with blind A*, which is
+/// optimal. Keyed by `<folder>/<problem file>`.
+const STRIPS_OPTIMA: &[(&str, f64, u64)] = &[
+    ("blocks-4-0/probBLOCKS-4-0.pddl", 6.0, 6),
+    ("blocks-5-0/probBLOCKS-5-0.pddl", 12.0, 12),
+    ("blocks-minimal/probBLOCKS-2-reverse.pddl", 4.0, 4),
+    ("blocks-minimal/probBLOCKS-3-preserve-middle.pddl", 8.0, 8),
+    ("blocks-minimal/probBLOCKS-3-reverse.pddl", 6.0, 6),
+    ("blocks-minimal/probBLOCKS-4-preserve-middle.pddl", 8.0, 8),
+    ("blocks-minimal/probBLOCKS-4-reverse.pddl", 8.0, 8),
+];
+
+fn corpus_root() -> PathBuf {
+    corpus::assets().join("strips-pddl-files")
 }
 
-/// Translate a fixture exactly the way the `planforge` binary does for a
-/// two-argument PDDL invocation: in-memory translate → preprocess → parse.
+/// Translates a fixture the way the `planforge` binary does for a two-argument
+/// PDDL invocation.
 ///
-/// Deliberately *not* `translate_to_sas_to_path_fast`, which requests singleton
-/// fact groups and would collapse every variable to domain 2. The real pipeline
-/// builds genuine multi-valued variables, and those are what we want to test.
+/// Deliberately *not* the `..._fast` path, which requests singleton fact groups
+/// and would collapse every variable to domain 2. The real pipeline builds
+/// genuine multi-valued variables, and those are what these tests are about.
 fn translated_task(fixture: &str, problem_file: &str) -> NumericRootTask {
-    let dir = fixture_dir(fixture);
-    let domain = dir.join("domain.pddl");
-    let problem = dir.join(problem_file);
-    assert!(domain.is_file(), "missing {domain:?}");
-    assert!(problem.is_file(), "missing {problem:?}");
+    let dir = corpus_root().join(fixture);
+    translate_in_memory(&dir.join("domain.pddl"), &dir.join(problem_file))
+}
 
-    let sas_text = planforge_translator::translate_to_sas_string(
-        domain.to_str().expect("fixture path is valid UTF-8"),
-        problem.to_str().expect("fixture path is valid UTF-8"),
-    )
-    .expect("translation failed");
-    let preprocessed = planforge_translate::preprocess::run_preprocess_to_string(&sas_text);
-    NumericRootTask::try_from_str(&preprocessed).expect("parsing the preprocessed task failed")
+fn blocks_4_0() -> NumericRootTask {
+    translated_task("blocks-4-0", "probBLOCKS-4-0.pddl")
 }
 
 fn operators_named<'t>(task: &'t NumericRootTask, names: &[&str]) -> Vec<&'t Operator> {
@@ -65,9 +75,42 @@ const BLOCKS_4_0_PLAN: [&str; 6] = [
 ];
 
 #[test]
+fn blind_astar_reproduces_every_pinned_strips_optimum() {
+    let discovered: Vec<String> = subdirectory_names(&corpus_root())
+        .iter()
+        .flat_map(|folder| {
+            problem_file_names(&corpus_root().join(folder))
+                .into_iter()
+                .map(move |problem| format!("{folder}/{problem}"))
+        })
+        .collect();
+    let pinned: Vec<&str> = STRIPS_OPTIMA.iter().map(|(name, _, _)| *name).collect();
+    assert_fixture_set_is_pinned("strips-pddl-files", &discovered, &pinned);
+
+    let mut mismatches: Vec<String> = Vec::new();
+    for &(key, cost, length) in STRIPS_OPTIMA {
+        let (folder, problem) = key
+            .split_once('/')
+            .unwrap_or_else(|| panic!("STRIPS_OPTIMA key {key:?} is not `<folder>/<problem>`"));
+        let expected = Solution { cost, length };
+        match blind_astar(&translated_task(folder, problem)) {
+            Some(actual) if actual.matches(&expected) => {}
+            Some(actual) => {
+                mismatches.push(format!("{key}: expected {expected:?}, got {actual:?}"))
+            }
+            None => mismatches.push(format!("{key}: expected {expected:?}, got no plan")),
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "blind A* did not reproduce the known STRIPS optima:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+#[test]
 fn optimal_blocks_plan_verifies_with_the_expected_cost() {
-    let task = translated_task("blocks-4-0", "probBLOCKS-4-0.pddl");
-    let arc = Arc::new(task);
+    let arc = Arc::new(blocks_4_0());
     let mut registry = StateRegistry::for_task(arc.clone());
     let operators = operators_named(&arc, &BLOCKS_4_0_PLAN);
 
@@ -90,8 +133,7 @@ fn optimal_blocks_plan_verifies_with_the_expected_cost() {
 
 #[test]
 fn plan_padded_past_the_goal_still_verifies_at_the_goal_prefix() {
-    let task = translated_task("blocks-4-0", "probBLOCKS-4-0.pddl");
-    let arc = Arc::new(task);
+    let arc = Arc::new(blocks_4_0());
     let mut registry = StateRegistry::for_task(arc.clone());
 
     // Append an operator that is applicable in the goal state but leaves it.
@@ -112,8 +154,7 @@ fn plan_padded_past_the_goal_still_verifies_at_the_goal_prefix() {
 
 #[test]
 fn reordered_blocks_plan_is_rejected_at_the_first_inapplicable_operator() {
-    let task = translated_task("blocks-4-0", "probBLOCKS-4-0.pddl");
-    let arc = Arc::new(task);
+    let arc = Arc::new(blocks_4_0());
     let mut registry = StateRegistry::for_task(arc.clone());
 
     // Swap the first two operators: `stack b a` needs `holding b`, which
@@ -135,8 +176,7 @@ fn reordered_blocks_plan_is_rejected_at_the_first_inapplicable_operator() {
 
 #[test]
 fn truncated_blocks_plan_is_rejected_for_missing_goals() {
-    let task = translated_task("blocks-4-0", "probBLOCKS-4-0.pddl");
-    let arc = Arc::new(task);
+    let arc = Arc::new(blocks_4_0());
     let mut registry = StateRegistry::for_task(arc.clone());
     let operators = operators_named(&arc, &BLOCKS_4_0_PLAN[..4]);
 
@@ -160,9 +200,7 @@ fn truncated_blocks_plan_is_rejected_for_missing_goals() {
 /// here rather than as a confusing rejection inside the engine.
 #[test]
 fn pure_strips_task_shape_is_as_the_sgd_engine_expects() {
-    use planforge_sas::numeric_task::NumericType;
-
-    let task = translated_task("blocks-4-0", "probBLOCKS-4-0.pddl");
+    let task = blocks_4_0();
 
     // Only Constant and Cost numeric variables: no real numeric planning.
     for numeric in task.numeric_variables() {

@@ -6,7 +6,6 @@
 
 #![cfg(feature = "sgd")]
 
-use std::path::Path;
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, Operator, TaskRef};
@@ -15,17 +14,15 @@ use planforge_sas::state_registry::StateRegistry;
 use planforge_sgd::config::{HorizonPolicy, SgdConfig};
 use planforge_sgd::engine::{SgdStatus, solve};
 
+use crate::corpus::{assets, translate_in_memory};
+
 fn translated(fixture_root: &str, fixture: &str, problem_file: &str) -> NumericRootTask {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(fixture_root)
-        .join(fixture);
-    let sas_text = planforge_translator::translate_to_sas_string(
-        dir.join("domain.pddl").to_str().expect("utf-8"),
-        dir.join(problem_file).to_str().expect("utf-8"),
-    )
-    .expect("translation failed");
-    let preprocessed = planforge_translate::preprocess::run_preprocess_to_string(&sas_text);
-    NumericRootTask::try_from_str(&preprocessed).expect("parsing failed")
+    let dir = assets().join(fixture_root).join(fixture);
+    translate_in_memory(&dir.join("domain.pddl"), &dir.join(problem_file))
+}
+
+fn blocks_4_0() -> NumericRootTask {
+    translated("strips-pddl-files", "blocks-4-0", "probBLOCKS-4-0.pddl")
 }
 
 /// Independently re-verify a returned plan, rather than trusting the engine's
@@ -53,11 +50,7 @@ fn revalidate(task: &Arc<NumericRootTask>, plan: &[usize]) -> f64 {
 
 #[test]
 fn solves_blocks_4_0_and_the_plan_verifies() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
 
     let config = SgdConfig {
         // Fixed horizon so the test is a controlled experiment rather than a
@@ -116,11 +109,7 @@ fn solves_blocks_4_0_and_the_plan_verifies() {
 /// same plan exactly, or none of the ablations mean anything.
 #[test]
 fn identical_seeds_produce_identical_plans() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
     let config = SgdConfig {
         horizon: HorizonPolicy::Fixed(10),
         particles: 4,
@@ -155,7 +144,7 @@ fn identical_seeds_produce_identical_plans() {
 #[test]
 fn numeric_tasks_are_refused_by_the_engine() {
     let task = Arc::new(translated(
-        "assets/numeric-pddl-files",
+        "numeric-pddl-files",
         "sailing-simple",
         "prob_1b1p_x.pddl",
     ));
@@ -182,11 +171,7 @@ fn numeric_tasks_are_refused_by_the_engine() {
 /// An invalid configuration must fail before any work happens.
 #[test]
 fn invalid_configuration_fails_before_optimizing() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
     let config = SgdConfig {
         horizon: HorizonPolicy::Fixed(8),
         particles: 0,
@@ -206,11 +191,7 @@ fn invalid_configuration_fails_before_optimizing() {
 /// well, so its optional-link plumbing is exercised by the same run.
 #[test]
 fn inert_causal_links_are_omitted_and_report_zero_diagnostics() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
     let config = SgdConfig {
         horizon: HorizonPolicy::Fixed(6),
         particles: 1,
@@ -245,11 +226,7 @@ fn inert_causal_links_are_omitted_and_report_zero_diagnostics() {
 /// one that does not.
 #[test]
 fn dovetail_grows_the_horizon_until_a_plan_fits() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
     let config = SgdConfig {
         // Round one has horizon 4, which is shorter than the 6-step optimum, so
         // no plan exists there at all and the schedule has to grow.
@@ -289,11 +266,7 @@ fn dovetail_grows_the_horizon_until_a_plan_fits() {
 /// not solve the task.
 #[test]
 fn learning_rate_zero_without_refresh_does_not_solve() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
     let config = SgdConfig {
         horizon: HorizonPolicy::Fixed(12),
         particles: 8,
@@ -326,11 +299,7 @@ fn learning_rate_zero_without_refresh_does_not_solve() {
 /// actually fire when enabled.
 #[test]
 fn refresh_is_off_by_default_and_fires_when_enabled() {
-    let task = Arc::new(translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    ));
+    let task = Arc::new(blocks_4_0());
     assert!(
         !SgdConfig::default().refresh,
         "refresh must default to off so results stay attributable to gradients"

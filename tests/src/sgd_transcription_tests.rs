@@ -5,7 +5,6 @@
 //! instance transcribes to the shape the method expects, and that a genuine
 //! numeric instance is refused with a usable reason.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, Operator};
@@ -15,30 +14,15 @@ use planforge_sgd::classical::NotClassical;
 use planforge_sgd::residuals::{Assignment, evaluate};
 use planforge_sgd::transcription::{Transcription, TranscriptionError};
 
-fn translated(fixture_root: &str, fixture: &str, problem_file: &str) -> NumericRootTask {
-    let dir: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(fixture_root)
-        .join(fixture);
-    let domain = dir.join("domain.pddl");
-    let problem = dir.join(problem_file);
-    assert!(domain.is_file(), "missing {domain:?}");
-    assert!(problem.is_file(), "missing {problem:?}");
+use crate::corpus::{assets, translate_in_memory};
 
-    let sas_text = planforge_translator::translate_to_sas_string(
-        domain.to_str().expect("path is valid UTF-8"),
-        problem.to_str().expect("path is valid UTF-8"),
-    )
-    .expect("translation failed");
-    let preprocessed = planforge_translate::preprocess::run_preprocess_to_string(&sas_text);
-    NumericRootTask::try_from_str(&preprocessed).expect("parsing failed")
+fn translated(fixture_root: &str, fixture: &str, problem_file: &str) -> NumericRootTask {
+    let dir = assets().join(fixture_root).join(fixture);
+    translate_in_memory(&dir.join("domain.pddl"), &dir.join(problem_file))
 }
 
 fn blocks_4_0() -> NumericRootTask {
-    translated(
-        "assets/strips-pddl-files",
-        "blocks-4-0",
-        "probBLOCKS-4-0.pddl",
-    )
+    translated("strips-pddl-files", "blocks-4-0", "probBLOCKS-4-0.pddl")
 }
 
 const BLOCKS_4_0_PLAN: [&str; 6] = [
@@ -237,11 +221,7 @@ fn perturbing_a_valid_assignment_makes_a_residual_positive() {
 fn numeric_tasks_are_rejected_with_a_usable_reason() {
     // sailing-simple is a genuine numeric domain: its conditions compile to
     // comparison axioms, which is exactly what the engine cannot handle.
-    let task = translated(
-        "assets/numeric-pddl-files",
-        "sailing-simple",
-        "prob_1b1p_x.pddl",
-    );
+    let task = translated("numeric-pddl-files", "sailing-simple", "prob_1b1p_x.pddl");
 
     match Transcription::build(&task) {
         Err(TranscriptionError::NotClassical(problems)) => {

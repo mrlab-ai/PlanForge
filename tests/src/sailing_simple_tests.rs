@@ -1,11 +1,27 @@
-use std::path::{Path, PathBuf};
+//! The hand-written `sailing-simple` corpus.
+//!
+//! `assets/numeric-pddl-files/sailing-simple/README.md` derives an optimum for
+//! every instance by hand and states that those numbers must be machine-checked
+//! with blind A* before any heuristic is pinned against them.
+//! [`SAILING_SIMPLE_OPTIMA`] is that check, and it is compared set-wise against
+//! the instances on disk so a new instance cannot be added without an optimum.
+//!
+//! Everything else here is an abstraction or cost-partitioning test that reads
+//! its ground truth from that table.
+
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
+    CostPartitioningMethod, SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
+};
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
+use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
@@ -14,11 +30,6 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_collec
     InitSplitQuantity,
     NumericSplitStrategy,
 };
-use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    CostPartitioningMethod, SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
-};
-use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator,
 };
@@ -27,108 +38,86 @@ use planforge_search::evaluation::evaluator::{EvaluationState, Evaluator};
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 use planforge_search::task_restriction::build_restricted_task;
-use planforge_translate::preprocess::run_preprocess_to_output;
-use planforge_translator::translate_to_sas_to_path_fast;
 
-fn unique_temp_dir(prefix: &str) -> std::io::Result<PathBuf> {
-    let base = std::env::temp_dir().join("numeric_planneRS");
-    std::fs::create_dir_all(&base)?;
+use crate::corpus::{
+    self, Scratch, assert_fixture_set_is_pinned, blind_astar_cost, problem_file_names,
+    translate_to_disk,
+};
 
-    let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+/// Hand-derived optima from the corpus README, machine-verified by
+/// [`blind_astar_reproduces_every_sailing_simple_optimum`].
+const SAILING_SIMPLE_OPTIMA: &[(&str, f64)] = &[
+    ("prob_1b1p_x", 11.0),
+    ("prob_1b1p_diag", 11.0),
+    ("prob_1b1p_far", 101.0),
+    ("prob_1b2p_x", 17.0),
+    ("prob_1b2p_diag", 22.0),
+    ("prob_1b4p_axes", 74.0),
+    ("prob_2b1p", 11.0),
+    ("prob_2b2p_x", 22.0),
+    ("prob_2b2p_assign", 17.0),
+];
 
-    let dir = base.join(format!("{prefix}_{pid}_{nanos}"));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
+fn instances_root() -> PathBuf {
+    corpus::assets().join("numeric-pddl-files/sailing-simple")
 }
 
-fn sailing_task(instance: &str) -> (NumericRootTask, PathBuf) {
-    let root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/numeric-pddl-files/sailing-simple");
-    let domain = root.join("domain.pddl");
-    let problem = root.join(format!("{instance}.pddl"));
-    assert!(
-        domain.is_file(),
-        "missing sailing-simple domain: {domain:?}"
+fn sailing_task(instance: &str) -> (NumericRootTask, Scratch) {
+    let root = instances_root();
+    let scratch = Scratch::new(&format!("sailing_simple_{instance}"));
+    let task = translate_to_disk(
+        &root.join("domain.pddl"),
+        &root.join(format!("{instance}.pddl")),
+        &scratch,
     );
-    assert!(
-        problem.is_file(),
-        "missing sailing-simple problem for {instance}: {problem:?}"
-    );
-
-    let temp_dir = unique_temp_dir(&format!("sailing_simple_{instance}"))
-        .unwrap_or_else(|e| panic!("failed to create temp dir: {e}"));
-    let output_sas = temp_dir.join("output.sas");
-    let preprocessed = temp_dir.join("output");
-
-    translate_to_sas_to_path_fast(
-        domain
-            .to_str()
-            .unwrap_or_else(|| panic!("non-utf8 domain path: {domain:?}")),
-        problem
-            .to_str()
-            .unwrap_or_else(|| panic!("non-utf8 problem path: {problem:?}")),
-        &output_sas,
-    )
-    .unwrap_or_else(|e| panic!("translate failed for sailing-simple {instance}: {e}"));
-
-    run_preprocess_to_output(
-        &[
-            "preprocess".to_string(),
-            output_sas.to_string_lossy().to_string(),
-        ],
-        &preprocessed,
-    );
-
-    (NumericRootTask::from_file(&preprocessed), temp_dir)
+    (task, scratch)
 }
 
-fn blind_astar_cost(instance: &str) -> f64 {
-    let (task, temp_dir) = sailing_task(instance);
-    let state_registry = StateRegistry::for_task(Arc::new(&task));
-    let mut search = AStarSearch::new(Arc::new(&task), state_registry, None, None, None);
-    let result = search.search().expect("blind A* search failed");
-    let _ = std::fs::remove_dir_all(&temp_dir);
-
-    match result.status {
-        SearchStatus::Solved(_) => result
-            .solution_cost
-            .or_else(|| {
-                result
-                    .plan
-                    .as_ref()
-                    .map(|plan| plan.iter().map(|op| op.cost() as f64).sum())
-            })
-            .expect("solved sailing-simple search must report a cost"),
-        status => panic!("blind A* did not solve {instance}: {status:?}"),
-    }
+fn optimum_of(instance: &str) -> f64 {
+    SAILING_SIMPLE_OPTIMA
+        .iter()
+        .find(|(name, _)| *name == instance)
+        .unwrap_or_else(|| panic!("{instance} is not in SAILING_SIMPLE_OPTIMA"))
+        .1
 }
 
-fn restricted_blind_astar_cost(instance: &str) -> f64 {
-    let (task, temp_dir) = sailing_task(instance);
-    let restricted_task = build_restricted_task(&task)
-        .expect("sailing-simple restricted task construction must not fail")
-        .expect("sailing-simple instances have promotable derived roots")
-        .into_task();
-    let state_registry = StateRegistry::for_task(Arc::new(&restricted_task));
-    let mut search = AStarSearch::new(Arc::new(&restricted_task), state_registry, None, None, None);
-    let result = search.search().expect("restricted blind A* search failed");
-    let _ = std::fs::remove_dir_all(&temp_dir);
+/// Blind A* is optimal, so this both verifies the hand-derived optima and pins
+/// that `build_restricted_task` is plan-preserving: the restriction promotes
+/// derived condition roots, and a restriction that changed reachability would
+/// change one of these costs.
+#[test]
+fn blind_astar_reproduces_every_sailing_simple_optimum() {
+    let discovered: Vec<String> = problem_file_names(&instances_root())
+        .iter()
+        .map(|file| {
+            file.strip_suffix(".pddl")
+                .unwrap_or_else(|| panic!("{file} does not end in .pddl"))
+                .to_owned()
+        })
+        .collect();
+    let pinned: Vec<&str> = SAILING_SIMPLE_OPTIMA
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    assert_fixture_set_is_pinned("sailing-simple", &discovered, &pinned);
 
-    match result.status {
-        SearchStatus::Solved(_) => result
-            .solution_cost
-            .or_else(|| {
-                result
-                    .plan
-                    .as_ref()
-                    .map(|plan| plan.iter().map(|op| op.cost() as f64).sum())
-            })
-            .expect("solved restricted sailing-simple search must report a cost"),
-        status => panic!("restricted blind A* did not solve {instance}: {status:?}"),
+    for &(instance, expected) in SAILING_SIMPLE_OPTIMA {
+        let (task, _scratch) = sailing_task(instance);
+        assert_eq!(
+            blind_astar_cost(&task, instance),
+            expected,
+            "machine-verified h* changed for {instance}"
+        );
+
+        let restricted = build_restricted_task(&task)
+            .expect("sailing-simple restricted task construction must not fail")
+            .expect("sailing-simple instances have promotable derived roots")
+            .into_task();
+        assert_eq!(
+            blind_astar_cost(&restricted, instance),
+            expected,
+            "the restricted task is not plan-preserving for {instance}"
+        );
     }
 }
 
@@ -174,7 +163,8 @@ fn assert_exact_single_abstraction_search<H>(
 
 #[test]
 fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
-    let (task, temp_dir) = sailing_task("prob_1b1p_x");
+    let (task, _scratch) = sailing_task("prob_1b1p_x");
+    let optimum = optimum_of("prob_1b1p_x");
 
     let domain_abstraction = DomainAbstractionGenerator::new(CegarConfig {
         max_iterations: usize::MAX,
@@ -195,7 +185,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     assert_exact_single_abstraction_search(
         &task,
         DomainAbstractionHeuristic::new(None, domain_abstraction),
-        11.0,
+        optimum,
         "domain",
     );
 
@@ -211,11 +201,9 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     assert_exact_single_abstraction_search(
         &task,
         CartesianAbstractionHeuristic::new(None, cartesian_abstraction),
-        11.0,
+        optimum,
         "Cartesian",
     );
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 fn standard_round7_collection_config(
@@ -246,7 +234,7 @@ fn scp_online_initial_h_with_config(
     instance: &str,
     collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 ) -> f64 {
-    let (task, temp_dir) = sailing_task(instance);
+    let (task, _scratch) = sailing_task(instance);
     let task = build_restricted_task(&task)
         .expect("sailing-simple restricted task construction must not fail")
         .expect("sailing-simple instances have promotable derived roots")
@@ -256,10 +244,7 @@ fn scp_online_initial_h_with_config(
     let abstractions = generator
         .generate_collection(&task)
         .expect("scp_online domain abstractions should build");
-    let h = scp_online_initial_h_for_collection(&task, abstractions, collection_config);
-
-    let _ = std::fs::remove_dir_all(&temp_dir);
-    h
+    scp_online_initial_h_for_collection(&task, abstractions, collection_config)
 }
 
 fn scp_online_initial_h_for_collection(
@@ -296,32 +281,6 @@ fn scp_online_initial_h_for_collection(
         .expect("scp_online initial evaluation should succeed")
 }
 
-#[test]
-fn restricted_task_preserves_sailing_simple_optimal_costs() {
-    let cases = [
-        ("prob_1b1p_x", 11.0),
-        ("prob_1b1p_diag", 11.0),
-        ("prob_2b1p", 11.0),
-        ("prob_1b2p_x", 17.0),
-        ("prob_1b2p_diag", 22.0),
-        ("prob_2b2p_x", 22.0),
-        ("prob_2b2p_assign", 17.0),
-    ];
-
-    for (instance, expected_cost) in cases {
-        let original_cost = blind_astar_cost(instance);
-        assert_eq!(
-            original_cost, expected_cost,
-            "machine-verified h* changed for original {instance}"
-        );
-        let restricted_cost = restricted_blind_astar_cost(instance);
-        assert_eq!(
-            restricted_cost, expected_cost,
-            "restricted task is not plan-preserving for {instance}"
-        );
-    }
-}
-
 fn scp_online_initial_h(instance: &str) -> f64 {
     scp_online_initial_h_with_config(instance, standard_round7_collection_config(1))
 }
@@ -335,67 +294,37 @@ fn numeric_var_id_by_name_parts(
         .position(|var| required_parts.iter().all(|part| var.name().contains(part)))
 }
 
+/// Under abstract-operator saturation one per-person abstraction contributes its
+/// 10-move route plus save (11), and the other keeps only one distinct save cost
+/// because rival-achiever route footprints consume overlapping move residuals.
+/// The name says what the assertion says: this is the *shortfall* against the
+/// additive 22 that disjoint near boats should give, pinned so a change in
+/// either direction is visible.
 #[test]
-fn sailing_simple_optima_blind() {
-    for (instance, expected) in [
-        ("prob_1b1p_x", 11.0),
-        ("prob_1b1p_diag", 11.0),
-        ("prob_2b1p", 11.0),
-    ] {
-        let actual = blind_astar_cost(instance);
-        assert_eq!(actual, expected, "{instance}");
-    }
-}
-
-#[test]
-#[ignore = "larger sailing-simple optimum check; verified manually in Step 0"]
-fn sailing_simple_optima_blind_ignored_larger() {
-    for (instance, expected) in [
-        ("prob_1b2p_x", 17.0),
-        ("prob_1b2p_diag", 22.0),
-        ("prob_1b4p_axes", 74.0),
-        ("prob_1b1p_far", 101.0),
-    ] {
-        let actual = blind_astar_cost(instance);
-        assert_eq!(actual, expected, "{instance}");
-    }
-}
-
-#[test]
-#[ignore = "blind A* expands ~520k states in release for this two-boat instance"]
-fn sailing_simple_multiboat_additive_blind() {
-    assert_eq!(blind_astar_cost("prob_2b2p_x"), 22.0);
-}
-
-#[test]
-fn sailing_simple_multiboat_additive() {
+fn sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum() {
+    let optimum = optimum_of("prob_2b2p_x");
     let h = scp_online_initial_h("prob_2b2p_x");
-    assert!(h <= 22.0, "prob_2b2p_x: h={h} must be admissible");
-    // Observed under abstract-operator saturation: one per-person abstraction
-    // contributes its 10-move route plus save (11), then the other keeps only
-    // one distinct save cost because rival-achiever route footprints consume
-    // overlapping move residuals. This documents the current gap to the
-    // intended additive 22 for disjoint near boats.
+    assert!(h <= optimum, "prob_2b2p_x: h={h} must be admissible");
     assert_eq!(h, 12.0);
 }
 
+/// Both persons' nearest boat is b0. Per-person abstractions cannot encode that
+/// one boat must perform the 10-move transfer between targets; with the current
+/// residual saturation they retain 7 units at the initial state.
 #[test]
 fn sailing_simple_assignment_gap() {
-    assert_eq!(blind_astar_cost("prob_2b2p_assign"), 17.0);
+    let optimum = optimum_of("prob_2b2p_assign");
     let h = scp_online_initial_h("prob_2b2p_assign");
     assert!(
-        h <= 17.0,
-        "prob_2b2p_assign: h={h} must be admissible against h*=17"
+        h <= optimum,
+        "prob_2b2p_assign: h={h} must be admissible against h*={optimum}"
     );
-    // Both persons' nearest boat is b0. Per-person abstractions cannot encode
-    // that one boat must perform the 10-move transfer between targets; with
-    // current residual saturation they retain 7 units at the initial state.
     assert_eq!(h, 7.0);
 }
 
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
-    let (task, temp_dir) = sailing_task("prob_2b1p");
+    let (task, _scratch) = sailing_task("prob_2b1p");
     let mut config = standard_round7_collection_config(1);
     config.max_abstraction_size = 1_000;
     let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
@@ -445,13 +374,13 @@ fn sailing_simple_ratchet_equilibrium() {
     );
 
     let h = scp_online_initial_h_for_collection(&task, abstractions, config);
-    let _ = std::fs::remove_dir_all(&temp_dir);
     assert!(h >= 10.0, "prob_2b1p: initial h={h} should stay >= 10");
 }
 
 #[test]
 fn sailing_simple_scp_online_admissible() {
-    for (instance, optimum) in [("prob_1b1p_x", 11.0), ("prob_1b2p_x", 17.0)] {
+    for instance in ["prob_1b1p_x", "prob_1b2p_x"] {
+        let optimum = optimum_of(instance);
         let h = scp_online_initial_h(instance);
         assert!(
             h <= optimum,
@@ -463,7 +392,7 @@ fn sailing_simple_scp_online_admissible() {
 
 #[test]
 fn sailing_simple_complementary_collection_keeps_single_goal_solved_abstractions() {
-    let (task, temp_dir) = sailing_task("prob_1b4p_axes");
+    let (task, _scratch) = sailing_task("prob_1b4p_axes");
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         collection_strategy: CollectionStrategy::Complementary,
         random_seed: Some(1),
@@ -477,7 +406,6 @@ fn sailing_simple_complementary_collection_keeps_single_goal_solved_abstractions
     let abstractions = generator
         .generate_collection(&task)
         .expect("complementary collection should build on prob_1b4p_axes");
-    let _ = std::fs::remove_dir_all(&temp_dir);
 
     assert!(
         abstractions.len() >= 8,
