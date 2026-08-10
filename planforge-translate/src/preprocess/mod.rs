@@ -11,8 +11,7 @@
 
 pub mod causal_graph;
 pub mod max_dag;
-pub mod numeric_task;
-pub mod output;
+pub mod sas_parts;
 pub mod scc;
 
 use std::io::Write;
@@ -426,21 +425,24 @@ fn placed(level: i32, what: &str) -> usize {
 }
 
 /// Orders and prunes the variables of `sas` by its causal graph, and writes the
-/// result as the SAS+ file the search reads.
+/// result as the SAS+ file another planner reads.
 pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::Result<()> {
-    output::write_sas(&reorder(sas), outfile)
+    info!("Writing output...");
+    planforge_sas::sas_writer::write_sas(&sas_parts::build(&reorder(sas)), outfile)
 }
 
 /// Orders and prunes the variables of `sas` by its causal graph, and builds the
 /// task the search reads straight from the result.
 ///
-/// The default path from PDDL to a search task. Writing the SAS+ file and
-/// reading it back produces the same task — `tests/src/task_equivalence_tests`
-/// holds both paths to that — but the file itself is for interoperating with
-/// other planners and for reading by hand, not for getting a task from one part
-/// of this process to another.
+/// The default path from PDDL to a search task. It shares everything but the
+/// last step with [`write_reordered_sas`]: both phrase the reordered task as
+/// [`planforge_sas::sas_format::SasTaskParts`], so writing the SAS+ file and
+/// reading it back produces the same task by construction —
+/// `tests/src/task_equivalence_tests` holds both paths to that. The file itself
+/// is for interoperating with other planners and for reading by hand, not for
+/// getting a task from one part of this process to another.
 pub fn reordered_numeric_task(sas: SASTask) -> planforge_sas::numeric_task::NumericRootTask {
-    numeric_task::build(&reorder(sas))
+    planforge_sas::numeric_task::NumericRootTask::from_sas_parts(sas_parts::build(&reorder(sas)))
 }
 
 /// Orders and prunes the variables of `sas` by its causal graph.

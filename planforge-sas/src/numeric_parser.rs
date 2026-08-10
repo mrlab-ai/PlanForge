@@ -8,10 +8,10 @@ use crate::axioms::{
 };
 use crate::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericType, NumericVariable,
 };
 use crate::sas_format::{
-    SasTaskParts, SasVariable, axiom_layer_from_sas, effect_precondition_from_sas,
+    SasOperator, SasTaskParts, SasVariable, axiom_layer_from_sas, effect_precondition_from_sas,
 };
 use nom::Parser;
 use nom::bytes::complete::take_while1;
@@ -250,21 +250,21 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<ExplicitFact>> {
     Ok((input, goals))
 }
 
-fn parse_operator(input: &str) -> IResult<&str, Operator> {
+fn parse_operator(input: &str) -> IResult<&str, SasOperator> {
     let (input, _) = tag("begin_operator")(input)?;
     let (input, _) = line_ending(input)?;
     let (input, name) = not_line_ending(input)?;
     let (input, _) = line_ending(input)?;
     let (input, num_prevail_cond) = u32(input)?;
     let (input, _) = line_ending(input)?;
-    let mut preconditions = vec![];
+    let mut prevail = vec![];
     let mut input = input;
     for _ in 0..num_prevail_cond {
         let mut parser = separated_pair(parse_integer, space1, parse_integer);
         let (loop_input, prevail_cond) = parser.parse(input)?;
         let prevail_cond =
             ExplicitFact::propositional(prevail_cond.0 as usize, prevail_cond.1 as usize);
-        preconditions.push(prevail_cond);
+        prevail.push(prevail_cond);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
     }
@@ -294,18 +294,10 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, _) = space1(loop_input)?;
         let (loop_input, effect_value) = usize(loop_input)?;
 
-        let precondition_value = effect_precondition_from_sas(precondition_field);
-        if let Some(precondition_value) = precondition_value {
-            preconditions.push(ExplicitFact::propositional(
-                effect_var_id,
-                precondition_value,
-            ));
-        }
-
         let effect = Effect::new(
             effect_conditions,
             effect_var_id,
-            precondition_value,
+            effect_precondition_from_sas(precondition_field),
             effect_value,
         );
         effects.push(effect);
@@ -354,18 +346,18 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     let (input, _) = tag("end_operator")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let operator = Operator::new(
-        name.to_string(),
-        preconditions,
+    let operator = SasOperator {
+        name: name.to_string(),
+        prevail,
         effects,
         assignment_effects,
         cost,
-    );
+    };
 
     Ok((input, operator))
 }
 
-fn parse_operators(input: &str) -> IResult<&str, Vec<Operator>> {
+fn parse_operators(input: &str) -> IResult<&str, Vec<SasOperator>> {
     let (input, num_operators) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut input = input;
@@ -516,7 +508,12 @@ fn parse_global_constraint(input: &str) -> IResult<&str, ExplicitFact> {
     Ok((input, constraint))
 }
 
-pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
+/// The whole file, section by section, in the shape both ways out of the format
+/// go through.
+///
+/// Split out from [`parse_numeric_sas_output`] so that the writer can be held to
+/// being this function's inverse; see `sas_writer`'s round-trip test.
+pub(crate) fn parse_sas_parts(input: &str) -> IResult<&str, SasTaskParts> {
     let (input, version) = parse_version(input)?;
     let (input, metric) = parse_metric(input)?;
     let (input, variables) = parse_all_variables(input)?;
@@ -533,7 +530,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, _) = tag("begin_SG")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let task = NumericRootTask::from_sas_parts(SasTaskParts {
+    let parts = SasTaskParts {
         version,
         metric,
         variables,
@@ -547,9 +544,14 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
         comparison_axioms,
         assignment_axioms,
         global_constraint,
-    });
+    };
 
-    Ok((input, task))
+    Ok((input, parts))
+}
+
+pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
+    let (input, parts) = parse_sas_parts(input)?;
+    Ok((input, NumericRootTask::from_sas_parts(parts)))
 }
 
 #[cfg(test)]
@@ -569,10 +571,10 @@ mod tests {
         let (rest, operator) = parse_operator(input).expect("operator parses");
 
         assert_eq!(rest, "");
-        assert_eq!(operator.name(), "move");
-        assert_eq!(operator.cost(), 7);
+        assert_eq!(operator.name, "move");
+        assert_eq!(operator.cost, 7);
 
-        let effects = operator.assignment_effects();
+        let effects = &operator.assignment_effects;
         assert_eq!(effects.len(), 1);
         let effect = &effects[0];
         assert!(effect.is_conditional());
@@ -592,7 +594,7 @@ mod tests {
 
         let (_, operator) = parse_operator(input).expect("operator parses");
 
-        let effect = &operator.assignment_effects()[0];
+        let effect = &operator.assignment_effects[0];
         assert_eq!(
             effect.conditions(),
             &vec![
@@ -611,7 +613,7 @@ mod tests {
 
         let (_, operator) = parse_operator(input).expect("operator parses");
 
-        let effect = &operator.assignment_effects()[0];
+        let effect = &operator.assignment_effects[0];
         assert!(!effect.is_conditional());
         assert!(effect.conditions().is_empty());
         assert_eq!(effect.affected_var_id(), 3);

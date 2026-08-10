@@ -1,7 +1,8 @@
 /// SAS+ task representation for the planner output format.
 ///
-/// The task is written out by [`crate::preprocess::output`], after the causal
-/// graph has reordered its variables; nothing here formats itself.
+/// The task is phrased in the shape the SAS+ format carries by
+/// [`crate::preprocess::sas_parts`], after the causal graph has reordered its
+/// variables; nothing here formats itself.
 use tracing::debug;
 
 /// The comparator that holds exactly when `comp` does not.
@@ -15,17 +16,6 @@ pub fn inverted_comparator(comp: &str) -> &'static str {
         "!=" => "=",
         other => panic!("unknown comparator: {other:?}"),
     }
-}
-
-/// `op` itself, once it is one of the five PDDL assignment operators. An effect
-/// that names anything else must not reach the SAS file, where it would be read
-/// back as a different effect or not at all.
-pub fn assignment_operator(op: &str) -> &str {
-    assert!(
-        matches!(op, "=" | "+" | "-" | "*" | "/"),
-        "unknown assignment operator: {op:?}"
-    );
-    op
 }
 
 /// Planning task in finite-domain representation.
@@ -545,7 +535,7 @@ impl SASNumericAxiom {
 
 #[cfg(test)]
 mod tests {
-    use super::{SASOperator, assignment_operator, inverted_comparator};
+    use super::{SASOperator, inverted_comparator};
 
     /// The SAS file spells operator names without the PDDL parentheses.
     #[test]
@@ -574,13 +564,5 @@ mod tests {
     #[should_panic(expected = "unknown comparator")]
     fn inverting_rejects_a_comparator_that_is_not_one() {
         inverted_comparator("=<");
-    }
-
-    /// An unknown assignment operator must fail loudly rather than being folded
-    /// into a default one, which would silently rewrite the effect.
-    #[test]
-    #[should_panic(expected = "unknown assignment operator")]
-    fn an_unknown_assignment_operator_is_rejected() {
-        assignment_operator("^");
     }
 }
