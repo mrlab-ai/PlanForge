@@ -45,8 +45,7 @@ pub fn translate_to_sas_to_path(
     problem: &str,
     output_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let mut out_file = std::fs::File::create(output_path)?;
-    translate_to_sas_writer(domain, problem, false, &mut out_file)
+    write_sas_file(domain, problem, false, output_path)
 }
 
 /// As [`translate_to_sas_to_path`], but with one SAS variable per fact instead
@@ -56,8 +55,24 @@ pub fn translate_to_sas_to_path_fast(
     problem: &str,
     output_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let mut out_file = std::fs::File::create(output_path)?;
-    translate_to_sas_writer(domain, problem, true, &mut out_file)
+    write_sas_file(domain, problem, true, output_path)
+}
+
+/// The SAS+ file is written a line at a time, so it goes through a buffer: on a
+/// task with fifty thousand operators, writing straight to the file spends more
+/// time in `write` syscalls than the rest of the translation takes.
+fn write_sas_file(
+    domain: &str,
+    problem: &str,
+    fast_groups: bool,
+    output_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let mut out = std::io::BufWriter::new(std::fs::File::create(output_path)?);
+    translate_to_sas_writer(domain, problem, fast_groups, &mut out)?;
+    out.flush()?;
+    Ok(())
 }
 
 /// In-memory entry point: emit the translator's SAS+ text as a `String`.
