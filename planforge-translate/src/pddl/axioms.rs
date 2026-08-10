@@ -74,22 +74,16 @@ impl Axiom {
     /// Returns a PropositionalAxiom or None if statically false.
     pub fn instantiate(
         &self,
-        var_mapping: &HashMap<String, String>,
+        var_mapping: &super::tasks::VarMapping,
         tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<InstantiatedNumericAxiom>,
     ) -> Option<PropositionalAxiom> {
         // Build the effect atom
-        let arg_list: Vec<String> = self.parameters[..self.num_external_parameters]
-            .iter()
-            .map(|p| {
-                var_mapping
-                    .get(&p.name)
-                    .cloned()
-                    .unwrap_or_else(|| p.name.clone())
-            })
-            .collect();
-        let effect = Atom::new(self.name.clone(), arg_list);
+        let effect = Atom::new(
+            self.name.clone(),
+            var_mapping.resolve_parameters(&self.parameters[..self.num_external_parameters]),
+        );
 
         // Instantiate condition
         let condition = self.condition.instantiate_action(
@@ -182,24 +176,17 @@ impl NumericAxiom {
 
     pub fn instantiate(
         &self,
-        var_mapping: &HashMap<String, String>,
+        var_mapping: &super::tasks::VarMapping,
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
         init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<InstantiatedNumericAxiom>,
     ) -> InstantiatedNumericAxiom {
-        let new_args: Vec<String> = self
-            .parameters
-            .iter()
-            .map(|p| {
-                var_mapping
-                    .get(&p.name)
-                    .cloned()
-                    .unwrap_or_else(|| p.name.clone())
-            })
-            .collect();
-        let effect =
-            PrimitiveNumericExpression::with_type(self.name.clone(), new_args, self.ntype());
+        let effect = PrimitiveNumericExpression::with_type(
+            self.name.clone(),
+            var_mapping.resolve_parameters(&self.parameters),
+            self.ntype(),
+        );
 
         let new_parts: Vec<FunctionalExpression> = self
             .parts

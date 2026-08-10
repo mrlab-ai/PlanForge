@@ -1,6 +1,7 @@
 use itertools::Itertools;
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::time::Instant;
 use tracing::info;
 
@@ -9,10 +10,11 @@ use super::options;
 use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
+use super::symbols::ObjectId;
 
 fn build_balance_checker(
     task: &Task,
-    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+    reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> BalanceChecker {
     let mut predicates_to_add_action_indices: HashMap<String, HashSet<usize>> = HashMap::new();
     let mut action_to_heavy_action: HashMap<usize, Action> = HashMap::new();
@@ -63,13 +65,8 @@ fn build_balance_checker(
 
 fn add_inequality_preconds(
     action: &Action,
-    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+    reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> Action {
-    let rap = match reachable_action_params {
-        Some(r) => r,
-        None => return action.clone(),
-    };
-
     if action.parameters.len() < 2 {
         return action.clone();
     }
@@ -78,7 +75,7 @@ fn add_inequality_preconds(
     for combo in (0..action.parameters.len()).combinations(2) {
         let pos1 = combo[0];
         let pos2 = combo[1];
-        if let Some(params_list) = rap.get(&action.name) {
+        if let Some(params_list) = reachable_action_params.get(&action.name) {
             let mut all_different = true;
             for params in params_list {
                 if params[pos1] == params[pos2] {
@@ -169,7 +166,7 @@ fn get_initial_invariants(task: &Task) -> Vec<Invariant> {
 
 fn find_invariants(
     task: &Task,
-    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+    reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> Vec<Invariant> {
     let limit = options::INVARIANT_GENERATION_MAX_CANDIDATES;
     let initial = get_initial_invariants(task);
@@ -251,7 +248,7 @@ fn useful_groups(invariants: &[Invariant], initial_facts: &[Atom]) -> Vec<Vec<At
 /// Main entry point: finds groups of mutex atoms.
 pub fn get_groups(
     task: &Task,
-    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+    reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> Vec<Vec<Atom>> {
     info!("Finding invariants...");
     let mut invariants = find_invariants(task, reachable_action_params);

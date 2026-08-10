@@ -94,7 +94,7 @@ impl Action {
     /// Returns a PropositionalAction or None if the precondition is statically false.
     pub fn instantiate(
         &self,
-        var_mapping: &HashMap<String, String>,
+        var_mapping: &super::tasks::VarMapping,
         tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
@@ -105,14 +105,9 @@ impl Action {
             ..
         } = *tables;
         // Build the action name
-        let arg_list: Vec<String> = self.parameters[..self.num_external_parameters]
+        let arg_list: Vec<&str> = self.parameters[..self.num_external_parameters]
             .iter()
-            .map(|p| {
-                var_mapping
-                    .get(&p.name)
-                    .cloned()
-                    .unwrap_or_else(|| p.name.clone())
-            })
+            .map(|parameter| var_mapping.resolve(&parameter.name))
             .collect();
         let name = format!("({} {})", self.name, arg_list.join(" "));
 
@@ -147,21 +142,15 @@ impl Action {
 
             match &eff.peffect {
                 Condition::Atom(atom) => {
-                    let new_args: Vec<String> = atom
-                        .args
-                        .iter()
-                        .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
-                        .collect();
-                    let new_atom = Atom::new(atom.predicate.clone(), new_args);
+                    let new_atom =
+                        Atom::new(atom.predicate.clone(), var_mapping.resolve_all(&atom.args));
                     add_effects.push((eff_condition, new_atom));
                 }
                 Condition::NegatedAtom(natom) => {
-                    let new_args: Vec<String> = natom
-                        .args
-                        .iter()
-                        .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
-                        .collect();
-                    let new_atom = Atom::new(natom.predicate.clone(), new_args);
+                    let new_atom = Atom::new(
+                        natom.predicate.clone(),
+                        var_mapping.resolve_all(&natom.args),
+                    );
                     del_effects.push((eff_condition, new_atom));
                 }
                 _ => panic!("Unexpected effect type in action instantiation"),
@@ -171,9 +160,7 @@ impl Action {
         for (params, condition, assignment) in &self.assign_effects {
             let mut eff_var_mapping = var_mapping.clone();
             for parameter in params {
-                eff_var_mapping
-                    .entry(parameter.name.clone())
-                    .or_insert_with(|| parameter.name.clone());
+                eff_var_mapping.bind_to_itself(&parameter.name);
             }
             let eff_condition = match condition.instantiate_action(
                 &eff_var_mapping,
@@ -207,13 +194,9 @@ impl Action {
             // Default cost: increase(total-cost, 1)
             let constant_expr = FunctionalExpression::NumericConstant(NumericConstant::new(1.0));
             let derived = task_function_admin.get_derived_function(&constant_expr);
-            if let Some(axiom) = task_function_admin
-                .get_all_axioms()
-                .into_iter()
-                .find(|axiom| axiom.name == derived.symbol)
-            {
+            if let Some(axiom) = task_function_admin.axiom_named(&derived.symbol).cloned() {
                 let instantiated_axiom = axiom.instantiate(
-                    &HashMap::new(),
+                    &super::tasks::VarMapping::default(),
                     fluent_functions,
                     init_function_vals,
                     task_function_admin,
@@ -300,7 +283,7 @@ impl Condition {
     /// Returns Some(conditions) for the fluent conditions.
     pub fn instantiate_action(
         &self,
-        var_mapping: &HashMap<String, String>,
+        var_mapping: &super::tasks::VarMapping,
         tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
@@ -330,12 +313,8 @@ impl Condition {
                 Some(result)
             }
             Condition::Atom(atom) => {
-                let new_args: Vec<String> = atom
-                    .args
-                    .iter()
-                    .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
-                let new_atom = Atom::new(atom.predicate.clone(), new_args);
+                let new_atom =
+                    Atom::new(atom.predicate.clone(), var_mapping.resolve_all(&atom.args));
                 if fluent_facts.contains(&atom.predicate) {
                     Some(vec![Condition::Atom(new_atom)])
                 } else if init_facts.contains(&new_atom) {
@@ -345,11 +324,7 @@ impl Condition {
                 }
             }
             Condition::NegatedAtom(natom) => {
-                let new_args: Vec<String> = natom
-                    .args
-                    .iter()
-                    .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
+                let new_args = var_mapping.resolve_all(&natom.args);
                 let pos_atom = Atom::new(natom.predicate.clone(), new_args.clone());
                 if fluent_facts.contains(&natom.predicate) {
                     Some(vec![Condition::NegatedAtom(NegatedAtom::new(

@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use tracing::info;
 
@@ -9,6 +10,7 @@ use super::invariant_finder;
 use super::options;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
+use super::symbols::ObjectId;
 
 fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Atom> {
     let mut result = vec![];
@@ -215,7 +217,7 @@ pub struct FactGroups {
 pub fn compute_groups(
     task: &Task,
     atoms: &HashSet<Atom>,
-    reachable_action_params: &Option<HashMap<String, Vec<Vec<String>>>>,
+    reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> FactGroups {
     let groups = invariant_finder::get_groups(task, reachable_action_params);
 

@@ -57,6 +57,73 @@ pub struct Task {
     pub global_constraint: Condition,
 }
 
+/// The objects grounding gives an action's or an axiom's parameters.
+///
+/// A parameter list is a handful of entries long, so a scan finds one faster
+/// than a hash does, and the mapping borrows both the parameter names and the
+/// object names rather than copying them: it is rebuilt for every one of the
+/// reachable instances, of which a large task has hundreds of thousands.
+#[derive(Debug, Default, Clone)]
+pub struct VarMapping<'a> {
+    bindings: Vec<(&'a str, &'a str)>,
+}
+
+impl<'a> VarMapping<'a> {
+    /// Binds `parameter` to `object`, replacing whatever it was bound to.
+    pub fn bind(&mut self, parameter: &'a str, object: &'a str) {
+        match self
+            .bindings
+            .iter_mut()
+            .find(|(name, _)| *name == parameter)
+        {
+            Some(binding) => binding.1 = object,
+            None => self.bindings.push((parameter, object)),
+        }
+    }
+
+    /// Binds `parameter` to itself unless it is already bound. A parameter of a
+    /// conditional effect is quantified inside the effect, so grounding the
+    /// action leaves it standing.
+    pub fn bind_to_itself(&mut self, parameter: &'a str) {
+        if self.get(parameter).is_none() {
+            self.bindings.push((parameter, parameter));
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.bindings.clear();
+    }
+
+    pub fn get(&self, parameter: &str) -> Option<&'a str> {
+        self.bindings
+            .iter()
+            .find(|(name, _)| *name == parameter)
+            .map(|&(_, object)| object)
+    }
+
+    /// What `name` stands for once the parameters are bound: the object it is
+    /// bound to, or the name itself, which is what a constant resolves to.
+    pub fn resolve<'s>(&'s self, name: &'s str) -> &'s str {
+        self.get(name).unwrap_or(name)
+    }
+
+    /// An argument list with every parameter replaced by its object.
+    pub fn resolve_all(&self, names: &[String]) -> Vec<String> {
+        names
+            .iter()
+            .map(|name| self.resolve(name).to_owned())
+            .collect()
+    }
+
+    /// The objects a parameter list is bound to, as an argument list.
+    pub fn resolve_parameters(&self, parameters: &[TypedObject]) -> Vec<String> {
+        parameters
+            .iter()
+            .map(|parameter| self.resolve(&parameter.name).to_owned())
+            .collect()
+    }
+}
+
 /// The task-wide tables an action or axiom is instantiated against: what
 /// holds initially, which predicates and functions are fluent, and what the
 /// numeric fluents start at.
@@ -214,7 +281,6 @@ impl Task {
 pub struct DerivedFunctionAdministrator {
     pub function_symbols: HashSet<String>,
     derived_functions: HashMap<DerivedFunctionKey, NumericAxiom>,
-    pub axioms: Vec<NumericAxiom>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -235,12 +301,23 @@ impl DerivedFunctionAdministrator {
         DerivedFunctionAdministrator {
             function_symbols: HashSet::new(),
             derived_functions: HashMap::new(),
-            axioms: vec![],
         }
     }
 
     pub fn get_all_axioms(&self) -> Vec<NumericAxiom> {
         self.derived_functions.values().cloned().collect()
+    }
+
+    /// The axiom that defines the derived function called `name`.
+    ///
+    /// A derived function is keyed by the expression it stands for and named
+    /// after that key, so a name belongs to at most one of them. Grounding asks
+    /// this once per instance of every action, which is why it does not go
+    /// through [`Self::get_all_axioms`] and its copy of the whole table.
+    pub fn axiom_named(&self, name: &str) -> Option<&NumericAxiom> {
+        self.derived_functions
+            .values()
+            .find(|axiom| axiom.name == name)
     }
 
     fn get_default_variables(&self, nr: usize) -> Vec<TypedObject> {
@@ -388,8 +465,7 @@ impl DerivedFunctionAdministrator {
         let parameters = self.get_default_variables(args.len());
         let axiom = NumericAxiom::new(name.clone(), parameters, op, parts);
         self.function_symbols.insert(name.clone());
-        self.derived_functions.insert(key, axiom.clone());
-        self.axioms = self.get_all_axioms();
+        self.derived_functions.insert(key, axiom);
         PrimitiveNumericExpression::with_type(name, args, 'D')
     }
 

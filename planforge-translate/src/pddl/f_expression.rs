@@ -160,7 +160,7 @@ impl FunctionAssignment {
 
     pub fn instantiate(
         &self,
-        var_mapping: &HashMap<String, String>,
+        var_mapping: &super::tasks::VarMapping,
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
         init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
@@ -170,7 +170,7 @@ impl FunctionAssignment {
             .fluent
             .args
             .iter()
-            .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+            .map(|arg| var_mapping.resolve(arg).to_owned())
             .collect();
         let new_fluent = PrimitiveNumericExpression::with_type(
             self.fluent.symbol.clone(),
@@ -190,7 +190,7 @@ impl FunctionAssignment {
 
     pub fn instantiate_cost(
         &self,
-        var_mapping: &HashMap<String, String>,
+        var_mapping: &super::tasks::VarMapping,
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
         init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
@@ -388,7 +388,7 @@ impl fmt::Display for FunctionalExpression {
 /// Helper: Instantiate a functional expression
 pub fn instantiate_expression(
     expr: &FunctionalExpression,
-    var_mapping: &HashMap<String, String>,
+    var_mapping: &super::tasks::VarMapping,
     fluent_functions: &HashSet<PrimitiveNumericExpression>,
     init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
     task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
@@ -400,7 +400,7 @@ pub fn instantiate_expression(
             let new_args: Vec<String> = pne
                 .args
                 .iter()
-                .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
+                .map(|arg| var_mapping.resolve(arg).to_owned())
                 .collect();
             let instantiated =
                 PrimitiveNumericExpression::with_type(pne.symbol.clone(), new_args, pne.ntype);
@@ -410,13 +410,9 @@ pub fn instantiate_expression(
                     let constant_expr =
                         FunctionalExpression::NumericConstant(NumericConstant::new(*value));
                     let derived = task_function_admin.get_derived_function(&constant_expr);
-                    if let Some(axiom) = task_function_admin
-                        .get_all_axioms()
-                        .into_iter()
-                        .find(|axiom| axiom.name == derived.symbol)
-                    {
+                    if let Some(axiom) = task_function_admin.axiom_named(&derived.symbol).cloned() {
                         let instantiated_axiom = axiom.instantiate(
-                            &HashMap::new(),
+                            &super::tasks::VarMapping::default(),
                             fluent_functions,
                             init_function_vals,
                             task_function_admin,

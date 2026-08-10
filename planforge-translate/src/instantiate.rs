@@ -1,5 +1,6 @@
 /// Instantiates the PDDL task using the logic program model.
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 
 use super::build_model;
 use super::pddl::actions::PropositionalAction;
@@ -7,8 +8,9 @@ use super::pddl::axioms::{InstantiatedNumericAxiom, PropositionalAxiom};
 use super::pddl::conditions::*;
 use super::pddl::f_expression::*;
 use super::pddl::pddl_types::TypedObject;
-use super::pddl::tasks::Task;
+use super::pddl::tasks::{Task, VarMapping};
 use super::pddl_to_prolog;
+use super::symbols::ObjectId;
 use super::tools::OrderedSet;
 
 fn collect_used_derived_pnes_from_expr(
@@ -84,7 +86,11 @@ pub struct ExploreResult {
     pub numeric_axioms: Vec<InstantiatedNumericAxiom>,
     pub init_constant_predicates: Vec<Atom>,
     pub init_constant_numerics: Vec<FunctionAssignment>,
-    pub reachable_action_params: HashMap<String, Vec<Vec<String>>>,
+    /// The parameter tuple of every reachable instance of each action, with
+    /// the objects interned as the model left them. The invariant synthesis
+    /// only asks whether two positions of a tuple hold the same object, so the
+    /// tuples never have to be spelled back out.
+    pub reachable_action_params: HashMap<String, Vec<Rc<[ObjectId]>>>,
 }
 
 /// A predicate is fluent if it appears in some action effect or is derived.
@@ -215,7 +221,7 @@ pub fn explore(task: &Task) -> ExploreResult {
 
     let mut fluent_functions: HashSet<PrimitiveNumericExpression> = HashSet::new();
     let mut reachable_atoms: Vec<Atom> = vec![];
-    let mut reachable_action_params: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+    let mut reachable_action_params: HashMap<String, Vec<Rc<[ObjectId]>>> = HashMap::new();
     let mut axiom_instances: Vec<(&str, Vec<String>)> = vec![];
     let mut relaxed_reachable = false;
     for atom in &model.atoms {
@@ -244,7 +250,7 @@ pub fn explore(task: &Task) -> ExploreResult {
             Bookkeeping::ActionParameters(name) => reachable_action_params
                 .entry(name.to_owned())
                 .or_default()
-                .push(args()),
+                .push(Rc::clone(&atom.args)),
             Bookkeeping::FunctionAxiom(name) => axiom_instances.push((name, args())),
             Bookkeeping::GoalReachable => relaxed_reachable = true,
         }
@@ -262,25 +268,30 @@ pub fn explore(task: &Task) -> ExploreResult {
     let mut grounded_ops: Vec<PropositionalAction> = vec![];
     let mut new_constant_numeric_axioms: Vec<InstantiatedNumericAxiom> = vec![];
 
+    // The mapping is rebuilt for every instance and borrows the names it maps,
+    // so one buffer serves all of them.
+    let mut var_mapping = VarMapping::default();
     for action in &task.actions {
-        if let Some(param_lists) = reachable_action_params.get(&action.name) {
-            for params in param_lists {
-                if params.len() == action.num_external_parameters {
-                    let mut var_mapping: HashMap<String, String> = HashMap::new();
-                    for (param, value) in action.parameters.iter().zip(params.iter()) {
-                        var_mapping.insert(param.name.clone(), value.clone());
-                    }
-                    // For parameters beyond num_external, they're internal
-                    // We need to handle them too
-                    if let Some(prop_action) = action.instantiate(
-                        &var_mapping,
-                        tables,
-                        &mut task_function_admin,
-                        &mut new_constant_numeric_axioms,
-                    ) {
-                        grounded_ops.push(prop_action);
-                    }
-                }
+        let Some(param_lists) = reachable_action_params.get(&action.name) else {
+            continue;
+        };
+        for params in param_lists {
+            // A tuple of the wrong length instantiates the action's internal
+            // parameters, which are grounded by the effect they belong to.
+            if params.len() != action.num_external_parameters {
+                continue;
+            }
+            var_mapping.clear();
+            for (parameter, &object) in action.parameters.iter().zip(params.iter()) {
+                var_mapping.bind(&parameter.name, model.symbols.object_name(object));
+            }
+            if let Some(prop_action) = action.instantiate(
+                &var_mapping,
+                tables,
+                &mut task_function_admin,
+                &mut new_constant_numeric_axioms,
+            ) {
+                grounded_ops.push(prop_action);
             }
         }
     }
@@ -289,9 +300,11 @@ pub fn explore(task: &Task) -> ExploreResult {
     let mut grounded_axioms: Vec<PropositionalAxiom> = vec![];
     for axiom in &task.axioms {
         for_each_parameter_tuple(&axiom.parameters, &objects_by_type, &mut |params| {
-            let mut var_mapping: HashMap<String, String> = HashMap::new();
-            for (param, value) in axiom.parameters.iter().zip(params) {
-                var_mapping.insert(param.name.clone(), value.clone());
+            // The tuple is rewritten in place between visits, so this mapping
+            // cannot outlive the visit and cannot be hoisted out of it.
+            let mut var_mapping = VarMapping::default();
+            for (parameter, value) in axiom.parameters.iter().zip(params) {
+                var_mapping.bind(&parameter.name, value);
             }
             if let Some(prop_axiom) = axiom.instantiate(
                 &var_mapping,
@@ -314,11 +327,12 @@ pub fn explore(task: &Task) -> ExploreResult {
             .map(|axiom| (axiom.name.clone(), axiom))
             .collect();
 
+    let mut var_mapping = VarMapping::default();
     for (name, args) in &axiom_instances {
         if let Some(axiom) = numeric_axioms_by_name.get(*name) {
-            let mut var_mapping: HashMap<String, String> = HashMap::new();
+            var_mapping.clear();
             for (parameter, value) in axiom.parameters.iter().zip(args) {
-                var_mapping.insert(parameter.name.clone(), value.clone());
+                var_mapping.bind(&parameter.name, value);
             }
             let instantiated = axiom.instantiate(
                 &var_mapping,
@@ -362,9 +376,9 @@ pub fn explore(task: &Task) -> ExploreResult {
             .iter()
             .filter(|p| p.symbol == head.symbol && p.args.len() == axiom.parameters.len())
         {
-            let mut var_mapping: HashMap<String, String> = HashMap::new();
-            for (param, value) in axiom.parameters.iter().zip(used.args.iter()) {
-                var_mapping.insert(param.name.clone(), value.clone());
+            var_mapping.clear();
+            for (parameter, value) in axiom.parameters.iter().zip(used.args.iter()) {
+                var_mapping.bind(&parameter.name, value);
             }
             let instantiated = axiom.instantiate(
                 &var_mapping,

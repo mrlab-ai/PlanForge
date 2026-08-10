@@ -1451,7 +1451,7 @@ pub fn translate_task_from_grounded_internal(
         // This preserves semantics but produces a less compact encoding.
         fact_groups::compute_singleton_groups(&atoms_set)
     } else {
-        fact_groups::compute_groups(task, &atoms_set, &Some(reachable_action_params.clone()))
+        fact_groups::compute_groups(task, &atoms_set, reachable_action_params)
     };
 
     let numeric_axioms = numeric_axiom_rules::handle_axioms(num_axioms);
