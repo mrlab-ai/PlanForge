@@ -34,8 +34,8 @@ use super::utils;
 use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
     AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
-    RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion, TransitionResidualCosts,
-    state_region_intersection,
+    OperatorTransition, RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion,
+    TransitionResidualCosts, state_region_intersection,
 };
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
@@ -83,6 +83,45 @@ struct AbstractGoalDistanceSpace<'a> {
     goal_facts: &'a [ExplicitFact],
     layout: ComparisonBranchingLayout<'a>,
     num_states: usize,
+}
+
+/// One abstraction's turn in a saturated cost partitioning: the costs earlier
+/// abstractions in the order have left unspent, which abstraction of the
+/// collection this is, and the two states that can cut the build short -- the
+/// state being evaluated, whose distance reaching zero means there is nothing
+/// left for this abstraction to contribute, and the perimeter cap beyond which
+/// distances are discarded.
+#[derive(Clone, Copy)]
+pub struct SaturationStep<'a> {
+    pub residual_costs: &'a TransitionResidualCosts,
+    pub abstraction_id: usize,
+    pub current_state_id: Option<usize>,
+    pub cap_state_id: Option<usize>,
+}
+
+/// A solved abstraction a wildcard plan can be read back from: the task and the
+/// generator that fixes its hash layout, the abstract operators with the match
+/// tree indexing them, the goal-distance table the plan descends, and the
+/// comparison variables that branch when a state's conditions are re-evaluated.
+#[derive(Clone, Copy)]
+struct SolvedAbstraction<'a> {
+    task: &'a dyn AbstractNumericTask,
+    generator: &'a AbstractOperatorGenerator,
+    operators: &'a [AbstractOperator],
+    table: &'a AbstractDistanceTable,
+    match_tree: &'a MatchTree,
+    comparison_var_ids: &'a [usize],
+}
+
+/// What a transition-system build keeps beyond the transitions themselves: the
+/// per-state regions, the abstract self-loops that potential/abstraction OCP
+/// needs for its `c(a) >= 0` constraints, and a cap on the concrete label
+/// transitions it will record before reporting the cap exceeded.
+#[derive(Clone, Copy)]
+struct TransitionSystemContents {
+    materialize_state_regions: bool,
+    include_self_loops: bool,
+    max_concrete_label_transitions: Option<usize>,
 }
 
 /// What one comparison-enumeration loop remembers across calls: the resolved
@@ -675,7 +714,15 @@ impl DomainAbstractionFactory {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
         self.build_transition_system_with_operators(
-            task, &generator, &operators, deadline, true, false, None,
+            task,
+            &generator,
+            &operators,
+            TransitionSystemContents {
+                materialize_state_regions: true,
+                include_self_loops: false,
+                max_concrete_label_transitions: None,
+            },
+            deadline,
         )?
         .into_complete()
     }
@@ -689,7 +736,15 @@ impl DomainAbstractionFactory {
     ) -> Result<AbstractTransitionSystem> {
         let generator = self.make_operator_generator(task, combine_labels)?;
         self.build_transition_system_with_operators(
-            task, &generator, operators, deadline, true, false, None,
+            task,
+            &generator,
+            operators,
+            TransitionSystemContents {
+                materialize_state_regions: true,
+                include_self_loops: false,
+                max_concrete_label_transitions: None,
+            },
+            deadline,
         )?
         .into_complete()
     }
@@ -703,7 +758,15 @@ impl DomainAbstractionFactory {
     ) -> Result<AbstractTransitionSystem> {
         let generator = self.make_operator_generator(task, combine_labels)?;
         self.build_transition_system_with_operators(
-            task, &generator, operators, deadline, false, false, None,
+            task,
+            &generator,
+            operators,
+            TransitionSystemContents {
+                materialize_state_regions: false,
+                include_self_loops: false,
+                max_concrete_label_transitions: None,
+            },
+            deadline,
         )?
         .into_complete()
     }
@@ -725,10 +788,12 @@ impl DomainAbstractionFactory {
             task,
             &generator,
             operators,
+            TransitionSystemContents {
+                materialize_state_regions: false,
+                include_self_loops: true,
+                max_concrete_label_transitions: Some(max_concrete_label_transitions),
+            },
             deadline,
-            false,
-            true,
-            Some(max_concrete_label_transitions),
         )
     }
 
@@ -805,11 +870,13 @@ impl DomainAbstractionFactory {
                     .map(|&concrete_op_id| {
                         if residuals_have_reductions {
                             residual_costs.cost_for_indexed_transition(
-                                concrete_op_id,
-                                abstraction_id,
-                                transition.source_hash,
-                                transition.abstract_op_id,
-                                transition.target_hash,
+                                OperatorTransition {
+                                    concrete_op_id,
+                                    abstraction_id,
+                                    source_hash: transition.source_hash,
+                                    abstract_op_id: transition.abstract_op_id,
+                                    target_hash: transition.target_hash,
+                                },
                                 &transition_system.state_regions[transition.source_hash],
                                 &transition_system.state_regions[transition.target_hash],
                             )
@@ -1006,19 +1073,21 @@ impl DomainAbstractionFactory {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
         operators: &[AbstractOperator],
         footprints: &[AbstractOperatorFootprint],
-        residual_costs: &TransitionResidualCosts,
-        abstraction_id: usize,
-        current_state_id: Option<usize>,
-        cap_state_id: Option<usize>,
+        step: SaturationStep<'_>,
         deadline: Option<Instant>,
     ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
+        let SaturationStep {
+            residual_costs,
+            abstraction_id,
+            current_state_id,
+            cap_state_id,
+        } = step;
         ensure_online_scp_deadline(deadline)?;
         ensure!(
             footprints.len() >= operators.len(),
@@ -1099,13 +1168,16 @@ impl DomainAbstractionFactory {
                 }
             }
             let tcf = self.compute_saturated_abstract_operator_costs_from_operators_inner(
-                task,
-                &generator,
-                &operators,
+                SolvedAbstraction {
+                    task,
+                    generator: &generator,
+                    operators: &operators,
+                    table: &perim_table,
+                    match_tree: &match_tree,
+                    comparison_var_ids: &comparison_var_ids_for_tree,
+                },
                 &operator_costs,
-                &perim_table,
                 deadline,
-                Some(&match_tree),
             )?;
             let mut saturated_operators = operators;
             apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
@@ -1124,13 +1196,16 @@ impl DomainAbstractionFactory {
         }
 
         let tcf = self.compute_saturated_abstract_operator_costs_from_operators_inner(
-            task,
-            &generator,
-            &operators,
+            SolvedAbstraction {
+                task,
+                generator: &generator,
+                operators: &operators,
+                table: &table,
+                match_tree: &match_tree,
+                comparison_var_ids: &comparison_var_ids_for_tree,
+            },
             &operator_costs,
-            &table,
             deadline,
-            Some(&match_tree),
         )?;
         // For Saturator::All, the saturated abstract-operator costs are tight
         // wrt `table.distances`: by construction every transition (u,v) using
@@ -1485,12 +1560,14 @@ impl DomainAbstractionFactory {
 
         let plan_start = Instant::now();
         let plan = self.compute_wildcard_plan_from_table(
-            task,
-            &generator,
-            &operators,
-            &table,
-            &comparison_var_ids,
-            &match_tree,
+            SolvedAbstraction {
+                task,
+                generator: &generator,
+                operators: &operators,
+                table: &table,
+                match_tree: &match_tree,
+                comparison_var_ids: &comparison_var_ids,
+            },
             use_wildcard_plans,
             plan_step_rng,
             deadline,
@@ -1680,18 +1757,19 @@ impl DomainAbstractionFactory {
         Ok(table)
     }
 
-    #[allow(clippy::needless_range_loop)]
-    #[allow(clippy::too_many_arguments)]
     fn build_transition_system_with_operators(
         &self,
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
+        contents: TransitionSystemContents,
         deadline: Option<Instant>,
-        materialize_state_regions: bool,
-        include_self_loops: bool,
-        max_concrete_label_transitions: Option<usize>,
     ) -> Result<OcpTransitionSystemBuild> {
+        let TransitionSystemContents {
+            materialize_state_regions,
+            include_self_loops,
+            max_concrete_label_transitions,
+        } = contents;
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
@@ -2376,17 +2454,20 @@ impl DomainAbstractionFactory {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn compute_saturated_abstract_operator_costs_from_operators_inner(
         &self,
-        _task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
+        abstraction: SolvedAbstraction<'_>,
         operator_costs: &[f64],
-        table: &AbstractDistanceTable,
         deadline: Option<Instant>,
-        prebuilt_match_tree: Option<&MatchTree>,
     ) -> Result<AbstractOperatorCostFunction> {
+        let SolvedAbstraction {
+            task,
+            generator,
+            operators,
+            table,
+            match_tree,
+            comparison_var_ids,
+        } = abstraction;
         ensure!(
             operators.len() == operator_costs.len(),
             "abstract operator/cost vector size mismatch: {} vs {}",
@@ -2395,20 +2476,7 @@ impl DomainAbstractionFactory {
         );
 
         let num_states = table.distances.len();
-        let comparison_var_ids = self.comparison_var_ids();
         let comparison_branching = !comparison_var_ids.is_empty();
-        let owned_match_tree = if prebuilt_match_tree.is_none() {
-            Some(MatchTree::build(
-                generator.domain_sizes(),
-                generator.numeric_domain_sizes(),
-                generator.hash_multipliers(),
-                operators,
-                &comparison_var_ids,
-            ))
-        } else {
-            None
-        };
-        let match_tree = prebuilt_match_tree.unwrap_or_else(|| owned_match_tree.as_ref().unwrap());
         let mut saturated = vec![0.0_f64; operators.len()];
         let mut applicable_operator_ids = Vec::new();
 
@@ -2431,7 +2499,7 @@ impl DomainAbstractionFactory {
         // AOCP-fillSCP (prob_4_2_2: 34 vs 33, prob_5_1_2: 30 vs 24,
         // prob_4_2_3: 32 vs 29, etc.).
         let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, &comparison_var_ids)
+            comparison_preconditions_by_operator(operators, comparison_var_ids)
         } else {
             Vec::new()
         };
@@ -2450,7 +2518,7 @@ impl DomainAbstractionFactory {
                 self.clear_comparison_vars_except(
                     target_hash,
                     generator.hash_multipliers(),
-                    &comparison_var_ids,
+                    comparison_var_ids,
                     &[],
                 )?
             } else {
@@ -2489,11 +2557,11 @@ impl DomainAbstractionFactory {
                     let possible_predecessors = self
                         .enumerate_states_with_evaluated_comparisons_cached(
                             base_predecessor,
-                            _task,
+                            task,
                             ComparisonBranchingLayout {
                                 numeric_domain_sizes: generator.numeric_domain_sizes(),
                                 hash_multipliers: generator.hash_multipliers(),
-                                comparison_var_ids: &comparison_var_ids,
+                                comparison_var_ids,
                             },
                             &comparison_preconditions[abstract_op_id],
                             &mut comparison_enumeration_memo,
@@ -3034,19 +3102,21 @@ impl DomainAbstractionFactory {
         Ok(memo.overflow.as_slice())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn compute_wildcard_plan_from_table(
         &self,
-        task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
-        table: &AbstractDistanceTable,
-        comparison_var_ids: &[usize],
-        match_tree: &MatchTree,
+        abstraction: SolvedAbstraction<'_>,
         use_wildcard_plans: bool,
         mut plan_step_rng: Option<&mut SmallRng>,
         deadline: Option<Instant>,
     ) -> Result<Option<WildcardPlanResult>> {
+        let SolvedAbstraction {
+            task,
+            generator,
+            operators,
+            table,
+            match_tree,
+            comparison_var_ids,
+        } = abstraction;
         ensure_online_scp_deadline(deadline)?;
         let domain_sizes = generator.domain_sizes();
         let hash_multipliers = generator.hash_multipliers();

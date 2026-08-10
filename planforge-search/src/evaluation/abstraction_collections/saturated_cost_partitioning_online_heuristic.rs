@@ -28,7 +28,9 @@ use crate::successor_generator::SuccessorTree;
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::AbstractOperator;
 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-use crate::evaluation::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
+use crate::evaluation::domain_abstractions::domain_abstraction_factory::{
+    AbstractDistanceTable, SaturationStep,
+};
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
     DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
@@ -3558,10 +3560,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            &remaining_costs,
-                            pos,
-                            abstract_state_ids.get(pos).copied().flatten(),
-                            None,
+                            SaturationStep {
+                                residual_costs: &remaining_costs,
+                                abstraction_id: pos,
+                                current_state_id: abstract_state_ids.get(pos).copied().flatten(),
+                                cap_state_id: None,
+                            },
                             deadline,
                         )
                         .map_err(|error| {
@@ -3610,10 +3614,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            &remaining_costs,
-                            pos,
-                            cap_state_id,
-                            cap_state_id,
+                            SaturationStep {
+                                residual_costs: &remaining_costs,
+                                abstraction_id: pos,
+                                current_state_id: cap_state_id,
+                                cap_state_id,
+                            },
                             deadline,
                         )
                         .map_err(|error| {
@@ -3662,10 +3668,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            &remaining_costs,
-                            pos,
-                            cap_state_id,
-                            cap_state_id,
+                            SaturationStep {
+                                residual_costs: &remaining_costs,
+                                abstraction_id: pos,
+                                current_state_id: cap_state_id,
+                                cap_state_id,
+                            },
                             deadline,
                         )
                         .map_err(|error| {
@@ -3704,10 +3712,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             abstraction.combine_labels,
                             &abstraction.abstract_operators,
                             &abstraction.abstract_operator_footprints,
-                            &remaining_costs,
-                            pos,
-                            cap_state_id,
-                            None,
+                            SaturationStep {
+                                residual_costs: &remaining_costs,
+                                abstraction_id: pos,
+                                current_state_id: cap_state_id,
+                                cap_state_id: None,
+                            },
                             deadline,
                         )
                         .map_err(|error| {

@@ -305,7 +305,6 @@ pub fn build_explicit_label_cost_partitioning_table(
     Ok((global_distances, saturated))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn build_explicit_regional_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     footprints: &[AbstractOperatorFootprint],
@@ -526,7 +525,6 @@ fn saturated_abstract_operator_costs(
     Ok(saturated)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn abstract_operator_costs_from_footprints(
     num_operators: usize,
     footprints: &[AbstractOperatorFootprint],
@@ -1219,6 +1217,31 @@ struct TransitionIdentity {
     target_hash: usize,
 }
 
+/// The transition a residual cost is read or reduced for: the concrete operator
+/// that pays the cost, the abstraction of the collection the query belongs to,
+/// and the abstract operator taking `source_hash` to `target_hash`.
+/// `TransitionIdentity` is the same thing without the operator, which is how
+/// each operator's own reduction map is keyed.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct OperatorTransition {
+    pub concrete_op_id: usize,
+    pub abstraction_id: usize,
+    pub source_hash: usize,
+    pub abstract_op_id: usize,
+    pub target_hash: usize,
+}
+
+impl OperatorTransition {
+    fn identity(&self) -> TransitionIdentity {
+        TransitionIdentity {
+            abstraction_id: self.abstraction_id,
+            source_hash: self.source_hash,
+            abstract_op_id: self.abstract_op_id,
+            target_hash: self.target_hash,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct TransitionQueryKey {
     abstraction_id: usize,
@@ -1417,23 +1440,14 @@ impl TransitionResidualCosts {
             .collect()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn cost_for_transition(
         &self,
-        concrete_op_id: usize,
-        current_abstraction_id: usize,
-        source_hash: usize,
-        abstract_op_id: usize,
-        target_hash: usize,
+        transition: OperatorTransition,
         source_region: &StateRegion,
         target_region: &StateRegion,
     ) -> f64 {
         self.cost_for_transition_with_region_key(
-            concrete_op_id,
-            current_abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
+            transition,
             source_region,
             target_region,
             Some(TransitionRegionKey {
@@ -1443,27 +1457,13 @@ impl TransitionResidualCosts {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn cost_for_indexed_transition(
         &self,
-        concrete_op_id: usize,
-        current_abstraction_id: usize,
-        source_hash: usize,
-        abstract_op_id: usize,
-        target_hash: usize,
+        transition: OperatorTransition,
         source_region: &StateRegion,
         target_region: &StateRegion,
     ) -> f64 {
-        self.cost_for_transition_with_region_key(
-            concrete_op_id,
-            current_abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
-            source_region,
-            target_region,
-            None,
-        )
+        self.cost_for_transition_with_region_key(transition, source_region, target_region, None)
     }
 
     pub fn cost_for_abstract_operator(
@@ -1474,11 +1474,13 @@ impl TransitionResidualCosts {
         region: &TransitionRegion,
     ) -> f64 {
         self.cost_for_transition_with_region(
-            concrete_op_id,
-            current_abstraction_id,
-            ABSTRACT_OPERATOR_REGION_HASH,
-            abstract_op_id,
-            ABSTRACT_OPERATOR_REGION_HASH,
+            OperatorTransition {
+                concrete_op_id,
+                abstraction_id: current_abstraction_id,
+                source_hash: ABSTRACT_OPERATOR_REGION_HASH,
+                abstract_op_id,
+                target_hash: ABSTRACT_OPERATOR_REGION_HASH,
+            },
             region.clone(),
             None,
         )
@@ -1505,11 +1507,13 @@ impl TransitionResidualCosts {
             residual.regional_usage.max_over(&footprint.source_region)
         };
         let legacy = self.cost_for_transition_with_region(
-            footprint.concrete_op_id,
-            current_abstraction_id,
-            ABSTRACT_OPERATOR_REGION_HASH,
-            abstract_op_id,
-            ABSTRACT_OPERATOR_REGION_HASH,
+            OperatorTransition {
+                concrete_op_id: footprint.concrete_op_id,
+                abstraction_id: current_abstraction_id,
+                source_hash: ABSTRACT_OPERATOR_REGION_HASH,
+                abstract_op_id,
+                target_hash: ABSTRACT_OPERATOR_REGION_HASH,
+            },
             TransitionRegion {
                 source: Arc::clone(&footprint.source_region),
                 target: Arc::clone(&footprint.source_region),
@@ -1519,24 +1523,15 @@ impl TransitionResidualCosts {
         (legacy - regional).max(0.0)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn cost_for_transition_with_region_key(
         &self,
-        concrete_op_id: usize,
-        current_abstraction_id: usize,
-        source_hash: usize,
-        abstract_op_id: usize,
-        target_hash: usize,
+        transition: OperatorTransition,
         source_region: &StateRegion,
         target_region: &StateRegion,
         region_key: Option<TransitionRegionKey>,
     ) -> f64 {
         self.cost_for_transition_with_region(
-            concrete_op_id,
-            current_abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
+            transition,
             TransitionRegion {
                 source: Arc::new(source_region.clone()),
                 target: Arc::new(target_region.clone()),
@@ -1545,17 +1540,19 @@ impl TransitionResidualCosts {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn cost_for_transition_with_region(
         &self,
-        concrete_op_id: usize,
-        current_abstraction_id: usize,
-        source_hash: usize,
-        abstract_op_id: usize,
-        target_hash: usize,
+        transition: OperatorTransition,
         query_region: TransitionRegion,
         region_key: Option<TransitionRegionKey>,
     ) -> f64 {
+        let OperatorTransition {
+            concrete_op_id,
+            abstraction_id,
+            source_hash,
+            abstract_op_id,
+            target_hash,
+        } = transition;
         let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
             return f64::INFINITY;
         };
@@ -1564,7 +1561,7 @@ impl TransitionResidualCosts {
         }
 
         let key = TransitionQueryKey {
-            abstraction_id: current_abstraction_id,
+            abstraction_id,
             source_hash,
             abstract_op_id,
             target_hash,
@@ -1577,7 +1574,7 @@ impl TransitionResidualCosts {
         }
 
         let query = TransitionCondition {
-            abstraction_id: current_abstraction_id,
+            abstraction_id,
             source_hash,
             abstract_op_id,
             target_hash,
@@ -1637,11 +1634,13 @@ impl TransitionResidualCosts {
             for &concrete_op_id in &transition.concrete_op_ids {
                 let region = transition_system.transition_region(transition)?;
                 self.reduce_exact_transition(
-                    concrete_op_id,
-                    producing_abstraction_id,
-                    transition.source_hash,
-                    transition.abstract_op_id,
-                    transition.target_hash,
+                    OperatorTransition {
+                        concrete_op_id,
+                        abstraction_id: producing_abstraction_id,
+                        source_hash: transition.source_hash,
+                        abstract_op_id: transition.abstract_op_id,
+                        target_hash: transition.target_hash,
+                    },
                     &region,
                     saturated,
                 )
@@ -1956,30 +1955,26 @@ impl TransitionResidualCosts {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn reduce_exact_transition(
         &mut self,
-        concrete_op_id: usize,
-        producing_abstraction_id: usize,
-        source_hash: usize,
-        abstract_op_id: usize,
-        target_hash: usize,
+        transition: OperatorTransition,
         region: &TransitionRegion,
         saturated: f64,
     ) -> Result<()> {
+        let concrete_op_id = transition.concrete_op_id;
         ensure!(
             concrete_op_id < self.operator_residuals.len(),
             "concrete operator id out of bounds: {concrete_op_id}"
         );
         let condition = TransitionCondition {
-            abstraction_id: producing_abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
+            abstraction_id: transition.abstraction_id,
+            source_hash: transition.source_hash,
+            abstract_op_id: transition.abstract_op_id,
+            target_hash: transition.target_hash,
             region: region.clone(),
         };
         let residual = &mut self.operator_residuals[concrete_op_id];
-        let identity = condition.identity();
+        let identity = transition.identity();
         if let Some(&index) = residual.reduction_indices.get(&identity) {
             let reduction = &mut residual.reductions[index];
             let new_amount = reduction.amount + saturated;
@@ -2904,6 +2899,23 @@ mod tests {
         }
     }
 
+    /// A transition of concrete operator 0, which is the only operator these
+    /// residual-cost tests give a base cost to.
+    fn transition(
+        abstraction_id: usize,
+        source_hash: usize,
+        abstract_op_id: usize,
+        target_hash: usize,
+    ) -> OperatorTransition {
+        OperatorTransition {
+            concrete_op_id: 0,
+            abstraction_id,
+            source_hash,
+            abstract_op_id,
+            target_hash,
+        }
+    }
+
     fn numeric_state_region(lower: f64, upper: f64) -> StateRegion {
         StateRegion {
             propositions: vec![vec![0]].into(),
@@ -2992,11 +3004,7 @@ mod tests {
 
         assert_eq!(
             residuals.cost_for_transition(
-                0,
-                0,
-                3,
-                7,
-                4,
+                transition(0, 3, 7, 4),
                 &reduced_region.source,
                 &reduced_region.target
             ),
@@ -3004,17 +3012,29 @@ mod tests {
         );
         let other_target = state_region(2);
         assert_eq!(
-            residuals.cost_for_transition(0, 0, 3, 7, 5, &reduced_region.source, &other_target),
+            residuals.cost_for_transition(
+                transition(0, 3, 7, 5),
+                &reduced_region.source,
+                &other_target
+            ),
             5.0
         );
         let overlapping = region(0, 1);
         assert_eq!(
-            residuals.cost_for_transition(0, 1, 3, 7, 4, &overlapping.source, &overlapping.target),
+            residuals.cost_for_transition(
+                transition(1, 3, 7, 4),
+                &overlapping.source,
+                &overlapping.target
+            ),
             3.0
         );
         let disjoint = region(1, 0);
         assert_eq!(
-            residuals.cost_for_transition(0, 1, 3, 7, 4, &disjoint.source, &disjoint.target),
+            residuals.cost_for_transition(
+                transition(1, 3, 7, 4),
+                &disjoint.source,
+                &disjoint.target
+            ),
             5.0
         );
     }
@@ -3062,11 +3082,7 @@ mod tests {
 
         assert_eq!(
             residuals.cost_for_transition(
-                0,
-                0,
-                0,
-                0,
-                1,
+                transition(0, 0, 0, 1),
                 &reduced_region.source,
                 &reduced_region.target
             ),
@@ -3114,16 +3130,28 @@ mod tests {
 
         let disjoint = region(1, 0);
         assert_eq!(
-            residuals.cost_for_transition(0, 0, 9, 7, 4, &disjoint.source, &disjoint.target),
+            residuals.cost_for_transition(
+                transition(0, 9, 7, 4),
+                &disjoint.source,
+                &disjoint.target
+            ),
             5.0
         );
         assert_eq!(
-            residuals.cost_for_transition(0, 1, 9, 7, 4, &disjoint.source, &disjoint.target),
+            residuals.cost_for_transition(
+                transition(1, 9, 7, 4),
+                &disjoint.source,
+                &disjoint.target
+            ),
             5.0
         );
         let overlapping = region(0, 1);
         assert_eq!(
-            residuals.cost_for_transition(0, 1, 9, 7, 4, &overlapping.source, &overlapping.target),
+            residuals.cost_for_transition(
+                transition(1, 9, 7, 4),
+                &overlapping.source,
+                &overlapping.target
+            ),
             3.0
         );
     }
@@ -3178,11 +3206,7 @@ mod tests {
         let overlapping = region(0, 1);
         assert_eq!(
             residuals.cost_for_transition(
-                0,
-                1,
-                99,
-                99,
-                100,
+                transition(1, 99, 99, 100),
                 &overlapping.source,
                 &overlapping.target
             ),
@@ -3240,7 +3264,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_transition(0, 1, 99, 99, 100, &query.source, &query.target),
+            residuals.cost_for_transition(transition(1, 99, 99, 100), &query.source, &query.target),
             6.0
         );
         assert_eq!(residuals.operator_costs_for_label_cp(), vec![6.0]);
