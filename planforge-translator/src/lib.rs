@@ -94,10 +94,9 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
 
     let mut norm_task = normalize::NormalizableTask::from_task(parsed_task);
     norm_task.add_global_constraints();
-    normalize::normalize(&mut norm_task).expect("normalization failed");
+    normalize::normalize(&mut norm_task);
 
-    let result = planforge_translate::instantiate::explore_normalized(&norm_task)
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let result = planforge_translate::instantiate::explore(&norm_task.task);
 
     // `translate_task_from_grounded_internal` already filters unreachable
     // propositions and answers with a trivial task when that proves the task

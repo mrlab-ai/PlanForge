@@ -394,12 +394,6 @@ pub fn explore(task: &Task) -> ExploreResult {
     }
 }
 
-pub fn explore_normalized(
-    norm_task: &super::normalize::NormalizableTask,
-) -> Result<ExploreResult, String> {
-    Ok(explore(&norm_task.task))
-}
-
 /// Visits every assignment of type-correct objects to `parameters`, last
 /// parameter varying fastest. The tuples are visited rather than collected:
 /// there is one per object combination, and an axiom with three parameters

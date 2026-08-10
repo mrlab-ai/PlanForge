@@ -1,6 +1,8 @@
 /// Normalization of PDDL tasks before grounding.
 use std::collections::{HashMap, HashSet};
 
+use tracing::debug;
+
 use super::pddl::axioms::Axiom;
 use super::pddl::conditions::*;
 use super::pddl::effects::Effect;
@@ -25,44 +27,57 @@ impl NormalizableTask {
     }
 }
 
-/// Main normalization entry point. Performs multiple normalization steps.
-pub fn normalize(task: &mut NormalizableTask) -> Result<(), String> {
-    let t = &mut task.task;
+/// One normalization pass: the name the log calls it by, and the rewrite it
+/// applies to the task in place.
+type Pass = (&'static str, fn(&mut Task));
 
-    // Step 1: Uniquify variables in actions and axioms
-    for action in &mut t.actions {
+/// Every normalization pass, in the order the rest of the pipeline depends on.
+/// Quantifiers are gone before the disjunctions are split, and the arithmetic is
+/// flattened last, over conditions that are already conjunctions of literals.
+///
+/// A pass is a plain `fn(&mut Task)`, and adding one is a line here. A trait
+/// would buy nothing: there is one implementation of each pass, none is chosen at
+/// run time, and a function pointer is already enough to name a pass, list it and
+/// trace it. What the list is for is that the pipeline says what it does in one
+/// place instead of in a comment per call.
+const PASSES: &[Pass] = &[
+    ("uniquify variables", uniquify_variables),
+    ("convert types to predicates", convert_types_to_predicates),
+    ("remove universal quantifiers", remove_universal_quantifiers),
+    ("substitute complicated goal", substitute_complicated_goal),
+    ("split disjunctions", split_disjunctions),
+    ("move existential quantifiers", move_existential_quantifiers),
+    (
+        "eliminate existential quantifiers",
+        eliminate_existential_quantifiers,
+    ),
+    (
+        "remove arithmetic expressions",
+        remove_arithmetic_expressions,
+    ),
+    ("verify axiom predicates", verify_axiom_predicates),
+];
+
+/// Runs every pass in [`PASSES`] over the task, then republishes the goal they
+/// rewrote. Every pass either succeeds or panics on a task PDDL cannot express,
+/// so there is nothing here to report.
+pub fn normalize(task: &mut NormalizableTask) {
+    for &(name, pass) in PASSES {
+        debug!("normalizing: {name}");
+        pass(&mut task.task);
+    }
+    task.goal = task.task.goal.clone();
+}
+
+/// Renames every action's and axiom's parameters apart from every other's, so
+/// that the passes below may move a condition from one scope into another.
+fn uniquify_variables(task: &mut Task) {
+    for action in &mut task.actions {
         action.uniquify_variables();
     }
-    for axiom in &mut t.axioms {
+    for axiom in &mut task.axioms {
         axiom.uniquify_variables();
     }
-
-    // Step 2: Convert types to predicates (untype)
-    // type predicates for typed objects
-    convert_types_to_predicates(t);
-
-    // Step 3: Remove universal quantifiers from conditions
-    remove_universal_quantifiers(t);
-
-    // Step 4: Substitute complicated goals
-    substitute_complicated_goal(t);
-
-    // Step 5: Split disjunctive preconditions into one action each
-    split_disjunctions(t);
-
-    // Step 6: Move and eliminate existential quantifiers
-    move_existential_quantifiers(t);
-    eliminate_existential_quantifiers(t);
-
-    // Step 7: Remove arithmetic expressions (create numeric axioms)
-    remove_arithmetic_expressions(t);
-
-    // Step 8: Verify axiom predicates
-    verify_axiom_predicates(t);
-
-    task.goal = t.goal.clone();
-
-    Ok(())
 }
 
 /// Convert type declarations to predicates (adds type atoms to init)
