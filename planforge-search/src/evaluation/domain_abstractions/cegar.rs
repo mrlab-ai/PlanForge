@@ -44,8 +44,9 @@ use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary
 /// The only abstract domain a refined condition variable ever has: the value
 /// that establishes the condition in its own class, the value that does not in
 /// the other. Indexed by [`ConditionValue`], so `True` maps to class 1 and
-/// `False` to class 0 — the class an abstract operator's condition effect and
-/// [`DomainAbstractionFactory`]'s comparison reset both target.
+/// `False` to class 0 — the class an abstract operator's condition effect
+/// targets and the one [`DomainAbstractionFactory`] clears a comparison digit
+/// to before deriving its verdict.
 const CONDITION_SPLIT_MAPPING: [usize; ConditionValue::DOMAIN_SIZE] = [1, 0];
 
 #[derive(Debug, Clone)]
@@ -1520,6 +1521,8 @@ fn apply_initial_seed_splits(
                     mapping[value] = 1;
                     mapping
                 };
+                // Either way the seed is a binary split: one class for the value
+                // it names, one for everything else.
                 let new_domain_size = 2;
                 if !can_refine_propositional_variable(
                     domain_sizes,
