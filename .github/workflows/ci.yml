@@ -93,6 +93,15 @@ jobs:
       # candle backend building without imposing them on the default build.
       - run: cargo check -p planforge --features sgd
       - run: cargo test -p planforge-sgd --features candle
+      # tests/src/sgd_engine_tests.rs is `#![cfg(feature = "sgd")]`, and the
+      # `test` job builds the default feature set, so nothing compiled this file
+      # at all until now - it went stale under a harness change and no job
+      # noticed. Compile-only on purpose: those tests are end-to-end solves of
+      # several thousand optimizer updates, which is minutes in an unoptimized
+      # build, and `cargo test -p planforge-sgd --features candle` above already
+      # exercises the engine. Run them by hand with
+      # `cargo test -p tests --features sgd`.
+      - run: cargo check -p tests --features sgd --all-targets
 
   default-build-is-lean:
     name: default build excludes optional backends
