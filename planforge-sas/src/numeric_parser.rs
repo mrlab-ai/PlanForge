@@ -1,13 +1,21 @@
+//! The text syntax of the SAS+ format.
+//!
+//! What the sections *mean* lives in [`crate::sas_format`], so that the
+//! translator can build the same task without going through text at all.
+
 use crate::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use crate::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Metric, NumericType, NumericVariable,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, Metric, NumericRootTask,
+    NumericType, NumericVariable, Operator,
 };
-use crate::numeric_task::{Effect, ExplicitFact, ExplicitVariable, NumericRootTask, Operator};
+use crate::sas_format::{
+    SasTaskParts, SasVariable, axiom_layer_from_sas, effect_precondition_from_sas,
+};
 use nom::Parser;
 use nom::bytes::complete::take_while1;
-use nom::combinator::{map, opt, recognize};
+use nom::combinator::map_opt;
 use nom::number::complete::double;
 use nom::{
     IResult,
@@ -20,6 +28,12 @@ use nom::{
     sequence::separated_pair,
 };
 use std::vec;
+
+/// One token of an operator table, as the format writes it: a run of the
+/// characters the tables are spelled with, which the table then has to accept.
+fn parse_operator_token(input: &str) -> IResult<&str, &str> {
+    take_while1(|c: char| matches!(c, '<' | '>' | '=' | '!' | '+' | '-' | '*' | '/'))(input)
+}
 
 fn parse_version(input: &str) -> IResult<&str, u32> {
     let (input, _) = tag("begin_version")(input)?;
@@ -34,33 +48,19 @@ fn parse_version(input: &str) -> IResult<&str, u32> {
 fn parse_metric(input: &str) -> IResult<&str, Metric> {
     let (input, _) = tag("begin_metric")(input)?;
     let (input, _) = line_ending(input)?;
-    let (input, min_or_max) = alt((char('<'), char('>'))).parse(input)?;
-    let is_min = min_or_max == '<';
+    let (input, direction) = alt((char('<'), char('>'))).parse(input)?;
     let (input, _) = space1(input)?;
-    let (input, metric) = usize(input)?;
+    let (input, index) = usize(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_metric")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let metric = Metric::new(is_min, if metric > 0 { Some(metric) } else { None });
+    let metric = Metric::from_sas(direction, index)
+        .expect("the direction was parsed as one of the two the format spells");
     Ok((input, metric))
 }
 
-/// One `begin_variable` block, as it stands in the file.
-///
-/// A derived variable's axiom default is *not* part of this block: the SAS
-/// format writes it into the initial-state block instead and lets the axiom
-/// closure compute the real value on top of it. An [`ExplicitVariable`] can
-/// therefore only be built once the initial state has been read, which is what
-/// [`build_variables`] does.
-struct VariableBlock {
-    domain_size: usize,
-    name: String,
-    fact_names: Vec<String>,
-    axiom_layer: Option<usize>,
-}
-
-fn parse_variable(input: &str) -> IResult<&str, VariableBlock> {
+fn parse_variable(input: &str) -> IResult<&str, SasVariable> {
     let (input, _) = tag("begin_variable")(input)?;
     let (input, _) = line_ending(input)?;
     let (input, variable_name) = alphanumeric1(input)?;
@@ -80,20 +80,16 @@ fn parse_variable(input: &str) -> IResult<&str, VariableBlock> {
     }
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
-    let block = VariableBlock {
+    let variable = SasVariable {
         domain_size,
         name: variable_name.to_string(),
         fact_names,
-        axiom_layer: if axiom_layer >= 0 {
-            Some(axiom_layer as usize)
-        } else {
-            None
-        },
+        axiom_layer: axiom_layer_from_sas(axiom_layer),
     };
-    Ok((input, block))
+    Ok((input, variable))
 }
 
-fn parse_all_variables(input: &str) -> IResult<&str, Vec<VariableBlock>> {
+fn parse_all_variables(input: &str) -> IResult<&str, Vec<SasVariable>> {
     let (input, num_variables) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let mut variables = Vec::new();
@@ -106,68 +102,12 @@ fn parse_all_variables(input: &str) -> IResult<&str, Vec<VariableBlock>> {
     Ok((input, variables))
 }
 
-/// Join the variable blocks with the initial state they were written against.
-///
-/// The initial-state entry of a derived variable is its axiom default — the
-/// value it holds until an axiom proves something else — so this is where
-/// [`ExplicitVariable::axiom_default_value`] comes from. Non-derived variables
-/// are never reset, so their entry is simply their initial value and the field
-/// is never read for them.
-fn build_variables(blocks: Vec<VariableBlock>, initial_state: &[usize]) -> Vec<ExplicitVariable> {
-    assert_eq!(
-        blocks.len(),
-        initial_state.len(),
-        "the SAS initial state must name every variable"
-    );
-    blocks
-        .into_iter()
-        .zip(initial_state)
-        .map(|(block, &initial_value)| {
-            assert!(
-                initial_value < block.domain_size,
-                "initial value {initial_value} of variable {} is outside its domain of size {}",
-                block.name,
-                block.domain_size
-            );
-            ExplicitVariable::new(
-                block.domain_size,
-                block.name,
-                block.fact_names,
-                block.axiom_layer,
-                initial_value,
-            )
-        })
-        .collect()
+fn parse_numeric_type(input: &str) -> IResult<&str, NumericType> {
+    map_opt(alphanumeric1, NumericType::from_sas).parse(input)
 }
 
-fn parse_line_type(input: &str) -> IResult<&str, NumericType> {
-    alt((
-        map(tag("C"), |_| NumericType::Constant),
-        map(tag("D"), |_| NumericType::Derived),
-        map(tag("I"), |_| NumericType::Cost),
-        map(tag("R"), |_| NumericType::Regular),
-    ))
-    .parse(input)
-}
-
-fn parse_plus_or_minus(input: &str) -> IResult<&str, AssignmentOperation> {
-    alt((
-        map(tag("="), |_| AssignmentOperation::Assign),
-        map(tag("+"), |_| AssignmentOperation::Plus),
-        map(tag("-"), |_| AssignmentOperation::Minus),
-        map(tag("*"), |_| AssignmentOperation::Times),
-        map(tag("/"), |_| AssignmentOperation::Divide),
-    ))
-    .parse(input)
-}
-
-fn parse_layer(input: &str) -> IResult<&str, i32> {
-    map(
-        // We recognize an optional minus sign followed by one or more digits.
-        recognize(nom::sequence::pair(opt(char('-')), digit1)),
-        |s: &str| s.parse::<i32>().unwrap(),
-    )
-    .parse(input)
+fn parse_assignment_operation(input: &str) -> IResult<&str, AssignmentOperation> {
+    map_opt(parse_operator_token, AssignmentOperation::from_sas).parse(input)
 }
 
 fn parse_name(input: &str) -> IResult<&str, String> {
@@ -177,21 +117,13 @@ fn parse_name(input: &str) -> IResult<&str, String> {
 }
 
 fn parse_numeric_variable(input: &str) -> IResult<&str, NumericVariable> {
-    let (input, numeric_type) = parse_line_type(input)?;
+    let (input, numeric_type) = parse_numeric_type(input)?;
     let (input, _) = space1(input)?;
-    let (input, layer) = parse_layer(input)?;
+    let (input, layer) = i32(input)?;
     let (input, _) = space1(input)?;
     let (input, variable_name) = parse_name(input)?;
     let (input, _) = line_ending(input)?;
-    let var = NumericVariable::new(
-        variable_name.to_string(),
-        numeric_type,
-        if layer >= 0 {
-            Some(layer as usize)
-        } else {
-            None
-        },
-    );
+    let var = NumericVariable::new(variable_name, numeric_type, axiom_layer_from_sas(layer));
     Ok((input, var))
 }
 
@@ -358,24 +290,22 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
 
         let (loop_input, effect_var_id) = usize(loop_input)?;
         let (loop_input, _) = space1(loop_input)?;
-        let (loop_input, precondition_value) = i32(loop_input)?; // NOTE: -1 if there is no precondition.
+        let (loop_input, precondition_field) = i32(loop_input)?;
         let (loop_input, _) = space1(loop_input)?;
         let (loop_input, effect_value) = usize(loop_input)?;
 
-        if precondition_value != -1 {
-            let precondition =
-                ExplicitFact::propositional(effect_var_id, precondition_value as usize);
-            preconditions.push(precondition);
+        let precondition_value = effect_precondition_from_sas(precondition_field);
+        if let Some(precondition_value) = precondition_value {
+            preconditions.push(ExplicitFact::propositional(
+                effect_var_id,
+                precondition_value,
+            ));
         }
 
         let effect = Effect::new(
             effect_conditions,
             effect_var_id,
-            if precondition_value >= 0 {
-                Some(precondition_value as usize)
-            } else {
-                None
-            },
+            precondition_value,
             effect_value,
         );
         effects.push(effect);
@@ -405,7 +335,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         }
         let (loop_input, effect_var_id) = usize(loop_input)?;
         let (loop_input, _) = space1(loop_input)?;
-        let (loop_input, operation) = parse_plus_or_minus(loop_input)?;
+        let (loop_input, operation) = parse_assignment_operation(loop_input)?;
         let (loop_input, _) = space1(loop_input)?;
         let (loop_input, effect_value) = usize(loop_input)?;
         let (loop_input, _) = line_ending(loop_input)?;
@@ -492,20 +422,10 @@ fn parse_axioms(input: &str) -> IResult<&str, Vec<PropositionalAxiom>> {
 }
 
 fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
-    alt((
-        map(tag("<="), |_| ComparisonOperator::LessThanOrEqual),
-        map(tag(">="), |_| ComparisonOperator::GreaterThanOrEqual),
-        map(tag("!="), |_| ComparisonOperator::UnEqual),
-        map(tag(">"), |_| ComparisonOperator::GreaterThan),
-        map(tag("<"), |_| ComparisonOperator::LessThan),
-        map(tag("="), |_| ComparisonOperator::Equal),
-    ))
-    .parse(input)
+    map_opt(parse_operator_token, ComparisonOperator::from_sas).parse(input)
 }
 
 fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
-    // This function is a placeholder for parsing comparison axioms.
-    // Currently, it returns an empty Axiom as no comparison axioms are defined.
     let (input, affected_var_id) = usize(input)?;
     let (input, _) = space1(input)?;
     let (input, comparison_operator) = parse_comparison_operator(input)?;
@@ -526,8 +446,6 @@ fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
 }
 
 fn parse_comparison_axioms(input: &str) -> IResult<&str, Vec<ComparisonAxiom>> {
-    // This function is a placeholder for parsing comparison axioms.
-    // Currently, it returns an empty vector as no comparison axioms are defined.
     let (input, num_comparison_axioms) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("begin_comparison_axioms")(input)?;
@@ -545,13 +463,7 @@ fn parse_comparison_axioms(input: &str) -> IResult<&str, Vec<ComparisonAxiom>> {
 }
 
 fn parse_cal_operator(input: &str) -> IResult<&str, CalOperator> {
-    alt((
-        map(tag("+"), |_| CalOperator::Sum),
-        map(tag("-"), |_| CalOperator::Difference),
-        map(tag("*"), |_| CalOperator::Product),
-        map(tag("/"), |_| CalOperator::Division),
-    ))
-    .parse(input)
+    map_opt(parse_operator_token, CalOperator::from_sas).parse(input)
 }
 
 fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
@@ -575,8 +487,6 @@ fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
 }
 
 fn parse_assignment_axioms(input: &str) -> IResult<&str, Vec<AssignmentAxiom>> {
-    // This function is a placeholder for parsing numeric axioms.
-    // Currently, it returns an empty vector as no numeric axioms are defined.
     let (input, num_numeric_axioms) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("begin_numeric_axioms")(input)?;
@@ -609,11 +519,10 @@ fn parse_global_constraint(input: &str) -> IResult<&str, ExplicitFact> {
 pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, version) = parse_version(input)?;
     let (input, metric) = parse_metric(input)?;
-    let (input, variable_blocks) = parse_all_variables(input)?;
+    let (input, variables) = parse_all_variables(input)?;
     let (input, numeric_variables) = parse_all_numeric_variables(input)?;
     let (input, mutexes) = parse_mutexes(input)?;
     let (input, state) = parse_state(input)?;
-    let variables = build_variables(variable_blocks, &state);
     let (input, numeric_state) = parse_numeric_state(input)?;
     let (input, goals) = parse_goal(input)?;
     let (input, operators) = parse_operators(input)?;
@@ -624,27 +533,23 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
     let (input, _) = tag("begin_SG")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let mut output = NumericRootTask::new(
+    let task = NumericRootTask::from_sas_parts(SasTaskParts {
         version,
         metric,
         variables,
         numeric_variables,
-        goals,
         mutexes,
         state,
         numeric_state,
+        goals,
         operators,
         axioms,
         comparison_axioms,
         assignment_axioms,
         global_constraint,
-    );
-    // The one normalization the file's own variable order does not give us. A
-    // task parsed from SAS owns its variable ids, unlike one derived from
-    // another task, so it is the only place this may happen.
-    output.renumber_condition_variables_last();
+    });
 
-    Ok((input, output))
+    Ok((input, task))
 }
 
 #[cfg(test)]
