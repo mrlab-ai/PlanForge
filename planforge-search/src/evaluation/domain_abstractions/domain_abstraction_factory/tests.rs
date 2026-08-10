@@ -17,6 +17,17 @@ use planforge_sas::numeric_task::{
     NumericRootTask, NumericType, NumericVariable, Operator,
 };
 
+/// The propositional variable a comparison axiom writes, on axiom layer 0.
+fn condition_variable(name: &str) -> ExplicitVariable {
+    ExplicitVariable::new(
+        ConditionValue::DOMAIN_SIZE,
+        name.into(),
+        vec!["true".into(), "false".into()],
+        Some(0),
+        ConditionValue::False.as_usize(),
+    )
+}
+
 /// Initial values of the constant numeric variables `condition` reads.
 ///
 /// Every leaf id is a valid numeric variable: `NumericConditions::build`
@@ -178,13 +189,7 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
 #[test]
 fn explicit_transition_system_matches_implicit_distances_across_comparison_cascades() {
     let variables = vec![
-        ExplicitVariable::new(
-            3,
-            "x-lt-ten".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
-            Some(0),
-            ConditionValue::Unknown.as_usize(),
-        ),
+        condition_variable("x-lt-ten"),
         ExplicitVariable::new(
             2,
             "goal".into(),
@@ -233,13 +238,13 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         numeric_variables,
         vec![ExplicitFact::propositional(1, 1)],
         vec![],
-        vec![ConditionValue::Unknown.as_usize(), 0],
+        vec![ConditionValue::False.as_usize(), 0],
         vec![0.0, 10.0, 20.0],
         operators,
         vec![],
         vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
         vec![],
-        ExplicitFact::propositional(0, ConditionValue::Unknown.as_usize()),
+        ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
     );
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory
@@ -355,13 +360,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
 
 #[test]
 fn factory_splits_regular_var_at_constants_in_comparison_trees() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
-        Some(0),
-        2,
-    )];
+    let variables = vec![condition_variable("cmp")];
 
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, None),
@@ -418,13 +417,7 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
 
 #[test]
 fn enumerate_states_branches_on_undecidable_comparison() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
-        Some(0),
-        2,
-    )];
+    let variables = vec![condition_variable("cmp")];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
@@ -438,7 +431,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         numeric_variables,
         vec![],
         vec![],
-        vec![ConditionValue::Unknown.as_usize()],
+        vec![ConditionValue::False.as_usize()],
         vec![0.0, 0.0],
         vec![op],
         vec![],
@@ -462,7 +455,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
     // For enumeration we want the same numeric-partition assignment, but comparisons set back
     // to UNKNOWN so `enumerate_states_with_evaluated_comparisons` can branch.
     let base = factory
-        .reset_comparison_vars_to_unknown_except(init_hash, &hash_multipliers, &[0], &[])
+        .clear_comparison_vars_except(init_hash, &hash_multipliers, &[0], &[])
         .unwrap();
     let states = factory
         .enumerate_states_with_evaluated_comparisons(
@@ -479,13 +472,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
 
 #[test]
 fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
-        Some(0),
-        2,
-    )];
+    let variables = vec![condition_variable("cmp")];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("c2".into(), NumericType::Constant, None),
@@ -505,7 +492,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         numeric_variables,
         vec![],
         vec![],
-        vec![ConditionValue::Unknown.as_usize()],
+        vec![ConditionValue::False.as_usize()],
         vec![1.0, 2.0, 0.0],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
         vec![],
@@ -530,25 +517,25 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
     assert_eq!(comparison_abs_value, ConditionValue::True.as_usize());
 }
 
+/// Every comparison precondition of an abstract operator pins its variable for
+/// the enumeration; preconditions on ordinary variables do not.
 #[test]
-fn unknown_comparison_preconditions_are_not_treated_as_fixed() {
+fn comparison_preconditions_are_the_ones_on_comparison_variables() {
+    let comparison_precondition = ExplicitFact::propositional(0, ConditionValue::True.as_usize());
     let op = super::super::abstract_operator_generator::AbstractOperator {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::propositional(
-            0,
-            ConditionValue::Unknown.as_usize(),
-        )],
-        preconditions: vec![
-            ExplicitFact::propositional(0, ConditionValue::Unknown.as_usize()),
-            ExplicitFact::propositional(1, 7),
-        ],
+        regression_preconditions: vec![comparison_precondition],
+        preconditions: vec![comparison_precondition, ExplicitFact::propositional(1, 7)],
         changed_numeric_vars: vec![],
     };
 
-    let fixed = get_comparison_preconditions(&op, &[0]);
-    assert!(fixed.is_empty());
+    assert_eq!(
+        get_comparison_preconditions(&op, &[0]),
+        vec![comparison_precondition]
+    );
+    assert!(get_comparison_preconditions(&op, &[2]).is_empty());
 }
 
 #[test]
@@ -800,13 +787,7 @@ fn match_tree_indexes_comparison_variables() {
 #[test]
 fn initial_state_is_unique_and_comparisons_are_determined() {
     // One comparison-axiom propositional variable.
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
-        Some(0),
-        2,
-    )];
+    let variables = vec![condition_variable("cmp")];
     // Two regular numeric vars with no constants -> partitions are unbounded.
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -822,7 +803,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         vec![],
         vec![],
         // The concrete initial state used by numeric-fd has comparisons evaluated.
-        vec![ConditionValue::Unknown.as_usize()],
+        vec![ConditionValue::False.as_usize()],
         vec![0.0, 0.0],
         vec![op],
         vec![],
@@ -897,22 +878,7 @@ fn abstract_goals_skip_trivial_goal_axiom_preconditions() {
 
 #[test]
 fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
-    let variables = vec![
-        ExplicitVariable::new(
-            3,
-            "cmp0".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
-            Some(0),
-            2,
-        ),
-        ExplicitVariable::new(
-            3,
-            "cmp1".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
-            Some(0),
-            2,
-        ),
-    ];
+    let variables = vec![condition_variable("cmp0"), condition_variable("cmp1")];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
@@ -933,8 +899,8 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         ],
         vec![],
         vec![
-            ConditionValue::Unknown.as_usize(),
-            ConditionValue::Unknown.as_usize(),
+            ConditionValue::False.as_usize(),
+            ConditionValue::False.as_usize(),
         ],
         vec![0.0, 0.0, 0.0],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
@@ -949,7 +915,8 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
     let hash_multipliers = generator.hash_multipliers().to_vec();
     let comparison_var_ids = vec![0usize, 1usize];
 
-    let unsorted_goal_hash = ConditionValue::True.as_usize() + 3 * ConditionValue::False.as_usize();
+    let unsorted_goal_hash = ConditionValue::True.as_usize()
+        + ConditionValue::DOMAIN_SIZE * ConditionValue::False.as_usize();
     let states = factory
         .enumerate_states_with_evaluated_comparisons(
             unsorted_goal_hash,
@@ -961,9 +928,13 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         )
         .unwrap();
 
-    assert_eq!(states, vec![0, 3, 1, 4]);
+    assert_eq!(states, vec![0, 2, 1, 3]);
     assert!(states.contains(&unsorted_goal_hash));
-    assert!(states.binary_search(&unsorted_goal_hash).is_err());
+    assert!(
+        !states.is_sorted(),
+        "goal membership has to be a linear scan: the enumeration branches \
+         per comparison and does not come out in hash order"
+    );
 
     let table = factory
         .build_abstract_distance_table(&task, true, false)
@@ -973,13 +944,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
 
 #[test]
 fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
-        Some(0),
-        2,
-    )];
+    let variables = vec![condition_variable("cmp")];
 
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -1459,13 +1424,7 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
 #[test]
 fn footprint_one_finite_dim_suffices() {
     let variables = vec![
-        ExplicitVariable::new(
-            3,
-            "x_gt_zero".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
-            Some(0),
-            2,
-        ),
+        condition_variable("x_gt_zero"),
         ExplicitVariable::new(
             2,
             "saved".into(),

@@ -65,11 +65,11 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
 fn numeric_partition_transitions_and_comparison_filtering() {
     // Propositional var 0 is the derived comparison var for (x0 < c10).
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
 
     // Numeric vars: x0 (regular), c10 (constant), c7 (constant)
@@ -138,19 +138,21 @@ fn numeric_partition_transitions_and_comparison_filtering() {
     // From [10,inf), the precondition x0 < 10 is definitely contradicted and filtered.
     assert_eq!(abs_ops.len(), 2);
 
+    // Each operator clears the comparison digit from `True` (0) to `False` (1),
+    // worth 1, and either keeps x0's partition or advances it, worth 2.
     let mut hash_effects: Vec<i32> = abs_ops.iter().map(|o| o.hash_effect).collect();
     hash_effects.sort();
-    assert_eq!(hash_effects, vec![-5, -2]);
+    assert_eq!(hash_effects, vec![-3, -1]);
 }
 
 #[test]
 fn repeated_numeric_operator_generation_is_deterministic() {
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
 
     let numeric_variables = vec![
@@ -467,14 +469,17 @@ fn multiply_out_unconditional_propositional_effects() {
     );
 }
 
+/// An operator that requires a comparison does not carry the verdict across:
+/// the abstract operator's regression side clears the digit to the class of
+/// `False`, so regression re-derives the comparison from the target partition.
 #[test]
-fn derived_comparison_precondition_forces_unknown_old_value() {
+fn derived_comparison_precondition_clears_the_old_value() {
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, None),
@@ -522,14 +527,20 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
     .unwrap();
     let abs_ops = generator.build_abstract_operators(&task).unwrap();
     assert_eq!(abs_ops.len(), 1);
-    assert_eq!(abs_ops[0].hash_effect, -2);
+    assert_eq!(abs_ops[0].hash_effect, -1);
     assert_eq!(
         abs_ops[0].preconditions,
-        vec![ExplicitFact::propositional(0, 0)]
+        vec![ExplicitFact::propositional(
+            0,
+            ConditionValue::True.as_usize()
+        )]
     );
     assert_eq!(
         abs_ops[0].regression_preconditions,
-        vec![ExplicitFact::propositional(0, 2)]
+        vec![ExplicitFact::propositional(
+            0,
+            ConditionValue::False.as_usize()
+        )]
     );
 }
 
@@ -593,11 +604,11 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
 #[test]
 fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
 
     let numeric_variables = vec![
@@ -701,11 +712,11 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
 #[test]
 fn additive_view_filters_false_equality_precondition() {
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "at-target".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),

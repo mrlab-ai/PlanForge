@@ -1,6 +1,7 @@
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
@@ -96,11 +97,11 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
     // Propositional vars: gt (comparison result), g (goal flag).
     let variables = vec![
         ExplicitVariable::new(
-            3,
+            ConditionValue::DOMAIN_SIZE,
             "gt".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
+            vec!["true".into(), "false".into()],
             Some(0),
-            2,
+            ConditionValue::False.as_usize(),
         ),
         ExplicitVariable::new(2, "g".into(), vec!["g0".into(), "g1".into()], None, 0),
     ];

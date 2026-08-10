@@ -738,9 +738,9 @@ impl AbstractOperatorGenerator {
         Ok(generator)
     }
 
-    /// Convenience constructor that mirrors numeric-fd's default setup when no CEGAR mapping
-    /// exists yet: identity mapping for non-derived variables, and a 3-valued mapping
-    /// (false/true/unknown) for comparison-axiom variables.
+    /// Convenience constructor for the default setup when no CEGAR mapping
+    /// exists yet: every variable keeps its own domain, condition variables
+    /// included.
     pub fn new_with_identity_mapping(
         task: &dyn AbstractNumericTask,
         partitions: NumericPartitions,
@@ -751,22 +751,12 @@ impl AbstractOperatorGenerator {
         let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
         let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
         for var_id in 0..num_vars {
-            if task.numeric_conditions().is_condition_var(var_id) {
-                domain_mapping.push(
-                    ConditionValue::DOMAIN
-                        .map(ConditionValue::as_usize)
-                        .to_vec(),
-                );
-                domain_sizes.push(ConditionValue::DOMAIN_SIZE);
-            } else {
-                let size = task
-                    .get_variable_domain_size(var_id)
-                    .map_err(|e| anyhow!(e.to_string()))
-                    .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
-                let mapping: Vec<usize> = (0..size).collect();
-                domain_mapping.push(mapping);
-                domain_sizes.push(size);
-            }
+            let size = task
+                .get_variable_domain_size(var_id)
+                .map_err(|e| anyhow!(e.to_string()))
+                .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
+            domain_mapping.push((0..size).collect());
+            domain_sizes.push(size);
         }
 
         Self::new(
@@ -1031,10 +1021,13 @@ fn build_branch_for_operator(
         }
     }
 
-    // C++ parity: comparison-axiom preconditions are not regular prevail
-    // conditions. They constrain the source of the abstract operator, while
-    // the target side is reset to UNKNOWN so regression can re-evaluate the
-    // comparison from the target numeric partition.
+    // Comparison-axiom preconditions are not regular prevail conditions. They
+    // constrain the source of the abstract operator, while the target side is
+    // cleared to the class of `False` — "not established" — so regression
+    // re-evaluates the comparison from the target numeric partition instead of
+    // carrying the source's verdict across. `DomainAbstractionFactory` clears
+    // the same digit to the same class before it queries the match tree, and
+    // that agreement is what makes the two sides meet.
     for pre in merged_preconditions {
         let var_id = pre.var();
         if generator.variable_is_trivial(var_id)
@@ -1043,7 +1036,7 @@ fn build_branch_for_operator(
             continue;
         }
         let source_abs = generator.abstract_value(var_id, pre.value());
-        let target_abs = generator.abstract_value(var_id, ConditionValue::Unknown.as_usize());
+        let target_abs = generator.abstract_value(var_id, ConditionValue::False.as_usize());
         pre_pairs.push(ExplicitFact::condition(var_id, source_abs));
         eff_pairs.push(ExplicitFact::condition(var_id, target_abs));
     }

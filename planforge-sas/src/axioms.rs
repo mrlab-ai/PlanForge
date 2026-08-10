@@ -350,8 +350,14 @@ fn build_compiled_axiom_evaluator_data(
         .collect();
     for var_id in 0..numeric_task.get_num_variables() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
+        // A condition variable is computed, not proven: `seed_queue_from_state`
+        // already queues the verdict `evaluate_comparison_axioms` wrote for it,
+        // so there is no "stayed at its default" case left to announce. Queuing
+        // one anyway would announce the same literal twice and let a Horn rule
+        // fire one condition short.
         if let Some(idx) = axiom_layer
             && axiom_layer != last_layer
+            && axiom_layer != comparison_axiom_layer
         {
             let nbf_info = NegationByFailureInfo::new(var_id, axiom_default_values[var_id]);
             nbf_info_by_layer[idx].push(nbf_info);

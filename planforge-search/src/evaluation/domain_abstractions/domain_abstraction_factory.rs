@@ -1754,7 +1754,7 @@ impl DomainAbstractionFactory {
                 if !possible_targets.contains(&target_hash) {
                     continue;
                 }
-                self.reset_comparison_vars_to_unknown_except(
+                self.clear_comparison_vars_except(
                     target_hash,
                     hash_multipliers,
                     &comparison_var_ids,
@@ -2427,7 +2427,7 @@ impl DomainAbstractionFactory {
             }
 
             let base_target = if comparison_branching {
-                self.reset_comparison_vars_to_unknown_except(
+                self.clear_comparison_vars_except(
                     target_hash,
                     generator.hash_multipliers(),
                     &comparison_var_ids,
@@ -2554,7 +2554,7 @@ impl DomainAbstractionFactory {
             // on plant-watering/prob_4_2_2 (cost 34 vs optimal 33 across
             // a fraction of seeds).
             let base_target = if comparison_branching {
-                self.reset_comparison_vars_to_unknown_except(
+                self.clear_comparison_vars_except(
                     target_hash,
                     generator.hash_multipliers(),
                     &comparison_var_ids,
@@ -2788,7 +2788,21 @@ impl DomainAbstractionFactory {
         Ok(index)
     }
 
-    fn reset_comparison_vars_to_unknown_except(
+    /// The abstract class a comparison digit is cleared to before the verdict
+    /// for this abstract state is derived: the class of [`ConditionValue::False`],
+    /// which is also the class every abstract operator's comparison effect
+    /// targets.
+    fn cleared_comparison_class(&self, var_id: usize) -> Result<usize> {
+        self.domain_mapping[var_id]
+            .get(ConditionValue::False.as_usize())
+            .copied()
+            .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))
+    }
+
+    /// Clear every comparison digit of `state_hash` to its
+    /// [cleared class](Self::cleared_comparison_class), except the ones
+    /// `fixed_comparisons` pins to a value.
+    fn clear_comparison_vars_except(
         &self,
         state_hash: usize,
         hash_multipliers: &[usize],
@@ -2819,11 +2833,7 @@ impl DomainAbstractionFactory {
                 );
                 fixed_value
             } else {
-                *self.domain_mapping[var_id]
-                    .get(ConditionValue::Unknown.as_usize())
-                    .with_context(|| {
-                        format!("missing UNKNOWN mapping for comparison var {var_id}")
-                    })?
+                self.cleared_comparison_class(var_id)?
             };
             let cur_offset = cur
                 .checked_mul(mult)
@@ -2875,7 +2885,7 @@ impl DomainAbstractionFactory {
             return Ok(vec![base_state_hash]);
         }
         let num_props = self.domain_sizes.len();
-        let state_unknown = self.reset_comparison_vars_to_unknown_except(
+        let cleared_state = self.clear_comparison_vars_except(
             base_state_hash,
             hash_multipliers,
             comparison_var_ids,
@@ -2897,7 +2907,7 @@ impl DomainAbstractionFactory {
         let mut numeric_intervals: Vec<Interval> = Vec::new();
         let mut intervals_built = false;
 
-        let mut states: Vec<usize> = vec![state_unknown];
+        let mut states: Vec<usize> = vec![cleared_state];
         for tree in self.numeric_conditions.iter() {
             let var_id = tree.prop_var_id();
             ensure!(
@@ -2914,24 +2924,14 @@ impl DomainAbstractionFactory {
                 continue;
             }
 
+            // The digit starts at the class of `False`, so only `True` moves it.
             let mult = hash_multipliers[var_id];
-            let unknown_abs = *self.domain_mapping[var_id]
-                .get(ConditionValue::Unknown.as_usize())
-                .with_context(|| format!("missing UNKNOWN mapping for comparison var {var_id}"))?
-                as i32;
             let delta_true = (self.domain_mapping[var_id]
                 .get(ConditionValue::True.as_usize())
                 .copied()
                 .with_context(|| format!("missing TRUE mapping for comparison var {var_id}"))?
                 as i32
-                - unknown_abs)
-                * mult as i32;
-            let delta_false = (self.domain_mapping[var_id]
-                .get(ConditionValue::False.as_usize())
-                .copied()
-                .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))?
-                as i32
-                - unknown_abs)
+                - self.cleared_comparison_class(var_id)? as i32)
                 * mult as i32;
 
             if !intervals_built {
@@ -2956,16 +2956,15 @@ impl DomainAbstractionFactory {
                         *s = (*s as i32 + delta_true) as usize;
                     }
                 }
-                Some(false) => {
-                    for s in &mut states {
-                        *s = (*s as i32 + delta_false) as usize;
-                    }
-                }
+                // The digit already stands at the class of `False`.
+                Some(false) => {}
+                // The abstract state straddles the comparison, so both verdicts
+                // are reachable from it and both states have to be enumerated.
                 None => {
                     let mut next: Vec<usize> = Vec::with_capacity(states.len() * 2);
                     for &s in &states {
                         next.push((s as i32 + delta_true) as usize);
-                        next.push((s as i32 + delta_false) as usize);
+                        next.push(s);
                     }
                     states = next;
                 }
@@ -3093,7 +3092,7 @@ impl DomainAbstractionFactory {
                 "plan-extraction base successor out of range for state {current_hash} with op {op_id}"
             );
             let base_successor = if comparison_branching {
-                self.reset_comparison_vars_to_unknown_except(
+                self.clear_comparison_vars_except(
                     base_successor_i64 as usize,
                     hash_multipliers,
                     comparison_var_ids,
@@ -3321,7 +3320,7 @@ impl DomainAbstractionFactory {
             }
 
             let base_state = if comparison_branching {
-                self.reset_comparison_vars_to_unknown_except(
+                self.clear_comparison_vars_except(
                     state_hash,
                     hash_multipliers,
                     comparison_var_ids,
@@ -3459,7 +3458,7 @@ impl DomainAbstractionFactory {
                 ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
                 let alternative_cost = d + op.cost;
                 let target_base = if comparison_branching {
-                    self.reset_comparison_vars_to_unknown_except(
+                    self.clear_comparison_vars_except(
                         state_hash,
                         hash_multipliers,
                         comparison_var_ids,
@@ -3667,14 +3666,11 @@ fn get_comparison_preconditions(
     op: &AbstractOperator,
     comparison_var_ids: &[usize],
 ) -> Vec<ExplicitFact> {
-    let mut out: Vec<ExplicitFact> = Vec::new();
-    for f in &op.preconditions {
-        if comparison_var_ids.contains(&f.var()) && f.value() != ConditionValue::Unknown.as_usize()
-        {
-            out.push(*f);
-        }
-    }
-    out
+    op.preconditions
+        .iter()
+        .copied()
+        .filter(|f| comparison_var_ids.contains(&f.var()))
+        .collect()
 }
 
 fn comparison_preconditions_by_operator(

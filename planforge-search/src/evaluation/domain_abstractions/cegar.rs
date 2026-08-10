@@ -41,6 +41,13 @@ use super::domain_abstraction::NumericPartitions;
 use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
+/// The only abstract domain a refined condition variable ever has: the value
+/// that establishes the condition in its own class, the value that does not in
+/// the other. Indexed by [`ConditionValue`], so `True` maps to class 1 and
+/// `False` to class 0 — the class an abstract operator's condition effect and
+/// [`DomainAbstractionFactory`]'s comparison reset both target.
+const CONDITION_SPLIT_MAPPING: [usize; ConditionValue::DOMAIN_SIZE] = [1, 0];
+
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
     pub max_abstraction_size: usize,
@@ -983,24 +990,17 @@ fn try_refine_from_flaw(
                 ) {
                     return Ok(None);
                 }
-                // Comparison axiom vars: split into {false/unknown} vs {true} like numeric-fd.
+                // A condition variable has one split and only one: the two
+                // values of its domain, told apart. Refining it therefore means
+                // going straight to the full mapping.
                 let old_size = domain_sizes[var_id];
-                if domain_sizes[var_id] < 2 {
-                    domain_sizes[var_id] = 2;
+                if domain_sizes[var_id] < ConditionValue::DOMAIN_SIZE {
+                    domain_sizes[var_id] = ConditionValue::DOMAIN_SIZE;
                     changed = true;
                     prop_domain_size_changed = true;
                 }
-                // Ensure mapping values are within the new abstract size.
-                if !domain_mapping[var_id].is_empty() && domain_mapping[var_id][0] != 1 {
-                    domain_mapping[var_id][0] = 1;
-                    changed = true;
-                }
-                if domain_mapping[var_id].len() >= 2 && domain_mapping[var_id][1] != 0 {
-                    domain_mapping[var_id][1] = 0;
-                    changed = true;
-                }
-                if domain_mapping[var_id].len() >= 3 && domain_mapping[var_id][2] != 0 {
-                    domain_mapping[var_id][2] = 0;
+                if domain_mapping[var_id] != CONDITION_SPLIT_MAPPING {
+                    domain_mapping[var_id] = CONDITION_SPLIT_MAPPING.to_vec();
                     changed = true;
                 }
                 debug_assert!(domain_sizes[var_id] >= old_size);
@@ -1445,18 +1445,14 @@ fn apply_initial_seed_splits(
                 if value >= concrete_size {
                     continue;
                 }
-                let (new_domain_size, mapping) =
-                    if task.numeric_conditions().is_condition_var(var_id) {
-                        let mut mapping = vec![0; concrete_size];
-                        if !mapping.is_empty() {
-                            mapping[0] = 1;
-                        }
-                        (2, mapping)
-                    } else {
-                        let mut mapping = vec![0; concrete_size];
-                        mapping[value] = 1;
-                        (2, mapping)
-                    };
+                let mapping = if task.numeric_conditions().is_condition_var(var_id) {
+                    CONDITION_SPLIT_MAPPING.to_vec()
+                } else {
+                    let mut mapping = vec![0; concrete_size];
+                    mapping[value] = 1;
+                    mapping
+                };
+                let new_domain_size = 2;
                 if !can_refine_propositional_variable(
                     domain_sizes,
                     numeric_domain_sizes,
@@ -1501,18 +1497,26 @@ fn trivial_domain_mapping_and_sizes(
     Ok((domain_mapping, domain_sizes))
 }
 
-/// Which side of a split a comparison belongs to, given how it evaluates over
-/// the lower and the upper half.
+/// Which side of a split the boundary value belongs to, given the verdict each
+/// half's interval evaluation reaches — `None` where the half straddles the
+/// comparison and no verdict follows from it.
 ///
-/// Mirrors numeric-FD's preference order — FALSE beats UNKNOWN beats TRUE —
-/// which reduces to: take the lower half when it is the only FALSE side, or
-/// when it is UNKNOWN while the upper half is definitely TRUE.
+/// The split point goes to whichever half is further from establishing the
+/// condition, so that the half that does establish it stays as small as the
+/// split can make it: a decided `false` beats an undecided half, which beats a
+/// decided `true`. Two halves at the same rank leave the boundary in the upper
+/// one, as numeric-FD does.
+///
+/// Indeterminacy lives here and nowhere else. It is a property of evaluating a
+/// comparison over a box of numeric values, answered per call, not a value a
+/// state can hold — which is why the abstract domain of a condition variable is
+/// [`ConditionValue::DOMAIN_SIZE`] wide and not one wider.
 #[inline]
-fn prefers_lower_half(eval_lower: ConditionValue, eval_upper: ConditionValue) -> bool {
+fn prefers_lower_half(eval_lower: Option<bool>, eval_upper: Option<bool>) -> bool {
     match (eval_lower, eval_upper) {
-        (ConditionValue::False, ConditionValue::False) => false,
-        (ConditionValue::False, _) => true,
-        (ConditionValue::Unknown, ConditionValue::True) => true,
+        (Some(false), Some(false)) => false,
+        (Some(false), _) => true,
+        (None, Some(true)) => true,
         _ => false,
     }
 }
@@ -1542,8 +1546,8 @@ fn determine_include_in_lower(
     }
 
     prefers_lower_half(
-        tree.evaluate_interval(&lower_inputs).into(),
-        tree.evaluate_interval(&upper_inputs).into(),
+        tree.evaluate_interval(&lower_inputs),
+        tree.evaluate_interval(&upper_inputs),
     )
 }
 
@@ -1563,7 +1567,7 @@ fn determine_include_in_lower_for_flaw_search_state(
         .collect();
 
     prefers_lower_half(
-        tree.evaluate_interval(&lower_inputs).into(),
-        tree.evaluate_interval(&upper_inputs).into(),
+        tree.evaluate_interval(&lower_inputs),
+        tree.evaluate_interval(&upper_inputs),
     )
 }

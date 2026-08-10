@@ -16,11 +16,11 @@ use planforge_sas::numeric_task::{
 fn one_dimensional_sailing_like_task() -> NumericRootTask {
     let variables = vec![
         ExplicitVariable::new(
-            3,
+            ConditionValue::DOMAIN_SIZE,
             "x_gt_9".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
+            vec!["true".into(), "false".into()],
             Some(0),
-            2,
+            ConditionValue::False.as_usize(),
         ),
         ExplicitVariable::new(
             2,
@@ -201,11 +201,11 @@ fn get_flaws_reports_numeric_deviation_flaw() {
 
     let variables = vec![
         ExplicitVariable::new(
-            3,
+            ConditionValue::DOMAIN_SIZE,
             "gt".into(),
-            vec!["true".into(), "false".into(), "unknown".into()],
+            vec!["true".into(), "false".into()],
             Some(0),
-            2,
+            ConditionValue::False.as_usize(),
         ),
         ExplicitVariable::new(2, "g".into(), vec!["g0".into(), "g1".into()], None, 0),
     ];
@@ -444,11 +444,11 @@ fn blacklisted_propositional_vars_are_not_refined() {
 #[test]
 fn init_value_split_uses_true_branch_for_comparison_variables() {
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -487,7 +487,7 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         compute_initial_split_mapping(&task, &config, 0, Some(0), &mut rng).unwrap();
 
     assert_eq!(new_domain_size, 2);
-    assert_eq!(mapping, vec![1, 0, 0]);
+    assert_eq!(mapping, vec![1, 0]);
 }
 
 #[test]

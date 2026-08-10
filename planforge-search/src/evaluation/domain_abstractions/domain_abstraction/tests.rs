@@ -6,20 +6,20 @@ use planforge_sas::numeric_task::{
     ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
 };
 
-/// The propositional variable a comparison axiom writes: true / false /
-/// not-yet-derived, defaulting to the last.
+/// The propositional variable a comparison axiom writes: true or false,
+/// defaulting to false until the closure derives it.
 fn condition_variable(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         name.into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         None,
-        ConditionValue::Unknown.as_usize(),
+        ConditionValue::False.as_usize(),
     )
 }
 
 #[test]
-fn comparison_tree_interval_evaluates_definitely_and_unknown() {
+fn comparison_tree_interval_evaluates_definitely_and_undecided() {
     // numeric vars: x0 (regular), c1 (constant)
     // cmp: x0 < c1 (affected var id 0)
     let numeric_variables = vec![
@@ -36,7 +36,7 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         numeric_variables,
         vec![],
         vec![],
-        vec![ConditionValue::Unknown.as_usize()],
+        vec![ConditionValue::False.as_usize()],
         vec![0.0, 10.0],
         vec![],
         vec![],
@@ -54,15 +54,14 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
     // satisfiable and requiring it to fail is not.
     let requires_true = ExplicitFact::propositional(0, ConditionValue::True.as_usize());
     let requires_false = ExplicitFact::propositional(0, ConditionValue::False.as_usize());
-    let requires_unknown = ExplicitFact::propositional(0, ConditionValue::Unknown.as_usize());
     assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
     assert!(conditions.precondition_is_contradicted(&requires_false, &intervals));
 
-    // Unknown case: x0 in [0, 20] straddles c1, so both outcomes remain possible.
+    // Undecided case: x0 in [0, 20] straddles c1, so both outcomes remain
+    // possible and neither requirement is contradicted.
     let intervals = [Interval::closed(0.0, 20.0), Interval::singleton(10.0)];
     assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
     assert!(!conditions.precondition_is_contradicted(&requires_false, &intervals));
-    assert!(!conditions.precondition_is_contradicted(&requires_unknown, &intervals));
 }
 
 #[test]
@@ -232,7 +231,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         numeric_variables,
         vec![],
         vec![],
-        vec![ConditionValue::Unknown.as_usize()],
+        vec![ConditionValue::False.as_usize()],
         vec![0.0; 3],
         vec![],
         vec![],

@@ -1,6 +1,7 @@
 use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
@@ -305,15 +306,11 @@ fn projection_closes_over_selected_comparison_operands() {
         1,
         Metric::new(true, None),
         vec![ExplicitVariable::new(
-            3,
+            ConditionValue::DOMAIN_SIZE,
             "cmp".to_string(),
-            vec![
-                "true".to_string(),
-                "false".to_string(),
-                "unknown".to_string(),
-            ],
+            vec!["true".to_string(), "false".to_string()],
             Some(0),
-            2,
+            ConditionValue::False.as_usize(),
         )],
         vec![
             NumericVariable::new("x".to_string(), NumericType::Regular, None),

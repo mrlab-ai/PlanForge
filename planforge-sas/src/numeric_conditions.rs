@@ -38,13 +38,20 @@ use crate::numeric_task::{
 };
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
-/// The three values a propositional variable carrying a numeric condition's
+/// The two values a propositional variable carrying a numeric condition's
 /// truth value can take.
 ///
 /// The discriminants *are* the SAS encoding — a condition variable's domain is
-/// exactly these three values in this order — so [`Self::as_usize`] needs no
+/// exactly these two values in this order — so [`Self::as_usize`] needs no
 /// lookup table. This enum is the workspace's only definition of that
 /// encoding; nothing else spells the literals out.
+///
+/// A comparison is decided in every state a task can reach: the closure writes
+/// a verdict for every condition variable before anything reads one. Whether an
+/// *abstraction* can decide the comparison over a whole box of numeric values is
+/// a property of that reasoning step, answered by
+/// [`NumericCondition::evaluate_interval`]'s `Option<bool>`, and not a third
+/// value a state can hold.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(usize)]
 pub enum ConditionValue {
@@ -52,25 +59,14 @@ pub enum ConditionValue {
     True = 0,
     /// The comparison does not hold.
     False = 1,
-    /// The comparison has not been derived from the numeric state yet.
-    Unknown = 2,
 }
 
 impl ConditionValue {
-    /// Domain size of a condition variable.
-    pub const DOMAIN_SIZE: usize = 3;
-
-    /// Domain size of a condition variable in a *concrete* packed state.
-    ///
-    /// A concrete state fixes every numeric variable, so every comparison has
-    /// a verdict: only [`True`](Self::True) and [`False`](Self::False) occur
-    /// there. [`Unknown`](Self::Unknown) is what an *interval* evaluates to
-    /// and belongs to the abstract domain, which keeps all three values.
-    pub const CONCRETE_DOMAIN_SIZE: usize = 2;
+    /// Domain size of a condition variable, concrete and abstract alike.
+    pub const DOMAIN_SIZE: usize = 2;
 
     /// The domain of a condition variable, in value order.
-    pub const DOMAIN: [ConditionValue; Self::DOMAIN_SIZE] =
-        [Self::True, Self::False, Self::Unknown];
+    pub const DOMAIN: [ConditionValue; Self::DOMAIN_SIZE] = [Self::True, Self::False];
 
     /// The SAS value this variant encodes.
     #[inline]
@@ -84,7 +80,6 @@ impl ConditionValue {
         match value {
             0 => Some(Self::True),
             1 => Some(Self::False),
-            2 => Some(Self::Unknown),
             _ => None,
         }
     }
@@ -94,20 +89,6 @@ impl From<bool> for ConditionValue {
     #[inline]
     fn from(holds: bool) -> Self {
         if holds { Self::True } else { Self::False }
-    }
-}
-
-/// A three-valued verdict, as produced by evaluating a condition over
-/// intervals: `None` — both outcomes possible — is exactly [`Unknown`].
-///
-/// [`Unknown`]: ConditionValue::Unknown
-impl From<Option<bool>> for ConditionValue {
-    #[inline]
-    fn from(verdict: Option<bool>) -> Self {
-        match verdict {
-            Some(holds) => Self::from(holds),
-            None => Self::Unknown,
-        }
     }
 }
 
@@ -897,10 +878,10 @@ impl NumericConditions {
         match ConditionValue::from_usize(precondition.value()) {
             Some(ConditionValue::True) => !condition.admits_true(numeric_intervals),
             Some(ConditionValue::False) => !condition.admits_false(numeric_intervals),
-            // `Unknown` asserts nothing about the numeric state, so no
-            // assignment can contradict it. Abstracted values land outside the
-            // concrete domain and are likewise not contradicted here.
-            Some(ConditionValue::Unknown) | None => false,
+            // Abstracted values land outside the concrete domain: they name a
+            // class of condition values rather than one, so no single numeric
+            // assignment contradicts them.
+            None => false,
         }
     }
 }

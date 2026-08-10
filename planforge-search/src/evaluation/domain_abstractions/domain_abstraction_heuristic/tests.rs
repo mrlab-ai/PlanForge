@@ -15,11 +15,11 @@ fn comparison_task() -> NumericRootTask {
         Metric::new(true, None),
         vec![
             ExplicitVariable::new(
-                3,
+                ConditionValue::DOMAIN_SIZE,
                 "cmp".into(),
-                vec!["true".into(), "false".into(), "unknown".into()],
+                vec!["true".into(), "false".into()],
                 None,
-                ConditionValue::Unknown.as_usize(),
+                ConditionValue::False.as_usize(),
             ),
             ExplicitVariable::new(2, "p".into(), vec!["p".into(), "not-p".into()], None, 0),
         ],
@@ -29,7 +29,7 @@ fn comparison_task() -> NumericRootTask {
         ],
         vec![],
         vec![],
-        vec![ConditionValue::Unknown.as_usize(), 0],
+        vec![ConditionValue::False.as_usize(), 0],
         vec![2.0, 1.0],
         vec![],
         vec![],
@@ -46,7 +46,7 @@ fn comparison_task() -> NumericRootTask {
 
 #[test]
 fn comparison_projection_uses_concrete_value_mapping() {
-    let mapping = vec![vec![0, 1, 2]];
+    let mapping = vec![vec![0, 1]];
 
     let abs_val = abstract_propositional_value(0, 1, &mapping).unwrap();
 
@@ -57,11 +57,11 @@ fn comparison_projection_uses_concrete_value_mapping() {
 fn resolved_propositional_value_recomputes_comparison_axioms_from_numeric_state() {
     let task = comparison_task();
 
-    // The stored value is "not yet derived", so the comparison has to be
-    // recomputed from the numeric state: x = 2.0 > one = 1.0.
+    // The stored value is ignored for a condition variable: the comparison is
+    // recomputed from the numeric state, where x = 2.0 > one = 1.0.
     let concrete_val = resolved_propositional_value(
         0,
-        ConditionValue::Unknown.as_usize(),
+        ConditionValue::False.as_usize(),
         &[2.0, 1.0],
         task.numeric_conditions(),
         None,
@@ -79,7 +79,7 @@ fn resolved_propositional_value_prefers_supplied_comparison_values() {
     // own would yield ConditionValue::True.as_usize().
     let concrete_val = resolved_propositional_value(
         0,
-        ConditionValue::Unknown.as_usize(),
+        ConditionValue::True.as_usize(),
         &[2.0, 1.0],
         task.numeric_conditions(),
         Some(&[Some(ConditionValue::False.as_usize())]),

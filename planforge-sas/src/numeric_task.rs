@@ -1,5 +1,5 @@
 use crate::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
-use crate::numeric_conditions::NumericConditions;
+use crate::numeric_conditions::{ConditionValue, NumericConditions};
 use crate::numeric_parser::parse_numeric_sas_output;
 use crate::state_registry::{ConcreteState, StateRegistry};
 use crate::utils::int_packer::IntDoublePacker;
@@ -1103,11 +1103,11 @@ impl NumericRootTask {
     pub fn new(
         version: u32,
         metric: Metric,
-        variables: Vec<ExplicitVariable>,
+        mut variables: Vec<ExplicitVariable>,
         numeric_variables: Vec<NumericVariable>,
         goals: Vec<ExplicitFact>,
         mutexes: Vec<Vec<ExplicitFact>>,
-        state: Vec<usize>,
+        mut state: Vec<usize>,
         numeric_state: Vec<f64>,
         operators: Vec<Operator>,
         axioms: Vec<PropositionalAxiom>,
@@ -1126,6 +1126,7 @@ impl NumericRootTask {
             )
             .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
         );
+        narrow_condition_variables(&numeric_conditions, &mut variables, &mut state);
         let mut task = NumericRootTask {
             version,
             metric,
@@ -1462,6 +1463,47 @@ impl AbstractNumericTask for NumericRootTask {
         let mut numeric = self.get_initial_numeric_state_values().to_vec();
         evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
         Ok((propositional, numeric))
+    }
+}
+
+/// Pin every condition variable to the two-valued [`ConditionValue`] domain.
+///
+/// A condition variable's domain is fixed by what a comparison can answer, so a
+/// task does not get to choose it. SAS files written before the domain shrank
+/// declare a third value, `<none of those>`, and name it in the initial-state
+/// block as the variable's axiom default. It was never a value a state could
+/// hold: the comparison axioms write a verdict for every condition variable
+/// before anything reads one, so the placeholder is overwritten by the closure
+/// [`NumericRootTask::new`] runs a few lines later. Dropping it here is what
+/// makes the domain two everywhere — packed states, abstract states and the
+/// per-variable domain mappings the abstractions build on top of them.
+fn narrow_condition_variables(
+    conditions: &NumericConditions,
+    variables: &mut [ExplicitVariable],
+    state: &mut [usize],
+) {
+    for var_id in conditions.condition_var_ids() {
+        let variable = &mut variables[var_id];
+        assert!(
+            variable.domain_size == ConditionValue::DOMAIN_SIZE
+                || variable.domain_size == ConditionValue::DOMAIN_SIZE + 1,
+            "variable {var_id} ({}) carries a numeric condition but has domain size {}, \
+             which is neither {} nor the legacy {} that adds an unknown placeholder",
+            variable.name,
+            variable.domain_size,
+            ConditionValue::DOMAIN_SIZE,
+            ConditionValue::DOMAIN_SIZE + 1
+        );
+        variable.domain_size = ConditionValue::DOMAIN_SIZE;
+        variable.fact_names.truncate(ConditionValue::DOMAIN_SIZE);
+        // "Not derived yet" and "does not hold" are the same statement about a
+        // state, so the placeholder collapses onto `False`.
+        if variable.axiom_default_value >= ConditionValue::DOMAIN_SIZE {
+            variable.axiom_default_value = ConditionValue::False.as_usize();
+        }
+        if state[var_id] >= ConditionValue::DOMAIN_SIZE {
+            state[var_id] = ConditionValue::False.as_usize();
+        }
     }
 }
 

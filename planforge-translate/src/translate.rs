@@ -2,6 +2,8 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+use planforge_sas::numeric_conditions::ConditionValue;
+
 use tracing::info;
 
 use super::axiom_rules;
@@ -328,7 +330,7 @@ fn translate_strips_conditions_aux(
                         .entry(neg_atom.clone())
                         .or_default()
                         .push((ranges.len(), 1));
-                    ranges.push(3);
+                    ranges.push(ConditionValue::DOMAIN_SIZE);
 
                     // Now use the fact
                     let lookup_fact = if negated { &neg_fact } else { &pos_fact };
@@ -1025,7 +1027,6 @@ fn add_key_to_comp_axioms(
         translation_key.push(vec![
             axiom.to_string(),
             axiom.invert_comparator().to_string(),
-            "<none of those>".to_string(),
         ]);
     }
 }
@@ -1192,9 +1193,14 @@ fn translate_task(
         }
     }
 
-    // Extend init with comparison axiom init values
-    let comp_axiom_init: Vec<i32> = vec![2; translation.sas_comparison_axioms.len()]; // init to "none of those" (value 2)
-    init_values.extend(comp_axiom_init);
+    // A comparison variable's initial-state entry is its axiom default, and the
+    // comparison axiom overwrites it with a verdict before anything reads it.
+    // `False` is the default that says what the closure has not yet proven.
+    let comp_axiom_default = ConditionValue::False.as_usize() as i32;
+    init_values.extend(std::iter::repeat_n(
+        comp_axiom_default,
+        translation.sas_comparison_axioms.len(),
+    ));
 
     for axiom in &translation.sas_comparison_axioms {
         axiom_layers[axiom.effect] = num_axiom_layer;

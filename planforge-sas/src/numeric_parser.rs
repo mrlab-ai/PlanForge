@@ -555,6 +555,7 @@ pub fn parse_numeric_sas_output(input: &str) -> IResult<&str, NumericRootTask> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::numeric_conditions::ConditionValue;
     use crate::numeric_task::AbstractNumericTask;
 
     /// One assignment effect guarded by a single condition: `if var5 == 1 then
@@ -625,9 +626,10 @@ mod tests {
     /// here.
     ///
     /// Numerically: `x = 5`, `three = 3`, so `cond_ge` (`x >= three`) holds and
-    /// `cond_lt` (`x < three`) does not. A condition variable is three-valued
-    /// with 0 = true, 1 = false and 2 = unknown, and its initial-state entry is
-    /// the `unknown` default the closure overwrites.
+    /// `cond_lt` (`x < three`) does not. Both condition variables are written in
+    /// the legacy three-valued form, `<none of those>` and all, so that building
+    /// a task out of this file exercises the narrowing to
+    /// [`ConditionValue::DOMAIN_SIZE`].
     const INTERLEAVED_CONDITIONS_SAS: &str = "\
 begin_version
 4
@@ -785,10 +787,18 @@ begin_SG
             );
         }
 
-        // Each variable keeps its own metadata: `var1` is three-valued and
-        // defaults to `unknown`, `var5` is the derived one.
-        assert_eq!(task.get_variable_domain_size(1), Ok(3));
-        assert_eq!(task.get_variable_default_axiom_value(1), Ok(2));
+        // Each variable keeps its own metadata, except that the file's third
+        // condition value is narrowed away: `var1` carries a comparison, so it
+        // is two-valued and its `<none of those>` default collapses onto
+        // `False`. `var5` is the derived one.
+        assert_eq!(
+            task.get_variable_domain_size(1),
+            Ok(ConditionValue::DOMAIN_SIZE)
+        );
+        assert_eq!(
+            task.get_variable_default_axiom_value(1),
+            Ok(ConditionValue::False.as_usize())
+        );
         assert_eq!(task.get_variable_axiom_layer(5), Ok(Some(1)));
         assert_eq!(task.get_variable_name(5), Ok("var5"));
 

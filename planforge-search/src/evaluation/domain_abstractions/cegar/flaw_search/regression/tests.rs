@@ -3,6 +3,7 @@ use crate::evaluation::domain_abstractions::{
     domain_abstraction::NumericPartitions, domain_abstraction_factory::DomainAbstractionFactory,
 };
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
     NumericType, NumericVariable, Operator,
@@ -85,11 +86,11 @@ fn regression_flaws_find_initial_state_violation() {
 #[test]
 fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
     let variables = vec![ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         "cmp".into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),

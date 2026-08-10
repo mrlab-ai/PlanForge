@@ -5,6 +5,7 @@ use std::time::Duration;
 use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
     NumericRootTask, NumericType, NumericVariable, Operator,
@@ -2331,11 +2332,11 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
 
 fn comparison_variable(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(
-        3,
+        ConditionValue::DOMAIN_SIZE,
         name.into(),
-        vec!["true".into(), "false".into(), "unknown".into()],
+        vec!["true".into(), "false".into()],
         Some(0),
-        2,
+        ConditionValue::False.as_usize(),
     )
 }
 

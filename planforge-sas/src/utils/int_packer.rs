@@ -1,6 +1,5 @@
 use tracing::error;
 
-use crate::numeric_conditions::ConditionValue;
 use crate::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
 use crate::utils::float_tolerance;
 
@@ -130,34 +129,15 @@ impl IntDoublePacker {
     }
 
     /// Packer for the *concrete* states of `task`.
-    ///
-    /// A numeric condition gets one bit rather than the two its SAS domain of
-    /// three values would need: a concrete state fixes the numeric variables,
-    /// so `evaluate_comparison_axioms` writes either `True` or `False` and no
-    /// operator ever touches a derived variable. The abstract side builds its
-    /// own packers from the full domain sizes and keeps `Unknown`.
     pub fn from_abstract_task_with_numeric_range(
         task: &dyn AbstractNumericTask,
         numeric_range: u64,
     ) -> Self {
-        let conditions = task.numeric_conditions();
-        let mut domain_sizes = Vec::with_capacity(task.variables().len());
-        for (var_id, var) in task.variables().iter().enumerate() {
-            domain_sizes.push(if conditions.is_condition_var(var_id) {
-                let domain_size = var.domain_size();
-                assert!(
-                    domain_size == ConditionValue::CONCRETE_DOMAIN_SIZE
-                        || domain_size == ConditionValue::DOMAIN_SIZE,
-                    "variable {var_id} carries a numeric condition but has domain size \
-                     {domain_size}, which is neither {} nor {}",
-                    ConditionValue::CONCRETE_DOMAIN_SIZE,
-                    ConditionValue::DOMAIN_SIZE
-                );
-                ConditionValue::CONCRETE_DOMAIN_SIZE as u64
-            } else {
-                var.domain_size() as u64
-            });
-        }
+        let mut domain_sizes: Vec<u64> = task
+            .variables()
+            .iter()
+            .map(|var| var.domain_size() as u64)
+            .collect();
         let numeric_slot_offset = domain_sizes.len();
         for numeric_var in task.numeric_variables().iter() {
             if numeric_var.get_type() == &NumericType::Regular {
