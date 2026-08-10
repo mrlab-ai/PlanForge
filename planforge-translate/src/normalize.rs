@@ -124,39 +124,19 @@ fn remove_universal_quantifiers(task: &mut Task) {
     }
 }
 
-fn remove_universal(cond: &Condition) -> Condition {
-    match cond {
-        Condition::UniversalCondition(uc) => {
-            // forall params. phi  =>  not(exists params. not(phi))
-            let inner = if uc.parts.len() == 1 {
-                remove_universal(&uc.parts[0])
-            } else {
-                Condition::Conjunction(Conjunction::new(
-                    uc.parts.iter().map(remove_universal).collect(),
-                ))
-            };
-            // not(exists params. not(inner))
-            // We handle this by adding a new axiom
-            // For now, just recursively process
-            Condition::UniversalCondition(UniversalCondition::new(
-                uc.parameters.clone(),
-                vec![remove_universal(&inner)],
-            ))
-        }
-        Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-            conj.parts.iter().map(remove_universal).collect(),
+fn remove_universal(condition: &Condition) -> Condition {
+    let Condition::UniversalCondition(_) = condition else {
+        return condition.map_parts(remove_universal);
+    };
+    // A quantifier's body is one condition, so a body of several parts is
+    // conjoined before the quantifier is rebuilt over it.
+    let body = match condition.parts() {
+        [part] => remove_universal(part),
+        parts => Condition::Conjunction(Conjunction::new(
+            parts.iter().map(remove_universal).collect(),
         )),
-        Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-            disj.parts.iter().map(remove_universal).collect(),
-        )),
-        Condition::ExistentialCondition(ec) => {
-            Condition::ExistentialCondition(ExistentialCondition::new(
-                ec.parameters.clone(),
-                ec.parts.iter().map(remove_universal).collect(),
-            ))
-        }
-        other => other.clone(),
-    }
+    };
+    condition.with_parts(vec![remove_universal(&body)])
 }
 
 fn substitute_complicated_goal(task: &mut Task) {
@@ -291,16 +271,8 @@ fn move_existential_quantifiers(task: &mut Task) {
                 ))
                 .simplified()
             }
-            Condition::Disjunction(disj) => {
-                Condition::Disjunction(Disjunction::new(disj.parts.iter().map(recurse).collect()))
-                    .simplified()
-            }
-            Condition::UniversalCondition(uc) => {
-                Condition::UniversalCondition(UniversalCondition::new(
-                    uc.parameters.clone(),
-                    uc.parts.iter().map(recurse).collect(),
-                ))
-                .simplified()
+            Condition::Disjunction(_) | Condition::UniversalCondition(_) => {
+                condition.map_parts(recurse).simplified()
             }
             other => other.clone(),
         }
@@ -381,64 +353,13 @@ fn remove_arithmetic_expressions(task: &mut Task) {
         condition: &Condition,
     ) -> Condition {
         match condition {
-            Condition::FunctionComparison(fc) => {
-                let parts = fc
-                    .parts
-                    .iter()
-                    .map(|part| {
-                        FunctionalExpression::PrimitiveNumericExpression(
-                            function_administrator.get_derived_function(part),
-                        )
-                    })
-                    .collect();
-                Condition::FunctionComparison(FunctionComparison::new(fc.comparator.clone(), parts))
-            }
-            Condition::NegatedFunctionComparison(nfc) => {
-                let parts = nfc
-                    .parts
-                    .iter()
-                    .map(|part| {
-                        FunctionalExpression::PrimitiveNumericExpression(
-                            function_administrator.get_derived_function(part),
-                        )
-                    })
-                    .collect();
-                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
-                    nfc.comparator.clone(),
-                    parts,
-                ))
-            }
-            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-                conj.parts
-                    .iter()
-                    .map(|part| rewrite_condition(function_administrator, part))
-                    .collect(),
-            )),
-            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-                disj.parts
-                    .iter()
-                    .map(|part| rewrite_condition(function_administrator, part))
-                    .collect(),
-            )),
-            Condition::ExistentialCondition(ec) => {
-                Condition::ExistentialCondition(ExistentialCondition::new(
-                    ec.parameters.clone(),
-                    ec.parts
-                        .iter()
-                        .map(|part| rewrite_condition(function_administrator, part))
-                        .collect(),
-                ))
-            }
-            Condition::UniversalCondition(uc) => {
-                Condition::UniversalCondition(UniversalCondition::new(
-                    uc.parameters.clone(),
-                    uc.parts
-                        .iter()
-                        .map(|part| rewrite_condition(function_administrator, part))
-                        .collect(),
-                ))
-            }
-            other => other.clone(),
+            Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => condition
+                .map_comparison_operands(|operand| {
+                    FunctionalExpression::PrimitiveNumericExpression(
+                        function_administrator.get_derived_function(operand),
+                    )
+                }),
+            other => other.map_parts(|part| rewrite_condition(function_administrator, part)),
         }
     }
 
@@ -742,27 +663,15 @@ pub fn condition_to_rule_body(parameters: &[TypedObject], condition: &Condition)
     for part in parts {
         match part {
             Condition::Atom(_) => result.push(part),
-            Condition::FunctionComparison(fc) => {
-                for pne in fc
-                    .parts
+            Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => {
+                for pne in part
+                    .comparison_operands()
                     .iter()
-                    .flat_map(|expr| expr.primitive_numeric_expressions())
+                    .flat_map(FunctionalExpression::primitive_numeric_expressions)
                 {
                     result.push(Condition::Atom(Atom::new(
                         get_function_predicate(&pne.symbol),
-                        pne.args.clone(),
-                    )));
-                }
-            }
-            Condition::NegatedFunctionComparison(nfc) => {
-                for pne in nfc
-                    .parts
-                    .iter()
-                    .flat_map(|expr| expr.primitive_numeric_expressions())
-                {
-                    result.push(Condition::Atom(Atom::new(
-                        get_function_predicate(&pne.symbol),
-                        pne.args.clone(),
+                        pne.args,
                     )));
                 }
             }

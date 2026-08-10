@@ -61,6 +61,15 @@ impl PrimitiveNumericExpression {
             ntype,
         }
     }
+
+    /// The same fluent with its arguments put through `substitution`.
+    pub fn substituted(&self, substitution: &impl super::Substitution) -> Self {
+        PrimitiveNumericExpression::with_type(
+            self.symbol.clone(),
+            super::substitute(&self.args, substitution),
+            self.ntype,
+        )
+    }
 }
 
 impl fmt::Display for PrimitiveNumericExpression {
@@ -155,17 +164,7 @@ impl FunctionAssignment {
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
         new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
     ) -> FunctionAssignment {
-        let new_fluent_args: Vec<String> = self
-            .fluent
-            .args
-            .iter()
-            .map(|arg| var_mapping.resolve(arg).to_owned())
-            .collect();
-        let new_fluent = PrimitiveNumericExpression::with_type(
-            self.fluent.symbol.clone(),
-            new_fluent_args,
-            self.fluent.ntype,
-        );
+        let new_fluent = self.fluent.substituted(var_mapping);
         let new_expr = instantiate_expression(
             &self.expression,
             var_mapping,
@@ -180,15 +179,7 @@ impl FunctionAssignment {
     pub fn rename_variables(&self, renamings: &HashMap<String, String>) -> FunctionAssignment {
         FunctionAssignment::new(
             self.symbol.clone(),
-            PrimitiveNumericExpression::with_type(
-                self.fluent.symbol.clone(),
-                self.fluent
-                    .args
-                    .iter()
-                    .map(|arg| renamings.get(arg).cloned().unwrap_or_else(|| arg.clone()))
-                    .collect(),
-                self.fluent.ntype,
-            ),
+            self.fluent.substituted(renamings),
             self.expression.rename_variables(renamings),
         )
     }
@@ -211,59 +202,70 @@ impl fmt::Display for FunctionAssignment {
 // ============== Helper methods on FunctionalExpression ==============
 
 impl FunctionalExpression {
+    /// The operands a compound expression combines, in order; empty for a term,
+    /// which is a constant or a primitive numeric expression.
+    pub fn parts(&self) -> &[FunctionalExpression] {
+        match self {
+            FunctionalExpression::ArithmeticExpression(arithmetic) => &arithmetic.parts,
+            FunctionalExpression::AdditiveInverse(inverse) => &inverse.parts,
+            FunctionalExpression::NumericConstant(_)
+            | FunctionalExpression::PrimitiveNumericExpression(_) => &[],
+        }
+    }
+
+    /// The same kind of expression over `parts`, keeping the arithmetic operator
+    /// where there is one. A term has no operands to replace, so handing this
+    /// one any is a caller bug.
+    pub fn with_parts(&self, parts: Vec<FunctionalExpression>) -> FunctionalExpression {
+        match self {
+            FunctionalExpression::ArithmeticExpression(arithmetic) => {
+                FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
+                    arithmetic.op.clone(),
+                    parts,
+                ))
+            }
+            FunctionalExpression::AdditiveInverse(_) => {
+                FunctionalExpression::AdditiveInverse(AdditiveInverse::new(parts))
+            }
+            term => {
+                assert!(parts.is_empty(), "{term} has no operands to replace");
+                term.clone()
+            }
+        }
+    }
+
+    /// The same expression with `map` applied to each of its operands. A term is
+    /// its own image.
+    pub fn map_parts(
+        &self,
+        map: impl FnMut(&FunctionalExpression) -> FunctionalExpression,
+    ) -> FunctionalExpression {
+        self.with_parts(self.parts().iter().map(map).collect())
+    }
+
     pub fn primitive_numeric_expressions(&self) -> Vec<PrimitiveNumericExpression> {
         match self {
-            FunctionalExpression::NumericConstant(_) => vec![],
             FunctionalExpression::PrimitiveNumericExpression(pne) => vec![pne.clone()],
-            FunctionalExpression::ArithmeticExpression(ae) => {
-                let mut result = vec![];
-                for p in &ae.parts {
-                    result.extend(p.primitive_numeric_expressions());
-                }
-                result
-            }
-            FunctionalExpression::AdditiveInverse(ai) => {
-                let mut result = vec![];
-                for p in &ai.parts {
-                    result.extend(p.primitive_numeric_expressions());
-                }
-                result
-            }
+            other => other
+                .parts()
+                .iter()
+                .flat_map(FunctionalExpression::primitive_numeric_expressions)
+                .collect(),
         }
     }
 
     pub fn rename_variables(&self, renamings: &HashMap<String, String>) -> FunctionalExpression {
         match self {
-            FunctionalExpression::NumericConstant(_) => self.clone(),
             FunctionalExpression::PrimitiveNumericExpression(pne) => {
-                let new_args = pne
-                    .args
-                    .iter()
-                    .map(|a| renamings.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
                 FunctionalExpression::PrimitiveNumericExpression(
-                    PrimitiveNumericExpression::with_type(pne.symbol.clone(), new_args, pne.ntype),
+                    PrimitiveNumericExpression::with_type(
+                        pne.symbol.clone(),
+                        crate::pddl::substitute(&pne.args, renamings),
+                        pne.ntype,
+                    ),
                 )
             }
-            FunctionalExpression::ArithmeticExpression(ae) => {
-                let new_parts = ae
-                    .parts
-                    .iter()
-                    .map(|p| p.rename_variables(renamings))
-                    .collect();
-                FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
-                    ae.op.clone(),
-                    new_parts,
-                ))
-            }
-            FunctionalExpression::AdditiveInverse(ai) => {
-                let new_parts = ai
-                    .parts
-                    .iter()
-                    .map(|p| p.rename_variables(renamings))
-                    .collect();
-                FunctionalExpression::AdditiveInverse(AdditiveInverse::new(new_parts))
-            }
+            other => other.map_parts(|part| part.rename_variables(renamings)),
         }
     }
 
@@ -320,13 +322,7 @@ pub fn instantiate_expression(
     match expr {
         FunctionalExpression::NumericConstant(_) => expr.clone(),
         FunctionalExpression::PrimitiveNumericExpression(pne) => {
-            let new_args: Vec<String> = pne
-                .args
-                .iter()
-                .map(|arg| var_mapping.resolve(arg).to_owned())
-                .collect();
-            let instantiated =
-                PrimitiveNumericExpression::with_type(pne.symbol.clone(), new_args, pne.ntype);
+            let instantiated = pne.substituted(var_mapping);
             let is_fluent = fluent_functions.contains(&instantiated);
             if !is_fluent && !instantiated.symbol.starts_with("derived!") {
                 if let Some(value) = init_function_vals.get(&instantiated) {

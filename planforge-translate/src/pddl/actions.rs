@@ -94,7 +94,7 @@ impl Action {
         // Build the action name
         let arg_list: Vec<&str> = self.parameters[..self.num_external_parameters]
             .iter()
-            .map(|parameter| var_mapping.resolve(&parameter.name))
+            .map(|parameter| crate::pddl::Substitution::resolve(var_mapping, &parameter.name))
             .collect();
         let name = format!("({} {})", self.name, arg_list.join(" "));
 
@@ -129,14 +129,12 @@ impl Action {
 
             match &eff.peffect {
                 Condition::Atom(atom) => {
-                    let new_atom =
-                        Atom::new(atom.predicate.clone(), var_mapping.resolve_all(&atom.args));
-                    add_effects.push((eff_condition, new_atom));
+                    add_effects.push((eff_condition, atom.substituted(var_mapping)));
                 }
                 Condition::NegatedAtom(natom) => {
                     let new_atom = Atom::new(
                         natom.predicate.clone(),
-                        var_mapping.resolve_all(&natom.args),
+                        crate::pddl::substitute(&natom.args, var_mapping),
                     );
                     del_effects.push((eff_condition, new_atom));
                 }
@@ -264,8 +262,7 @@ impl Condition {
             // Note that both arms test the *atom*, not its predicate: an
             // unreachable instance of a fluent predicate is statically false.
             Condition::Atom(atom) => {
-                let new_atom =
-                    Atom::new(atom.predicate.clone(), var_mapping.resolve_all(&atom.args));
+                let new_atom = atom.substituted(var_mapping);
                 if fluent_facts.contains(&new_atom) {
                     Some(vec![Condition::Atom(new_atom)])
                 } else if init_facts.contains(&new_atom) {
@@ -275,7 +272,7 @@ impl Condition {
                 }
             }
             Condition::NegatedAtom(natom) => {
-                let new_args = var_mapping.resolve_all(&natom.args);
+                let new_args = crate::pddl::substitute(&natom.args, var_mapping);
                 let pos_atom = Atom::new(natom.predicate.clone(), new_args.clone());
                 if fluent_facts.contains(&pos_atom) {
                     Some(vec![Condition::NegatedAtom(NegatedAtom::new(
@@ -288,53 +285,17 @@ impl Condition {
                     Some(vec![]) // statically false, so its negation holds
                 }
             }
-            Condition::FunctionComparison(fc) => {
-                // Instantiate the function comparison
-                let new_parts = fc
-                    .parts
-                    .iter()
-                    .map(|p| {
-                        super::f_expression::instantiate_expression(
-                            p,
-                            var_mapping,
-                            fluent_functions,
-                            init_function_vals,
-                            task_function_admin,
-                            new_constant_axioms,
-                        )
-                    })
-                    .collect();
-                let new_fc =
-                    super::conditions::FunctionComparison::new(fc.comparator.clone(), new_parts);
-                Some(vec![Condition::FunctionComparison(
-                    super::conditions::FunctionComparison::new(new_fc.comparator, new_fc.parts),
-                )])
-            }
-            Condition::NegatedFunctionComparison(nfc) => {
-                let new_parts = nfc
-                    .parts
-                    .iter()
-                    .map(|p| {
-                        super::f_expression::instantiate_expression(
-                            p,
-                            var_mapping,
-                            fluent_functions,
-                            init_function_vals,
-                            task_function_admin,
-                            new_constant_axioms,
-                        )
-                    })
-                    .collect();
-                let new_nfc = super::conditions::NegatedFunctionComparison::new(
-                    nfc.comparator.clone(),
-                    new_parts,
-                );
-                Some(vec![Condition::NegatedFunctionComparison(
-                    super::conditions::NegatedFunctionComparison::new(
-                        new_nfc.comparator,
-                        new_nfc.parts,
-                    ),
-                )])
+            Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => {
+                Some(vec![self.map_comparison_operands(|operand| {
+                    super::f_expression::instantiate_expression(
+                        operand,
+                        var_mapping,
+                        fluent_functions,
+                        init_function_vals,
+                        task_function_admin,
+                        new_constant_axioms,
+                    )
+                })])
             }
             _ => {
                 // For other condition types, just return them as-is

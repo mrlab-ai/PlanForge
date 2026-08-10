@@ -95,26 +95,21 @@ impl<'a> VarMapping<'a> {
             .map(|&(_, object)| object)
     }
 
-    /// What `name` stands for once the parameters are bound: the object it is
-    /// bound to, or the name itself, which is what a constant resolves to.
-    pub fn resolve<'s>(&'s self, name: &'s str) -> &'s str {
-        self.get(name).unwrap_or(name)
-    }
-
-    /// An argument list with every parameter replaced by its object.
-    pub fn resolve_all(&self, names: &[String]) -> Vec<String> {
-        names
-            .iter()
-            .map(|name| self.resolve(name).to_owned())
-            .collect()
-    }
-
     /// The objects a parameter list is bound to, as an argument list.
     pub fn resolve_parameters(&self, parameters: &[TypedObject]) -> Vec<String> {
+        use super::Substitution;
         parameters
             .iter()
             .map(|parameter| self.resolve(&parameter.name).to_owned())
             .collect()
+    }
+}
+
+/// A binding maps the parameters it binds; every other name is an object or
+/// another constant, and stands for itself.
+impl super::Substitution for VarMapping<'_> {
+    fn resolve<'a>(&'a self, name: &'a str) -> &'a str {
+        self.get(name).unwrap_or(name)
     }
 }
 

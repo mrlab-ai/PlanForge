@@ -17,23 +17,14 @@ fn collect_used_derived_pnes_from_expr(
     expr: &FunctionalExpression,
     out: &mut OrderedSet<PrimitiveNumericExpression>,
 ) {
-    match expr {
-        FunctionalExpression::PrimitiveNumericExpression(pne) => {
-            if pne.symbol.starts_with("derived!") {
-                out.insert(pne.clone());
-            }
+    if let FunctionalExpression::PrimitiveNumericExpression(pne) = expr {
+        if pne.symbol.starts_with("derived!") {
+            out.insert(pne.clone());
         }
-        FunctionalExpression::ArithmeticExpression(ae) => {
-            for part in &ae.parts {
-                collect_used_derived_pnes_from_expr(part, out);
-            }
-        }
-        FunctionalExpression::AdditiveInverse(ai) => {
-            for part in &ai.parts {
-                collect_used_derived_pnes_from_expr(part, out);
-            }
-        }
-        FunctionalExpression::NumericConstant(_) => {}
+        return;
+    }
+    for part in expr.parts() {
+        collect_used_derived_pnes_from_expr(part, out);
     }
 }
 
@@ -41,38 +32,11 @@ fn collect_used_derived_pnes_from_condition(
     cond: &Condition,
     out: &mut OrderedSet<PrimitiveNumericExpression>,
 ) {
-    match cond {
-        Condition::FunctionComparison(fc) => {
-            for part in &fc.parts {
-                collect_used_derived_pnes_from_expr(part, out);
-            }
-        }
-        Condition::NegatedFunctionComparison(nfc) => {
-            for part in &nfc.parts {
-                collect_used_derived_pnes_from_expr(part, out);
-            }
-        }
-        Condition::Conjunction(conj) => {
-            for part in &conj.parts {
-                collect_used_derived_pnes_from_condition(part, out);
-            }
-        }
-        Condition::Disjunction(disj) => {
-            for part in &disj.parts {
-                collect_used_derived_pnes_from_condition(part, out);
-            }
-        }
-        Condition::ExistentialCondition(ec) => {
-            for part in &ec.parts {
-                collect_used_derived_pnes_from_condition(part, out);
-            }
-        }
-        Condition::UniversalCondition(uc) => {
-            for part in &uc.parts {
-                collect_used_derived_pnes_from_condition(part, out);
-            }
-        }
-        _ => {}
+    for operand in cond.comparison_operands() {
+        collect_used_derived_pnes_from_expr(operand, out);
+    }
+    for part in cond.parts() {
+        collect_used_derived_pnes_from_condition(part, out);
     }
 }
 

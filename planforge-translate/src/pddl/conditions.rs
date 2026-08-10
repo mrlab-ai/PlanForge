@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use super::f_expression::FunctionalExpression;
+
 /// The root condition enum, mirroring Python's Condition class hierarchy.
 /// Python used class inheritance; Rust uses an enum.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -87,6 +89,14 @@ impl Atom {
             args: self.args.clone(),
         }
     }
+
+    /// The same atom with its arguments put through `substitution`.
+    pub fn substituted(&self, substitution: &impl super::Substitution) -> Atom {
+        Atom::new(
+            self.predicate.clone(),
+            super::substitute(&self.args, substitution),
+        )
+    }
 }
 
 impl fmt::Display for Atom {
@@ -145,12 +155,12 @@ impl fmt::Display for NegatedAtom {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionComparison {
     pub comparator: String,
-    pub parts: Vec<super::f_expression::FunctionalExpression>,
+    pub parts: Vec<FunctionalExpression>,
     pub negated: bool,
 }
 
 impl FunctionComparison {
-    pub fn new(comparator: String, parts: Vec<super::f_expression::FunctionalExpression>) -> Self {
+    pub fn new(comparator: String, parts: Vec<FunctionalExpression>) -> Self {
         FunctionComparison {
             comparator,
             parts,
@@ -180,12 +190,12 @@ impl fmt::Display for FunctionComparison {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NegatedFunctionComparison {
     pub comparator: String,
-    pub parts: Vec<super::f_expression::FunctionalExpression>,
+    pub parts: Vec<FunctionalExpression>,
     pub negated: bool,
 }
 
 impl NegatedFunctionComparison {
-    pub fn new(comparator: String, parts: Vec<super::f_expression::FunctionalExpression>) -> Self {
+    pub fn new(comparator: String, parts: Vec<FunctionalExpression>) -> Self {
         NegatedFunctionComparison {
             comparator,
             parts,
@@ -213,82 +223,166 @@ impl fmt::Display for NegatedFunctionComparison {
 }
 
 // =========================================================================
-// Methods on Condition enum (Python's polymorphic dispatch)
+// Methods on Condition enum
 // =========================================================================
 
 impl Condition {
+    /// The subconditions of a compound condition, in order.
+    ///
+    /// Empty for every condition that has none: a constant, a literal, and a
+    /// comparison, whose operands are numeric expressions rather than
+    /// conditions. Naming the structure once is what lets the traversals below
+    /// -- and the normalization passes -- be written once instead of once per
+    /// compound variant.
+    pub fn parts(&self) -> &[Condition] {
+        match self {
+            Condition::Conjunction(conjunction) => &conjunction.parts,
+            Condition::Disjunction(disjunction) => &disjunction.parts,
+            Condition::UniversalCondition(universal) => &universal.parts,
+            Condition::ExistentialCondition(existential) => &existential.parts,
+            Condition::Truth
+            | Condition::Falsity
+            | Condition::Atom(_)
+            | Condition::NegatedAtom(_)
+            | Condition::FunctionComparison(_)
+            | Condition::NegatedFunctionComparison(_) => &[],
+        }
+    }
+
+    /// As [`Self::parts`], but taking the subconditions out of the condition
+    /// rather than borrowing them.
+    pub fn into_parts(self) -> Vec<Condition> {
+        match self {
+            Condition::Conjunction(conjunction) => conjunction.parts,
+            Condition::Disjunction(disjunction) => disjunction.parts,
+            Condition::UniversalCondition(universal) => universal.parts,
+            Condition::ExistentialCondition(existential) => existential.parts,
+            _ => Vec::new(),
+        }
+    }
+
+    /// The same kind of condition over `parts`, keeping whatever else the
+    /// condition carries -- the parameters a quantifier binds.
+    ///
+    /// A condition without subconditions has none to replace, so handing this
+    /// one any is a caller bug rather than something to drop quietly.
+    pub fn with_parts(&self, parts: Vec<Condition>) -> Condition {
+        match self {
+            Condition::Conjunction(_) => Condition::Conjunction(Conjunction::new(parts)),
+            Condition::Disjunction(_) => Condition::Disjunction(Disjunction::new(parts)),
+            Condition::UniversalCondition(universal) => Condition::UniversalCondition(
+                UniversalCondition::new(universal.parameters.clone(), parts),
+            ),
+            Condition::ExistentialCondition(existential) => Condition::ExistentialCondition(
+                ExistentialCondition::new(existential.parameters.clone(), parts),
+            ),
+            leaf => {
+                assert!(parts.is_empty(), "{leaf} has no subconditions to replace");
+                leaf.clone()
+            }
+        }
+    }
+
+    /// The same condition with `map` applied to each of its subconditions. A
+    /// condition without subconditions is its own image.
+    pub fn map_parts(&self, map: impl FnMut(&Condition) -> Condition) -> Condition {
+        self.with_parts(self.parts().iter().map(map).collect())
+    }
+
+    /// The numeric operands a comparison relates, in order; empty for every
+    /// condition that is not one.
+    ///
+    /// This is the other half of the structure [`Self::parts`] names: a
+    /// comparison is a leaf of the condition tree and the root of a pair of
+    /// expression trees, and both kinds of comparison hold theirs the same way.
+    pub fn comparison_operands(&self) -> &[FunctionalExpression] {
+        match self {
+            Condition::FunctionComparison(comparison) => &comparison.parts,
+            Condition::NegatedFunctionComparison(comparison) => &comparison.parts,
+            _ => &[],
+        }
+    }
+
+    /// The comparator a comparison relates its operands by. Only a comparison
+    /// has one, so asking anything else is a caller bug.
+    pub fn comparator(&self) -> &str {
+        match self {
+            Condition::FunctionComparison(comparison) => &comparison.comparator,
+            Condition::NegatedFunctionComparison(comparison) => &comparison.comparator,
+            other => panic!("{other} is not a comparison"),
+        }
+    }
+
+    /// The same comparison with `map` applied to each of its operands. A
+    /// condition that is not a comparison is its own image.
+    pub fn map_comparison_operands(
+        &self,
+        map: impl FnMut(&FunctionalExpression) -> FunctionalExpression,
+    ) -> Condition {
+        let operands: Vec<FunctionalExpression> =
+            self.comparison_operands().iter().map(map).collect();
+        match self {
+            Condition::FunctionComparison(comparison) => Condition::FunctionComparison(
+                FunctionComparison::new(comparison.comparator.clone(), operands),
+            ),
+            Condition::NegatedFunctionComparison(comparison) => {
+                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
+                    comparison.comparator.clone(),
+                    operands,
+                ))
+            }
+            other => other.clone(),
+        }
+    }
+
     pub fn simplified(&self) -> Condition {
         match self {
-            Condition::Truth => Condition::Truth,
-            Condition::Falsity => Condition::Falsity,
-            Condition::Conjunction(conj) => {
-                let mut result_parts: Vec<Condition> = vec![];
-                for p in conj.parts.iter().map(|p| p.simplified()) {
-                    match p {
-                        Condition::Conjunction(inner) => {
-                            result_parts.extend(inner.parts);
-                        }
-                        Condition::Falsity => return Condition::Falsity,
-                        Condition::Truth => {} // skip
-                        other => result_parts.push(other),
-                    }
-                }
-                if result_parts.is_empty() {
-                    Condition::Truth
-                } else if result_parts.len() == 1 {
-                    result_parts.into_iter().next().unwrap()
-                } else {
-                    Condition::Conjunction(Conjunction::new(result_parts))
+            Condition::Conjunction(_) => {
+                self.simplified_connective(&Condition::Falsity, &Condition::Truth)
+            }
+            Condition::Disjunction(_) => {
+                self.simplified_connective(&Condition::Truth, &Condition::Falsity)
+            }
+            // A quantifier whose whole body simplified to a constant is that
+            // constant: there is nothing left for it to quantify over.
+            Condition::UniversalCondition(_) | Condition::ExistentialCondition(_) => {
+                let simplified = self.map_parts(Condition::simplified);
+                match simplified.parts() {
+                    [constant @ (Condition::Truth | Condition::Falsity)] => constant.clone(),
+                    _ => simplified,
                 }
             }
-            Condition::Disjunction(disj) => {
-                let mut result_parts: Vec<Condition> = vec![];
-                for p in disj.parts.iter().map(|p| p.simplified()) {
-                    match p {
-                        Condition::Disjunction(inner) => {
-                            result_parts.extend(inner.parts);
-                        }
-                        Condition::Truth => return Condition::Truth,
-                        Condition::Falsity => {} // skip
-                        other => result_parts.push(other),
-                    }
-                }
-                if result_parts.is_empty() {
-                    Condition::Falsity
-                } else if result_parts.len() == 1 {
-                    result_parts.into_iter().next().unwrap()
-                } else {
-                    Condition::Disjunction(Disjunction::new(result_parts))
-                }
+            // Constants, literals and comparisons are already simplified.
+            leaf => leaf.clone(),
+        }
+    }
+
+    /// The simplification the two connectives share: a nested connective of the
+    /// same kind is spliced in, the `neutral` constant is dropped, and the
+    /// `absorbing` constant swallows the whole connective. What is left of a
+    /// connective over one part is that part, and over none it is `neutral`.
+    ///
+    /// A conjunction absorbs `Falsity` and is neutral on `Truth`; a disjunction
+    /// is its dual, which is the only difference between the two.
+    fn simplified_connective(&self, absorbing: &Condition, neutral: &Condition) -> Condition {
+        let mut parts: Vec<Condition> = Vec::with_capacity(self.parts().len());
+        for part in self.parts().iter().map(Condition::simplified) {
+            if &part == absorbing {
+                return absorbing.clone();
             }
-            Condition::UniversalCondition(uc) => {
-                let new_parts: Vec<Condition> = uc.parts.iter().map(|p| p.simplified()).collect();
-                if new_parts.len() == 1
-                    && matches!(&new_parts[0], Condition::Truth | Condition::Falsity)
-                {
-                    new_parts.into_iter().next().unwrap()
-                } else {
-                    Condition::UniversalCondition(UniversalCondition::new(
-                        uc.parameters.clone(),
-                        new_parts,
-                    ))
-                }
+            if &part == neutral {
+                continue;
             }
-            Condition::ExistentialCondition(ec) => {
-                let new_parts: Vec<Condition> = ec.parts.iter().map(|p| p.simplified()).collect();
-                if new_parts.len() == 1
-                    && matches!(&new_parts[0], Condition::Truth | Condition::Falsity)
-                {
-                    new_parts.into_iter().next().unwrap()
-                } else {
-                    Condition::ExistentialCondition(ExistentialCondition::new(
-                        ec.parameters.clone(),
-                        new_parts,
-                    ))
-                }
+            if std::mem::discriminant(&part) == std::mem::discriminant(self) {
+                parts.append(&mut part.into_parts());
+            } else {
+                parts.push(part);
             }
-            // Atoms, NegatedAtoms, FunctionComparisons are already simplified
-            other => other.clone(),
+        }
+        match parts.len() {
+            0 => neutral.clone(),
+            1 => parts.pop().expect("length checked"),
+            _ => self.with_parts(parts),
         }
     }
 
@@ -322,34 +416,14 @@ impl Condition {
                     .collect();
                 Condition::ExistentialCondition(ExistentialCondition::new(new_params, new_parts))
             }
-            Condition::Conjunction(conj) => Condition::Conjunction(Conjunction::new(
-                conj.parts
-                    .iter()
-                    .map(|p| p.uniquify_variables(type_map, renamings))
-                    .collect(),
-            )),
-            Condition::Disjunction(disj) => Condition::Disjunction(Disjunction::new(
-                disj.parts
-                    .iter()
-                    .map(|p| p.uniquify_variables(type_map, renamings))
-                    .collect(),
-            )),
-            Condition::Atom(atom) => {
-                let new_args = atom
-                    .args
-                    .iter()
-                    .map(|a| renamings.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
-                Condition::Atom(Atom::new(atom.predicate.clone(), new_args))
+            Condition::Conjunction(_) | Condition::Disjunction(_) => {
+                self.map_parts(|part| part.uniquify_variables(type_map, renamings))
             }
-            Condition::NegatedAtom(natom) => {
-                let new_args = natom
-                    .args
-                    .iter()
-                    .map(|a| renamings.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
-                Condition::NegatedAtom(NegatedAtom::new(natom.predicate.clone(), new_args))
-            }
+            Condition::Atom(atom) => Condition::Atom(atom.substituted(renamings)),
+            Condition::NegatedAtom(natom) => Condition::NegatedAtom(NegatedAtom::new(
+                natom.predicate.clone(),
+                super::substitute(&natom.args, renamings),
+            )),
             Condition::FunctionComparison(fc) => {
                 let new_parts = fc
                     .parts
@@ -377,23 +451,13 @@ impl Condition {
     }
 
     pub fn has_disjunction(&self) -> bool {
-        match self {
-            Condition::Disjunction(_) => true,
-            Condition::Conjunction(conj) => conj.parts.iter().any(|p| p.has_disjunction()),
-            Condition::UniversalCondition(uc) => uc.parts.iter().any(|p| p.has_disjunction()),
-            Condition::ExistentialCondition(ec) => ec.parts.iter().any(|p| p.has_disjunction()),
-            _ => false,
-        }
+        matches!(self, Condition::Disjunction(_))
+            || self.parts().iter().any(Condition::has_disjunction)
     }
 
     pub fn has_existential_part(&self) -> bool {
-        match self {
-            Condition::ExistentialCondition(_) => true,
-            Condition::Conjunction(conj) => conj.parts.iter().any(|p| p.has_existential_part()),
-            Condition::Disjunction(disj) => disj.parts.iter().any(|p| p.has_existential_part()),
-            Condition::UniversalCondition(uc) => uc.parts.iter().any(|p| p.has_existential_part()),
-            _ => false,
-        }
+        matches!(self, Condition::ExistentialCondition(_))
+            || self.parts().iter().any(Condition::has_existential_part)
     }
 
     /// Check if this is a Literal (Atom or NegatedAtom)

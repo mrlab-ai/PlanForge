@@ -254,13 +254,11 @@ fn translate_strips_conditions_aux(
     for fact in conditions {
         match fact {
             Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => {
-                let (comparator, parts_fexpr, negated) = match fact {
-                    Condition::FunctionComparison(fc) => (&fc.comparator, &fc.parts, false),
-                    Condition::NegatedFunctionComparison(nfc) => {
-                        (&nfc.comparator, &nfc.parts, true)
-                    }
-                    _ => unreachable!(),
-                };
+                let (comparator, parts_fexpr, negated) = (
+                    fact.comparator(),
+                    fact.comparison_operands(),
+                    fact.is_negated(),
+                );
 
                 // Check if fact is already in dictionary
                 if let Some(atom) = condition_to_atom(fact)
@@ -287,7 +285,7 @@ fn translate_strips_conditions_aux(
                     })
                     .collect();
 
-                let key = (comparator.clone(), parts.clone());
+                let key = (comparator.to_owned(), parts.clone());
 
                 if let Some(existing_fact) = comp_axiom_dict.get(&key) {
                     // Already have this comparison axiom
@@ -308,7 +306,7 @@ fn translate_strips_conditions_aux(
                 } else {
                     // Create new comparison axiom
                     let axiom =
-                        SASCompareAxiom::new(comparator.clone(), parts.clone(), ranges.len());
+                        SASCompareAxiom::new(comparator.to_owned(), parts.clone(), ranges.len());
 
                     // Create positive and negative atoms for lookup
                     let pos_fact = make_fc_condition(comparator, parts_fexpr, false);
@@ -1595,28 +1593,18 @@ fn condition_to_atom(cond: &Condition) -> Option<Atom> {
         Condition::NegatedAtom(na) => {
             Some(Atom::new(format!("NOT-{}", na.predicate), na.args.clone()))
         }
-        Condition::FunctionComparison(fc) => {
-            let name = format!(
-                "__fc_{}_{}",
-                fc.comparator,
-                fc.parts
-                    .iter()
-                    .map(|p| format!("{}", p))
-                    .collect::<Vec<_>>()
-                    .join("_")
-            );
-            Some(Atom::new(name, vec![]))
-        }
-        Condition::NegatedFunctionComparison(nfc) => {
-            let name = format!(
-                "__nfc_{}_{}",
-                nfc.comparator,
-                nfc.parts
-                    .iter()
-                    .map(|p| format!("{}", p))
-                    .collect::<Vec<_>>()
-                    .join("_")
-            );
+        // A comparison has no atom of its own, so it is given one, named after
+        // the comparison it stands for. The two kinds need different names: the
+        // dictionary holds a variable's positive and its negative fact, and
+        // sharing a name would make them the same fact.
+        Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => {
+            let prefix = if cond.is_negated() { "__nfc" } else { "__fc" };
+            let operands: Vec<String> = cond
+                .comparison_operands()
+                .iter()
+                .map(FunctionalExpression::to_string)
+                .collect();
+            let name = format!("{prefix}_{}_{}", cond.comparator(), operands.join("_"));
             Some(Atom::new(name, vec![]))
         }
         _ => None,
