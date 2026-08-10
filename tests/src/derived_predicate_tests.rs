@@ -23,6 +23,10 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
+    LandmarkCutNumericHeuristic, LmCutNumericConfig,
+};
+use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 
 use crate::corpus::{
     self, Scratch, Solution, assert_fixture_set_is_pinned, blind_astar, subdirectory_names,
@@ -61,6 +65,7 @@ struct Shape {
 /// the cost is the true optimum and the length pins the plan realising it.
 const FIXTURE_OPTIMA: &[(&str, f64, u64)] = &[
     ("conjunctive-chain", 4.0, 4),
+    ("cyclic-negation", 3.0, 3),
     ("disjunctive-support", 5.0, 5),
     ("goal-condition", 5.0, 5),
     ("layered-chain", 4.0, 4),
@@ -76,6 +81,8 @@ const FIXTURE_OPTIMA: &[(&str, f64, u64)] = &[
 const FIXTURE_SHAPES: &[(&str, Shape)] = &[
     ("conjunctive-chain",
      Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
+    ("cyclic-negation",
+     Shape { layers: 1, true_defaults: 0, proved: 2, cyclic: 4, comparisons: 0 }),
     ("disjunctive-support",
      Shape { layers: 1, true_defaults: 0, proved: 1, cyclic: 0, comparisons: 0 }),
     ("goal-condition",
@@ -83,7 +90,7 @@ const FIXTURE_SHAPES: &[(&str, Shape)] = &[
     ("layered-chain",
      Shape { layers: 3, true_defaults: 0, proved: 1, cyclic: 0, comparisons: 0 }),
     ("negated-dependency",
-     Shape { layers: 2, true_defaults: 1, proved: 0, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 2, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
     ("numeric-body",
      Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 1 }),
     ("recursive-closure",
@@ -258,6 +265,58 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
             &shape_of(name, &task),
             pinned_shape(name),
             "{name}: translated shape"
+        );
+    }
+}
+
+/// The same optima under an admissible heuristic that *reads* the axioms.
+///
+/// This is the only test that can see whether the negated axioms are right.
+/// Blind A* cannot: the axiom evaluator refutes a derived variable by finding it
+/// unproven at the end of its layer, so the negated rules never fire and a wrong
+/// set of them changes no plan. `lmcutnumeric` builds its relaxation out of
+/// them, and a derived variable it cannot refute makes the state look like a
+/// dead end - which is how negating a cyclic component literal by literal used
+/// to turn `cyclic-negation` into an unsolvable task with h = infinity in the
+/// initial state.
+#[test]
+fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
+    for &(name, cost, length) in FIXTURE_OPTIMA {
+        let task = fixture_task(name);
+        let registry = StateRegistry::for_task(Arc::new(&task));
+        let heuristic = LandmarkCutNumericHeuristic::from_config(
+            &task as &dyn AbstractNumericTask,
+            LmCutNumericConfig::default(),
+        )
+        .expect("the default lmcutnumeric config is supported");
+        let mut search = AStarSearch::new(
+            Arc::new(&task),
+            registry,
+            Some(Box::new(heuristic)),
+            None,
+            None,
+        );
+        let result = search.search().expect("lmcutnumeric A* search failed");
+
+        let plan = match (&result.status, &result.plan) {
+            (SearchStatus::Solved(_), Some(plan)) => plan,
+            (status, _) => panic!(
+                "{name}: lmcutnumeric A* must solve the fixture, got {status:?} after \
+                 {} dead ends",
+                result.dead_ends
+            ),
+        };
+        let found = Solution {
+            cost: result
+                .solution_cost
+                .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
+            length: plan.len() as u64,
+        };
+        let expected = Solution { cost, length };
+        assert!(
+            found.matches(&expected),
+            "{name}: lmcutnumeric A* returned {found:?}, expected the optimum {expected:?}; an \
+             inadmissible axiom relaxation would overestimate here"
         );
     }
 }

@@ -1054,21 +1054,19 @@ fn translate_task(
     task: GroundedTask,
     numeric_axioms: &numeric_axiom_rules::NumericAxioms,
 ) -> Result<SASTask, String> {
-    // Process axioms
-    let (processed_axioms, axiom_init, axiom_layer_dict) = axiom_rules::handle_axioms(
+    // Process axioms. Derived variables are not listed here: every one of them
+    // defaults to false, which the closed-world assumption below already gives
+    // them, and the axiom closure computes the real value on top of that.
+    let (processed_axioms, axiom_layer_dict) = axiom_rules::handle_axioms(
         task.actions,
         task.axioms,
         task.goal_list,
         task.global_constraint,
-    );
-
-    // Extend init with axiom init atoms
-    let mut full_init: Vec<Atom> = task.init.to_vec();
-    full_init.extend(axiom_init);
+    )?;
 
     // Initialize init_values: Closed World Assumption
     let mut init_values: Vec<i32> = translation.ranges.iter().map(|&r| (r as i32) - 1).collect();
-    for fact in &full_init {
+    for fact in task.init {
         if let Some(pairs) = translation.dictionary.get(fact) {
             for &(var, val) in pairs {
                 let curr_val = init_values[var];
