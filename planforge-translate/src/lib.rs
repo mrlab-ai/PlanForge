@@ -33,3 +33,4 @@ pub use api::{
     translate_to_sas_string, translate_to_sas_to_path, translate_to_sas_to_path_fast,
     translate_to_task,
 };
+pub use options::LayerStrategy;

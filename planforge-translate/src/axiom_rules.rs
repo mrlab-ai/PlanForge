@@ -24,6 +24,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use super::options::LayerStrategy;
 use super::pddl::actions::PropositionalAction;
 use super::pddl::axioms::PropositionalAxiom;
 use super::pddl::conditions::*;
@@ -155,13 +156,14 @@ pub fn handle_axioms(
     axioms: Vec<PropositionalAxiom>,
     goal_list: &[Condition],
     global_constraint: &Condition,
+    layer_strategy: LayerStrategy,
 ) -> Result<(Vec<PropositionalAxiom>, HashMap<Atom, i32>), String> {
     if axioms.is_empty() {
         return Ok((vec![], HashMap::new()));
     }
 
     let mut clusters = compute_clusters(&axioms, operators, goal_list, global_constraint)?;
-    let axiom_layers = compute_axiom_layers(&mut clusters);
+    let axiom_layers = compute_axiom_layers(&mut clusters, layer_strategy);
     compute_negative_axioms(&mut clusters);
     let processed_axioms = collect_axioms(&clusters);
     verify_layering_condition(&processed_axioms, &axiom_layers);
@@ -364,28 +366,23 @@ fn compute_clusters(
     Ok(clusters)
 }
 
-/// Gives every cluster the lowest layer its children allow.
+/// Lays the clusters out and reports the layer of every variable.
 ///
-/// A positive child may share the layer, because one layer's fixpoint
-/// propagates a proven literal. A negative child must sit strictly below, so
-/// that "never proven" has settled before it is read. Children come after their
-/// parent in the cluster order, hence the reverse traversal.
-fn compute_axiom_layers(clusters: &mut [AxiomCluster]) -> HashMap<Atom, i32> {
+/// Both strategies live off the same property of the cluster order: a cluster's
+/// children come after it, so the reverse traversal settles them first.
+/// [`LayerStrategy::Min`] then reads them; [`LayerStrategy::Max`] does not need
+/// to, because counting the layers down along that order already puts every
+/// child strictly below its parent.
+fn compute_axiom_layers(
+    clusters: &mut [AxiomCluster],
+    layer_strategy: LayerStrategy,
+) -> HashMap<Atom, i32> {
     for index in (0..clusters.len()).rev() {
-        let cluster = &clusters[index];
-        let layer = cluster
-            .positive_children
-            .iter()
-            .map(|&child| clusters[child].layer)
-            .chain(
-                cluster
-                    .negative_children
-                    .iter()
-                    .map(|&child| clusters[child].layer + 1),
-            )
-            .max()
-            .unwrap_or(0);
-        clusters[index].layer = layer;
+        clusters[index].layer = match layer_strategy {
+            LayerStrategy::Min => lowest_allowed_layer(clusters, index),
+            LayerStrategy::Max => i32::try_from(clusters.len() - 1 - index)
+                .expect("a task has fewer axiom clusters than an i32 counts"),
+        };
     }
 
     clusters
@@ -397,6 +394,27 @@ fn compute_axiom_layers(clusters: &mut [AxiomCluster]) -> HashMap<Atom, i32> {
                 .map(move |variable| (variable.clone(), cluster.layer))
         })
         .collect()
+}
+
+/// The lowest layer the already-laid-out children of `clusters[index]` leave it.
+///
+/// A positive child may share the layer, because one layer's fixpoint
+/// propagates a proven literal. A negative child must sit strictly below, so
+/// that "never proven" has settled before it is read.
+fn lowest_allowed_layer(clusters: &[AxiomCluster], index: usize) -> i32 {
+    let cluster = &clusters[index];
+    cluster
+        .positive_children
+        .iter()
+        .map(|&child| clusters[child].layer)
+        .chain(
+            cluster
+                .negative_children
+                .iter()
+                .map(|&child| clusters[child].layer + 1),
+        )
+        .max()
+        .unwrap_or(0)
 }
 
 /// Adds the axioms that *refute* the variables something reads negatively.
@@ -645,5 +663,156 @@ fn verify_layering_condition(axioms: &[PropositionalAxiom], layers: &HashMap<Ato
                  but no rule of that layer writes it"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    use crate::options::LayerStrategy;
+
+    /// How many derived variables sit in each layer, layer by layer.
+    type LayerCounts = &'static [(i32, usize)];
+
+    /// Every `:derived` fixture, and how many derived variables each strategy
+    /// puts in each layer.
+    ///
+    /// The counts are over the non-negative entries of the task's
+    /// `axiom_layers`. `numeric-body` derives its predicate from a comparison,
+    /// so its lowest layer is a numeric one and identical under both
+    /// strategies; the propositional layers sit on top of the numeric ones,
+    /// which is why the others start at 1 rather than 0.
+    ///
+    /// What the two strategies do is visible in the second column: `min`
+    /// collapses a positive chain into one layer, `max` gives each link a layer
+    /// of its own, and a cyclic component still shares one — the pairs of
+    /// `cyclic-negation` and the groups of four of `recursive-closure` are the
+    /// strongly connected components, and no strategy can split them.
+    const FIXTURE_LAYERS: &[(&str, LayerCounts, LayerCounts)] = &[
+        (
+            "conjunctive-chain",
+            &[(1, 4)],
+            &[(1, 1), (2, 1), (3, 1), (4, 1)],
+        ),
+        ("cyclic-negation", &[(1, 5)], &[(1, 2), (2, 2), (3, 1)]),
+        ("disjunctive-support", &[(1, 3)], &[(1, 1), (2, 1), (3, 1)]),
+        ("goal-condition", &[(1, 3)], &[(1, 1), (2, 1), (3, 1)]),
+        (
+            "layered-chain",
+            &[(1, 2), (2, 2), (3, 1)],
+            &[(1, 1), (2, 1), (3, 1), (4, 1), (5, 1)],
+        ),
+        (
+            "negated-dependency",
+            &[(1, 2), (2, 1)],
+            &[(1, 1), (2, 1), (3, 1)],
+        ),
+        (
+            "numeric-body",
+            &[(2, 1), (3, 3)],
+            &[(2, 1), (3, 1), (4, 1), (5, 1)],
+        ),
+        (
+            "recursive-closure",
+            &[(1, 21)],
+            &[(1, 1), (2, 4), (3, 4), (4, 4), (5, 4), (6, 4)],
+        ),
+    ];
+
+    fn fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/assets/derived-predicates")
+    }
+
+    /// The `axiom_layers` of the translated fixture, one entry per SAS
+    /// variable.
+    ///
+    /// [`super::handle_axioms`] checks the layering condition on every run, so a
+    /// fixture that translates at all was laid out validly.
+    fn axiom_layers(fixture: &str, layer_strategy: LayerStrategy) -> Vec<i32> {
+        let dir = fixture_root().join(fixture);
+        let path = |name: &str| {
+            dir.join(name)
+                .to_str()
+                .expect("fixture path is UTF-8")
+                .to_owned()
+        };
+        crate::api::translate_to_sas_task(
+            &path("domain.pddl"),
+            &path("problem.pddl"),
+            false,
+            layer_strategy,
+        )
+        .unwrap_or_else(|err| panic!("translating {fixture} failed: {err}"))
+        .variables
+        .axiom_layers
+    }
+
+    fn derived_variables_per_layer(layers: &[i32]) -> Vec<(i32, usize)> {
+        let mut counts: BTreeMap<i32, usize> = BTreeMap::new();
+        for &layer in layers.iter().filter(|&&layer| layer >= 0) {
+            *counts.entry(layer).or_default() += 1;
+        }
+        counts.into_iter().collect()
+    }
+
+    /// The table above covers the fixture tree, so a fixture added tomorrow is
+    /// laid out by both strategies rather than by neither.
+    #[test]
+    fn the_layering_table_names_every_derived_fixture() {
+        let mut found: Vec<String> = std::fs::read_dir(fixture_root())
+            .expect("the derived-predicate fixtures are checked in")
+            .map(|entry| {
+                entry
+                    .expect("readable directory entry")
+                    .file_name()
+                    .into_string()
+                    .expect("fixture name is UTF-8")
+            })
+            .collect();
+        found.sort();
+        let mut listed: Vec<String> = FIXTURE_LAYERS
+            .iter()
+            .map(|&(fixture, ..)| fixture.to_owned())
+            .collect();
+        listed.sort();
+        assert_eq!(found, listed);
+    }
+
+    #[test]
+    fn both_layer_strategies_lay_out_every_derived_fixture() {
+        for &(fixture, min_layers, max_layers) in FIXTURE_LAYERS {
+            let min = axiom_layers(fixture, LayerStrategy::Min);
+            let max = axiom_layers(fixture, LayerStrategy::Max);
+
+            assert_eq!(derived_variables_per_layer(&min), min_layers, "{fixture}");
+            assert_eq!(derived_variables_per_layer(&max), max_layers, "{fixture}");
+
+            // A strategy decides how far apart the derived variables are laid
+            // out, not which variables are derived; and spreading them out
+            // never moves one down.
+            assert_eq!(min.len(), max.len(), "{fixture}");
+            for (var, (&min_layer, &max_layer)) in min.iter().zip(&max).enumerate() {
+                assert_eq!(
+                    min_layer < 0,
+                    max_layer < 0,
+                    "{fixture}: variable {var} is derived under one strategy only"
+                );
+                assert!(
+                    min_layer <= max_layer,
+                    "{fixture}: variable {var} sits at layer {max_layer} under max, below the \
+                     {min_layer} of min"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_layer_strategy_is_named_as_mainline_spells_it() {
+        assert_eq!("min".parse(), Ok(LayerStrategy::Min));
+        assert_eq!("max".parse(), Ok(LayerStrategy::Max));
+        assert_eq!(LayerStrategy::default(), LayerStrategy::Min);
+        assert!("lowest".parse::<LayerStrategy>().is_err());
     }
 }

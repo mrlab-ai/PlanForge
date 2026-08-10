@@ -10,7 +10,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 
 use planforge::init_logger;
-use planforge_translate::translate_to_sas_to_path;
+use planforge_translate::{LayerStrategy, translate_to_sas_to_path};
 use tracing::info;
 
 /// The translator's entry points name files, and a path that is not valid
@@ -43,6 +43,11 @@ enum Commands {
         /// Optional output file (default: output.sas)
         #[clap(short, long)]
         output: Option<PathBuf>,
+        /// How to spread derived variables over axiom layers: `min` puts as
+        /// many as possible in one layer, `max` gives every variable its own
+        /// unless it is part of a cycle.
+        #[arg(long = "layer-strategy", default_value = "min")]
+        layer_strategy: LayerStrategy,
         #[arg(long = "log-level")]
         log_level: Option<tracing_subscriber::filter::LevelFilter>,
     },
@@ -55,13 +60,19 @@ fn main() -> anyhow::Result<()> {
             domain,
             problem,
             output,
+            layer_strategy,
             log_level,
         } => {
             init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
 
             let start = Instant::now();
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            translate_to_sas_to_path(as_str(&domain)?, as_str(&problem)?, &out_path)?;
+            translate_to_sas_to_path(
+                as_str(&domain)?,
+                as_str(&problem)?,
+                &out_path,
+                layer_strategy,
+            )?;
             info!(
                 "translator: wrote {} in {:.2?}",
                 out_path.display(),

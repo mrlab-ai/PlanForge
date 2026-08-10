@@ -5,6 +5,7 @@
 
 use planforge_sas::numeric_task::NumericRootTask;
 
+use crate::options::LayerStrategy;
 use crate::sas_tasks::SASTask;
 use crate::{normalize, pddl_parser::PddlTask};
 
@@ -12,16 +13,23 @@ use crate::{normalize, pddl_parser::PddlTask};
 ///
 /// The default way in: no SAS+ text is produced, and nothing is parsed.
 pub fn translate_to_task(domain: &str, problem: &str) -> anyhow::Result<NumericRootTask> {
-    let sas_task = translate_to_sas_task(domain, problem, false)?;
+    let sas_task = translate_to_sas_task(domain, problem, false, LayerStrategy::default())?;
     Ok(crate::preprocess::reordered_numeric_task(sas_task))
 }
 
+/// Translate the pair and write the SAS+ text to `output_path`.
+///
+/// `layer_strategy` is here rather than on [`translate_to_task`] because the
+/// layering is something the *file* carries: the search reads the layers it is
+/// given, so choosing between them is a question for whoever writes the task
+/// out, mainline's `--layer-strategy` included.
 pub fn translate_to_sas_to_path(
     domain: &str,
     problem: &str,
     output_path: &std::path::Path,
+    layer_strategy: LayerStrategy,
 ) -> anyhow::Result<()> {
-    write_sas_file(domain, problem, false, output_path)
+    write_sas_file(domain, problem, false, layer_strategy, output_path)
 }
 
 /// As [`translate_to_sas_to_path`], but with one SAS variable per fact instead
@@ -31,7 +39,7 @@ pub fn translate_to_sas_to_path_fast(
     problem: &str,
     output_path: &std::path::Path,
 ) -> anyhow::Result<()> {
-    write_sas_file(domain, problem, true, output_path)
+    write_sas_file(domain, problem, true, LayerStrategy::default(), output_path)
 }
 
 /// In-memory entry point: emit the translator's SAS+ text as a `String`.
@@ -41,7 +49,7 @@ pub fn translate_to_sas_to_path_fast(
 /// [`translate_to_task`] instead, which does not go through text at all.
 pub fn translate_to_sas_string(domain: &str, problem: &str) -> anyhow::Result<String> {
     let mut buf: Vec<u8> = Vec::new();
-    translate_to_sas_writer(domain, problem, false, &mut buf)?;
+    translate_to_sas_writer(domain, problem, false, LayerStrategy::default(), &mut buf)?;
     Ok(String::from_utf8(buf).expect("translator output is valid UTF-8"))
 }
 
@@ -52,12 +60,13 @@ fn write_sas_file(
     domain: &str,
     problem: &str,
     fast_groups: bool,
+    layer_strategy: LayerStrategy,
     output_path: &std::path::Path,
 ) -> anyhow::Result<()> {
     use std::io::Write;
 
     let mut out = std::io::BufWriter::new(std::fs::File::create(output_path)?);
-    translate_to_sas_writer(domain, problem, fast_groups, &mut out)?;
+    translate_to_sas_writer(domain, problem, fast_groups, layer_strategy, &mut out)?;
     out.flush()?;
     Ok(())
 }
@@ -68,19 +77,21 @@ fn translate_to_sas_writer<W: std::io::Write>(
     domain: &str,
     problem: &str,
     fast_groups: bool,
+    layer_strategy: LayerStrategy,
     out: &mut W,
 ) -> anyhow::Result<()> {
-    let sas_task = translate_to_sas_task(domain, problem, fast_groups)?;
+    let sas_task = translate_to_sas_task(domain, problem, fast_groups, layer_strategy)?;
     crate::preprocess::write_reordered_sas(sas_task, out)?;
     Ok(())
 }
 
 /// PDDL to the translation's own task, which is what both the file and the
 /// search task are built from.
-fn translate_to_sas_task(
+pub(crate) fn translate_to_sas_task(
     domain: &str,
     problem: &str,
     fast_groups: bool,
+    layer_strategy: LayerStrategy,
 ) -> anyhow::Result<SASTask> {
     let task = PddlTask::from_files(std::path::Path::new(domain), std::path::Path::new(problem))
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -95,6 +106,11 @@ fn translate_to_sas_task(
     // `translate_task_from_grounded_internal` already filters unreachable
     // propositions and answers with a trivial task when that proves the task
     // impossible or trivially solvable, so nothing is left to simplify here.
-    crate::translate::translate_task_from_grounded_internal(&result, &norm_task, fast_groups)
-        .map_err(|err| anyhow::anyhow!(err))
+    crate::translate::translate_task_from_grounded_internal(
+        &result,
+        &norm_task,
+        fast_groups,
+        layer_strategy,
+    )
+    .map_err(|err| anyhow::anyhow!(err))
 }

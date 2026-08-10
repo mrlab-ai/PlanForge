@@ -1050,6 +1050,7 @@ fn translate_task(
     translation: &mut Translation,
     task: GroundedTask,
     numeric_axioms: &numeric_axiom_rules::NumericAxioms,
+    layer_strategy: options::LayerStrategy,
 ) -> Result<SASTask, String> {
     // Process axioms. Derived variables are not listed here: every one of them
     // defaults to false, which the closed-world assumption below already gives
@@ -1059,6 +1060,7 @@ fn translate_task(
         task.axioms,
         task.goal_list,
         task.global_constraint,
+        layer_strategy,
     )?;
 
     // Initialize init_values: Closed World Assumption
@@ -1398,6 +1400,7 @@ pub fn translate_task_from_grounded_internal(
     explored: &crate::instantiate::ExploreResult,
     norm_task: &NormalizableTask,
     singleton_groups: bool,
+    layer_strategy: options::LayerStrategy,
 ) -> Result<SASTask, String> {
     let task = &norm_task.task;
     let crate::instantiate::ExploreResult {
@@ -1537,6 +1540,7 @@ pub fn translate_task_from_grounded_internal(
             metric: &task.metric,
         },
         &numeric_axioms,
+        layer_strategy,
     )?;
 
     info!(

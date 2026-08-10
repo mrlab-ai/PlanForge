@@ -1,3 +1,11 @@
+// `numeric_potentials` is behind the `cplex` feature, which needs a proprietary
+// CPLEX installation. Neither CI nor a checkout without one can compile this
+// file, so no clippy run can tell whether these two fire; `-D warnings` under
+// `--features cplex` would break for whoever has CPLEX. Both stay until someone
+// with an installation can look. `field_reassign_with_default` is live by
+// inspection (`let mut config = ...::default();` followed by field writes).
+#![allow(clippy::arc_with_non_send_sync, clippy::field_reassign_with_default)]
+
 use std::sync::Arc;
 
 use planforge_sas::axioms::{
