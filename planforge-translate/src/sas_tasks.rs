@@ -5,6 +5,30 @@ use tracing::debug;
 
 pub const SAS_FILE_VERSION: i32 = 4;
 
+/// The comparator that holds exactly when `comp` does not.
+pub fn inverted_comparator(comp: &str) -> &'static str {
+    match comp {
+        "<" => ">=",
+        "<=" => ">",
+        "=" => "!=",
+        ">=" => "<",
+        ">" => "<=",
+        "!=" => "=",
+        other => panic!("unknown comparator: {other:?}"),
+    }
+}
+
+/// `op` itself, once it is one of the five PDDL assignment operators. An effect
+/// that names anything else must not reach the SAS file, where it would be read
+/// back as a different effect or not at all.
+pub fn assignment_operator(op: &str) -> &str {
+    assert!(
+        matches!(op, "=" | "+" | "-" | "*" | "/"),
+        "unknown assignment operator: {op:?}"
+    );
+    op
+}
+
 /// Planning task in finite-domain representation.
 #[derive(Debug, Clone)]
 pub struct SASTask {
@@ -784,16 +808,11 @@ impl SASCompareAxiom {
     }
 
     pub fn invert_comparator(&self) -> SASCompareAxiom {
-        let inv_comp = match self.comp.as_str() {
-            ">=" => "<",
-            "<" => ">=",
-            "<=" => ">",
-            ">" => "<=",
-            "=" => "!=",
-            "!=" => "=",
-            _ => panic!("Unknown comparator: {}", self.comp),
-        };
-        SASCompareAxiom::new(inv_comp.to_string(), self.parts.clone(), self.effect)
+        SASCompareAxiom::new(
+            inverted_comparator(&self.comp).to_string(),
+            self.parts.clone(),
+            self.effect,
+        )
     }
 
     pub fn dump(&self) {
@@ -870,11 +889,44 @@ impl SASNumericAxiom {
     }
 }
 
-// ============================================================
-// Conversion from internal representation
-// ============================================================
+#[cfg(test)]
+mod tests {
+    use super::{SASOperator, assignment_operator, inverted_comparator};
 
-/// In this port, SASTask is already the final form, so this is identity.
-pub fn from_internal(task: &SASTask) -> &SASTask {
-    task
+    /// The SAS file spells operator names without the PDDL parentheses.
+    #[test]
+    fn the_output_name_drops_the_pddl_parentheses() {
+        let op = SASOperator::new(
+            "(move a b)".to_string(),
+            Vec::new(),
+            Vec::new(),
+            vec![(0, "+".to_string(), 1, Vec::new())],
+            1.0,
+        );
+
+        assert_eq!(op.output_name(), "move a b");
+    }
+
+    /// A comparison variable's two facts are named after the comparison and its
+    /// negation, so the two have to be exact opposites.
+    #[test]
+    fn inverting_a_comparator_twice_is_the_identity() {
+        for comp in ["<", "<=", "=", ">=", ">", "!="] {
+            assert_eq!(inverted_comparator(inverted_comparator(comp)), comp);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown comparator")]
+    fn inverting_rejects_a_comparator_that_is_not_one() {
+        inverted_comparator("=<");
+    }
+
+    /// An unknown assignment operator must fail loudly rather than being folded
+    /// into a default one, which would silently rewrite the effect.
+    #[test]
+    #[should_panic(expected = "unknown assignment operator")]
+    fn an_unknown_assignment_operator_is_rejected() {
+        assignment_operator("^");
+    }
 }

@@ -1,244 +1,395 @@
-pub mod axiom;
+//! The causal-graph pass over a translated task.
+//!
+//! It orders the SAS variables so that every variable comes after the ones it
+//! depends on, drops the variables no goal, global constraint or metric needs,
+//! and writes the result as the SAS+ file the search reads.
+//!
+//! The task itself stays the translator's [`SASTask`]. Everything this pass
+//! works out about a variable -- whether the task still needs it, and the
+//! position it ends up in -- lives beside it in [`VarState`] and
+//! [`NumericVarState`], indexed by the variable's original id.
+
 pub mod causal_graph;
-pub mod fact;
-pub mod helper_functions;
 pub mod max_dag;
-pub mod mutex_group;
-pub mod operator;
+pub mod output;
 pub mod scc;
-pub mod state;
-pub mod variable;
 
 use std::io::Write;
 
 use tracing::{debug, info};
 
-use self::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
 use self::causal_graph::CausalGraph;
-use self::fact::ExplicitFact;
-use self::helper_functions::to_sas_writer;
-use self::mutex_group::MutexGroup;
-use self::operator::Operator;
-use self::state::State;
-use self::variable::{ExplicitVariable, NumericVariable};
-use crate::sas_tasks::SASTask;
+use crate::sas_tasks::{SASTask, inverted_comparator};
 
-pub const SAS_FILE_VERSION: i32 = 4;
-pub const PRE_FILE_VERSION: i32 = SAS_FILE_VERSION;
+/// The level of a variable the reordering has not placed: either because the
+/// analysis has not run yet, or because the variable was pruned.
+pub const NO_LEVEL: i32 = -1;
 
-#[derive(Debug, Clone)]
+/// The axiom layer of a variable that no axiom derives.
+pub const NO_LAYER: i32 = -1;
+
+/// The metric the search optimizes: a direction, and the numeric variable that
+/// accumulates the plan's cost.
+#[derive(Debug, Clone, Copy)]
 pub struct Metric {
     pub optimization_criterion: char,
     pub index: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct GlobalConstraint {
-    pub var: usize,
-    pub value: usize,
-}
-pub type Condition = Vec<ExplicitFact>;
-
-/// The translated task in the model the causal-graph analysis works on. It
-/// holds the same task as [`SASTask`], plus the per-variable bookkeeping --
-/// level, necessity, numeric type -- that the analysis fills in.
-pub struct PreprocessedTask {
-    pub metric: Metric,
-    pub variables: Vec<ExplicitVariable>,
-    pub numeric_variables: Vec<NumericVariable>,
-    pub mutexes: Vec<MutexGroup>,
-    pub initial_state: State,
-    pub goals: Vec<ExplicitFact>,
-    pub operators: Vec<Operator>,
-    pub axioms_rel: Vec<AxiomRelational>,
-    pub axioms_func_comp: Vec<AxiomFunctionalComparison>,
-    pub axioms_numeric: Vec<AxiomNumericComputation>,
-    pub global_constraint: Option<GlobalConstraint>,
-}
-
-impl PreprocessedTask {
-    /// The axioms of each kind are grouped by the axiom layer of the variable
-    /// they define, so that the analysis and the output see them stratified.
-    /// The sort is stable, so axioms sharing a layer keep the order the
-    /// translation produced them in.
-    pub fn from_sas(task: &SASTask) -> Self {
-        let sas_vars = &task.variables;
-        let mut variables: Vec<ExplicitVariable> = sas_vars
-            .value_names
-            .iter()
-            .zip(&sas_vars.axiom_layers)
-            .enumerate()
-            .map(|(index, (values, &layer))| ExplicitVariable::new(index, layer, values.clone()))
-            .collect();
-
-        let sas_num_vars = &task.numeric_variables;
-        let mut numeric_variables: Vec<NumericVariable> = sas_num_vars
-            .variable_names
-            .iter()
-            .zip(&sas_num_vars.axiom_layers)
-            .zip(&sas_num_vars.types)
-            .enumerate()
-            .map(|(index, ((name, &layer), sas_type))| {
-                NumericVariable::new(index, sas_type, layer, name.clone())
-            })
-            .collect();
-
-        let mut axioms_rel: Vec<AxiomRelational> =
-            task.axioms.iter().map(AxiomRelational::from_sas).collect();
-        axioms_rel.sort_by_key(|axiom| variables[axiom.get_effect_var()].get_layer());
-
-        let mut axioms_func_comp: Vec<AxiomFunctionalComparison> = task
-            .comp_axioms
-            .iter()
-            .map(|axiom| {
-                AxiomFunctionalComparison::from_sas(axiom, &mut variables, &numeric_variables)
-            })
-            .collect();
-        axioms_func_comp.sort_by_key(|axiom| variables[axiom.get_effect_var()].get_layer());
-
-        let mut axioms_numeric: Vec<AxiomNumericComputation> = task
-            .numeric_axioms
-            .iter()
-            .map(|axiom| AxiomNumericComputation::from_sas(axiom, &mut numeric_variables))
-            .collect();
-        axioms_numeric.sort_by_key(|axiom| numeric_variables[axiom.get_effect_var()].get_layer());
-
-        let (criterion, metric_index) = &task.metric;
-        let mut criterion = criterion.chars();
-        let optimization_criterion = criterion
+impl Metric {
+    /// The translation spells the metric as a direction and the index of the
+    /// numeric variable holding the cost.
+    fn from_sas((criterion, index): &(String, i64)) -> Self {
+        let mut chars = criterion.chars();
+        let optimization_criterion = chars
             .next()
             .expect("the metric names an optimization criterion");
         assert!(
-            criterion.next().is_none(),
-            "the optimization criterion is a single character, got {:?}",
-            task.metric.0
+            chars.next().is_none(),
+            "the optimization criterion is a single character, got {criterion:?}"
         );
-        let index = usize::try_from(*metric_index)
+        let index = usize::try_from(*index)
             .expect("the metric names a numeric variable; unit cost is not preprocessable");
-
-        let (gc_var, gc_value) = task.global_constraint;
-
         Self {
-            metric: Metric {
-                optimization_criterion,
-                index,
-            },
-            variables,
-            numeric_variables,
-            mutexes: task.mutexes.iter().map(MutexGroup::from_sas).collect(),
-            initial_state: State::from_sas(&task.init),
-            goals: task
-                .goal
-                .pairs
-                .iter()
-                .map(|&(var, value)| ExplicitFact { var, value })
-                .collect(),
-            operators: task.operators.iter().map(Operator::from_sas).collect(),
-            axioms_rel,
-            axioms_func_comp,
-            axioms_numeric,
-            global_constraint: Some(GlobalConstraint {
-                var: gc_var,
-                value: gc_value,
-            }),
+            optimization_criterion,
+            index,
         }
     }
 }
 
+/// What a numeric variable holds, as the SAS file spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumType {
+    /// Not classified yet: the translation only distinguishes the variables
+    /// that carry a value in their own right from the derived and constant
+    /// ones, and this pass decides which of the former the search needs and
+    /// which merely instrument the metric.
+    Unknown,
+    Constant,
+    Derived,
+    Instrumentation,
+    Regular,
+}
+
+impl NumType {
+    fn as_sas(self) -> &'static str {
+        match self {
+            NumType::Constant => "C",
+            NumType::Derived => "D",
+            NumType::Instrumentation => "I",
+            NumType::Regular => "R",
+            NumType::Unknown => {
+                unreachable!("a numeric variable reached the output unclassified")
+            }
+        }
+    }
+}
+
+/// What the pass works out about one propositional variable.
+#[derive(Debug, Clone, Copy)]
+pub struct VarState {
+    level: i32,
+    necessary: bool,
+}
+
+impl VarState {
+    /// A variable the analysis has not looked at: needed by nothing, and
+    /// without a position in the reordered task.
+    const UNPLACED: Self = Self {
+        level: NO_LEVEL,
+        necessary: false,
+    };
+
+    pub fn level(self) -> i32 {
+        self.level
+    }
+
+    pub fn is_necessary(self) -> bool {
+        self.necessary
+    }
+
+    fn set_level(&mut self, level: i32) {
+        assert_eq!(self.level, NO_LEVEL, "variable placed twice");
+        self.level = level;
+    }
+
+    fn mark_necessary(&mut self) {
+        assert!(!self.necessary, "variable marked necessary twice");
+        self.necessary = true;
+    }
+}
+
+/// What the pass works out about one numeric variable.
+#[derive(Debug, Clone, Copy)]
+pub struct NumericVarState {
+    level: i32,
+    necessary: bool,
+    ntype: NumType,
+}
+
+impl NumericVarState {
+    /// `R` and `I` deliberately arrive as [`NumType::Unknown`]: which numeric
+    /// variables are regular and which only instrument the metric is decided
+    /// here, from the metric and the assignment axioms that feed it, not taken
+    /// from the translation.
+    fn from_sas_type(index: usize, sas_type: &str) -> Self {
+        let ntype = match sas_type {
+            "C" => NumType::Constant,
+            "D" => NumType::Derived,
+            "R" | "I" => NumType::Unknown,
+            other => panic!("numeric variable {index} has an unknown type {other:?}"),
+        };
+        Self {
+            level: NO_LEVEL,
+            necessary: false,
+            ntype,
+        }
+    }
+
+    pub fn level(self) -> i32 {
+        self.level
+    }
+
+    pub fn is_necessary(self) -> bool {
+        self.necessary
+    }
+
+    pub fn ntype(self) -> NumType {
+        self.ntype
+    }
+
+    fn set_level(&mut self, level: i32) {
+        assert_eq!(self.level, NO_LEVEL, "numeric variable placed twice");
+        self.level = level;
+    }
+
+    fn mark_necessary(&mut self) {
+        assert!(!self.necessary, "numeric variable marked necessary twice");
+        self.necessary = true;
+        if self.ntype == NumType::Unknown {
+            self.ntype = NumType::Regular;
+        }
+    }
+
+    fn mark_instrumentation(&mut self) {
+        assert!(!self.necessary, "numeric variable marked necessary twice");
+        self.necessary = true;
+        if self.ntype == NumType::Unknown {
+            self.ntype = NumType::Instrumentation;
+        }
+    }
+}
+
+/// A translated task prepared for the causal-graph analysis.
+pub struct PreprocessedTask {
+    pub sas: SASTask,
+    pub metric: Metric,
+    pub vars: Vec<VarState>,
+    pub numeric_vars: Vec<NumericVarState>,
+}
+
+impl PreprocessedTask {
+    pub fn new(mut sas: SASTask) -> Self {
+        check_shape(&sas);
+        name_comparison_facts(&mut sas);
+        sort_axioms_by_layer(&mut sas);
+
+        let vars = vec![VarState::UNPLACED; sas.variables.ranges.len()];
+        let numeric_vars = sas
+            .numeric_variables
+            .types
+            .iter()
+            .enumerate()
+            .map(|(index, sas_type)| NumericVarState::from_sas_type(index, sas_type))
+            .collect();
+        let metric = Metric::from_sas(&sas.metric);
+
+        Self {
+            sas,
+            metric,
+            vars,
+            numeric_vars,
+        }
+    }
+}
+
+/// The pass indexes the task's variables freely, and reads a variable's range
+/// from `ranges` and its facts from `value_names`, so the parallel arrays have
+/// to agree before any of it runs.
+fn check_shape(sas: &SASTask) {
+    let variables = &sas.variables;
+    let num_vars = variables.ranges.len();
+    assert_eq!(variables.axiom_layers.len(), num_vars);
+    assert_eq!(variables.value_names.len(), num_vars);
+    assert_eq!(sas.init.values.len(), num_vars);
+    for (var, ((&range, names), &value)) in variables
+        .ranges
+        .iter()
+        .zip(&variables.value_names)
+        .zip(&sas.init.values)
+        .enumerate()
+    {
+        assert_eq!(
+            range,
+            names.len(),
+            "variable {var} has range {range} but {} facts",
+            names.len()
+        );
+        assert!(
+            value >= 0,
+            "variable {var} has no initial value (got {value})"
+        );
+    }
+
+    let numeric = &sas.numeric_variables;
+    let num_numeric_vars = numeric.variable_names.len();
+    assert_eq!(numeric.axiom_layers.len(), num_numeric_vars);
+    assert_eq!(numeric.types.len(), num_numeric_vars);
+    assert_eq!(sas.init.num_values.len(), num_numeric_vars);
+
+    // Both kinds of numeric axiom combine exactly two terms; the output names
+    // the two, and a third would be dropped without a word.
+    for axiom in &sas.numeric_axioms {
+        assert_eq!(
+            axiom.parts.len(),
+            2,
+            "numeric axiom for var {} combines {} operands, not 2",
+            axiom.effect,
+            axiom.parts.len()
+        );
+    }
+}
+
+/// Spells out in a comparison variable's facts which comparison it stands for.
+/// This is not cosmetic: the variable arrives from the translation named after
+/// its own index, and the SAS file is read by hand and by the search's own
+/// diagnostics.
+fn name_comparison_facts(sas: &mut SASTask) {
+    let num_numeric_vars = sas.numeric_variables.variable_names.len();
+    for axiom in &sas.comp_axioms {
+        let effect = axiom.effect;
+        assert_eq!(
+            axiom.parts.len(),
+            2,
+            "comparison axiom for var {effect} compares {} operands, not 2",
+            axiom.parts.len()
+        );
+        let (left, right) = (axiom.parts[0], axiom.parts[1]);
+        assert!(effect < sas.variables.value_names.len());
+        assert!(left < num_numeric_vars);
+        assert!(right < num_numeric_vars);
+
+        let left_name = &sas.numeric_variables.variable_names[left];
+        let right_name = &sas.numeric_variables.variable_names[right];
+        let facts = &mut sas.variables.value_names[effect];
+        facts[0] = format!("{} {left_name}, {right_name}", axiom.comp);
+        facts[1] = format!(
+            "{} {left_name}, {right_name}",
+            inverted_comparator(&axiom.comp)
+        );
+    }
+}
+
+/// Groups the axioms of each kind by the axiom layer of the variable they
+/// define, so that the analysis and the output see them stratified. The sort is
+/// stable, so axioms sharing a layer keep the order the translation produced
+/// them in.
+fn sort_axioms_by_layer(sas: &mut SASTask) {
+    let SASTask {
+        variables,
+        numeric_variables,
+        axioms,
+        comp_axioms,
+        numeric_axioms,
+        ..
+    } = sas;
+    axioms.sort_by_key(|axiom| variables.axiom_layers[axiom.effect.0]);
+    comp_axioms.sort_by_key(|axiom| variables.axiom_layers[axiom.effect]);
+    numeric_axioms.sort_by_key(|axiom| numeric_variables.axiom_layers[axiom.effect]);
+}
+
 /// The task after the causal graph has ordered and pruned its variables.
 ///
-/// `original_variables` and `original_numeric_variables` are indexed by a
-/// variable's *old* id and hold the level it was given, or `-1` if it was
-/// pruned; every reference in an operator, axiom, mutex group or goal is still
-/// phrased in old ids and is remapped through them on the way out.
+/// `prop_order` and `numeric_order` list the surviving variables by their old
+/// id, in their new order; every reference inside `task.sas` is still phrased
+/// in old ids and is remapped through `task.vars` / `task.numeric_vars` on the
+/// way out.
 pub struct ReorderedTask {
-    pub metric: Metric,
-    pub original_variables: Vec<ExplicitVariable>,
-    pub original_numeric_variables: Vec<NumericVariable>,
-    /// The variables that survived, in their new order.
-    pub variables: Vec<ExplicitVariable>,
-    pub numeric_variables: Vec<NumericVariable>,
-    pub mutexes: Vec<MutexGroup>,
-    pub initial_state: State,
-    pub goals: Vec<ExplicitFact>,
-    pub operators: Vec<Operator>,
-    pub axioms_rel: Vec<AxiomRelational>,
-    pub axioms_func_comp: Vec<AxiomFunctionalComparison>,
-    pub axioms_numeric: Vec<AxiomNumericComputation>,
-    pub global_constraint: Option<GlobalConstraint>,
+    pub task: PreprocessedTask,
+    pub prop_order: Vec<usize>,
+    pub numeric_order: Vec<usize>,
 }
 
 impl ReorderedTask {
     /// The number of facts, variables, goals and effects the search will hold,
     /// which is what "how big is this task" means in the logs.
     fn encoding_size(&self) -> usize {
-        let facts: usize = self.variables.iter().map(ExplicitVariable::get_range).sum();
+        let PreprocessedTask { sas, .. } = &self.task;
+        let facts: usize = self
+            .prop_order
+            .iter()
+            .map(|&var| sas.variables.ranges[var])
+            .sum();
         let mut size =
-            self.variables.len() + self.numeric_variables.len() + facts + self.goals.len();
-        size += self
+            self.prop_order.len() + self.numeric_order.len() + facts + sas.goal.pairs.len();
+        size += sas
             .mutexes
             .iter()
-            .map(MutexGroup::get_encoding_size)
+            .map(|mutex| mutex.facts.len())
             .sum::<usize>();
-        size += self
+        size += sas
             .operators
             .iter()
-            .map(Operator::get_encoding_size)
+            .map(|op| op.get_encoding_size())
             .sum::<usize>();
-        size += self
-            .axioms_rel
+        size += sas
+            .axioms
             .iter()
-            .map(AxiomRelational::get_encoding_size)
+            .map(|axiom| axiom.get_encoding_size())
             .sum::<usize>();
-        size += self
-            .axioms_numeric
-            .iter()
-            .map(AxiomNumericComputation::get_encoding_size)
-            .sum::<usize>();
-        size += self
-            .axioms_func_comp
-            .iter()
-            .map(AxiomFunctionalComparison::get_encoding_size)
-            .sum::<usize>();
+        // A comparison and an assignment axiom each hold their effect and the
+        // pair of operands, of which the operands are shared with the terms
+        // they were built from, so each counts as two.
+        size += 2 * (sas.comp_axioms.len() + sas.numeric_axioms.len());
         size
+    }
+
+    fn derived_variable_count(&self) -> usize {
+        self.prop_order
+            .iter()
+            .filter(|&&var| self.task.sas.variables.axiom_layers[var] != NO_LAYER)
+            .count()
     }
 }
 
-/// Orders and prunes the variables of `task` by its causal graph, and writes
-/// the result as the SAS+ file the search reads.
-///
-/// `prune_variables` drops the variables no goal, global constraint or metric
-/// depends on. Turning it off keeps every variable and only reorders.
-pub fn write_reordered_sas<W: Write>(task: &SASTask, prune_variables: bool, outfile: &mut W) {
-    let translated = PreprocessedTask::from_sas(task);
-    let metric_index_before = translated.metric.index;
+/// Orders and prunes the variables of `sas` by its causal graph, and writes the
+/// result as the SAS+ file the search reads.
+pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) {
+    let task = PreprocessedTask::new(sas);
+    let metric_index_before = task.metric.index;
 
     info!("Building causal graph...");
-    let reordered = CausalGraph::new(translated, prune_variables).finalize();
+    let reordered = CausalGraph::new(task).finalize();
 
     debug!(
         "Metric index changed from {} to {}",
-        metric_index_before, reordered.metric.index
+        metric_index_before, reordered.task.metric.index
     );
     info!(
         "Preprocessor facts: {}",
         reordered
-            .variables
+            .prop_order
             .iter()
-            .map(ExplicitVariable::get_range)
+            .map(|&var| reordered.task.sas.variables.ranges[var])
             .sum::<usize>()
     );
     info!(
         "Preprocessor derived variables: {}",
-        reordered
-            .variables
-            .iter()
-            .filter(|var| var.is_derived())
-            .count()
+        reordered.derived_variable_count()
     );
     info!("Preprocessor task size: {}", reordered.encoding_size());
 
     info!("Writing output...");
-    to_sas_writer(&reordered, outfile);
+    output::write_sas(&reordered, outfile);
     info!("done");
 }

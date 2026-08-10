@@ -1,44 +1,28 @@
-use std::cell::RefCell;
-use std::cmp::max;
+//! The causal graph of a translated task, and the ordering it induces.
+//!
+//! An edge runs from every variable an operator or axiom reads to every
+//! variable it writes, weighted by how often that dependency occurs. The
+//! variables are then ordered by a topological sort of the graph's strongly
+//! connected components, and the ones nothing the task asks for depends on are
+//! dropped.
+
 use std::collections::BTreeMap;
-use std::ops::Deref;
 
 use tracing::{debug, info};
 
-use super::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
-use super::fact::ExplicitFact;
 use super::max_dag::MaxDag;
-use super::mutex_group::MutexGroup;
-use super::operator::Operator;
 use super::scc::Scc;
-use super::state::State;
-use super::variable::{ExplicitVariable, NumType, NumericVariable};
-use super::{GlobalConstraint, Metric, PreprocessedTask, ReorderedTask};
+use super::{
+    NO_LAYER, NO_LEVEL, NumType, NumericVarState, PreprocessedTask, ReorderedTask, VarState,
+};
+use crate::sas_tasks::{SASAxiom, SASCompareAxiom, SASNumericAxiom, SASOperator, SasFact};
 
+/// A node of the causal graph: the task numbers its propositional and its
+/// numeric variables independently, so a node needs both.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EitherVar {
     ExplicitVariable(usize),
     NumericVariable(usize),
-}
-
-impl EitherVar {
-    pub fn get_name(&self, vars: &[ExplicitVariable], numeric_vars: &[NumericVariable]) -> String {
-        match self {
-            EitherVar::ExplicitVariable(v) => vars[*v].get_name(),
-            EitherVar::NumericVariable(v) => numeric_vars[*v].get_name(),
-        }
-    }
-}
-
-impl Deref for EitherVar {
-    type Target = usize;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::ExplicitVariable(i) => i,
-            Self::NumericVariable(i) => i,
-        }
-    }
 }
 
 pub type WeightedSuccessors = BTreeMap<EitherVar, u64>;
@@ -47,76 +31,53 @@ pub type Predecessors = BTreeMap<EitherVar, u64>;
 pub type PredecessorGraph = BTreeMap<EitherVar, Predecessors>;
 
 pub type Partition = Vec<Vec<EitherVar>>;
-pub type OrderingVars = Vec<EitherVar>;
-pub type ExplicitOrderingVars = Vec<usize>;
-pub type NumericOrderingVars = Vec<usize>;
 
-#[derive(Debug)]
 pub struct CausalGraph {
-    variables: RefCell<Vec<ExplicitVariable>>,
-    numeric_variables: RefCell<Vec<NumericVariable>>,
-    operators: Vec<Operator>,
-    axioms: Vec<AxiomRelational>,
-    ass_axioms: Vec<AxiomNumericComputation>,
-    comp_axioms: Vec<AxiomFunctionalComparison>,
-    mutexes: Vec<MutexGroup>,
-    goals: Vec<ExplicitFact>,
-    global_constraint: Option<GlobalConstraint>,
-    metric: Metric,
-    /// Carried through untouched; the causal graph renumbers variables, and the
-    /// initial state is read back by the writer under the new numbering.
-    initial_state: State,
-    prune_variables: bool,
-
-    weighted_graph: WeightedGraph,
+    task: PreprocessedTask,
     predecessor_graph: PredecessorGraph,
 
-    ordering: OrderingVars,
-    propositional_ordering: ExplicitOrderingVars,
-    numeric_ordering: NumericOrderingVars,
+    /// Every variable of the task, in causal-graph order.
+    ordering: Vec<EitherVar>,
+    /// The surviving variables of each kind, in causal-graph order.
+    prop_order: Vec<usize>,
+    numeric_order: Vec<usize>,
 }
 
 impl CausalGraph {
-    pub fn new(task: PreprocessedTask, prune_variables: bool) -> Self {
-        let PreprocessedTask {
-            metric,
-            variables,
-            numeric_variables,
-            mutexes,
-            initial_state,
-            goals,
-            operators,
-            axioms_rel: axioms,
-            axioms_func_comp: comp_axioms,
-            axioms_numeric: ass_axioms,
-            global_constraint,
-        } = task;
-
+    pub fn new(task: PreprocessedTask) -> Self {
+        let sas = &task.sas;
         let mut weighted_graph: WeightedGraph = BTreeMap::new();
-        for v in variables.iter() {
-            weighted_graph.insert(EitherVar::ExplicitVariable(v.index), BTreeMap::new());
+        for var in 0..task.vars.len() {
+            weighted_graph.insert(EitherVar::ExplicitVariable(var), BTreeMap::new());
         }
-        for v in numeric_variables.iter() {
-            weighted_graph.insert(EitherVar::NumericVariable(v.index), BTreeMap::new());
+        for var in 0..task.numeric_vars.len() {
+            weighted_graph.insert(EitherVar::NumericVariable(var), BTreeMap::new());
         }
 
-        let (weighted_graph, predecessor_graph) =
-            Self::weigh_graph_from_ops(&operators, weighted_graph);
-        let (weighted_graph, predecessor_graph) =
-            Self::weigh_graph_from_axioms(&axioms, weighted_graph, predecessor_graph);
-        let (weighted_graph, predecessor_graph) =
-            Self::weigh_graph_from_comp_axioms(&comp_axioms, weighted_graph, predecessor_graph);
-        let (weighted_graph, predecessor_graph) =
-            Self::weigh_graph_from_ass_axioms(&ass_axioms, weighted_graph, predecessor_graph);
+        let mut predecessor_graph: PredecessorGraph = BTreeMap::new();
+        weigh_operators(&sas.operators, &mut weighted_graph, &mut predecessor_graph);
+        weigh_axioms(&sas.axioms, &mut weighted_graph, &mut predecessor_graph);
+        weigh_comparison_axioms(
+            &sas.comp_axioms,
+            &mut weighted_graph,
+            &mut predecessor_graph,
+        );
+        weigh_numeric_axioms(
+            &sas.numeric_axioms,
+            &mut weighted_graph,
+            &mut predecessor_graph,
+        );
 
-        let (sccs, weighted_graph) =
-            Self::get_strongly_connected_components(&variables, &numeric_variables, weighted_graph);
-        let (ordering, weighted_graph) =
-            Self::calculate_topological_pseudo_sort(&goals, weighted_graph, &sccs);
+        let sccs = strongly_connected_components(
+            task.vars.len(),
+            task.numeric_vars.len(),
+            &weighted_graph,
+        );
+        let ordering = topological_pseudo_sort(&task, &weighted_graph, &sccs);
 
         info!(
             "The causal graph is {}acyclic.",
-            if sccs.len() == variables.len() + numeric_variables.len() {
+            if sccs.len() == task.vars.len() + task.numeric_vars.len() {
                 ""
             } else {
                 "not "
@@ -124,579 +85,508 @@ impl CausalGraph {
         );
 
         let mut cg = Self {
-            variables: RefCell::new(variables),
-            numeric_variables: RefCell::new(numeric_variables),
-            operators,
-            axioms,
-            ass_axioms,
-            comp_axioms,
-            mutexes,
-            goals,
-            global_constraint,
-            metric,
-            initial_state,
-            prune_variables,
-            weighted_graph,
+            task,
             predecessor_graph,
             ordering,
-            propositional_ordering: Vec::new(),
-            numeric_ordering: Vec::new(),
+            prop_order: Vec::new(),
+            numeric_order: Vec::new(),
         };
 
-        cg.calculate_important_vars();
+        cg.place_necessary_variables();
 
         cg
     }
 
-    fn weigh_graph_from_ops(
-        operators: &[Operator],
-        mut weighted_graph: WeightedGraph,
-    ) -> (WeightedGraph, PredecessorGraph) {
-        let mut predecessor_graph: PredecessorGraph = BTreeMap::new();
-        for op in operators.iter() {
-            let prevail = op.get_prevail();
-            let pre_posts = op.get_pre_post();
-            let ass_effs = op.get_num_eff();
-            let mut source_vars: Vec<EitherVar> = Vec::new();
-            for prev in prevail.iter() {
-                source_vars.push(EitherVar::ExplicitVariable(prev.var));
-            }
-            for pre_post in pre_posts.iter() {
-                if pre_post.pre.is_some() {
-                    source_vars.push(EitherVar::ExplicitVariable(pre_post.var));
-                }
-            }
+    /// Marks the variables the task cannot be solved without -- the ones a
+    /// goal, the global constraint or the metric depends on, transitively --
+    /// and gives each of them its position in the reordered task.
+    fn place_necessary_variables(&mut self) {
+        let PreprocessedTask {
+            sas,
+            metric,
+            vars,
+            numeric_vars,
+        } = &mut self.task;
 
-            for pre_post in pre_posts.iter() {
-                let curr_target = EitherVar::ExplicitVariable(pre_post.var);
-                if pre_post.is_conditional_effect {
-                    for eff_cond in &pre_post.effect_conds {
-                        source_vars.push(EitherVar::ExplicitVariable(eff_cond.var));
-                    }
-                }
-
-                for curr_source in &source_vars {
-                    let weighted_succ = weighted_graph.entry(*curr_source).or_default();
-
-                    predecessor_graph.entry(curr_target).or_default();
-                    if *curr_source != curr_target {
-                        let entry = weighted_succ.entry(curr_target).or_insert(0);
-                        *entry += 1;
-                        let pred = predecessor_graph.get_mut(&curr_target).unwrap();
-                        let pred_entry = pred.entry(*curr_source).or_insert(0);
-                        *pred_entry += 1;
-                    }
-                }
-
-                if pre_post.is_conditional_effect {
-                    let len = source_vars.len();
-                    let remove_count = pre_post.effect_conds.len();
-                    source_vars.truncate(len - remove_count);
-                }
-            }
-
-            for ass_eff in ass_effs.iter() {
-                let curr_target = EitherVar::NumericVariable(ass_eff.var);
-                if ass_eff.is_conditional_effect {
-                    for eff_cond in &ass_eff.effect_conds {
-                        source_vars.push(EitherVar::ExplicitVariable(eff_cond.var));
-                    }
-                }
-                source_vars.push(EitherVar::NumericVariable(ass_eff.foperand));
-
-                for curr_source in &source_vars {
-                    let weighted_succ = weighted_graph.entry(*curr_source).or_default();
-                    predecessor_graph.entry(curr_target).or_default();
-                    if *curr_source != curr_target {
-                        let entry = weighted_succ.entry(curr_target).or_insert(0);
-                        *entry += 1;
-                        let pred = predecessor_graph.get_mut(&curr_target).unwrap();
-                        let pred_entry = pred.entry(*curr_source).or_insert(0);
-                        *pred_entry += 1;
-                    }
-                }
-                let len = source_vars.len();
-                let remove_count = ass_eff.effect_conds.len() + 1;
-                source_vars.truncate(len - remove_count);
-            }
-        }
-
-        (weighted_graph, predecessor_graph)
-    }
-
-    fn weigh_graph_from_axioms(
-        axioms: &[AxiomRelational],
-        mut weighted_graph: WeightedGraph,
-        mut predecessor_graph: PredecessorGraph,
-    ) -> (WeightedGraph, PredecessorGraph) {
-        for axiom in axioms.iter() {
-            for cond in axiom.get_conditions().iter() {
-                let curr_source = EitherVar::ExplicitVariable(cond.var);
-                let weighted_succ = weighted_graph.entry(curr_source).or_default();
-                let curr_target = EitherVar::ExplicitVariable(axiom.get_effect_var());
-                predecessor_graph.entry(curr_target).or_default();
-                if curr_source != curr_target {
-                    let entry = weighted_succ.entry(curr_target).or_insert(0);
-                    *entry += 1;
-                    let pred = predecessor_graph.get_mut(&curr_target).unwrap();
-                    let pred_entry = pred.entry(curr_source).or_insert(0);
-                    *pred_entry += 1;
-                }
-            }
-        }
-
-        (weighted_graph, predecessor_graph)
-    }
-
-    fn weigh_graph_from_comp_axioms(
-        comp_axioms: &[AxiomFunctionalComparison],
-        mut weighted_graph: WeightedGraph,
-        mut predecessor_graph: PredecessorGraph,
-    ) -> (WeightedGraph, PredecessorGraph) {
-        for cax in comp_axioms {
-            let target = EitherVar::ExplicitVariable(cax.get_effect_var());
-
-            for curr_source in [
-                EitherVar::NumericVariable(cax.get_left_var()),
-                EitherVar::NumericVariable(cax.get_right_var()),
-            ] {
-                let weighted_succ = weighted_graph.entry(curr_source).or_default();
-                predecessor_graph.entry(target).or_default();
-                let entry = weighted_succ.entry(target).or_insert(0);
-                *entry += 1;
-                let pred = predecessor_graph.get_mut(&target).unwrap();
-                let pred_entry = pred.entry(curr_source).or_insert(0);
-                *pred_entry += 1;
-            }
-        }
-
-        (weighted_graph, predecessor_graph)
-    }
-
-    fn weigh_graph_from_ass_axioms(
-        ass_axioms: &[AxiomNumericComputation],
-        mut weighted_graph: WeightedGraph,
-        mut predecessor_graph: PredecessorGraph,
-    ) -> (WeightedGraph, PredecessorGraph) {
-        for ass_ax in ass_axioms {
-            let target = EitherVar::NumericVariable(ass_ax.get_effect_var());
-
-            for curr_source in [
-                EitherVar::NumericVariable(ass_ax.get_left_var()),
-                EitherVar::NumericVariable(ass_ax.get_right_var()),
-            ] {
-                let weighted_succ = weighted_graph.entry(curr_source).or_default();
-                predecessor_graph.entry(target).or_default();
-                if curr_source != target {
-                    let entry = weighted_succ.entry(target).or_insert(0);
-                    *entry += 1;
-                    let pred = predecessor_graph.get_mut(&target).unwrap();
-                    let pred_entry = pred.entry(curr_source).or_insert(0);
-                    *pred_entry += 1;
-                }
-            }
-        }
-
-        (weighted_graph, predecessor_graph)
-    }
-
-    fn get_strongly_connected_components(
-        variables: &[ExplicitVariable],
-        numeric_variables: &[NumericVariable],
-        weighted_graph: WeightedGraph,
-    ) -> (Partition, WeightedGraph) {
-        let mut result = Vec::new();
-        let mut variable_to_index: BTreeMap<EitherVar, usize> = BTreeMap::new();
-        let num_vars = variables.len();
-        for (i, var) in variables.iter().enumerate() {
-            variable_to_index.insert(EitherVar::ExplicitVariable(var.index), i);
-        }
-        let num_numeric_vars = numeric_variables.len();
-        for (i, nvar) in numeric_variables.iter().enumerate() {
-            variable_to_index.insert(EitherVar::NumericVariable(nvar.index), num_vars + i);
-        }
-
-        let mut unweighted_graph: Vec<Vec<usize>> = vec![Vec::new(); num_vars + num_numeric_vars];
-        for (weighted_node, weighted_succ) in weighted_graph.iter() {
-            let index = *variable_to_index.get(weighted_node).unwrap();
-            let succ = &mut unweighted_graph[index];
-            for weighted_succ_node in weighted_succ.keys() {
-                succ.push(*variable_to_index.get(weighted_succ_node).unwrap());
-            }
-        }
-
-        let int_result = Scc::new(unweighted_graph).get_result();
-        for int_component in int_result {
-            let mut component: Vec<EitherVar> = Vec::new();
-            for var_id in int_component {
-                if var_id < num_vars {
-                    assert!(var_id == variables[var_id].index);
-                    component.push(EitherVar::ExplicitVariable(var_id));
-                } else {
-                    let idx = var_id - num_vars;
-                    assert!(idx == numeric_variables[idx].index);
-                    component.push(EitherVar::NumericVariable(idx));
-                }
-            }
-            result.push(component);
-        }
-
-        (result, weighted_graph)
-    }
-
-    fn calculate_topological_pseudo_sort(
-        goals: &[ExplicitFact],
-        weighted_graph: WeightedGraph,
-        sccs: &Partition,
-    ) -> (OrderingVars, WeightedGraph) {
-        let mut ordering: OrderingVars = Vec::new();
-        let mut goal_map: BTreeMap<usize, usize> = BTreeMap::new();
-        for goal in goals.iter() {
-            goal_map.insert(goal.var, goal.value);
-        }
-        for curr_scc in sccs {
-            let num_scc_vars = curr_scc.len();
-            if num_scc_vars > 1 {
-                let mut variable_to_index: BTreeMap<EitherVar, usize> = BTreeMap::new();
-                for (i, v) in curr_scc.iter().enumerate() {
-                    variable_to_index.insert(*v, i);
-                }
-
-                let mut subgraph: Vec<Vec<(usize, u64)>> = Vec::new();
-                for scc_var in curr_scc {
-                    let all_edges = weighted_graph
-                        .get(scc_var)
-                        .expect("every variable of the component is a node of the graph");
-                    let mut subgraph_edges: Vec<(usize, u64)> = Vec::new();
-                    for (target, cost) in all_edges {
-                        if let Some(index_it) = variable_to_index.get(target) {
-                            let new_index = *index_it;
-                            if let EitherVar::ExplicitVariable(v) = target
-                                && goal_map.contains_key(v)
-                            {
-                                subgraph_edges.push((new_index, 100000 + *cost));
-                            }
-                            subgraph_edges.push((new_index, *cost));
-                        }
-                    }
-                    subgraph.push(subgraph_edges);
-                }
-
-                let order = MaxDag::new(subgraph).get_result();
-                for i in order {
-                    ordering.push(curr_scc[i]);
-                }
-            } else {
-                ordering.push(curr_scc[0]);
-            }
-        }
-
-        (ordering, weighted_graph)
-    }
-
-    fn calculate_important_vars(&mut self) {
-        let mut variables = self.variables.borrow_mut();
-        let mut numeric_variables = self.numeric_variables.borrow_mut();
-        for goal in self.goals.iter() {
-            let var = goal.var;
-            if !variables[var].is_necessary() {
-                debug!(
-                    "var {} is directly necessary (goal).",
-                    variables[var].get_name()
-                );
-                variables[var].set_necessary();
-                self.dfs(
-                    EitherVar::ExplicitVariable(goal.var),
-                    &mut variables,
-                    &mut numeric_variables,
+        for &(var, _) in &sas.goal.pairs {
+            if !vars[var].is_necessary() {
+                debug!("var{var} is directly necessary (goal).");
+                vars[var].mark_necessary();
+                mark_predecessors_necessary(
+                    &self.predecessor_graph,
+                    EitherVar::ExplicitVariable(var),
+                    vars,
+                    numeric_vars,
                 );
             }
         }
 
-        if let Some(gc) = self.global_constraint {
-            let gc_var = gc.var;
-            if !variables[gc_var].is_necessary() {
-                debug!(
-                    "var {} is directly necessary (global constraint).",
-                    variables[gc_var].get_name()
-                );
-                variables[gc_var].set_necessary();
-                self.dfs(
-                    EitherVar::ExplicitVariable(gc.var),
-                    &mut variables,
-                    &mut numeric_variables,
-                );
-            }
+        let (constraint_var, _) = sas.global_constraint;
+        if !vars[constraint_var].is_necessary() {
+            debug!("var{constraint_var} is directly necessary (global constraint).");
+            vars[constraint_var].mark_necessary();
+            mark_predecessors_necessary(
+                &self.predecessor_graph,
+                EitherVar::ExplicitVariable(constraint_var),
+                vars,
+                numeric_vars,
+            );
         }
 
-        self.set_variable_instrumentation_necessary(&mut numeric_variables, self.metric.index);
-        for op in &self.operators {
-            for num_eff in op.get_num_eff() {
-                let var = num_eff.var;
-                if numeric_variables[var].get_type() == NumType::Instrumentation {
-                    assert!(numeric_variables[var].is_necessary());
-                    self.set_variable_instrumentation_necessary(
-                        &mut numeric_variables,
-                        num_eff.foperand,
-                    );
+        mark_instrumentation_necessary(&sas.numeric_axioms, numeric_vars, metric.index);
+        for op in &sas.operators {
+            for &(var, _, operand, _) in &op.assign_effects {
+                if numeric_vars[var].ntype() == NumType::Instrumentation {
+                    assert!(numeric_vars[var].is_necessary());
+                    mark_instrumentation_necessary(&sas.numeric_axioms, numeric_vars, operand);
                 }
             }
         }
 
-        assert!(self.propositional_ordering.is_empty());
-        assert!(self.numeric_ordering.is_empty());
-        assert!(self.ordering.len() == numeric_variables.len() + variables.len());
+        assert!(self.prop_order.is_empty());
+        assert!(self.numeric_order.is_empty());
+        assert_eq!(self.ordering.len(), vars.len() + numeric_vars.len());
         for cg_var in &self.ordering {
-            match cg_var {
-                EitherVar::ExplicitVariable(v) => {
-                    if variables[*v].is_necessary() || !self.prune_variables {
-                        self.propositional_ordering.push(*v);
+            match *cg_var {
+                EitherVar::ExplicitVariable(var) => {
+                    if vars[var].is_necessary() {
+                        vars[var].set_level(self.prop_order.len() as i32);
+                        self.prop_order.push(var);
                     }
                 }
-                EitherVar::NumericVariable(v) => {
-                    if numeric_variables[*v].is_necessary() || !self.prune_variables {
-                        self.numeric_ordering.push(*v);
+                EitherVar::NumericVariable(var) => {
+                    if numeric_vars[var].is_necessary() {
+                        numeric_vars[var].set_level(self.numeric_order.len() as i32);
+                        self.numeric_order.push(var);
                     }
                 }
             }
-        }
-        for (i, var) in self.propositional_ordering.iter().enumerate() {
-            variables[*var].set_level(i as i32);
-        }
-        for (i, nvar) in self.numeric_ordering.iter().enumerate() {
-            numeric_variables[*nvar].set_level(i as i32);
         }
         info!(
             "{} variables of {} necessary",
-            self.propositional_ordering.len(),
-            variables.len()
+            self.prop_order.len(),
+            vars.len()
         );
         info!(
             "{} numeric variables of {} necessary",
-            self.numeric_ordering.len(),
-            numeric_variables.len()
+            self.numeric_order.len(),
+            numeric_vars.len()
         );
     }
 
-    fn dfs(
-        &self,
-        from: EitherVar,
-        vars: &mut [ExplicitVariable],
-        numeric_vars: &mut [NumericVariable],
-    ) {
-        if let Some(preds) = self.predecessor_graph.get(&from) {
-            for pred in preds.keys() {
-                let curr_predecessor = *pred;
-                match curr_predecessor {
-                    EitherVar::ExplicitVariable(v) => {
-                        if !vars[v].is_necessary() {
-                            vars[v].set_necessary();
-                            debug!("var {} is necessary.", vars[v].get_name());
-                            self.dfs(curr_predecessor, vars, numeric_vars);
-                        }
-                    }
-                    EitherVar::NumericVariable(v) => {
-                        if !numeric_vars[v].is_necessary() {
-                            numeric_vars[v].set_necessary();
-                            debug!("var {} is necessary.", numeric_vars[v].get_name());
-                            self.dfs(curr_predecessor, vars, numeric_vars);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    /// Drops the effects, mutex groups and axioms that speak about a pruned
+    /// variable, and the operators left without an effect.
+    fn strip_pruned_variables(&mut self) {
+        let PreprocessedTask {
+            sas,
+            vars,
+            numeric_vars,
+            ..
+        } = &mut self.task;
 
-    fn set_variable_instrumentation_necessary(
-        &self,
-        numeric_variables: &mut [NumericVariable],
-        inst_var: usize,
-    ) {
-        if !numeric_variables[inst_var].is_necessary() {
-            debug!(
-                "{} is necessary for the metric",
-                numeric_variables[inst_var].get_name()
-            );
-            numeric_variables[inst_var].set_instrumentation();
+        let mutexes_before = sas.mutexes.len();
+        for mutex in &mut sas.mutexes {
+            mutex
+                .facts
+                .retain(|&(var, _)| vars[var].level() != NO_LEVEL);
         }
-        for ass_ax in self.ass_axioms.iter() {
-            if inst_var == ass_ax.get_effect_var() {
-                self.set_variable_instrumentation_necessary(
-                    numeric_variables,
-                    ass_ax.get_left_var(),
-                );
-                self.set_variable_instrumentation_necessary(
-                    numeric_variables,
-                    ass_ax.get_right_var(),
-                );
-            }
-        }
-    }
-
-    pub fn check_and_repair_empty_axiom_layers(&self) {
-        let mut max_num_index_before = -1;
-        let mut max_num_index_after = -1;
-        for nvar in self.numeric_variables.borrow().iter() {
-            max_num_index_before = max(max_num_index_before, nvar.get_layer());
-            if nvar.is_necessary() {
-                max_num_index_after = max(max_num_index_after, nvar.get_layer());
-            }
-        }
-        if max_num_index_before != max_num_index_after {
-            debug!(
-                "index before = {} after = {}",
-                max_num_index_before, max_num_index_after
-            );
-            let decrement = max_num_index_before - max_num_index_after;
-
-            let mut vars = self.variables.borrow_mut();
-            for var in vars.iter_mut() {
-                var.decrement_layer(decrement);
-                assert!(var.get_layer() == -1 || var.get_layer() > max_num_index_after);
-            }
-        }
-    }
-
-    fn reordered_metric_index(&self) -> usize {
-        let level = self.numeric_variables.borrow()[self.metric.index].get_level();
-        usize::try_from(level)
-            .expect("the metric variable is necessary, so the reordering gave it a level")
-    }
-
-    pub fn dump(&self) {
-        for (source, succs) in &self.weighted_graph {
-            debug!(
-                "dependent on var {}: ",
-                source.get_name(&self.variables.borrow(), &self.numeric_variables.borrow())
-            );
-            for (succ, weight) in succs {
-                debug!(
-                    "  [{}, {}]",
-                    succ.get_name(&self.variables.borrow(), &self.numeric_variables.borrow()),
-                    weight
-                );
-            }
-        }
-        for (source, succs) in &self.predecessor_graph {
-            debug!(
-                "var {} is dependent of: ",
-                source.get_name(&self.variables.borrow(), &self.numeric_variables.borrow())
-            );
-            for (succ, weight) in succs {
-                debug!(
-                    "  [{}, {}]",
-                    succ.get_name(&self.variables.borrow(), &self.numeric_variables.borrow()),
-                    weight
-                );
-            }
-        }
-    }
-
-    pub fn strip_operators(&mut self) {
-        let old_count = self.operators.len();
-        for op in self.operators.iter_mut() {
-            op.strip_unimportant_effects(
-                &self.variables.borrow(),
-                &self.numeric_variables.borrow(),
-            );
-        }
-        self.operators
-            .retain(|op| !op.is_redundant(&self.numeric_variables.borrow()));
-        info!(
-            "{} of {} operators necessary.",
-            self.operators.len(),
-            old_count
-        );
-    }
-
-    pub fn strip_mutexes(&mut self) {
-        let old_count = self.mutexes.len();
-        for mutex in self.mutexes.iter_mut() {
-            mutex.strip_unimportant_facts(&self.variables.borrow());
-        }
-        self.mutexes.retain(|m| !m.is_redundant());
+        // A group that has shrunk to facts on a single variable states nothing:
+        // two values of one variable are mutually exclusive by construction.
+        sas.mutexes
+            .retain(|mutex| mutex.facts.windows(2).any(|pair| pair[0].0 != pair[1].0));
         info!(
             "{} of {} mutex groups necessary.",
-            self.mutexes.len(),
-            old_count
+            sas.mutexes.len(),
+            mutexes_before
         );
-    }
 
-    pub fn strip_axiom_relationals(&mut self) {
-        let old_count = self.axioms.len();
-        self.axioms
-            .retain(|axiom| !axiom.is_redundant(&self.variables.borrow()));
+        let operators_before = sas.operators.len();
+        for op in &mut sas.operators {
+            op.pre_post
+                .retain(|&(var, ..)| vars[var].level() != NO_LEVEL);
+            op.assign_effects
+                .retain(|&(var, ..)| numeric_vars[var].level() != NO_LEVEL);
+        }
+        sas.operators
+            .retain(|op| !is_redundant_operator(op, numeric_vars));
+        info!(
+            "{} of {} operators necessary.",
+            sas.operators.len(),
+            operators_before
+        );
+
+        let axioms_before = sas.axioms.len();
+        sas.axioms
+            .retain(|axiom| vars[axiom.effect.0].level() != NO_LEVEL);
         info!(
             "{} of {} axiom rules necessary.",
-            self.axioms.len(),
-            old_count
+            sas.axioms.len(),
+            axioms_before
         );
-    }
 
-    pub fn strip_axiom_functional_comparisons(&mut self) {
-        let old_count = self.comp_axioms.len();
-        self.comp_axioms.retain(|axiom| {
-            !axiom.is_redundant(&self.variables.borrow(), &self.numeric_variables.borrow())
+        let comp_axioms_before = sas.comp_axioms.len();
+        sas.comp_axioms.retain(|axiom| {
+            vars[axiom.effect].level() != NO_LEVEL
+                && axiom
+                    .parts
+                    .iter()
+                    .all(|&part| numeric_vars[part].level() != NO_LEVEL)
         });
         info!(
-            "{} of {} axiom_functional assignment rules necessary.",
-            self.comp_axioms.len(),
-            old_count
+            "{} of {} axiom functional comparison rules necessary.",
+            sas.comp_axioms.len(),
+            comp_axioms_before
+        );
+
+        let numeric_axioms_before = sas.numeric_axioms.len();
+        sas.numeric_axioms.retain(|axiom| {
+            numeric_vars[axiom.effect].level() != NO_LEVEL
+                && axiom
+                    .parts
+                    .iter()
+                    .all(|&part| numeric_vars[part].level() != NO_LEVEL)
+        });
+        info!(
+            "{} of {} axiom functional assignment rules necessary.",
+            sas.numeric_axioms.len(),
+            numeric_axioms_before
         );
     }
 
-    pub fn strip_axiom_functional_assignment(&mut self) {
-        let old_count = self.ass_axioms.len();
-        self.ass_axioms
-            .retain(|axiom| !axiom.is_redundant(&self.numeric_variables.borrow()));
-        info!(
-            "{} of {} axiom_functional comparison rules necessary.",
-            self.ass_axioms.len(),
-            old_count
-        );
+    /// Pruning a numeric variable can empty the topmost axiom layers, and the
+    /// search reads the layers as a contiguous range, so the propositional
+    /// layers move down by however many numeric layers went away.
+    fn close_axiom_layer_gap(&mut self) {
+        let PreprocessedTask {
+            sas, numeric_vars, ..
+        } = &mut self.task;
+
+        let mut top_layer_before = NO_LAYER;
+        let mut top_layer_after = NO_LAYER;
+        for (var, state) in numeric_vars.iter().enumerate() {
+            let layer = sas.numeric_variables.axiom_layers[var];
+            top_layer_before = top_layer_before.max(layer);
+            if state.is_necessary() {
+                top_layer_after = top_layer_after.max(layer);
+            }
+        }
+        if top_layer_before == top_layer_after {
+            return;
+        }
+
+        debug!("numeric axiom layers end at {top_layer_after}, not {top_layer_before}");
+        let decrement = top_layer_before - top_layer_after;
+        for layer in &mut sas.variables.axiom_layers {
+            if *layer != NO_LAYER {
+                *layer -= decrement;
+                assert!(
+                    *layer > top_layer_after,
+                    "a propositional axiom layer sank into the numeric ones"
+                );
+            }
+        }
     }
 
     /// Drops what the pruning made unreachable and answers with the task under
     /// its new variable numbering.
     pub fn finalize(mut self) -> ReorderedTask {
-        self.strip_mutexes();
-        self.strip_operators();
-        self.strip_axiom_relationals();
-        self.strip_axiom_functional_comparisons();
-        self.strip_axiom_functional_assignment();
+        self.strip_pruned_variables();
+        self.close_axiom_layer_gap();
 
-        self.check_and_repair_empty_axiom_layers();
-
-        let mut metric = self.metric.clone();
-        metric.index = self.reordered_metric_index();
-
-        let original_variables: Vec<ExplicitVariable> = self.variables.take();
-        let original_numeric_variables: Vec<NumericVariable> = self.numeric_variables.take();
-        let variables = self
-            .propositional_ordering
-            .iter()
-            .map(|&v| original_variables[v].clone())
-            .collect();
-        let numeric_variables = self
-            .numeric_ordering
-            .iter()
-            .map(|&v| original_numeric_variables[v].clone())
-            .collect();
+        let metric_level = self.task.numeric_vars[self.task.metric.index].level();
+        self.task.metric.index = usize::try_from(metric_level)
+            .expect("the metric variable is necessary, so the reordering gave it a level");
 
         ReorderedTask {
-            metric,
-            original_variables,
-            original_numeric_variables,
-            variables,
-            numeric_variables,
-            mutexes: self.mutexes,
-            initial_state: self.initial_state,
-            goals: self.goals,
-            operators: self.operators,
-            axioms_rel: self.axioms,
-            axioms_func_comp: self.comp_axioms,
-            axioms_numeric: self.ass_axioms,
-            global_constraint: self.global_constraint,
+            task: self.task,
+            prop_order: self.prop_order,
+            numeric_order: self.numeric_order,
         }
     }
+}
+
+/// Records that `target` depends on `source`, unless a variable depends on
+/// itself, which says nothing about the order the variables have to come in.
+fn add_edge(
+    weighted_graph: &mut WeightedGraph,
+    predecessor_graph: &mut PredecessorGraph,
+    source: EitherVar,
+    target: EitherVar,
+) {
+    let successors = weighted_graph.entry(source).or_default();
+    let predecessors = predecessor_graph.entry(target).or_default();
+    if source != target {
+        *successors.entry(target).or_insert(0) += 1;
+        *predecessors.entry(source).or_insert(0) += 1;
+    }
+}
+
+/// An operator's effect on a variable depends on everything the operator reads:
+/// its preconditions, and the condition of that effect.
+fn weigh_operators(
+    operators: &[SASOperator],
+    weighted_graph: &mut WeightedGraph,
+    predecessor_graph: &mut PredecessorGraph,
+) {
+    let mut source_vars: Vec<EitherVar> = Vec::new();
+    for op in operators {
+        source_vars.clear();
+        for &(var, _) in &op.prevail {
+            source_vars.push(EitherVar::ExplicitVariable(var));
+        }
+        for &(var, pre, _, _) in &op.pre_post {
+            if pre != -1 {
+                source_vars.push(EitherVar::ExplicitVariable(var));
+            }
+        }
+        let precondition_count = source_vars.len();
+
+        for (var, _, _, conditions) in &op.pre_post {
+            let target = EitherVar::ExplicitVariable(*var);
+            extend_with_facts(&mut source_vars, conditions);
+            for &source in &source_vars {
+                add_edge(weighted_graph, predecessor_graph, source, target);
+            }
+            source_vars.truncate(precondition_count);
+        }
+
+        for (var, _, operand, conditions) in &op.assign_effects {
+            let target = EitherVar::NumericVariable(*var);
+            extend_with_facts(&mut source_vars, conditions);
+            source_vars.push(EitherVar::NumericVariable(*operand));
+            for &source in &source_vars {
+                add_edge(weighted_graph, predecessor_graph, source, target);
+            }
+            source_vars.truncate(precondition_count);
+        }
+    }
+}
+
+fn extend_with_facts(source_vars: &mut Vec<EitherVar>, facts: &[SasFact]) {
+    source_vars.extend(
+        facts
+            .iter()
+            .map(|&(var, _)| EitherVar::ExplicitVariable(var)),
+    );
+}
+
+fn weigh_axioms(
+    axioms: &[SASAxiom],
+    weighted_graph: &mut WeightedGraph,
+    predecessor_graph: &mut PredecessorGraph,
+) {
+    for axiom in axioms {
+        let target = EitherVar::ExplicitVariable(axiom.effect.0);
+        for &(var, _) in &axiom.condition {
+            let source = EitherVar::ExplicitVariable(var);
+            add_edge(weighted_graph, predecessor_graph, source, target);
+        }
+    }
+}
+
+/// A comparison variable depends on both sides of the comparison. The two are
+/// numeric and the variable is propositional, so neither can be the other and
+/// the self-edge case cannot arise.
+fn weigh_comparison_axioms(
+    axioms: &[SASCompareAxiom],
+    weighted_graph: &mut WeightedGraph,
+    predecessor_graph: &mut PredecessorGraph,
+) {
+    for axiom in axioms {
+        let target = EitherVar::ExplicitVariable(axiom.effect);
+        for &part in &axiom.parts {
+            let source = EitherVar::NumericVariable(part);
+            assert_ne!(source, target);
+            add_edge(weighted_graph, predecessor_graph, source, target);
+        }
+    }
+}
+
+fn weigh_numeric_axioms(
+    axioms: &[SASNumericAxiom],
+    weighted_graph: &mut WeightedGraph,
+    predecessor_graph: &mut PredecessorGraph,
+) {
+    for axiom in axioms {
+        let target = EitherVar::NumericVariable(axiom.effect);
+        for &part in &axiom.parts {
+            let source = EitherVar::NumericVariable(part);
+            add_edge(weighted_graph, predecessor_graph, source, target);
+        }
+    }
+}
+
+/// The graph's nodes numbered consecutively, propositional variables first, as
+/// [`Scc`] and [`MaxDag`] want them.
+fn node_index(var: EitherVar, num_vars: usize) -> usize {
+    match var {
+        EitherVar::ExplicitVariable(var) => var,
+        EitherVar::NumericVariable(var) => num_vars + var,
+    }
+}
+
+fn strongly_connected_components(
+    num_vars: usize,
+    num_numeric_vars: usize,
+    weighted_graph: &WeightedGraph,
+) -> Partition {
+    let mut unweighted_graph: Vec<Vec<usize>> = vec![Vec::new(); num_vars + num_numeric_vars];
+    for (node, successors) in weighted_graph {
+        unweighted_graph[node_index(*node, num_vars)]
+            .extend(successors.keys().map(|&succ| node_index(succ, num_vars)));
+    }
+
+    Scc::new(unweighted_graph)
+        .get_result()
+        .into_iter()
+        .map(|component| {
+            component
+                .into_iter()
+                .map(|node| {
+                    if node < num_vars {
+                        EitherVar::ExplicitVariable(node)
+                    } else {
+                        EitherVar::NumericVariable(node - num_vars)
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Orders the components, and the variables inside a component whose
+/// dependencies are cyclic by the cheapest set of dependencies to violate.
+/// Goal variables are pushed to the end of their component by pricing the
+/// edges into them out of reach.
+fn topological_pseudo_sort(
+    task: &PreprocessedTask,
+    weighted_graph: &WeightedGraph,
+    sccs: &Partition,
+) -> Vec<EitherVar> {
+    const GOAL_EDGE_SURCHARGE: u64 = 100_000;
+
+    let mut is_goal_var = vec![false; task.vars.len()];
+    for &(var, _) in &task.sas.goal.pairs {
+        is_goal_var[var] = true;
+    }
+
+    let mut ordering: Vec<EitherVar> =
+        Vec::with_capacity(task.vars.len() + task.numeric_vars.len());
+    for component in sccs {
+        if component.len() == 1 {
+            ordering.push(component[0]);
+            continue;
+        }
+
+        let mut variable_to_index: BTreeMap<EitherVar, usize> = BTreeMap::new();
+        for (index, &var) in component.iter().enumerate() {
+            variable_to_index.insert(var, index);
+        }
+
+        let subgraph: Vec<Vec<(usize, u64)>> = component
+            .iter()
+            .map(|var| {
+                let successors = weighted_graph
+                    .get(var)
+                    .expect("every variable of the component is a node of the graph");
+                let mut edges: Vec<(usize, u64)> = Vec::new();
+                for (target, &cost) in successors {
+                    let Some(&index) = variable_to_index.get(target) else {
+                        continue;
+                    };
+                    if let EitherVar::ExplicitVariable(target) = *target
+                        && is_goal_var[target]
+                    {
+                        edges.push((index, GOAL_EDGE_SURCHARGE + cost));
+                    }
+                    edges.push((index, cost));
+                }
+                edges
+            })
+            .collect();
+
+        ordering.extend(
+            MaxDag::new(subgraph)
+                .get_result()
+                .into_iter()
+                .map(|index| component[index]),
+        );
+    }
+
+    ordering
+}
+
+/// Marks everything `from` transitively depends on as necessary.
+fn mark_predecessors_necessary(
+    predecessor_graph: &PredecessorGraph,
+    from: EitherVar,
+    vars: &mut [VarState],
+    numeric_vars: &mut [NumericVarState],
+) {
+    let mut stack = vec![from];
+    while let Some(node) = stack.pop() {
+        let Some(predecessors) = predecessor_graph.get(&node) else {
+            continue;
+        };
+        for &predecessor in predecessors.keys() {
+            match predecessor {
+                EitherVar::ExplicitVariable(var) => {
+                    if vars[var].is_necessary() {
+                        continue;
+                    }
+                    vars[var].mark_necessary();
+                    debug!("var{var} is necessary.");
+                }
+                EitherVar::NumericVariable(var) => {
+                    if numeric_vars[var].is_necessary() {
+                        continue;
+                    }
+                    numeric_vars[var].mark_necessary();
+                    debug!("numeric var{var} is necessary.");
+                }
+            }
+            stack.push(predecessor);
+        }
+    }
+}
+
+/// Marks a numeric variable the metric is computed from, and the terms it is
+/// computed from in turn, as necessary. Such a variable is only read by the
+/// bookkeeping of the plan's cost, never by an operator's precondition, which
+/// is what makes it instrumentation rather than part of the state.
+fn mark_instrumentation_necessary(
+    numeric_axioms: &[SASNumericAxiom],
+    numeric_vars: &mut [NumericVarState],
+    var: usize,
+) {
+    if !numeric_vars[var].is_necessary() {
+        debug!("numeric var{var} is necessary for the metric");
+        numeric_vars[var].mark_instrumentation();
+    }
+    for axiom in numeric_axioms {
+        if axiom.effect == var {
+            for &part in &axiom.parts {
+                mark_instrumentation_necessary(numeric_axioms, numeric_vars, part);
+            }
+        }
+    }
+}
+
+/// An operator whose only effects are on instrumentation cannot change the
+/// state the search explores, so nothing is lost by dropping it.
+fn is_redundant_operator(op: &SASOperator, numeric_vars: &[NumericVarState]) -> bool {
+    if !op.pre_post.is_empty() {
+        return false;
+    }
+    for &(var, ..) in &op.assign_effects {
+        if numeric_vars[var].ntype() == NumType::Regular {
+            debug!(
+                "Operator {} is not redundant because of its effect on numeric var{var}",
+                op.name
+            );
+            return false;
+        }
+    }
+    debug!("Operator {} is redundant", op.name);
+    true
 }
