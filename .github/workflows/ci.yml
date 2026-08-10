@@ -33,23 +33,24 @@ jobs:
     # Advisory on purpose, and only until the backlog is gone. A blocking job
     # would be red on its first run and would train everyone to ignore it.
     #
-    # `cargo clippy --workspace --exclude planforge-cplex --all-targets` reports
-    # 180 distinct lints as of this commit: 112 planforge-search, 19
-    # planforge-sas, 15 planforge-sgd, 15 tests, 12 planforge-config-derive, 3
-    # planforge-py, 2 planforge-searcher, 1 planforge, 1 tutorials.
-    # planforge-translate and planforge-translator are clean, so the earlier
+    # Re-measure with
+    #   cargo clippy --workspace --exclude planforge-cplex --all-targets
+    # rather than trusting the counts below; they are dropping steadily. At the
+    # time of writing there are 110 distinct lints: 55 planforge-search, 18
+    # planforge-sas, 15 planforge-sgd, 15 tests, 3 planforge-py, 2
+    # planforge-searcher, 1 planforge, 1 tutorials. planforge-translate,
+    # planforge-translator and planforge-config-derive are clean, so the earlier
     # note blaming the backlog on planforge-translate is out of date.
     #
-    # 68 of the 180 are one lint, `arc_with_non_send_sync`, and it is not a
-    # backlog item: `TaskRef<'a> = Arc<dyn AbstractNumericTask + 'a>` while
-    # `NumericRootTask` holds `RefCell`s, so every call site that hands a task
-    # to a `StateRegistry` trips it. All 15 in `tests` are that lint. Deciding
-    # what to do about it - make the task `Send + Sync`, or make `TaskRef` an
-    # `Rc` - is a planforge-sas decision, not something to paper over at the
-    # call sites. The other 112 are ordinary lints with mechanical fixes;
-    # `clone_on_copy` (33), `field_reassign_with_default` (14),
-    # `too_many_arguments` (12) and `doc_overindented_list_items` (12) are most
-    # of them.
+    # 68 of the 110 are a single lint, `arc_with_non_send_sync`, and that one is
+    # not a backlog item: `TaskRef<'a> = Arc<dyn AbstractNumericTask + 'a>`
+    # while `NumericRootTask` holds `RefCell`s, so every call site that hands a
+    # task to a `StateRegistry` trips it. All 15 in `tests` are that lint.
+    # Making this job blocking therefore needs a planforge-sas decision - make
+    # the task `Send + Sync`, or make `TaskRef` an `Rc` - not an `allow` at a
+    # hundred call sites. The remaining 42 are ordinary lints with mechanical
+    # fixes, mostly `field_reassign_with_default` (14), `too_many_arguments`
+    # (12) and `needless_range_loop` (7).
     #
     # Burn that down, then delete this line and fold `-D warnings` in below. Do
     # not silence individual lints to get there.
