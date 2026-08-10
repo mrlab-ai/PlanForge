@@ -109,7 +109,7 @@ fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
     NumericRootTask::new(
         1,
         Metric::new(true, None),
-        vec![simple_var("cmp", Some(0)), simple_var("goal", None)],
+        vec![simple_var("cmp", Some(1)), simple_var("goal", None)],
         vec![
             NumericVariable::new("const2".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),

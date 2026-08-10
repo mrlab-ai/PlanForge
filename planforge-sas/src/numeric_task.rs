@@ -921,7 +921,7 @@ impl NumericRootTask {
             )
             .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
         );
-        NumericRootTask {
+        let task = NumericRootTask {
             version,
             metric,
             variables,
@@ -938,7 +938,31 @@ impl NumericRootTask {
             assignment_axioms,
             numeric_conditions,
             global_constraint,
-        }
+        };
+        task.close_initial_state_under_axioms();
+        task
+    }
+
+    /// Replace the initial state by its axiom closure.
+    ///
+    /// The values a SAS file gives a derived variable are not its initial
+    /// values but its axiom *defaults*; the real ones follow from the axioms.
+    /// Running the closure once here means `get_initial_propositional_state_values`
+    /// and `get_initial_numeric_state_values` describe a state the search can
+    /// use as it stands, instead of one every consumer has to finish for
+    /// itself.
+    ///
+    /// The closure is a function of the non-derived variables alone, so it is
+    /// idempotent: applying it to an already-closed state is a no-op, which is
+    /// what makes it safe for a task built out of another task's initial state.
+    fn close_initial_state_under_axioms(&self) {
+        let (propositional, numeric) = self
+            .evaluated_initial_abstract_state_values()
+            .unwrap_or_else(|error| {
+                panic!("initial state does not satisfy the task's own axioms: {error}")
+            });
+        self.set_initial_propositional_state_values(propositional);
+        self.set_initial_numeric_state_values(numeric);
     }
 
     /// The fact that must hold in every reachable state.

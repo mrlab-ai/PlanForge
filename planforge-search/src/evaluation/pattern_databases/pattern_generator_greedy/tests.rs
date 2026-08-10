@@ -114,7 +114,7 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
                 3,
                 "cmp".to_string(),
                 vec!["t".to_string(), "f".to_string(), "u".to_string()],
-                Some(0),
+                Some(1),
                 2,
             ),
         ],
@@ -270,7 +270,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
             2,
             "goal".to_string(),
             vec!["off".to_string(), "on".to_string()],
-            Some(0),
+            Some(1),
             0,
         )],
         vec![

@@ -66,7 +66,7 @@ fn rejects_unrestricted_numeric_conditions() {
             3,
             "cmp".to_string(),
             vec!["t".to_string(), "f".to_string(), "u".to_string()],
-            Some(0),
+            Some(1),
             2,
         )],
         vec![

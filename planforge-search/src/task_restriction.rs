@@ -1025,7 +1025,7 @@ mod tests {
             2,
             "cmp".into(),
             vec!["true".into(), "false".into()],
-            Some(0),
+            Some(1),
             1,
         )];
         let numeric_variables = vec![
@@ -1127,7 +1127,7 @@ mod tests {
             2,
             "cmp".into(),
             vec!["true".into(), "false".into()],
-            Some(0),
+            Some(1),
             1,
         )];
         let numeric_variables = vec![
@@ -1193,7 +1193,7 @@ mod tests {
             2,
             "cmp".into(),
             vec!["true".into(), "false".into()],
-            Some(0),
+            Some(1),
             1,
         )];
         let numeric_variables = vec![
@@ -1298,7 +1298,7 @@ mod tests {
             2,
             "cmp".into(),
             vec!["true".into(), "false".into()],
-            Some(0),
+            Some(1),
             1,
         )];
         let numeric_variables = vec![

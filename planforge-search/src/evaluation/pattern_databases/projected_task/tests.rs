@@ -102,13 +102,19 @@ fn projection_builds_a_compact_restricted_transition_system() {
 #[test]
 fn projection_rejects_an_unrestricted_task() {
     let task = restricted_sample_task();
-    let variables = task.variables().clone();
     let mut numeric_variables = task.numeric_variables().clone();
     numeric_variables.push(NumericVariable::new(
         "derived-x".to_string(),
         NumericType::Derived,
         Some(0),
     ));
+    // The derived numeric variable takes axiom layer 0, so the comparison and
+    // the propositional axiom above it each move up one layer.
+    let variables: Vec<ExplicitVariable> = task
+        .variables()
+        .iter()
+        .map(|variable| variable.with_axiom_layer(variable.axiom_layer().map(|layer| layer + 1)))
+        .collect();
     let unrestricted = NumericRootTask::new(
         1,
         task.metric().clone(),
