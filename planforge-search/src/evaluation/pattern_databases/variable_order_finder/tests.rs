@@ -50,6 +50,6 @@ fn goal_cg_level_prefers_goal_numeric_variables() {
     );
     let mut order = VariableOrderFinder::new(&task, GreedyVariableOrderType::GoalCgLevel, true, 0);
 
-    let next = order.next();
+    let next = order.next_variable();
     assert_eq!(next, Some((1, true)));
 }

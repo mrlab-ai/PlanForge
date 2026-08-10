@@ -281,7 +281,6 @@ pub(crate) fn progress_and_get_sequence_deviation_flaws<'a>(
     Ok((state, Some(next_state), flawed))
 }
 
-#[allow(clippy::needless_range_loop)]
 pub fn get_progression_numeric_sequence_deviation_flaws(
     task: &dyn AbstractNumericTask,
     op: &Operator,
@@ -293,11 +292,13 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
 ) -> Vec<Flaw> {
     let mut flaws: Vec<Flaw> = Vec::new();
 
-    let num_vars = successor_state
-        .numeric
-        .len()
-        .min(abstract_numeric_successor_state.len());
-    for var_id in 0..num_vars {
+    // Zipping stops at the shorter of the two, which is the intended bound: a
+    // dimension without an abstract value cannot deviate from one.
+    for (var_id, (&abstract_value, &interval_next_value)) in abstract_numeric_successor_state
+        .iter()
+        .zip(&successor_state.numeric)
+        .enumerate()
+    {
         let operator_modified_var = op
             .assignment_effects()
             .iter()
@@ -308,12 +309,10 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
             continue;
         }
 
-        let abstract_value = abstract_numeric_successor_state[var_id];
         let Some(parts) = partitions.partitions(var_id) else {
             continue;
         };
-        let correct_abstract_values =
-            partitions_for_interval(parts, &successor_state.numeric[var_id]);
+        let correct_abstract_values = partitions_for_interval(parts, &interval_next_value);
         if correct_abstract_values.is_empty() {
             continue;
         };
@@ -321,7 +320,6 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
             continue;
         }
 
-        let interval_next_value = successor_state.numeric[var_id];
         let interval_current_value = current_state
             .numeric
             .get(var_id)

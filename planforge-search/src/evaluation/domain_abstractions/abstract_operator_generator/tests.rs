@@ -9,6 +9,10 @@ use planforge_sas::numeric_task::{
 use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
 use planforge_sas::utils::interval::Interval;
 
+/// What identifies an abstract operator for a determinism comparison: its hash
+/// effect plus its progression and regression preconditions.
+type AbstractOperatorSignature = (i32, Vec<ExplicitFact>, Vec<ExplicitFact>);
+
 #[test]
 fn propositional_effect_without_precondition_preserves_sibling_branches() {
     let variables = vec![
@@ -202,8 +206,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         vec![Interval::singleton(7.0)],
     ]);
 
-    #[allow(clippy::type_complexity)]
-    let mut signatures: Vec<Vec<(i32, Vec<ExplicitFact>, Vec<ExplicitFact>)>> = Vec::new();
+    let mut signatures: Vec<Vec<AbstractOperatorSignature>> = Vec::new();
     for _ in 0..12 {
         let mut generator = AbstractOperatorGenerator::new_with_identity_mapping(
             &task,

@@ -13,6 +13,11 @@ use planforge_sas::utils::linear_effects::LinearNumericEffect;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
 
+/// The value a comparison-axiom variable takes when the comparison is false.
+/// Only this value carries numeric conditions: the true value is produced by
+/// the axiom itself.
+const COMPARISON_FALSE_FACT_VALUE: usize = 0;
+
 #[derive(Debug, Clone, Copy)]
 struct QueueEntry {
     cost: f64,
@@ -274,7 +279,11 @@ pub struct LandmarkCutLandmarks<'task> {
     conditions: Vec<NumericCondition>,
     epsilons: Vec<f64>,
     numeric_helper: NumericTaskHelper,
-    comparison_fact_to_condition_ids: BTreeMap<(usize, usize), Vec<usize>>,
+    /// Condition ids of the *false* fact of each comparison axiom variable,
+    /// keyed by that variable. Only value 0 is ever registered or looked up:
+    /// a comparison variable being true is the axiom's own effect, which
+    /// `precondition_proposition_ids` relaxes away.
+    comparison_false_fact_condition_ids: BTreeMap<usize, Vec<usize>>,
     linear_effect_to_conditions_plus: Vec<Vec<Vec<usize>>>,
     linear_effect_to_conditions_minus: Vec<Vec<Vec<usize>>>,
     operator_condition_eval: Vec<Vec<OperatorConditionEval>>,
@@ -380,7 +389,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             conditions: Vec::new(),
             epsilons: Vec::new(),
             numeric_helper,
-            comparison_fact_to_condition_ids: BTreeMap::new(),
+            comparison_false_fact_condition_ids: BTreeMap::new(),
             linear_effect_to_conditions_plus: Vec::new(),
             linear_effect_to_conditions_minus: Vec::new(),
             operator_condition_eval: Vec::new(),
@@ -444,7 +453,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.numeric_condition_proposition_ids.clear();
         self.conditions.clear();
         self.epsilons.clear();
-        self.comparison_fact_to_condition_ids.clear();
+        self.comparison_false_fact_condition_ids.clear();
         self.linear_effect_to_conditions_plus.clear();
         self.linear_effect_to_conditions_minus.clear();
         self.operator_condition_eval.clear();
@@ -2573,7 +2582,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         Ok(expression)
     }
 
-    #[allow(clippy::needless_range_loop)]
     fn build_supported_sose_operators(&mut self) -> Result<(), String> {
         let operator_count = self.task.get_operators().len();
         self.operator_condition_eval =
@@ -2627,7 +2635,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 // effect. We must not gate the linear check behind base_relaxed_by_original.
                 let mut condition_supporters = Vec::new();
                 let mut invalid_support = false;
-                for op1_id in 0..operator_count {
+                for (op1_id, &op1_base_relaxed_id) in base_relaxed_by_original.iter().enumerate() {
                     // Linear-effect check: scan ALL operators (C++ iterates all operators here).
                     if self.has_linear_effect(
                         op1_id,
@@ -2641,7 +2649,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
                     // Supporter collection: only ops that have a base relaxed op can become
                     // SOSE supporters (because we need a relaxed precondition set for them).
-                    let Some(op1_relaxed_id) = base_relaxed_by_original[op1_id] else {
+                    let Some(op1_relaxed_id) = op1_base_relaxed_id else {
                         continue;
                     };
 
@@ -3393,7 +3401,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
     }
 
-    #[allow(clippy::single_element_loop)]
     fn build_comparison_fact_condition_ids(&mut self) {
         if self.config.ignore_numeric {
             return;
@@ -3401,14 +3408,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
 
         for comparison_axiom in self.task.comparison_axioms().iter() {
             let affected_var_id = comparison_axiom.get_affected_var_id();
-            for fact_value in [0] {
-                let condition_ids = self
-                    .numeric_helper
-                    .get_comparison_fact_condition_ids(affected_var_id, fact_value);
-                if !condition_ids.is_empty() {
-                    self.comparison_fact_to_condition_ids
-                        .insert((affected_var_id, fact_value), condition_ids);
-                }
+            let condition_ids = self
+                .numeric_helper
+                .get_comparison_fact_condition_ids(affected_var_id, COMPARISON_FALSE_FACT_VALUE);
+            if !condition_ids.is_empty() {
+                self.comparison_false_fact_condition_ids
+                    .insert(affected_var_id, condition_ids);
             }
         }
     }
@@ -3708,14 +3713,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn precondition_proposition_ids(&self, fact: &ExplicitFact) -> Vec<usize> {
-        if !self.config.ignore_numeric {
-            if self.numeric_helper.is_comparison_axiom_var(fact.var()) && fact.value() > 0 {
+        if !self.config.ignore_numeric && self.numeric_helper.is_comparison_axiom_var(fact.var()) {
+            if fact.value() != COMPARISON_FALSE_FACT_VALUE {
                 return Vec::new();
             }
-            if let Some(condition_ids) = self
-                .comparison_fact_to_condition_ids
-                .get(&(fact.var(), fact.value()))
-            {
+            // Every key of the map is the affected variable of a comparison
+            // axiom, which is exactly what `is_comparison_axiom_var` reports.
+            if let Some(condition_ids) = self.comparison_false_fact_condition_ids.get(&fact.var()) {
                 return condition_ids
                     .iter()
                     .map(|&condition_id| {
@@ -3729,8 +3733,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
         if self.is_numeric_axiom_var(fact.var()) {
             // Reached when either `ignore_numeric=true` (numeric tracking is disabled
             // wholesale) or the fact references a numeric-axiom var that isn't a
-            // comparison axiom registered in `comparison_fact_to_condition_ids`
-            // (e.g. an assignment-axiom var, or a comparison var whose TRUE/value=0
+            // comparison axiom registered in `comparison_false_fact_condition_ids`
+            // (e.g. an assignment-axiom var, or a comparison var whose value=0
             // entry produced an empty condition list at build time).
             //
             // Dropping the precondition is an admissible relaxation: an operator

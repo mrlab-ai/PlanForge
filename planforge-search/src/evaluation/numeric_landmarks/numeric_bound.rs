@@ -433,7 +433,6 @@ impl NumericBound {
         change
     }
 
-    #[allow(clippy::needless_range_loop)]
     fn update_action_bounds(&mut self) -> bool {
         let mut change = false;
 
@@ -447,12 +446,11 @@ impl NumericBound {
                 let mut ub = constant;
                 let mut lb = constant;
 
-                for var_id in 0..self.num_numeric_variables {
+                for (var_id, &weight) in coefficients.iter().enumerate() {
                     if var_id == lhs {
                         continue;
                     }
 
-                    let weight = coefficients[var_id];
                     if has_ub {
                         if weight >= self.precision
                             && self.variable_before_action_has_ub[var_id][op_id]
@@ -644,7 +642,6 @@ impl NumericBound {
         change
     }
 
-    #[allow(clippy::needless_range_loop)]
     fn check_coefficient_in_preconditions(
         &self,
         coefficients: &[f64],
@@ -660,9 +657,11 @@ impl NumericBound {
             let mut scale_initialized = false;
             let mut scale = 0.0;
 
-            for n_id in 0..self.num_numeric_variables {
-                let coefficient = coefficients[n_id];
-                let condition_coefficient = condition.coefficients[n_id];
+            // Both vectors are projections onto the same numeric variable
+            // order, so they have `num_numeric_variables` entries each.
+            for (&coefficient, &condition_coefficient) in
+                coefficients.iter().zip(&condition.coefficients)
+            {
                 if coefficient.abs() >= self.precision
                     && condition_coefficient.abs() >= self.precision
                 {

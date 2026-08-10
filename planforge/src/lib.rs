@@ -291,7 +291,6 @@ pub fn solve_task_with_state_storage(
     }
 }
 
-#[allow(clippy::field_reassign_with_default)]
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     register_event_handlers();
     planforge_searcher::preflight_required_backends(&cli.search)?;

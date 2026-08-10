@@ -92,7 +92,7 @@ pub fn generate_greedy_pattern(
     let mut size = 1usize;
 
     while !order.done() {
-        let Some((next_var_id, is_numeric)) = order.next() else {
+        let Some((next_var_id, is_numeric)) = order.next_variable() else {
             break;
         };
 

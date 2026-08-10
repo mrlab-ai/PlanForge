@@ -3249,7 +3249,7 @@ impl DomainAbstractionFactory {
         }))
     }
 
-    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    #[allow(clippy::too_many_arguments)]
     fn compute_distances_and_generating_ops(
         &self,
         task: &dyn AbstractNumericTask,
@@ -3270,7 +3270,7 @@ impl DomainAbstractionFactory {
         let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
         let comparison_branching = !comparison_var_ids.is_empty();
 
-        for state_hash in 0..num_states {
+        for (state_hash, distance) in distances.iter_mut().enumerate() {
             if state_hash % 1024 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
@@ -3298,10 +3298,8 @@ impl DomainAbstractionFactory {
                     continue;
                 }
             }
-            {
-                distances[state_hash] = 0.0;
-                heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
-            }
+            *distance = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
 
         let comparison_preconditions = if comparison_branching {

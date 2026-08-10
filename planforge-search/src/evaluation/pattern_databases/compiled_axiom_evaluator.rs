@@ -265,7 +265,6 @@ impl<'a> CompiledAxiomEvaluator<'a> {
     }
 }
 
-#[allow(clippy::needless_range_loop)]
 fn build_compiled_axiom_evaluator_data(
     numeric_task: &dyn AbstractNumericTask,
 ) -> CompiledAxiomEvaluatorData {
@@ -340,13 +339,12 @@ fn build_compiled_axiom_evaluator_data(
                 .expect("variable id below the variable count is in bounds")
         })
         .collect();
-    for var_id in 0..numeric_task.get_num_variables() {
+    for (var_id, &default_value) in axiom_default_values.iter().enumerate() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
         if let Some(axiom) = axiom_layer
             && axiom_layer != last_layer
         {
-            let nbf_info = NegationByFailureInfo::new(var_id, axiom_default_values[var_id]);
-            nbf_info_by_layer[axiom].push(nbf_info);
+            nbf_info_by_layer[axiom].push(NegationByFailureInfo::new(var_id, default_value));
         }
     }
 

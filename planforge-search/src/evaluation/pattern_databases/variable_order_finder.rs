@@ -125,11 +125,13 @@ impl VariableOrderFinder {
         self.remaining_vars.is_empty()
     }
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Option<(usize, bool)> {
+    /// The next variable in the order, or `None` when no remaining variable
+    /// qualifies under the configured order type. Not `Iterator::next`: it is
+    /// a hard error to call this once `done()` reports exhaustion.
+    pub fn next_variable(&mut self) -> Option<(usize, bool)> {
         assert!(
             !self.done(),
-            "VariableOrderFinder::next called with no remaining variables"
+            "VariableOrderFinder::next_variable called with no remaining variables"
         );
 
         match self.variable_order_type {

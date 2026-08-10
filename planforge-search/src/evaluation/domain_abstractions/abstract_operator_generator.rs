@@ -1184,7 +1184,6 @@ fn multiply_out_propositional(
     Ok(out)
 }
 
-#[allow(clippy::needless_range_loop)]
 fn compute_hash_effects_with_preconditions(
     task: &dyn AbstractNumericTask,
     generator: &mut AbstractOperatorGenerator,
@@ -1294,7 +1293,7 @@ fn compute_hash_effects_with_preconditions(
     changed_numeric_vars_for_semantics.dedup();
 
     let mut per_var: Vec<(usize, Vec<(usize, usize)>)> = Vec::new();
-    for v in 0..num_numeric_vars {
+    for (v, effs) in effects_by_var.iter().enumerate() {
         ensure!(
             v < task.numeric_variables().len(),
             "abstract operator numeric domain size/task variable mismatch: numeric_domain_sizes has {}, task has {} numeric variables",
@@ -1331,7 +1330,6 @@ fn compute_hash_effects_with_preconditions(
             }
             continue;
         }
-        let effs = &effects_by_var[v];
         if let Some(eff) = effs.first() {
             let rhs = eff.var_id();
             let rhs_parts = generator
