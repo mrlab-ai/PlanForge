@@ -65,9 +65,6 @@ impl ConditionValue {
     /// Domain size of a condition variable, concrete and abstract alike.
     pub const DOMAIN_SIZE: usize = 2;
 
-    /// The domain of a condition variable, in value order.
-    pub const DOMAIN: [ConditionValue; Self::DOMAIN_SIZE] = [Self::True, Self::False];
-
     /// The SAS value this variant encodes.
     #[inline]
     pub const fn as_usize(self) -> usize {
@@ -89,13 +86,6 @@ impl From<bool> for ConditionValue {
     #[inline]
     fn from(holds: bool) -> Self {
         if holds { Self::True } else { Self::False }
-    }
-}
-
-impl From<ConditionValue> for usize {
-    #[inline]
-    fn from(value: ConditionValue) -> Self {
-        value.as_usize()
     }
 }
 
