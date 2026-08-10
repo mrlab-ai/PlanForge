@@ -8,6 +8,8 @@
 #[cfg(test)]
 mod corpus;
 #[cfg(test)]
+mod derived_predicate_tests;
+#[cfg(test)]
 mod numeric_condition_tests;
 #[cfg(test)]
 mod numeric_corpus_tests;

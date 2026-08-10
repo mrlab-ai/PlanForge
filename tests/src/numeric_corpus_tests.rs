@@ -361,6 +361,8 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
         }
     }
 
+    assert_negation_by_failure_reads_a_settled_layer(name, task, &comparison_layers);
+
     // Derived variables are the axioms' business alone: no operator may write
     // one, or the axiom layer it was computed at would be silently invalidated.
     for operator in task.get_operators() {
@@ -388,6 +390,58 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
                 operator.name(),
                 task.numeric_variables()[affected].get_type(),
                 task.numeric_variables()[affected].name()
+            );
+        }
+    }
+}
+
+/// The reason axiom layers exist, checked on the translated task.
+///
+/// An axiom that reads a derived variable at the value that variable's own
+/// axioms *prove* is monotone: one layer's fixpoint closes it, so the two may
+/// share a layer. An axiom that reads a derived variable at its *default* value
+/// is negation by failure — it asks whether the variable stayed unproven — and
+/// that answer only exists once the reader's layer is done, which is why
+/// `AxiomEvaluator` admits those literals only between layers. So such a
+/// reading must come from a strictly lower layer, or the evaluator answers it
+/// before the evidence is in.
+fn assert_negation_by_failure_reads_a_settled_layer(
+    name: &str,
+    task: &dyn AbstractNumericTask,
+    comparison_layers: &BTreeSet<usize>,
+) {
+    let derived_layer = |var: usize| -> Option<usize> {
+        let layer = task
+            .get_variable_axiom_layer(var)
+            .unwrap_or_else(|e| panic!("{name}: variable {var} out of range: {e}"))?;
+        // A comparison head also carries a layer, but its value comes from the
+        // numeric pass rather than from Horn rules, and its `unknown` default is
+        // never derived, so it is not a negation-by-failure literal.
+        (!comparison_layers.contains(&layer)).then_some(layer)
+    };
+
+    for axiom in task.axioms() {
+        let head = axiom.var_id();
+        let Some(head_layer) = derived_layer(head) else {
+            continue;
+        };
+        for condition in axiom.conditions() {
+            let read = condition.var();
+            let Some(read_layer) = derived_layer(read) else {
+                continue;
+            };
+            let default = task
+                .get_variable_default_axiom_value(read)
+                .unwrap_or_else(|e| panic!("{name}: variable {read} out of range: {e}"));
+            if condition.value() != default {
+                continue;
+            }
+            assert!(
+                read_layer < head_layer,
+                "{name}: the axiom on variable {head} at layer {head_layer} reads variable \
+                 {read} at its default value {default}, but {read} is derived at layer \
+                 {read_layer}; that negation by failure is answered before {read}'s layer has \
+                 settled"
             );
         }
     }
