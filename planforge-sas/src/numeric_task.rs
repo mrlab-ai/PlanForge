@@ -1482,27 +1482,37 @@ fn narrow_condition_variables(
     variables: &mut [ExplicitVariable],
     state: &mut [usize],
 ) {
+    /// The value a legacy file's `<none of those>` occupies, one past the domain.
+    const LEGACY_PLACEHOLDER: usize = ConditionValue::DOMAIN_SIZE;
+
     for var_id in conditions.condition_var_ids() {
         let variable = &mut variables[var_id];
         assert!(
             variable.domain_size == ConditionValue::DOMAIN_SIZE
-                || variable.domain_size == ConditionValue::DOMAIN_SIZE + 1,
+                || variable.domain_size == LEGACY_PLACEHOLDER + 1,
             "variable {var_id} ({}) carries a numeric condition but has domain size {}, \
-             which is neither {} nor the legacy {} that adds an unknown placeholder",
+             which is neither {} nor the legacy {} that adds the placeholder",
             variable.name,
             variable.domain_size,
             ConditionValue::DOMAIN_SIZE,
-            ConditionValue::DOMAIN_SIZE + 1
+            LEGACY_PLACEHOLDER + 1
         );
         variable.domain_size = ConditionValue::DOMAIN_SIZE;
         variable.fact_names.truncate(ConditionValue::DOMAIN_SIZE);
+
         // "Not derived yet" and "does not hold" are the same statement about a
-        // state, so the placeholder collapses onto `False`.
-        if variable.axiom_default_value >= ConditionValue::DOMAIN_SIZE {
-            variable.axiom_default_value = ConditionValue::False.as_usize();
-        }
-        if state[var_id] >= ConditionValue::DOMAIN_SIZE {
-            state[var_id] = ConditionValue::False.as_usize();
+        // state, so the placeholder collapses onto `False`. Nothing else can
+        // stand where it stood.
+        for value in [&mut variable.axiom_default_value, &mut state[var_id]] {
+            assert!(
+                *value <= LEGACY_PLACEHOLDER,
+                "condition variable {var_id} holds value {value}, which is outside \
+                 even the legacy domain of {} values",
+                LEGACY_PLACEHOLDER + 1
+            );
+            if *value == LEGACY_PLACEHOLDER {
+                *value = ConditionValue::False.as_usize();
+            }
         }
     }
 }
