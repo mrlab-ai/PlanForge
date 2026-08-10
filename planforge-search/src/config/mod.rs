@@ -1,5 +1,5 @@
-//! Typed-config option machinery shared between this crate (the typed
-//! configs themselves) and `planforge-searcher` (the search-spec parser).
+//! Typed-config option machinery: the AST a `--search` spec parses into, and
+//! the two traits that turn it into typed config structs.
 //!
 //! - [`ConfigArg`] / [`ConfigValue`] / [`ConfigCall`] are the AST nodes the
 //!   parser produces (one per `key=value` pair, with optional nested calls).
@@ -14,7 +14,10 @@
 
 use std::collections::HashSet;
 
+pub use parser::{parse_call, parse_heuristic_spec};
 pub use planforge_config_derive::ApplyOptions;
+
+mod parser;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigCall {
@@ -83,6 +86,112 @@ impl ConfigValue {
             ConfigValue::Atom(name) => Err(format!("expected call, got atom `{name}`")),
         }
     }
+
+    /// Whether this value is, or nests, a call to `name`.
+    pub fn contains_call(&self, name: &str) -> bool {
+        match self {
+            // A zero-argument call such as `blind()` is parsed as a bare atom,
+            // so an atom spelled `name` *is* a call to `name`.
+            ConfigValue::Atom(atom) => atom == name,
+            ConfigValue::Call(call) => {
+                call.name() == name
+                    || call
+                        .args()
+                        .iter()
+                        .any(|arg| arg.value().contains_call(name))
+            }
+        }
+    }
+}
+
+/// A parsed heuristic configuration. The heuristic is identified by `name`; its
+/// options are an ordered list of [`ConfigArg`]s (each optionally keyed),
+/// applied to a typed config struct at construction time.
+///
+/// Storing args as `Vec<ConfigArg>` (not a map) lets each config resolve
+/// positional args against its own option order -- so both
+/// `greedy_numeric_pdb(max_pdb_states=321)` and `greedy_numeric_pdb(321)` work,
+/// and they can be mixed: `greedy_numeric_pdb(321, numeric_first=false)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeuristicSpec {
+    pub name: String,
+    pub args: Vec<ConfigArg>,
+}
+
+impl HeuristicSpec {
+    pub fn new(name: impl Into<String>, args: Vec<ConfigArg>) -> Self {
+        Self {
+            name: name.into(),
+            args,
+        }
+    }
+
+    pub fn blind() -> Self {
+        Self::new("blind", Vec::new())
+    }
+
+    /// Read a nested heuristic out of an option value, as in
+    /// `check_admissible(<inner>)` or `astar_fs(fast=<inner>, ...)`.
+    ///
+    /// Named/positional/duplicate validation is deferred to the heuristic's own
+    /// config, which owns the canonical option order.
+    pub fn from_value(value: &ConfigValue) -> Self {
+        match value {
+            ConfigValue::Atom(name) => Self::new(name.clone(), Vec::new()),
+            ConfigValue::Call(call) => Self::new(call.name.clone(), call.args.clone()),
+        }
+    }
+
+    pub fn contains_call(&self, name: &str) -> bool {
+        self.name == name || self.args.iter().any(|arg| arg.value().contains_call(name))
+    }
+}
+
+impl std::fmt::Display for HeuristicSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.args.is_empty() {
+            return write!(f, "{}()", self.name);
+        }
+        write!(f, "{}(", self.name)?;
+        for (index, arg) in self.args.iter().enumerate() {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+            match arg.key() {
+                Some(key) => write!(f, "{key}={}", arg.value())?,
+                None => write!(f, "{}", arg.value())?,
+            }
+        }
+        write!(f, ")")
+    }
+}
+
+impl std::fmt::Display for ConfigValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigValue::Atom(atom) => f.write_str(atom),
+            ConfigValue::Call(call) => write!(f, "{call}"),
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.args.is_empty() {
+            return write!(f, "{}()", self.name);
+        }
+        write!(f, "{}(", self.name)?;
+        for (index, arg) in self.args.iter().enumerate() {
+            if index > 0 {
+                write!(f, ", ")?;
+            }
+            match arg.key() {
+                Some(key) => write!(f, "{key}={}", arg.value())?,
+                None => write!(f, "{}", arg.value())?,
+            }
+        }
+        write!(f, ")")
+    }
 }
 
 pub fn atom(value: &ConfigValue) -> Result<&str, String> {
@@ -128,38 +237,25 @@ pub fn for_each_option(
 // =============================================================================
 // Traits
 //
-// Sealed via a `pub(crate)` private module so downstream crates can't add
-// impls — they'd need to name `::planforge_search::config::sealed::Sealed`
-// and that path is `pub(crate)`. Inside this workspace the derive macro
-// emits the `Sealed` impl alongside the real impl; hand-written impls do
-// the same.
+// Deliberately not sealed. Sealing them meant a new option type could only be
+// added inside this crate, which is why heuristic construction used to live in
+// a crate of its own and adding a heuristic touched two crates. Anything that
+// can be spelled as a `--search` option value is welcome to implement these.
 // =============================================================================
-
-pub(crate) mod sealed {
-    pub trait Sealed {}
-}
 
 /// Implemented by typed configs that can be populated from a `&[ConfigArg]`.
 /// Normally derived via `#[derive(ApplyOptions)]`; written by hand only for
 /// configs whose CLI surface differs structurally from the struct layout
 /// (e.g. coupled writes, curated subsets).
-pub trait ApplyOptions: sealed::Sealed {
+pub trait ApplyOptions {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>;
 }
 
 /// Implemented by every type that can appear as the value of an option.
 /// The derive picks `from_option_value` for each field automatically.
-pub trait FromOptionValue: sealed::Sealed + Sized {
+pub trait FromOptionValue: Sized {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String>;
 }
-
-// Primitive `Sealed` impls — keep alongside the `FromOptionValue` impls below.
-impl sealed::Sealed for bool {}
-impl sealed::Sealed for usize {}
-impl sealed::Sealed for u64 {}
-impl sealed::Sealed for f64 {}
-impl sealed::Sealed for Option<u64> {}
-impl sealed::Sealed for String {}
 
 // =============================================================================
 // Primitive impls

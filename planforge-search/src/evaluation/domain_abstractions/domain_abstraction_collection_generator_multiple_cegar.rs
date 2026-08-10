@@ -56,8 +56,6 @@ impl fmt::Display for VariableSubset {
     }
 }
 
-impl crate::config::sealed::Sealed for VariableSubset {}
-
 impl crate::config::FromOptionValue for VariableSubset {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {
@@ -87,8 +85,6 @@ impl fmt::Display for InitSplitQuantity {
     }
 }
 
-impl crate::config::sealed::Sealed for InitSplitQuantity {}
-
 impl crate::config::FromOptionValue for InitSplitQuantity {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {
@@ -115,8 +111,6 @@ impl fmt::Display for NumericSplitStrategy {
         }
     }
 }
-
-impl crate::config::sealed::Sealed for NumericSplitStrategy {}
 
 impl crate::config::FromOptionValue for NumericSplitStrategy {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {

@@ -28,8 +28,6 @@ impl fmt::Display for CollectionStrategy {
     }
 }
 
-impl crate::config::sealed::Sealed for CollectionStrategy {}
-
 impl crate::config::FromOptionValue for CollectionStrategy {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {

@@ -4,12 +4,11 @@
 //! the translation pipeline, the resource limits and exit codes, and the plan
 //! writer, none of which have anything to do with searching.
 //!
-//! Options are applied by hand rather than through `#[derive(ApplyOptions)]`:
-//! that trait is sealed inside `planforge-search`, and `SgdConfig` lives in
-//! `planforge-sgd`, which must not depend on `planforge-search` — that
+//! Options are applied by hand rather than through `#[derive(ApplyOptions)]`.
+//! The derive emits paths into `planforge-search`, and `SgdConfig` lives in
+//! `planforge-sgd`, which must not depend on `planforge-search` — that missing
 //! dependency edge is what makes "this engine cannot search" a structural fact
-//! rather than a promise. `apply_da_options` in `recursive_config` is
-//! hand-written for the same reason.
+//! rather than a promise.
 
 use std::str::FromStr;
 

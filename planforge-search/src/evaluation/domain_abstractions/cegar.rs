@@ -116,6 +116,58 @@ impl Default for CegarConfig {
     }
 }
 
+/// `domain_abstraction(...)` and friends expose a curated subset of the fields:
+/// the rest are internal runtime flags the collection generators set
+/// themselves, so this is written by hand rather than derived.
+impl crate::config::ApplyOptions for CegarConfig {
+    fn apply_options(&mut self, args: &[crate::config::ConfigArg]) -> Result<(), String> {
+        use crate::config::{ConfigValue, FromOptionValue, for_each_option};
+
+        /// Type-inferring shortcut for `<T as FromOptionValue>::from_option_value`.
+        fn parse<T: FromOptionValue>(value: &ConfigValue) -> Result<T, String> {
+            T::from_option_value(value)
+        }
+
+        const ORDER: &[&str] = &[
+            "max_abstraction_size",
+            "max_iterations",
+            "max_time",
+            "use_wildcard_plans",
+            "combine_labels",
+            "random_seed",
+            "flaw_treatment",
+            "flaw_kind",
+            "init_split_method",
+        ];
+        for_each_option(args, ORDER, |key, value| {
+            match key {
+                "max_abstraction_size" => self.max_abstraction_size = parse(value)?,
+                "max_iterations" => self.max_iterations = parse(value)?,
+                "max_time" => {
+                    let seconds = f64::from_option_value(value)?;
+                    self.max_time = if seconds.is_infinite() {
+                        None
+                    } else {
+                        Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
+                            format!("invalid domain-abstraction max_time {seconds}: {error}")
+                        })?)
+                    };
+                }
+                "use_wildcard_plans" => self.use_wildcard_plans = parse(value)?,
+                "combine_labels" => self.combine_labels = parse(value)?,
+                "random_seed" => self.random_seed = parse(value)?,
+                "flaw_treatment" => self.flaw_treatment = parse(value)?,
+                "flaw_kind" => self.flaw_kind = parse(value)?,
+                "init_split_method" => self.init_split_method = parse(value)?,
+                other => {
+                    return Err(format!("unknown option `{other}` for `domain_abstraction`"));
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum InitialSeedSplit {
     Propositional {

@@ -20,9 +20,10 @@ use clap::Parser;
 use planforge_cli_utils::*;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::heuristic_factory::HeuristicBuildError;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchResult};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
-use planforge_searcher::{HeuristicBuildError, HeuristicSpec, SearchSpec};
+use planforge_searcher::{HeuristicSpec, SearchSpec};
 use std::ffi::OsString;
 use std::num::NonZero;
 use std::process::Command;
@@ -376,6 +377,6 @@ fn build_heuristic_from_spec<'a>(
     task_ref: &'a dyn AbstractNumericTask,
     sampling_task: TaskRef<'a>,
 ) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
-    planforge_searcher::build_heuristic_from_spec_with_task_ref(spec, task_ref, sampling_task)
+    planforge_search::heuristic_factory::build_heuristic_from_spec(spec, task_ref, sampling_task)
         .map_err(HeuristicBuildError::into_io_error)
 }

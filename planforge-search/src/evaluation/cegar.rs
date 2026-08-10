@@ -34,8 +34,6 @@ impl fmt::Display for FlawKind {
     }
 }
 
-impl crate::config::sealed::Sealed for FlawKind {}
-
 impl crate::config::FromOptionValue for FlawKind {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {

@@ -1,33 +1,33 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use planforge_search::config::{
+use crate::config::{
     ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue,
 };
-use planforge_search::evaluation::abstraction_collections::component::AbstractionComponent;
-use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::cartesian_abstractions::{
+use crate::evaluation::abstraction_collections::component::AbstractionComponent;
+use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
+use crate::evaluation::cartesian_abstractions::{
     CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
     CartesianAbstractionGenerator, CartesianFlawCandidateGeneration,
     CartesianRefinementDirection, CartesianSplitSelection,
 };
-use planforge_search::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
-use planforge_search::evaluation::cegar::FlawKind;
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use crate::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
+use crate::evaluation::cegar::FlawKind;
+use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
-use planforge_search::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
-use planforge_search::evaluation::pattern_databases::pattern_generator_systematic::{
+use crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use crate::evaluation::pattern_databases::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
-use planforge_search::evaluation::pattern_databases::pdb_collection::PdbCollection;
-use planforge_search::evaluation::pattern_databases::validate_restricted_task;
+use crate::evaluation::pattern_databases::pdb_collection::PdbCollection;
+use crate::evaluation::pattern_databases::validate_restricted_task;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
-use crate::HeuristicBuildError;
+use super::HeuristicBuildError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComponentUse {
@@ -704,15 +704,15 @@ fn format_config_value(value: &ConfigValue) -> String {
 mod tests {
     use std::time::Instant;
 
-    use planforge_search::config::{ConfigArg, ConfigCall, ConfigValue};
+    use crate::config::{ConfigArg, ConfigCall, ConfigValue};
 
-    use crate::HeuristicBuildError;
+    use super::HeuristicBuildError;
 
     use super::{
         ComponentUse, apply_cartesian_options, remaining_construction_time,
         require_only_component_sources, split_component_sources,
     };
-    use planforge_search::evaluation::cartesian_abstractions::{
+    use crate::evaluation::cartesian_abstractions::{
         CartesianAbstractPlanSelection, CartesianFlawCandidateGeneration, CartesianSplitSelection,
     };
 

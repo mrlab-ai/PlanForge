@@ -6,6 +6,7 @@ extern crate self as planforge_search;
 pub mod causal_graph;
 pub mod config;
 pub mod evaluation;
+pub mod heuristic_factory;
 pub mod resource_limits;
 pub mod search;
 pub mod successor_generator;

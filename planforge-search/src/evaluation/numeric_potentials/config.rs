@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ConfigValue, FromOptionValue, sealed};
+use crate::config::{ConfigValue, FromOptionValue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum OptimizeFor {
@@ -37,7 +37,6 @@ impl BoundsProvider {
 
 macro_rules! option_enum {
     ($type:ty, {$($text:literal => $value:expr),+ $(,)?}) => {
-        impl sealed::Sealed for $type {}
         impl FromOptionValue for $type {
             fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
                 match value.as_atom()? {

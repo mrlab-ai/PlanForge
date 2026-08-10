@@ -114,8 +114,6 @@ impl fmt::Display for SplitDirection {
     }
 }
 
-impl crate::config::sealed::Sealed for Option<SplitDirection> {}
-
 impl crate::config::FromOptionValue for Option<SplitDirection> {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {
