@@ -12,10 +12,10 @@
 //! where a failure mode is only detectable as unsolvability that is called out
 //! rather than relied on.
 //!
-//! [`FIXTURES`] additionally pins the *shape* each fixture translates to - how
-//! many axiom layers it occupies, how many of its derived variables default to
-//! true, whether its support graph is cyclic - because that is what says the
-//! corpus reaches those code paths at all, rather than merely passing.
+//! [`FIXTURE_SHAPES`] additionally pins the *shape* each fixture translates to:
+//! how many axiom layers it occupies, how many derived facts have several
+//! proofs, whether its support graph is cyclic. That is what says the corpus
+//! reaches those code paths at all, rather than merely passing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -43,9 +43,9 @@ struct Shape {
     /// than one means the task needs the layered evaluation order rather than a
     /// single fixpoint.
     layers: usize,
-    /// Derived variables whose axiom default is *true*, i.e. the ones the
-    /// translator only ever has to refute. These are the variables mainline's
-    /// issue453 removes by making every derived variable default to false.
+    /// Derived variables whose axiom default is *true*. Zero for every fixture,
+    /// and pinned so that it stays zero: every derived variable defaults to
+    /// false, and the layering is only sound because of it.
     true_defaults: usize,
     /// Derived facts - a variable *and* a value - that more than one axiom
     /// proves: disjunctive support, which no `axioms_by_atom` entry may collapse
@@ -140,7 +140,7 @@ fn derived_propositional_variables(task: &NumericRootTask) -> Vec<usize> {
         .collect()
 }
 
-/// Measures the shape [`FIXTURES`] pins.
+/// Measures the shape [`FIXTURE_SHAPES`] pins.
 fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
     let derived = derived_propositional_variables(task);
     let defaults: BTreeMap<usize, usize> = derived
