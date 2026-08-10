@@ -21,13 +21,24 @@ use crate::sas_tasks::{SAS_FILE_VERSION, SasFact, assignment_operator};
 /// Blanket-implemented for every [`Write`], so every call below is a direct one.
 trait SasSink: Write {
     /// `body` between `begin_{tag}` and `end_{tag}`.
+    ///
+    /// The two markers are written as bytes rather than formatted: a task with
+    /// fifty thousand operators opens a hundred thousand blocks, and going
+    /// through `core::fmt` to concatenate two known strings costs more than the
+    /// copy does.
     fn block(&mut self, tag: &str, body: impl FnOnce(&mut Self) -> io::Result<()>) -> io::Result<()>
     where
         Self: Sized,
     {
-        writeln!(self, "begin_{tag}")?;
+        self.marker(b"begin_", tag)?;
         body(self)?;
-        writeln!(self, "end_{tag}")
+        self.marker(b"end_", tag)
+    }
+
+    fn marker(&mut self, prefix: &[u8], tag: &str) -> io::Result<()> {
+        self.write_all(prefix)?;
+        self.write_all(tag.as_bytes())?;
+        self.write_all(b"\n")
     }
 
     /// How many `items` there are, then `record` for each of them.

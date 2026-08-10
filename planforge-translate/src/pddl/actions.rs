@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::conditions::{Atom, Condition, NegatedAtom};
+use super::conditions::{Atom, Condition};
 use super::effects::Effect;
 use super::f_expression::{
     FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
@@ -131,13 +131,17 @@ impl Action {
                 Condition::Atom(atom) => {
                     add_effects.push((eff_condition, atom.substituted(var_mapping)));
                 }
-                Condition::NegatedAtom(natom) => {
-                    let new_atom = Atom::new(
+                // A delete effect is recorded by the atom it removes, so the
+                // substitution goes straight into that atom: negating the
+                // literal first would copy the arguments a second time, once per
+                // delete effect of every reachable instance of every action.
+                Condition::NegatedAtom(natom) => del_effects.push((
+                    eff_condition,
+                    Atom::new(
                         natom.predicate.clone(),
                         crate::pddl::substitute(&natom.args, var_mapping),
-                    );
-                    del_effects.push((eff_condition, new_atom));
-                }
+                    ),
+                )),
                 _ => panic!("Unexpected effect type in action instantiation"),
             }
         }
@@ -272,13 +276,15 @@ impl Condition {
                 }
             }
             Condition::NegatedAtom(natom) => {
-                let new_args = crate::pddl::substitute(&natom.args, var_mapping);
-                let pos_atom = Atom::new(natom.predicate.clone(), new_args.clone());
+                // Both tests are on the atom this literal denies, and only the
+                // fluent case needs the literal itself, so the negated copy of
+                // the arguments is made there and not before.
+                let pos_atom = Atom::new(
+                    natom.predicate.clone(),
+                    crate::pddl::substitute(&natom.args, var_mapping),
+                );
                 if fluent_facts.contains(&pos_atom) {
-                    Some(vec![Condition::NegatedAtom(NegatedAtom::new(
-                        natom.predicate.clone(),
-                        new_args,
-                    ))])
+                    Some(vec![Condition::NegatedAtom(pos_atom.negate())])
                 } else if init_facts.contains(&pos_atom) {
                     None // statically true, and we need it negated
                 } else {

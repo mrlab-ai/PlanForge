@@ -113,6 +113,14 @@ pub fn cmp_atoms(left: &Atom, right: &Atom) -> std::cmp::Ordering {
         .then_with(|| crate::tools::cmp_quoted_slice(&left.args, &right.args))
 }
 
+/// A denied atom.
+///
+/// Field for field an [`Atom`], and deliberately still its own type rather than
+/// an `Atom` payload the way [`Comparison`] is: the two differ in how they print,
+/// and a negated atom's `Display` is what names the second value of a binary SAS
+/// variable in `output.sas` (`build_translation_key`). Sharing the payload would
+/// need a wrapper type to restore that name, which is more code than the shared
+/// fields save.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NegatedAtom {
     pub predicate: String,
@@ -136,6 +144,14 @@ impl NegatedAtom {
             predicate: self.predicate.clone(),
             args: self.args.clone(),
         }
+    }
+
+    /// The same literal with its arguments put through `substitution`.
+    pub fn substituted(&self, substitution: &impl super::Substitution) -> NegatedAtom {
+        NegatedAtom::new(
+            self.predicate.clone(),
+            super::substitute(&self.args, substitution),
+        )
     }
 }
 
@@ -377,10 +393,7 @@ impl Condition {
                 self.map_parts(|part| part.uniquify_variables(type_map, renamings))
             }
             Condition::Atom(atom) => Condition::Atom(atom.substituted(renamings)),
-            Condition::NegatedAtom(natom) => Condition::NegatedAtom(NegatedAtom::new(
-                natom.predicate.clone(),
-                super::substitute(&natom.args, renamings),
-            )),
+            Condition::NegatedAtom(natom) => Condition::NegatedAtom(natom.substituted(renamings)),
             Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => {
                 self.map_comparison_operands(|operand| operand.rename_variables(renamings))
             }
