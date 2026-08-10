@@ -18,8 +18,8 @@ use crate::evaluation::cegar::progress_concrete_state;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::SplitDirection;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::progression::{
-    NumericTransitionStates, get_progression_numeric_deviation_flaws,
-    get_progression_precondition_flaws,
+    ConcreteStateView, NumericTransitionStates, PartitionedTask,
+    get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -637,13 +637,17 @@ fn debug_print_concrete_trace(
             // consult `deltas`, so an empty map is fine here.
             let deltas: HashMap<usize, Vec<f64>> = HashMap::new();
             let applicable = get_progression_precondition_flaws(
-                task,
-                &deltas,
-                partitions,
+                PartitionedTask {
+                    task,
+                    partitions,
+                    deltas: &deltas,
+                },
                 op,
-                &state_packer,
-                &buffer,
-                &numeric_state,
+                ConcreteStateView {
+                    packer: &state_packer,
+                    prop: &buffer,
+                    numeric: &numeric_state,
+                },
                 step,
                 SplitDirection::Forward,
             )

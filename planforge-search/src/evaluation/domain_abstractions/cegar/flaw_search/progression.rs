@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use anyhow::{Result, ensure};
 use planforge_sas::{
@@ -23,6 +23,27 @@ use crate::evaluation::domain_abstractions::{
     domain_abstraction_factory::WildcardPlanResult,
     utils::{fact_is_hold, get_initial_state, make_prop_state_packer, partition_for_value},
 };
+
+/// The task a flaw is measured against: the task itself, the numeric partitions
+/// that abstract it, and the per-numeric-variable operator effect deltas cached
+/// from it. The deltas are only read in the `Backward` direction, but they are
+/// cached rather than recomputed per flaw because the `operators x
+/// assignment_effects` scan they need was 36% of total CPU on minecraft.
+#[derive(Clone, Copy)]
+pub struct PartitionedTask<'a> {
+    pub task: &'a dyn AbstractNumericTask,
+    pub partitions: &'a NumericPartitions,
+    pub deltas: &'a HashMap<usize, Vec<f64>>,
+}
+
+/// One concrete state as the flaw walk carries it: the packed propositional half
+/// with the packer that reads facts out of it, and the numeric values.
+#[derive(Clone, Copy)]
+pub struct ConcreteStateView<'a> {
+    pub packer: &'a IntDoublePacker,
+    pub prop: &'a [u64],
+    pub numeric: &'a [f64],
+}
 
 /// Walk the wildcard plan and emit flaws using the chosen split direction.
 ///
@@ -48,13 +69,15 @@ pub fn get_progression_flaws(
     // thread through the flaw helpers below.
     let deltas = numeric_effect_deltas(task);
 
+    let partitioned = PartitionedTask {
+        task,
+        partitions,
+        deltas: &deltas,
+    };
     let (mut prop_state, mut numeric_state) =
         get_initial_state(task, &state_packer, &axiom_evaluator)?;
-    let mut next_prop_state = None;
-    let mut next_numeric_state = None;
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
-    let mut flawed = false;
     let mut step: usize = 1;
 
     for equivalent_ops in wildcard_plan.wildcard_plan.iter() {
@@ -68,40 +91,37 @@ pub fn get_progression_flaws(
             let Some(op) = task.get_operators().get(op_id) else {
                 continue;
             };
-            let operator_flaws = get_progression_precondition_flaws(
-                task,
-                &deltas,
-                partitions,
-                op,
-                &state_packer,
-                &prop_state,
-                &numeric_state,
-                step,
-                direction,
-            );
-            if operator_flaws.is_empty() {
-                (next_prop_state, next_numeric_state, flawed) = progress_and_get_deviation_flaws(
-                    &prop_state,
-                    &numeric_state,
+            let state = ConcreteStateView {
+                packer: &state_packer,
+                prop: &prop_state,
+                numeric: &numeric_state,
+            };
+            let operator_flaws =
+                get_progression_precondition_flaws(partitioned, op, state, step, direction);
+            if !operator_flaws.is_empty() {
+                collected_flaws.extend(operator_flaws);
+                continue;
+            }
+            let (next_prop_state, next_numeric_state, deviation_flaws) =
+                progress_and_get_deviation_flaws(
+                    partitioned,
+                    state,
                     expected_abs_numeric_state,
-                    &state_packer,
                     &axiom_evaluator,
                     op,
-                    partitions,
-                    &deltas,
-                    &mut collected_flaws,
                     step,
                     direction,
                 )?;
-                if !flawed {
-                    collected_flaws.clear();
-                    prop_state = next_prop_state.take().unwrap();
-                    numeric_state = next_numeric_state.take().unwrap();
-                    break;
-                }
-            } else {
-                collected_flaws.extend(operator_flaws);
+            if deviation_flaws.is_empty() {
+                // This operator of the wildcard step is executable and lands
+                // where the abstract plan said, so the flaws the alternatives
+                // produced are not flaws of the plan.
+                collected_flaws.clear();
+                prop_state = next_prop_state;
+                numeric_state = next_numeric_state;
+                break;
             }
+            collected_flaws.extend(deviation_flaws);
         }
 
         if !collected_flaws.is_empty() {
@@ -115,21 +135,18 @@ pub fn get_progression_flaws(
         return Ok(collected_flaws);
     }
 
-    let goal_flaws = get_goal_flaws(
-        task,
-        &deltas,
-        partitions,
-        &state_packer,
-        &prop_state,
-        &numeric_state,
+    Ok(get_goal_flaws(
+        partitioned,
+        ConcreteStateView {
+            packer: &state_packer,
+            prop: &prop_state,
+            numeric: &numeric_state,
+        },
         step,
         direction,
-    );
-
-    Ok(goal_flaws)
+    ))
 }
 
-#[allow(unused_assignments)]
 pub fn get_execute_entire_plan_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
@@ -139,11 +156,14 @@ pub fn get_execute_entire_plan_flaws(
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
     let deltas = numeric_effect_deltas(task);
+    let partitioned = PartitionedTask {
+        task,
+        partitions,
+        deltas: &deltas,
+    };
 
     let (mut prop_state, mut numeric_state) =
         get_initial_state(task, &state_packer, &axiom_evaluator)?;
-    let mut next_prop_state = None;
-    let mut next_numeric_state = None;
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
     let mut step: usize = 1;
@@ -155,6 +175,11 @@ pub fn get_execute_entire_plan_flaws(
             "WildcardPlanResult abstract_numeric_states too short for step {step}"
         );
 
+        let state = ConcreteStateView {
+            packer: &state_packer,
+            prop: &prop_state,
+            numeric: &numeric_state,
+        };
         let mut step_flaws = Vec::new();
         let mut chosen_op: Option<&Operator> = None;
         let mut fallback_op: Option<&Operator> = None;
@@ -166,17 +191,8 @@ pub fn get_execute_entire_plan_flaws(
                 fallback_op = Some(op);
             }
 
-            let operator_flaws = get_progression_precondition_flaws(
-                task,
-                &deltas,
-                partitions,
-                op,
-                &state_packer,
-                &prop_state,
-                &numeric_state,
-                step,
-                direction,
-            );
+            let operator_flaws =
+                get_progression_precondition_flaws(partitioned, op, state, step, direction);
             if operator_flaws.is_empty() {
                 chosen_op = Some(op);
                 step_flaws.clear();
@@ -188,33 +204,31 @@ pub fn get_execute_entire_plan_flaws(
         collected_flaws.extend(step_flaws);
 
         if let Some(op) = chosen_op.or(fallback_op) {
-            (next_prop_state, next_numeric_state, _) = progress_and_get_deviation_flaws(
-                &prop_state,
-                &numeric_state,
-                expected_abs_numeric_state,
-                &state_packer,
-                &axiom_evaluator,
-                op,
-                partitions,
-                &deltas,
-                &mut collected_flaws,
-                step,
-                direction,
-            )?;
-            prop_state = next_prop_state.take().unwrap();
-            numeric_state = next_numeric_state.take().unwrap();
+            let (next_prop_state, next_numeric_state, deviation_flaws) =
+                progress_and_get_deviation_flaws(
+                    partitioned,
+                    state,
+                    expected_abs_numeric_state,
+                    &axiom_evaluator,
+                    op,
+                    step,
+                    direction,
+                )?;
+            collected_flaws.extend(deviation_flaws);
+            prop_state = next_prop_state;
+            numeric_state = next_numeric_state;
         }
 
         step += 1;
     }
 
     collected_flaws.extend(get_goal_flaws(
-        task,
-        &deltas,
-        partitions,
-        &state_packer,
-        &prop_state,
-        &numeric_state,
+        partitioned,
+        ConcreteStateView {
+            packer: &state_packer,
+            prop: &prop_state,
+            numeric: &numeric_state,
+        },
         step,
         direction,
     ));
@@ -222,50 +236,45 @@ pub fn get_execute_entire_plan_flaws(
     Ok(collected_flaws)
 }
 
-type OptionalPropAndNumStateAndFlawed = (Option<Vec<u64>>, Option<Vec<f64>>, bool);
-#[allow(clippy::too_many_arguments)]
+/// The successor of one plan step -- packed propositional half, numeric values
+/// -- and the deviation flaws that step exposed.
+type ProgressedStateAndFlaws = (Vec<u64>, Vec<f64>, Vec<Flaw>);
+/// Apply `op` to `state` and report the successor together with the numeric
+/// deviation flaws it exposes. An empty flaw list means the concrete successor
+/// lands in the partitions the abstract plan expected.
 pub(crate) fn progress_and_get_deviation_flaws(
-    prop_state: &[u64],
-    numeric_state: &[f64],
+    partitioned: PartitionedTask<'_>,
+    state: ConcreteStateView<'_>,
     expected_abs_numeric_state: &[usize],
-    state_packer: &IntDoublePacker,
     axiom_evaluator: &AxiomEvaluator<'_>,
     op: &Operator,
-    partitions: &NumericPartitions,
-    _deltas: &std::collections::HashMap<usize, Vec<f64>>,
-    collected_flaws: &mut Vec<Flaw>,
     step: usize,
     direction: SplitDirection,
-) -> Result<OptionalPropAndNumStateAndFlawed> {
-    let mut next_prop_state = prop_state.to_vec();
-    let mut next_numeric_state = numeric_state.to_vec();
-    let mut flawed = false;
+) -> Result<ProgressedStateAndFlaws> {
+    let mut next_prop_state = state.prop.to_vec();
+    let mut next_numeric_state = state.numeric.to_vec();
     crate::evaluation::cegar::progress_concrete_state(
         op,
         axiom_evaluator,
-        state_packer,
+        state.packer,
         &mut next_prop_state,
         &mut next_numeric_state,
     )?;
 
     let deviation_flaws = get_progression_numeric_deviation_flaws(
-        axiom_evaluator.numeric_task.as_ref(),
+        partitioned.task,
         op,
         NumericTransitionStates {
-            current: numeric_state,
+            current: state.numeric,
             successor: &next_numeric_state,
             abstract_successor: expected_abs_numeric_state,
         },
-        partitions,
+        partitioned.partitions,
         step,
         direction,
     );
-    if !deviation_flaws.is_empty() {
-        collected_flaws.extend(deviation_flaws);
-        flawed = true;
-    }
 
-    Ok((Some(next_prop_state), Some(next_numeric_state), flawed))
+    Ok((next_prop_state, next_numeric_state, deviation_flaws))
 }
 
 /// The concrete and abstract numeric states either side of one plan step.
@@ -411,27 +420,20 @@ pub fn get_progression_numeric_deviation_flaws(
     flaws
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn get_progression_precondition_flaws(
-    task: &dyn AbstractNumericTask,
-    deltas: &std::collections::HashMap<usize, Vec<f64>>,
-    partitions: &NumericPartitions,
+    partitioned: PartitionedTask<'_>,
     op: &Operator,
-    packer: &IntDoublePacker,
-    buffer: &[u64],
-    numeric_state: &[f64],
+    state: ConcreteStateView<'_>,
     step: usize,
     direction: SplitDirection,
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
-        if !fact_is_hold(pre, packer, buffer) {
+        if !fact_is_hold(pre, state.packer, state.prop) {
             out.push(build_prop_flaw_for_fact(
-                task,
-                deltas,
-                partitions,
+                partitioned,
                 pre,
-                numeric_state,
+                state.numeric,
                 step,
                 direction,
             ));
@@ -440,17 +442,13 @@ pub fn get_progression_precondition_flaws(
     out
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn get_goal_flaws(
-    task: &dyn AbstractNumericTask,
-    deltas: &std::collections::HashMap<usize, Vec<f64>>,
-    partitions: &NumericPartitions,
-    packer: &IntDoublePacker,
-    buffer: &[u64],
-    numeric_state: &[f64],
+    partitioned: PartitionedTask<'_>,
+    state: ConcreteStateView<'_>,
     step: usize,
     direction: SplitDirection,
 ) -> Vec<Flaw> {
+    let task = partitioned.task;
     let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
     let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
@@ -463,13 +461,11 @@ pub fn get_goal_flaws(
             derived_goal_vars.insert(goal_var);
             continue;
         }
-        if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(*goal_fact) {
+        if !fact_is_hold(goal_fact, state.packer, state.prop) && seen.insert(*goal_fact) {
             out.push(build_prop_flaw_for_fact(
-                task,
-                deltas,
-                partitions,
+                partitioned,
                 goal_fact,
-                numeric_state,
+                state.numeric,
                 step,
                 direction,
             ));
@@ -485,13 +481,11 @@ pub fn get_goal_flaws(
             continue;
         }
         for pre in ax.conditions().iter() {
-            if !fact_is_hold(pre, packer, buffer) && seen.insert(*pre) {
+            if !fact_is_hold(pre, state.packer, state.prop) && seen.insert(*pre) {
                 out.push(build_prop_flaw_for_fact(
-                    task,
-                    deltas,
-                    partitions,
+                    partitioned,
                     pre,
-                    numeric_state,
+                    state.numeric,
                     step,
                     direction,
                 ));
@@ -506,14 +500,17 @@ pub fn get_goal_flaws(
 /// dependent flaws are computed forward (concrete-value split per variable)
 /// or backward (boundary-aligned shell splits) according to `direction`.
 fn build_prop_flaw_for_fact(
-    task: &dyn AbstractNumericTask,
-    deltas: &std::collections::HashMap<usize, Vec<f64>>,
-    partitions: &NumericPartitions,
+    partitioned: PartitionedTask<'_>,
     fact: &ExplicitFact,
     numeric_state: &[f64],
     step: usize,
     direction: SplitDirection,
 ) -> Flaw {
+    let PartitionedTask {
+        task,
+        partitions,
+        deltas,
+    } = partitioned;
     let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(fact.var()) {
         match direction {
             SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {

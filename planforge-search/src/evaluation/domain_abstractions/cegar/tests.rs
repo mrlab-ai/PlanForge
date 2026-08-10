@@ -364,13 +364,15 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
         &config,
         &task,
         &flaws,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        RefinementState {
+            domain_mapping: &mut domain_mapping,
+            domain_sizes: &mut domain_sizes,
+            partitions: &mut partitions,
+            numeric_domain_sizes: &mut numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+        },
         &mut rng,
-        &mut blacklisted_prop_var_ids,
-        &mut blacklisted_numeric_var_ids,
         0,
     )
     .unwrap();
@@ -426,13 +428,15 @@ fn blacklisted_propositional_vars_are_not_refined() {
         &cegar.config,
         &task,
         &flaws,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        RefinementState {
+            domain_mapping: &mut domain_mapping,
+            domain_sizes: &mut domain_sizes,
+            partitions: &mut partitions,
+            numeric_domain_sizes: &mut numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+        },
         &mut rng,
-        &mut blacklisted_prop_var_ids,
-        &mut blacklisted_numeric_var_ids,
         0,
     )
     .unwrap();
@@ -578,12 +582,14 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         &task,
         &config,
         &mut rng,
-        &HashSet::new(),
-        &HashSet::new(),
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        RefinementState {
+            domain_mapping: &mut domain_mapping,
+            domain_sizes: &mut domain_sizes,
+            partitions: &mut partitions,
+            numeric_domain_sizes: &mut numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut HashSet::new(),
+            blacklisted_numeric_var_ids: &mut HashSet::new(),
+        },
     )
     .unwrap();
 
@@ -742,13 +748,15 @@ fn max_refined_single_atom_is_sticky() {
             &config,
             &task,
             &flaws,
-            &mut domain_mapping,
-            &mut domain_sizes,
-            &mut partitions,
-            &mut numeric_domain_sizes,
+            RefinementState {
+                domain_mapping: &mut domain_mapping,
+                domain_sizes: &mut domain_sizes,
+                partitions: &mut partitions,
+                numeric_domain_sizes: &mut numeric_domain_sizes,
+                blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+            },
             &mut rng,
-            &mut blacklisted_prop_var_ids,
-            &mut blacklisted_numeric_var_ids,
             1,
         )
         .unwrap();
@@ -784,13 +792,15 @@ fn stale_numeric_flaw_at_existing_boundary_contributes_empty_summary() {
         &config,
         &task,
         &flaws,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        RefinementState {
+            domain_mapping: &mut domain_mapping,
+            domain_sizes: &mut domain_sizes,
+            partitions: &mut partitions,
+            numeric_domain_sizes: &mut numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+        },
         &mut rng,
-        &mut blacklisted_prop_var_ids,
-        &mut blacklisted_numeric_var_ids,
         1,
     )
     .unwrap();

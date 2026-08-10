@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::evaluation::domain_abstractions::cegar::{
-    CegarConfig, apply_initial_goal_splits, compute_initial_split_mapping
+    CegarConfig, RefinementState, apply_initial_goal_splits, compute_initial_split_mapping,
 };
 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::InitSplitMethod;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
@@ -135,12 +135,14 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         &task,
         &config,
         &mut rng,
-        &HashSet::new(),
-        &HashSet::new(),
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-        &mut numeric_domain_sizes,
+        RefinementState {
+            domain_mapping: &mut domain_mapping,
+            domain_sizes: &mut domain_sizes,
+            partitions: &mut partitions,
+            numeric_domain_sizes: &mut numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut HashSet::new(),
+            blacklisted_numeric_var_ids: &mut HashSet::new(),
+        },
     )
     .unwrap();
 

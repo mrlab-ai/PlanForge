@@ -250,7 +250,6 @@ fn get_sequence_regression_flaws(
 }
 
 type CurrentNextAndFlawed<'a> = (FlawSearchState<'a>, Option<FlawSearchState<'a>>, bool);
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn progress_and_get_sequence_deviation_flaws<'a>(
     state: FlawSearchState<'a>,
     expected_abs_numeric_state: &[usize],

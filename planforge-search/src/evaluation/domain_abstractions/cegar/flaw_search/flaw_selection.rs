@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::{collections::HashSet, fmt};
+use std::fmt;
 
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::AbstractNumericTask;
@@ -9,9 +9,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
 use super::{Flaw, NumericFlaw};
-use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
-use crate::evaluation::domain_abstractions::cegar::{CegarConfig, ChosenFlaws, FlawCandidate};
-use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
+use crate::evaluation::domain_abstractions::cegar::{ChosenFlaws, FlawCandidate};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -60,20 +58,16 @@ impl crate::config::FromOptionValue for InitSplitMethod {
 
 /// Trait that all flaw treatment variants must implement.
 pub trait FlawTreatment {
-    /// Return the ordered chosen flaws.
-    #[allow(clippy::too_many_arguments)]
+    /// Return the ordered chosen flaws. The two domain-size vectors are what
+    /// the scoring criteria read: how far each variable has already been
+    /// refined, and therefore what a further split would cost.
     fn choose_flaws(
         &self,
         task: &dyn AbstractNumericTask,
         flaws: &[Flaw],
-        config: &CegarConfig,
+        domain_sizes: &[usize],
+        numeric_domain_sizes: &[usize],
         rng: &mut SmallRng,
-        blacklisted_prop_var_ids: &mut HashSet<usize>,
-        blacklisted_numeric_var_ids: &mut HashSet<usize>,
-        domain_mapping: &mut DomainMapping,
-        domain_sizes: &mut [usize],
-        partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut [usize],
         plan_length: usize,
     ) -> ChosenFlaws;
 
@@ -168,19 +162,13 @@ impl crate::config::FromOptionValue for FlawTreatmentVariants {
 }
 
 impl FlawTreatment for FlawTreatmentVariants {
-    #[allow(clippy::too_many_arguments)]
     fn choose_flaws(
         &self,
         task: &dyn AbstractNumericTask,
         flaws: &[Flaw],
-        _config: &CegarConfig,
+        domain_sizes: &[usize],
+        numeric_domain_sizes: &[usize],
         rng: &mut SmallRng,
-        _blacklisted_prop_var_ids: &mut HashSet<usize>,
-        _blacklisted_numeric_var_ids: &mut HashSet<usize>,
-        _domain_mapping: &mut DomainMapping,
-        domain_sizes: &mut [usize],
-        _partitions: &mut NumericPartitions,
-        numeric_domain_sizes: &mut [usize],
         plan_length: usize,
     ) -> ChosenFlaws {
         let conditions = task.numeric_conditions();
@@ -317,8 +305,8 @@ pub(super) fn fix_flaws_per_variable(flaws: &[Flaw]) -> ChosenFlaws {
 fn compute_max_refined(
     flaws: &[Flaw],
     conditions: &NumericConditions,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     prop_multiplier: usize,
 ) -> (ChosenFlaws, usize) {
     let mut max_score = 0;
@@ -369,8 +357,8 @@ fn compute_max_refined(
 pub(super) fn fix_single_flaw_max_refined(
     flaws: &[Flaw],
     conditions: &NumericConditions,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     prop_multiplier: usize,
     rng: &mut SmallRng,
 ) -> ChosenFlaws {
@@ -434,8 +422,8 @@ fn best_min_growth_dependent_flaws(
 pub(super) fn fix_single_flaw_min_growth(
     flaws: &[Flaw],
     conditions: &NumericConditions,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     rng: &mut SmallRng,
 ) -> ChosenFlaws {
     let mut candidates: Vec<(FlawCandidate, (usize, usize))> = Vec::with_capacity(flaws.len());
@@ -513,8 +501,8 @@ pub(super) fn fix_closest_to_goal(flaws: &[Flaw]) -> ChosenFlaws {
 pub(super) fn fix_balance_max_refined_closest_to_goal(
     flaws: &[Flaw],
     conditions: &NumericConditions,
-    domain_sizes: &mut [usize],
-    numeric_domain_sizes: &mut [usize],
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
     plan_length: usize,
     prop_multiplier: usize,
 ) -> ChosenFlaws {
@@ -542,6 +530,8 @@ pub(super) fn fix_balance_max_refined_closest_to_goal(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
     use planforge_sas::numeric_task::{ExplicitFact, NumericType, NumericVariable};
     use rand::SeedableRng;
@@ -595,15 +585,15 @@ mod tests {
             prop_flaw(0, vec![numeric_flaw(0)]),
         ];
         let conditions = condition_on_prop_var(0);
-        let mut domain_sizes = vec![1, 2];
-        let mut numeric_domain_sizes = vec![1];
+        let domain_sizes = vec![1, 2];
+        let numeric_domain_sizes = vec![1];
         let mut rng = SmallRng::seed_from_u64(1);
 
         let chosen = fix_single_flaw_max_refined(
             &flaws,
             &conditions,
-            &mut domain_sizes,
-            &mut numeric_domain_sizes,
+            &domain_sizes,
+            &numeric_domain_sizes,
             1,
             &mut rng,
         );
@@ -615,16 +605,11 @@ mod tests {
     fn max_refined_continues_most_refined_dependent_numeric_view() {
         let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
         let conditions = condition_on_prop_var(0);
-        let mut domain_sizes = vec![2];
-        let mut numeric_domain_sizes = vec![7, 2];
+        let domain_sizes = vec![2];
+        let numeric_domain_sizes = vec![7, 2];
 
-        let (chosen, _) = compute_max_refined(
-            &flaws,
-            &conditions,
-            &mut domain_sizes,
-            &mut numeric_domain_sizes,
-            1,
-        );
+        let (chosen, _) =
+            compute_max_refined(&flaws, &conditions, &domain_sizes, &numeric_domain_sizes, 1);
 
         let restricted = chosen[0]
             .restricted_dep
@@ -637,15 +622,15 @@ mod tests {
     fn min_growth_continues_most_refined_dependent_numeric_view() {
         let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
         let conditions = condition_on_prop_var(0);
-        let mut domain_sizes = vec![2];
-        let mut numeric_domain_sizes = vec![7, 2];
+        let domain_sizes = vec![2];
+        let numeric_domain_sizes = vec![7, 2];
         let mut rng = SmallRng::seed_from_u64(1);
 
         let chosen = fix_single_flaw_min_growth(
             &flaws,
             &conditions,
-            &mut domain_sizes,
-            &mut numeric_domain_sizes,
+            &domain_sizes,
+            &numeric_domain_sizes,
             &mut rng,
         );
 
@@ -667,14 +652,14 @@ mod tests {
         let mut first_choices = HashSet::new();
 
         for seed in 0..32 {
-            let mut domain_sizes = Vec::new();
-            let mut numeric_domain_sizes = vec![1, 1, 1];
+            let domain_sizes = Vec::new();
+            let numeric_domain_sizes = vec![1, 1, 1];
             let mut rng = SmallRng::seed_from_u64(seed);
             let chosen = fix_single_flaw_min_growth(
                 &flaws,
                 &conditions,
-                &mut domain_sizes,
-                &mut numeric_domain_sizes,
+                &domain_sizes,
+                &numeric_domain_sizes,
                 &mut rng,
             );
             first_choices.insert(chosen[0].idx);

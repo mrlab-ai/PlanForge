@@ -824,7 +824,6 @@ struct CartesianSemantics<'task> {
     target_split_boundaries: Vec<f64>,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mark_fact_split_dependencies(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,

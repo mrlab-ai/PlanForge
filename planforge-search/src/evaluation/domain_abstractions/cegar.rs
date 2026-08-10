@@ -218,6 +218,37 @@ pub struct CegarOutcome {
     pub solved_by_self: bool,
 }
 
+/// What a refinement writes to: the abstraction's propositional domain mapping
+/// with its per-variable domain sizes, its numeric partitions with theirs, and
+/// the variables refinement has given up on.
+///
+/// Every landed split adds one value to one of the two halves and bumps the
+/// matching size, which is how the CEGAR loop detects progress. The initial-split
+/// functions only read the two blacklists; `fix_flaws` lets flaw selection extend
+/// them.
+pub struct RefinementState<'a> {
+    pub domain_mapping: &'a mut DomainMapping,
+    pub domain_sizes: &'a mut [usize],
+    pub partitions: &'a mut NumericPartitions,
+    pub numeric_domain_sizes: &'a mut [usize],
+    pub blacklisted_prop_var_ids: &'a mut HashSet<usize>,
+    pub blacklisted_numeric_var_ids: &'a mut HashSet<usize>,
+}
+
+impl RefinementState<'_> {
+    /// Shorten the borrows so an inner call can rewrite the same abstraction.
+    fn reborrow(&mut self) -> RefinementState<'_> {
+        RefinementState {
+            domain_mapping: &mut *self.domain_mapping,
+            domain_sizes: &mut *self.domain_sizes,
+            partitions: &mut *self.partitions,
+            numeric_domain_sizes: &mut *self.numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut *self.blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids: &mut *self.blacklisted_numeric_var_ids,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RefinementSummary {
     pub refined_propositional_vars: HashSet<usize>,
@@ -295,23 +326,27 @@ impl Cegar {
                 task,
                 config,
                 &mut rng,
-                &blacklisted_prop_var_ids,
-                &blacklisted_numeric_var_ids,
-                &mut domain_mapping,
-                &mut domain_sizes,
-                &mut partitions,
-                &mut numeric_domain_sizes,
+                RefinementState {
+                    domain_mapping: &mut domain_mapping,
+                    domain_sizes: &mut domain_sizes,
+                    partitions: &mut partitions,
+                    numeric_domain_sizes: &mut numeric_domain_sizes,
+                    blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+                    blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+                },
             )?;
         } else {
             apply_initial_seed_splits(
                 task,
                 config,
-                &blacklisted_prop_var_ids,
-                &blacklisted_numeric_var_ids,
-                &mut domain_mapping,
-                &mut domain_sizes,
-                &mut partitions,
-                &mut numeric_domain_sizes,
+                RefinementState {
+                    domain_mapping: &mut domain_mapping,
+                    domain_sizes: &mut domain_sizes,
+                    partitions: &mut partitions,
+                    numeric_domain_sizes: &mut numeric_domain_sizes,
+                    blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+                    blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+                },
             )?;
         }
 
@@ -451,13 +486,15 @@ impl Cegar {
                 &self.config,
                 task,
                 &eligible_flaws.flaws,
-                &mut factory.domain_mapping,
-                &mut factory.domain_sizes,
-                &mut factory.partitions,
-                &mut factory.numeric_domain_sizes,
+                RefinementState {
+                    domain_mapping: &mut factory.domain_mapping,
+                    domain_sizes: &mut factory.domain_sizes,
+                    partitions: &mut factory.partitions,
+                    numeric_domain_sizes: &mut factory.numeric_domain_sizes,
+                    blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+                    blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+                },
                 &mut rng,
-                &mut blacklisted_prop_var_ids,
-                &mut blacklisted_numeric_var_ids,
                 plan.wildcard_plan.len(),
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
@@ -883,21 +920,15 @@ fn can_refine_numeric_variable_with_blacklist(
 /// Port of numeric-FD's refinement step (`fix_flaws`).
 ///
 /// Return the refined variable IDs.
-#[allow(clippy::too_many_arguments)]
 pub fn fix_flaws(
     config: &CegarConfig,
     task: &dyn AbstractNumericTask,
     flaws: &[Flaw],
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
+    mut state: RefinementState<'_>,
     rng: &mut SmallRng,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
     plan_length: usize,
 ) -> Result<RefinementSummary> {
-    let eligible_flaws = filter_eligible_flaws(task, partitions, domain_sizes, flaws);
+    let eligible_flaws = filter_eligible_flaws(task, state.partitions, state.domain_sizes, flaws);
     if eligible_flaws.filtered_stale > 0 {
         debug!(
             "filtered {} stale flaws (already-split values / fully refined vars)",
@@ -912,14 +943,9 @@ pub fn fix_flaws(
     let chosen_flaws: ChosenFlaws = config.flaw_treatment.choose_flaws(
         task,
         &flaws,
-        config,
+        state.domain_sizes,
+        state.numeric_domain_sizes,
         rng,
-        blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
         plan_length,
     );
 
@@ -947,12 +973,7 @@ pub fn fix_flaws(
                 task,
                 &chosen,
                 config,
-                blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids,
-                domain_mapping,
-                domain_sizes,
-                partitions,
-                numeric_domain_sizes,
+                state.reborrow(),
                 dependent_numeric_refinement,
             )?;
 
@@ -969,19 +990,21 @@ pub fn fix_flaws(
     Ok(refined_summary)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn try_refine_from_flaw(
     task: &dyn AbstractNumericTask,
     flaw: &Flaw,
     config: &CegarConfig,
-    blacklisted_prop_var_ids: &mut HashSet<usize>,
-    blacklisted_numeric_var_ids: &mut HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
+    state: RefinementState<'_>,
     dependent_numeric_refinement: DependentNumericRefinement,
 ) -> Result<Option<RefinementSummary>> {
+    let RefinementState {
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+        blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids,
+    } = state;
     match flaw {
         Flaw::Numeric(nf) => {
             let var_id = nf.numeric_var_id;
@@ -1283,18 +1306,20 @@ fn compute_initial_split_mapping(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
     rng: &mut SmallRng,
-    blacklisted_prop_var_ids: &HashSet<usize>,
-    blacklisted_numeric_var_ids: &HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
+    state: RefinementState<'_>,
 ) -> Result<()> {
+    let RefinementState {
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+        blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids,
+    } = state;
     let goal_values: HashMap<usize, usize> = goal_variable_values(task)
         .into_iter()
         .map(|v| (v.var(), v.value()))
@@ -1459,17 +1484,19 @@ fn apply_initial_goal_splits(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn apply_initial_seed_splits(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
-    blacklisted_prop_var_ids: &HashSet<usize>,
-    blacklisted_numeric_var_ids: &HashSet<usize>,
-    domain_mapping: &mut DomainMapping,
-    domain_sizes: &mut [usize],
-    partitions: &mut NumericPartitions,
-    numeric_domain_sizes: &mut [usize],
+    state: RefinementState<'_>,
 ) -> Result<()> {
+    let RefinementState {
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+        blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids,
+    } = state;
     for seed in &config.initial_seed_splits {
         match *seed {
             InitialSeedSplit::Numeric {
