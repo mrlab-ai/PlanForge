@@ -515,7 +515,7 @@ fn filter_eligible_flaws(
                 }
             }
             Flaw::Propositional(prop) => {
-                if !propositional_flaw_is_refinable(task, domain_sizes, prop) {
+                if !propositional_flaw_is_refinable(task, partitions, domain_sizes, prop) {
                     filtered_stale += 1 + prop.dependent_numeric_flaws.len();
                     continue;
                 }
@@ -544,8 +544,17 @@ fn numeric_flaw_is_refinable(partitions: &NumericPartitions, flaw: &NumericFlaw)
     )
 }
 
+/// Is there a refinement left that this propositional flaw asks for?
+///
+/// For an ordinary variable that is one question: are there values still sharing
+/// an abstract class? A condition variable is different. Splitting it is a
+/// one-shot — [`ConditionValue`]'s two values, told apart — but the flaw it
+/// raises is rarely about the split. It is about the numeric variables the
+/// comparison reads, and those come along in `dependent_numeric_flaws`, so the
+/// flaw stays refinable for as long as one of them is.
 fn propositional_flaw_is_refinable(
     task: &dyn AbstractNumericTask,
+    partitions: &NumericPartitions,
     domain_sizes: &[usize],
     flaw: &PropFlaw,
 ) -> bool {
@@ -563,7 +572,14 @@ fn propositional_flaw_is_refinable(
         true_size,
         var_id
     );
-    current_size < true_size
+    if current_size < true_size {
+        return true;
+    }
+    task.numeric_conditions().is_condition_var(var_id)
+        && flaw
+            .dependent_numeric_flaws
+            .iter()
+            .any(|numeric| numeric_flaw_is_refinable(partitions, numeric))
 }
 
 fn log_final_target_centered_abstraction(

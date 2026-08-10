@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
@@ -292,19 +293,19 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
         .iter()
         .map(|axiom| {
             let head = axiom.get_affected_var_id();
-            // A compiled numeric condition is three-valued (true / false /
-            // unknown) and defaults to `unknown`, so a condition the evaluator
-            // has not reached yet can never look satisfied. Interval-based
-            // abstractions rely on exactly that.
+            // A compiled numeric condition is two-valued and defaults to
+            // `False`, so a condition the evaluator has not reached yet can
+            // never look satisfied. Interval-based abstractions rely on exactly
+            // that, and on there being no third value to mean anything else.
             assert_eq!(
                 task.get_variable_domain_size(head),
-                Ok(3),
-                "{name}: comparison-axiom head {head} is not a three-valued condition variable"
+                Ok(ConditionValue::DOMAIN_SIZE),
+                "{name}: comparison-axiom head {head} is not a two-valued condition variable"
             );
             assert_eq!(
                 task.get_variable_default_axiom_value(head),
-                Ok(2),
-                "{name}: comparison-axiom head {head} must default to `unknown`"
+                Ok(ConditionValue::False.as_usize()),
+                "{name}: comparison-axiom head {head} must default to `False`"
             );
             for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
                 assert!(
