@@ -16,6 +16,7 @@ use crate::sas_format::{
 use nom::Parser;
 use nom::bytes::complete::take_while1;
 use nom::combinator::map_opt;
+use nom::multi::{count, length_count, many0};
 use nom::number::complete::double;
 use nom::{
     IResult,
@@ -25,9 +26,32 @@ use nom::{
         alphanumeric1, char, digit1, i32, line_ending, not_line_ending, space1, u32, u64, usize,
     },
     combinator::map_res,
-    sequence::separated_pair,
+    sequence::{delimited, pair, separated_pair, terminated},
 };
 use std::vec;
+
+/// A section the format states as a count on a line of its own and then exactly
+/// that many records: the reader's counterpart to the writer's `counted`.
+fn counted<'a, T>(
+    input: &'a str,
+    record: impl FnMut(&'a str) -> IResult<&'a str, T>,
+) -> IResult<&'a str, Vec<T>> {
+    length_count(terminated(u32, line_ending), record).parse(input)
+}
+
+/// One fact on a line of its own, as the goal, a mutex group, an axiom body and
+/// an operator's prevail conditions all state them.
+fn parse_fact_line(input: &str) -> IResult<&str, ExplicitFact> {
+    let (input, (var, value)) = terminated(
+        separated_pair(parse_integer, space1, parse_integer),
+        line_ending,
+    )
+    .parse(input)?;
+    Ok((
+        input,
+        ExplicitFact::propositional(var as usize, value as usize),
+    ))
+}
 
 /// One token of an operator table, as the format writes it: a run of the
 /// characters the tables are spelled with, which the table then has to accept.
@@ -70,14 +94,9 @@ fn parse_variable(input: &str) -> IResult<&str, SasVariable> {
     let (input, domain_size) = usize(input)?;
     let (input, _) = line_ending(input)?;
 
-    let mut fact_names = Vec::with_capacity(domain_size);
-    let mut input = input;
-    for _ in 0..domain_size {
-        let (loop_input, fact_name) = not_line_ending(input)?;
-        fact_names.push(fact_name.to_string());
-        let (loop_input, _) = line_ending(loop_input)?;
-        input = loop_input;
-    }
+    let (input, fact_names) =
+        count(terminated(not_line_ending, line_ending), domain_size).parse(input)?;
+    let fact_names = fact_names.into_iter().map(str::to_owned).collect();
     let (input, _) = tag("end_variable")(input)?;
     let (input, _) = line_ending(input)?;
     let variable = SasVariable {
@@ -90,16 +109,7 @@ fn parse_variable(input: &str) -> IResult<&str, SasVariable> {
 }
 
 fn parse_all_variables(input: &str) -> IResult<&str, Vec<SasVariable>> {
-    let (input, num_variables) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut variables = Vec::new();
-    let mut input = input;
-    for _ in 0..num_variables {
-        let (loop_input, var) = parse_variable(input)?;
-        variables.push(var);
-        input = loop_input;
-    }
-    Ok((input, variables))
+    counted(input, parse_variable)
 }
 
 fn parse_numeric_type(input: &str) -> IResult<&str, NumericType> {
@@ -127,21 +137,16 @@ fn parse_numeric_variable(input: &str) -> IResult<&str, NumericVariable> {
     Ok((input, var))
 }
 
+/// The numeric variables, whose count the format states *before* the section's
+/// markers rather than inside them.
 fn parse_all_numeric_variables(input: &str) -> IResult<&str, Vec<NumericVariable>> {
-    let (input, num_numeric_variables) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let (input, _) = tag("begin_numeric_variables")(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut numeric_variables = Vec::new();
-    let mut input = input;
-    for _ in 0..num_numeric_variables {
-        let (loop_input, var) = parse_numeric_variable(input)?;
-        numeric_variables.push(var);
-        input = loop_input;
-    }
-    let (input, _) = tag("end_numeric_variables")(input)?;
-    let (input, _) = line_ending(input)?;
-    Ok((input, numeric_variables))
+    let (input, num_numeric_variables) = terminated(u32, line_ending).parse(input)?;
+    delimited(
+        pair(tag("begin_numeric_variables"), line_ending),
+        count(parse_numeric_variable, num_numeric_variables as usize),
+        pair(tag("end_numeric_variables"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_integer(input: &str) -> IResult<&str, u32> {
@@ -149,105 +154,46 @@ fn parse_integer(input: &str) -> IResult<&str, u32> {
 }
 
 fn parse_mutex_group(input: &str) -> IResult<&str, Vec<ExplicitFact>> {
-    let (input, _) = tag("begin_mutex_group")(input)?;
-    let (input, _) = line_ending(input)?;
-
-    let (input, num_facts) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut input = input;
-
-    let mut mutex_group = Vec::with_capacity(num_facts as usize);
-    for _ in 0..num_facts {
-        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (new_input, fact) = parser.parse(input)?;
-        let fact = ExplicitFact::propositional(fact.0 as usize, fact.1 as usize);
-
-        mutex_group.push(fact);
-        let (new_input, _) = line_ending(new_input)?;
-        input = new_input;
-    }
-
-    let (input, _) = tag("end_mutex_group")(input)?;
-    let (input, _) = line_ending(input)?;
-
-    Ok((input, mutex_group))
+    delimited(
+        pair(tag("begin_mutex_group"), line_ending),
+        |input| counted(input, parse_fact_line),
+        pair(tag("end_mutex_group"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<ExplicitFact>>> {
-    let (input, num_mutexes) = usize(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut input = input;
-
-    let mut mutexes = Vec::with_capacity(num_mutexes);
-
-    for _ in 0..num_mutexes {
-        let (new_input, mutex_group) = parse_mutex_group(input)?;
-        mutexes.push(mutex_group);
-        input = new_input;
-    }
-    Ok((input, mutexes))
+    counted(input, parse_mutex_group)
 }
 
+/// The initial state, one value per line. The format states no count for it --
+/// the section holds one line per variable -- so the values are read until one
+/// does not parse, which is where the closing marker stands.
 fn parse_state(input: &str) -> IResult<&str, Vec<usize>> {
-    let (input, _) = tag("begin_state")(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut input = input;
-    let mut states = vec![];
-    loop {
-        let (loop_input, state) = not_line_ending(input)?;
-        if state == "end_state" {
-            input = loop_input;
-            break;
-        }
-        let (_, state) = usize(state)?;
-        states.push(state);
-        let (loop_input, _) = line_ending(loop_input)?;
-        input = loop_input;
-    }
-    let (input, _) = line_ending(input)?;
-    Ok((input, states))
+    delimited(
+        pair(tag("begin_state"), line_ending),
+        many0(terminated(usize, line_ending)),
+        pair(tag("end_state"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_numeric_state(input: &str) -> IResult<&str, Vec<f64>> {
-    let (input, _) = tag("begin_numeric_state")(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut input = input;
-    let mut states = vec![];
-    loop {
-        let (loop_input, state) = not_line_ending(input)?;
-        if state == "end_numeric_state" {
-            input = loop_input;
-            break;
-        }
-        let (_, state) = double(state)?;
-        states.push(state);
-        let (loop_input, _) = line_ending(loop_input)?;
-        input = loop_input;
-    }
-    let (input, _) = line_ending(input)?;
-    Ok((input, states))
+    delimited(
+        pair(tag("begin_numeric_state"), line_ending),
+        many0(terminated(double, line_ending)),
+        pair(tag("end_numeric_state"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_goal(input: &str) -> IResult<&str, Vec<ExplicitFact>> {
-    let (input, _) = tag("begin_goal")(input)?;
-    let (input, _) = line_ending(input)?;
-    let (input, num_goals) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-
-    let mut input = input;
-    let mut goals = vec![];
-    for _ in 0..num_goals {
-        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, goal) = parser.parse(input)?;
-        let goal = ExplicitFact::propositional(goal.0 as usize, goal.1 as usize);
-        goals.push(goal);
-        let (loop_input, _) = line_ending(loop_input)?;
-        input = loop_input;
-    }
-
-    let (input, _) = tag("end_goal")(input)?;
-    let (input, _) = line_ending(input)?;
-    Ok((input, goals))
+    delimited(
+        pair(tag("begin_goal"), line_ending),
+        |input| counted(input, parse_fact_line),
+        pair(tag("end_goal"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_operator(input: &str) -> IResult<&str, SasOperator> {
@@ -255,19 +201,7 @@ fn parse_operator(input: &str) -> IResult<&str, SasOperator> {
     let (input, _) = line_ending(input)?;
     let (input, name) = not_line_ending(input)?;
     let (input, _) = line_ending(input)?;
-    let (input, num_prevail_cond) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut prevail = vec![];
-    let mut input = input;
-    for _ in 0..num_prevail_cond {
-        let mut parser = separated_pair(parse_integer, space1, parse_integer);
-        let (loop_input, prevail_cond) = parser.parse(input)?;
-        let prevail_cond =
-            ExplicitFact::propositional(prevail_cond.0 as usize, prevail_cond.1 as usize);
-        prevail.push(prevail_cond);
-        let (loop_input, _) = line_ending(loop_input)?;
-        input = loop_input;
-    }
+    let (input, prevail) = counted(input, parse_fact_line)?;
 
     let (input, num_effects) = u32(input)?;
     let (input, _) = line_ending(input)?;
@@ -358,35 +292,14 @@ fn parse_operator(input: &str) -> IResult<&str, SasOperator> {
 }
 
 fn parse_operators(input: &str) -> IResult<&str, Vec<SasOperator>> {
-    let (input, num_operators) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut input = input;
-    let mut operators = vec![];
-    for _ in 0..num_operators {
-        let (loop_input, operator) = parse_operator(input)?;
-        operators.push(operator);
-        input = loop_input;
-    }
-    Ok((input, operators))
+    counted(input, parse_operator)
 }
 
 fn parse_axiom(input: &str) -> IResult<&str, PropositionalAxiom> {
     let (input, _) = tag("begin_rule")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let (input, num_conditions) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-
-    let mut input = input;
-    let mut conditions = vec![];
-    for _ in 0..num_conditions {
-        let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
-        let (loop_input, condition) = parser.parse(input)?;
-        let condition = ExplicitFact::propositional(condition.0 as usize, condition.1 as usize);
-        conditions.push(condition);
-        let (loop_input, _) = line_ending(loop_input)?;
-        input = loop_input;
-    }
+    let (input, conditions) = counted(input, parse_fact_line)?;
     let (input, var_id) = usize(input)?;
     let (input, _) = tag(" ")(input)?;
     let (input, precondition_value) = usize(input)?;
@@ -401,16 +314,7 @@ fn parse_axiom(input: &str) -> IResult<&str, PropositionalAxiom> {
 }
 
 fn parse_axioms(input: &str) -> IResult<&str, Vec<PropositionalAxiom>> {
-    let (input, num_axioms) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let mut input = input;
-    let mut axioms = vec![];
-    for _ in 0..num_axioms {
-        let (loop_input, axiom) = parse_axiom(input)?;
-        axioms.push(axiom);
-        input = loop_input;
-    }
-    Ok((input, axioms))
+    counted(input, parse_axiom)
 }
 
 fn parse_comparison_operator(input: &str) -> IResult<&str, ComparisonOperator> {
@@ -438,20 +342,13 @@ fn parse_comparison_axiom(input: &str) -> IResult<&str, ComparisonAxiom> {
 }
 
 fn parse_comparison_axioms(input: &str) -> IResult<&str, Vec<ComparisonAxiom>> {
-    let (input, num_comparison_axioms) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let (input, _) = tag("begin_comparison_axioms")(input)?;
-    let (mut input, _) = line_ending(input)?;
-
-    let mut comparison_axioms = vec![];
-    for _ in 0..num_comparison_axioms {
-        let (loop_input, comparison_axiom) = parse_comparison_axiom(input)?;
-        comparison_axioms.push(comparison_axiom);
-        input = loop_input;
-    }
-    let (input, _) = tag("end_comparison_axioms")(input)?;
-    let (input, _) = line_ending(input)?;
-    Ok((input, comparison_axioms))
+    let (input, num_comparison_axioms) = terminated(u32, line_ending).parse(input)?;
+    delimited(
+        pair(tag("begin_comparison_axioms"), line_ending),
+        count(parse_comparison_axiom, num_comparison_axioms as usize),
+        pair(tag("end_comparison_axioms"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_cal_operator(input: &str) -> IResult<&str, CalOperator> {
@@ -479,20 +376,13 @@ fn parse_assignment_axiom(input: &str) -> IResult<&str, AssignmentAxiom> {
 }
 
 fn parse_assignment_axioms(input: &str) -> IResult<&str, Vec<AssignmentAxiom>> {
-    let (input, num_numeric_axioms) = u32(input)?;
-    let (input, _) = line_ending(input)?;
-    let (input, _) = tag("begin_numeric_axioms")(input)?;
-    let (mut input, _) = line_ending(input)?;
-
-    let mut assignment_axioms = vec![];
-    for _ in 0..num_numeric_axioms {
-        let (loop_input, axiom) = parse_assignment_axiom(input)?;
-        assignment_axioms.push(axiom);
-        input = loop_input;
-    }
-    let (input, _) = tag("end_numeric_axioms")(input)?;
-    let (input, _) = line_ending(input)?;
-    Ok((input, assignment_axioms))
+    let (input, num_numeric_axioms) = terminated(u32, line_ending).parse(input)?;
+    delimited(
+        pair(tag("begin_numeric_axioms"), line_ending),
+        count(parse_assignment_axiom, num_numeric_axioms as usize),
+        pair(tag("end_numeric_axioms"), line_ending),
+    )
+    .parse(input)
 }
 
 fn parse_global_constraint(input: &str) -> IResult<&str, ExplicitFact> {
