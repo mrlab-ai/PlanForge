@@ -343,15 +343,27 @@ fn translate_strips_conditions_aux(
                 }
             }
             Condition::Atom(atom) => {
-                if let Some(pairs) = dictionary.get(atom) {
-                    for &(var, val) in pairs {
-                        if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
-                            return None; // conflicting
-                        }
-                        condition.set_single(var, val);
+                // In the mutex pass the dictionary holds only the atoms some
+                // mutex group covers, so a miss means "unconstrained". In the
+                // real pass every reachable atom has a variable, and
+                // instantiation has already removed the statically true and
+                // false ones, so a miss is a broken invariant: silently
+                // dropping the condition would make the operator or axiom hold
+                // in states where it must not.
+                let Some(pairs) = dictionary.get(atom) else {
+                    assert!(
+                        mutex_check,
+                        "condition atom {atom:?} has no SAS variable; it is neither reachable \
+                         nor statically decided"
+                    );
+                    continue;
+                };
+                for &(var, val) in pairs {
+                    if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
+                        return None; // conflicting
                     }
+                    condition.set_single(var, val);
                 }
-                // Static facts that aren't in dictionary can be ignored (they're static true)
             }
             Condition::NegatedAtom(_) => {
                 // Handle negative conditions later

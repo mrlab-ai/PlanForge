@@ -704,65 +704,6 @@ impl Condition {
             _ => None,
         }
     }
-
-    /// Instantiate the condition with a variable mapping.
-    pub fn instantiate(
-        &self,
-        var_mapping: &HashMap<String, String>,
-        init_facts: &HashSet<Atom>,
-        fluent_facts: &HashSet<String>, // set of predicate names
-        result: &mut Vec<Condition>,
-    ) {
-        match self {
-            Condition::Truth => {}
-            Condition::Falsity => {
-                // This should signal unsatisfiable
-                panic!("Cannot instantiate Falsity");
-            }
-            Condition::Conjunction(conj) => {
-                for part in &conj.parts {
-                    part.instantiate(var_mapping, init_facts, fluent_facts, result);
-                }
-            }
-            Condition::Atom(atom) => {
-                let new_args: Vec<String> = atom
-                    .args
-                    .iter()
-                    .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
-                let new_atom = Atom::new(atom.predicate.clone(), new_args);
-                if fluent_facts.contains(&atom.predicate) {
-                    result.push(Condition::Atom(new_atom));
-                } else if !init_facts.contains(&new_atom) {
-                    // Static fact not in init -> unsatisfiable
-                    panic!("Static atom not in init: {}", new_atom);
-                }
-                // else: static fact in init -> always true, skip
-            }
-            Condition::NegatedAtom(natom) => {
-                let new_args: Vec<String> = natom
-                    .args
-                    .iter()
-                    .map(|a| var_mapping.get(a).cloned().unwrap_or_else(|| a.clone()))
-                    .collect();
-                let new_atom = Atom::new(natom.predicate.clone(), new_args.clone());
-                if fluent_facts.contains(&natom.predicate) {
-                    result.push(Condition::NegatedAtom(NegatedAtom::new(
-                        natom.predicate.clone(),
-                        new_args,
-                    )));
-                } else if init_facts.contains(&new_atom) {
-                    // Static fact in init but we need it negated -> unsatisfiable
-                    panic!("Static atom in init but needed negated: {}", new_atom);
-                }
-                // else: static fact not in init -> always false = negation is true, skip
-            }
-            other => {
-                // FunctionComparison, etc. are handled separately in the full instantiate
-                result.push(other.clone());
-            }
-        }
-    }
 }
 
 impl fmt::Display for Condition {

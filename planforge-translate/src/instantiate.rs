@@ -94,7 +94,10 @@ pub struct ExploreResult {
 }
 
 /// A predicate is fluent if it appears in some action effect or is derived.
-fn get_fluent_facts(task: &Task) -> HashSet<String> {
+///
+/// Which *atoms* of those predicates are fluent is a different question, decided
+/// by the reachability model; see [`GroundingTables::fluent_facts`].
+fn get_fluent_predicates(task: &Task) -> HashSet<String> {
     let mut fluent_preds: HashSet<String> = HashSet::new();
     for action in &task.actions {
         for eff in &action.effects {
@@ -208,7 +211,7 @@ pub fn explore(task: &Task) -> ExploreResult {
     let prog = pddl_to_prolog::translate(task);
     let model = build_model::compute_model(&prog);
 
-    let fluent_facts = get_fluent_facts(task);
+    let fluent_predicates = get_fluent_predicates(task);
     let objects_by_type = get_objects_by_type(&task.objects, &task.types);
     let init_func_vals = init_function_values(&task.num_init);
     let init_facts: HashSet<Atom> = task.init.iter().cloned().collect();
@@ -216,7 +219,7 @@ pub fn explore(task: &Task) -> ExploreResult {
     let roles: Vec<Role> = model
         .symbols
         .predicates()
-        .map(|(_, name)| Role::classify(name, &fluent_facts))
+        .map(|(_, name)| Role::classify(name, &fluent_predicates))
         .collect();
 
     let mut fluent_functions: HashSet<PrimitiveNumericExpression> = HashSet::new();
@@ -256,6 +259,7 @@ pub fn explore(task: &Task) -> ExploreResult {
         }
     }
 
+    let fluent_facts: HashSet<Atom> = reachable_atoms.iter().cloned().collect();
     let tables = &super::pddl::tasks::GroundingTables {
         init_facts: &init_facts,
         fluent_facts: &fluent_facts,
@@ -403,7 +407,7 @@ pub fn explore(task: &Task) -> ExploreResult {
     let mut init_constant_predicates: Vec<Atom> = vec![];
     let mut init_constant_numerics: Vec<FunctionAssignment> = vec![];
     for atom in &task.init {
-        if !fluent_facts.contains(&atom.predicate) && !atom.predicate.starts_with("==") {
+        if !fluent_predicates.contains(&atom.predicate) && !atom.predicate.starts_with("==") {
             init_constant_predicates.push(atom.clone());
         }
     }

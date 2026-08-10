@@ -312,29 +312,33 @@ impl Condition {
                 }
                 Some(result)
             }
+            // A reachable fluent atom stays a condition; anything else is
+            // decided here, at the only point where the reachable set is known.
+            // Note that both arms test the *atom*, not its predicate: an
+            // unreachable instance of a fluent predicate is statically false.
             Condition::Atom(atom) => {
                 let new_atom =
                     Atom::new(atom.predicate.clone(), var_mapping.resolve_all(&atom.args));
-                if fluent_facts.contains(&atom.predicate) {
+                if fluent_facts.contains(&new_atom) {
                     Some(vec![Condition::Atom(new_atom)])
                 } else if init_facts.contains(&new_atom) {
-                    Some(vec![]) // static true
+                    Some(vec![]) // statically true
                 } else {
-                    None // static false
+                    None // statically false
                 }
             }
             Condition::NegatedAtom(natom) => {
                 let new_args = var_mapping.resolve_all(&natom.args);
                 let pos_atom = Atom::new(natom.predicate.clone(), new_args.clone());
-                if fluent_facts.contains(&natom.predicate) {
+                if fluent_facts.contains(&pos_atom) {
                     Some(vec![Condition::NegatedAtom(NegatedAtom::new(
                         natom.predicate.clone(),
                         new_args,
                     ))])
                 } else if init_facts.contains(&pos_atom) {
-                    None // static true, but we need it negated -> false
+                    None // statically true, and we need it negated
                 } else {
-                    Some(vec![]) // static false, negation is true
+                    Some(vec![]) // statically false, so its negation holds
                 }
             }
             Condition::FunctionComparison(fc) => {

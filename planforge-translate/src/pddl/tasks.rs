@@ -125,11 +125,20 @@ impl<'a> VarMapping<'a> {
 }
 
 /// The task-wide tables an action or axiom is instantiated against: what
-/// holds initially, which predicates and functions are fluent, and what the
+/// holds initially, which facts and functions are fluent, and what the
 /// numeric fluents start at.
 pub struct GroundingTables<'a> {
     pub init_facts: &'a HashSet<Atom>,
-    pub fluent_facts: &'a HashSet<String>,
+    /// The *atoms* the relaxed-reachability model proved reachable and whose
+    /// predicate some effect or axiom writes.
+    ///
+    /// Deliberately a set of atoms rather than of predicate names: a ground
+    /// atom of a fluent predicate can still be unreachable, and then a
+    /// condition on it is statically false. Testing the predicate instead would
+    /// keep that condition as a fluent one, and it would later be dropped for
+    /// having no SAS variable — which turns an inapplicable operator or an
+    /// unsupported axiom into an unconditional one.
+    pub fluent_facts: &'a HashSet<Atom>,
     pub fluent_functions: &'a HashSet<PrimitiveNumericExpression>,
     pub init_function_vals: &'a HashMap<PrimitiveNumericExpression, f64>,
 }
