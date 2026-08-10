@@ -12,20 +12,32 @@ use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 use super::symbols::ObjectId;
 
+/// The facts of `group` that the delete relaxation can reach, with the counted
+/// variable `?X` replaced by every object that makes the fact reachable.
+///
+/// A fact without a counted variable is subject to the same test: an invariant
+/// found over the lifted task may name a fact that grounding proved
+/// unreachable, and keeping it would put a fact into a SAS variable's domain
+/// that no state ever holds.
 fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Atom> {
     let mut result = vec![];
     for fact in group {
-        if let Some(pos) = fact.args.iter().position(|a| a == "?X") {
-            for obj in &task.objects {
-                let mut newargs = fact.args.clone();
-                newargs[pos] = obj.name.clone();
-                let atom = Atom::new(fact.predicate.clone(), newargs);
-                if reachable_facts.contains(&atom) {
-                    result.push(atom);
+        match fact.args.iter().position(|arg| arg == "?X") {
+            Some(pos) => {
+                for object in &task.objects {
+                    let mut newargs = fact.args.clone();
+                    newargs[pos] = object.name.clone();
+                    let atom = Atom::new(fact.predicate.clone(), newargs);
+                    if reachable_facts.contains(&atom) {
+                        result.push(atom);
+                    }
                 }
             }
-        } else {
-            result.push(fact.clone());
+            None => {
+                if reachable_facts.contains(fact) {
+                    result.push(fact.clone());
+                }
+            }
         }
     }
     result
