@@ -602,7 +602,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
 }
 
 #[test]
-fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
+fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() {
     let variables = vec![ExplicitVariable::new(
         ConditionValue::DOMAIN_SIZE,
         "cmp".into(),

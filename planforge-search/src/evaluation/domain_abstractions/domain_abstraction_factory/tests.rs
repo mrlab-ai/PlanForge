@@ -452,8 +452,9 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         )
         .unwrap();
 
-    // For enumeration we want the same numeric-partition assignment, but comparisons set back
-    // to UNKNOWN so `enumerate_states_with_evaluated_comparisons` can branch.
+    // For enumeration we want the same numeric-partition assignment, but the
+    // comparison digits cleared so `enumerate_states_with_evaluated_comparisons`
+    // can branch.
     let base = factory
         .clear_comparison_vars_except(init_hash, &hash_multipliers, &[0], &[])
         .unwrap();

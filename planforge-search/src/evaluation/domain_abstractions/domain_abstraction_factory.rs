@@ -2394,7 +2394,7 @@ impl DomainAbstractionFactory {
 
         // Mirror `compute_distances_and_generating_ops`: under
         // comparison-branching the regression Dijkstra resets each popped
-        // state's comparison-axiom bits to UNKNOWN before consulting the
+        // state's comparison-axiom bits before consulting the
         // match tree, computes the natural predecessor from the reset
         // form, and then expands every wildcard-consistent predecessor.
         // Comparison-axiom prop vars are not directly written by
@@ -2536,7 +2536,7 @@ impl DomainAbstractionFactory {
 
             // Mirror `compute_distances_and_generating_ops`: under
             // comparison-branching, Dijkstra resets the target state's
-            // comparison-axiom prop vars to UNKNOWN before consulting
+            // comparison-axiom prop vars before consulting
             // `match_tree` for applicable operators, and computes the
             // predecessor hash from that reset state. The reason is that
             // ops have no direct effect on comparison-axiom prop vars —

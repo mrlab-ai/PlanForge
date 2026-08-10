@@ -26,15 +26,11 @@ fn restricted_sample_task() -> NumericRootTask {
         vec![
             variable("p", None),
             ExplicitVariable::new(
-                3,
+                ConditionValue::DOMAIN_SIZE,
                 "cmp".to_string(),
-                vec![
-                    "cmp-true".to_string(),
-                    "cmp-false".to_string(),
-                    "cmp-unknown".to_string(),
-                ],
+                vec!["cmp-true".to_string(), "cmp-false".to_string()],
                 Some(0),
-                2,
+                ConditionValue::False.as_usize(),
             ),
             variable("goal-marker", Some(1)),
         ],
