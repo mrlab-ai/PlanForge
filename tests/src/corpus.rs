@@ -115,22 +115,55 @@ impl Solution {
     }
 }
 
+/// Everything a blind-A* run is determined by its task alone: the plan it
+/// returns, and how much search it took to get there.
+///
+/// The counters are part of it because they are the sensitive half. Two runs can
+/// agree on an optimal cost while disagreeing on which optimal plan they find and
+/// on how many states they looked at, and it is the latter that moves when
+/// anything in the pipeline depends on the iteration order of a hash map.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchRun {
+    pub cost: f64,
+    /// Operator names, in plan order.
+    pub plan: Vec<String>,
+    pub expanded: usize,
+    pub generated: usize,
+}
+
+impl SearchRun {
+    pub fn solution(&self) -> Solution {
+        Solution {
+            cost: self.cost,
+            length: self.plan.len() as u64,
+        }
+    }
+}
+
 /// Runs blind A*, which is optimal, so the returned cost is the true optimum.
 /// `None` means the search terminated without a plan.
-pub fn blind_astar(task: &NumericRootTask) -> Option<Solution> {
+pub fn blind_astar_run(task: &NumericRootTask) -> Option<SearchRun> {
     let registry = StateRegistry::for_task(Arc::new(task));
     let mut search = AStarSearch::new(Arc::new(task), registry, None, None, None);
     let result = search.search().expect("blind A* search failed");
 
     match (&result.status, &result.plan) {
-        (SearchStatus::Solved(_), Some(plan)) => Some(Solution {
+        (SearchStatus::Solved(_), Some(plan)) => Some(SearchRun {
             cost: result
                 .solution_cost
                 .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
-            length: plan.len() as u64,
+            plan: plan.iter().map(|op| op.name().to_owned()).collect(),
+            expanded: result.nodes_expanded,
+            generated: result.nodes_generated,
         }),
         _ => None,
     }
+}
+
+/// Cost and length of the plan blind A* finds, for the tests that pin an optimum
+/// rather than a whole run.
+pub fn blind_astar(task: &NumericRootTask) -> Option<Solution> {
+    blind_astar_run(task).map(|run| run.solution())
 }
 
 /// Blind A* that insists on a plan, for fixtures whose solvability is pinned.
