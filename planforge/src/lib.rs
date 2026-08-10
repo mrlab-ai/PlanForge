@@ -1,5 +1,20 @@
+//! The planner's single entry point: one CLI, one binary, every `--search`
+//! spec.
+//!
+//! The crate owns the process-level concerns -- argument parsing, resource
+//! limits and the wrapped child process, logging, the plan file and the exit
+//! code -- and delegates the planning itself to `planforge-translate` and
+//! `planforge-searcher`/`planforge-search`.
+
+pub mod output;
+pub mod portfolio;
 #[cfg(test)]
 mod tests;
+
+pub use output::{
+    exit_code_for_search_status, print_plan_result, print_search_result, write_plan_file,
+};
+pub use portfolio::PortfolioOptions;
 
 use clap::Parser;
 use planforge_cli_utils::*;
@@ -7,7 +22,7 @@ use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef}
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchResult};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
-use planforge_searcher::*;
+use planforge_searcher::{HeuristicBuildError, HeuristicSpec, SearchSpec};
 use std::ffi::OsString;
 use std::num::NonZero;
 use std::process::Command;
@@ -85,7 +100,10 @@ pub struct PlannersCli {
         default_value = "astar(blind())",
         value_parser = planforge_searcher::parse_search_spec
     )]
-    pub search: planforge_searcher::SearchSpec,
+    pub search: SearchSpec,
+
+    #[command(flatten)]
+    pub portfolio: PortfolioOptions,
 
     #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
     pub inputs: Vec<String>,
@@ -153,7 +171,7 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
 /// is dispatched directly in `run_internal`.
 pub fn solve_task(
     task: TaskRef<'_>,
-    spec: &planforge_searcher::SearchSpec,
+    spec: &SearchSpec,
     time_limit: Option<Duration>,
     memory_limit: Option<u64>,
 ) -> std::io::Result<SearchResult> {
@@ -162,7 +180,7 @@ pub fn solve_task(
 
 pub fn solve_task_with_state_storage(
     task: TaskRef<'_>,
-    spec: &planforge_searcher::SearchSpec,
+    spec: &SearchSpec,
     time_limit: Option<Duration>,
     memory_limit: Option<u64>,
     compact_numeric_states: bool,
@@ -170,7 +188,7 @@ pub fn solve_task_with_state_storage(
     let state_registry =
         StateRegistry::for_task_with_compact_numeric(task.clone(), compact_numeric_states);
     match spec {
-        planforge_searcher::SearchSpec::Astar(heuristic, mpd) => {
+        SearchSpec::Astar(heuristic, mpd) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
             let mut search = AStarSearch::new_with_mpd(
                 task.clone(),
@@ -185,7 +203,7 @@ pub fn solve_task_with_state_storage(
                 .search()
                 .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
         }
-        planforge_searcher::SearchSpec::Gbfs(heuristic) => {
+        SearchSpec::Gbfs(heuristic) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
             let mut search = AStarSearch::new_gbfs(
                 task.clone(),
@@ -199,7 +217,7 @@ pub fn solve_task_with_state_storage(
                 .search()
                 .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
         }
-        planforge_searcher::SearchSpec::AstarFs(fast_spec, slow_spec) => {
+        SearchSpec::AstarFs(fast_spec, slow_spec) => {
             // A* with two admissible heuristics: a fast one for ordering
             // and a slow one evaluated lazily on second-pop. Treats the
             // user's `blind` choice as a placeholder by materializing a
@@ -250,7 +268,7 @@ pub fn solve_task_with_state_storage(
         }
         // `sgd(...)` is not a search engine and does not go through a state
         // registry or an open list; `run_internal` dispatches it directly.
-        planforge_searcher::SearchSpec::Sgd(_) => Err(std::io::Error::other(
+        SearchSpec::Sgd(_) => Err(std::io::Error::other(
             "solve_task does not handle `sgd(...)`; it is dispatched in run_internal",
         )),
     }
@@ -304,7 +322,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
-    if matches!(cli.search, planforge_searcher::SearchSpec::Sgd(_)) {
+    if matches!(cli.search, SearchSpec::Sgd(_)) {
         info!("=== Gradient Plan Synthesis ===");
     } else {
         info!("=== Search Engine ===");
@@ -319,21 +337,21 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
     let result = match &cli.search {
-        planforge_searcher::SearchSpec::Astar(_, _)
-        | planforge_searcher::SearchSpec::Gbfs(_)
-        | planforge_searcher::SearchSpec::AstarFs(_, _) => solve_task_with_state_storage(
-            task.clone(),
-            &cli.search,
-            time_limit,
-            memory_limit,
-            cli.compact_numeric_states,
-        )?,
+        SearchSpec::Astar(_, _) | SearchSpec::Gbfs(_) | SearchSpec::AstarFs(_, _) => {
+            solve_task_with_state_storage(
+                task.clone(),
+                &cli.search,
+                time_limit,
+                memory_limit,
+                cli.compact_numeric_states,
+            )?
+        }
         #[cfg(feature = "sgd")]
-        planforge_searcher::SearchSpec::Sgd(args) => {
+        SearchSpec::Sgd(args) => {
             planforge_searcher::sgd::run_sgd(task.clone(), global_constraint, args)?
         }
         #[cfg(not(feature = "sgd"))]
-        planforge_searcher::SearchSpec::Sgd(_) => {
+        SearchSpec::Sgd(_) => {
             return Err(std::io::Error::other(
                 "`sgd(...)` requires the `sgd` cargo feature; rebuild with \
                  `cargo build --release -p planforge --features sgd`",
@@ -341,11 +359,11 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         }
     };
 
-    planforge_searcher::write_plan_file(&result)?;
+    write_plan_file(&result)?;
     // The gradient engine reports no search statistics, so it gets the plan
     // block only.
-    if matches!(cli.search, planforge_searcher::SearchSpec::Sgd(_)) {
-        planforge_searcher::print_plan_result(&result);
+    if matches!(cli.search, SearchSpec::Sgd(_)) {
+        print_plan_result(&result);
     } else {
         print_search_result(&result);
     }
@@ -354,10 +372,10 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 }
 
 fn build_heuristic_from_spec<'a>(
-    spec: &planforge_searcher::HeuristicSpec,
+    spec: &HeuristicSpec,
     task_ref: &'a dyn AbstractNumericTask,
     sampling_task: TaskRef<'a>,
 ) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
     planforge_searcher::build_heuristic_from_spec_with_task_ref(spec, task_ref, sampling_task)
-        .map_err(planforge_searcher::HeuristicBuildError::into_io_error)
+        .map_err(HeuristicBuildError::into_io_error)
 }

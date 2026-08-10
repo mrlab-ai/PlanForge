@@ -43,7 +43,7 @@ Stable Rust, no nightly features:
 
     cargo build --release
 
-The primary binary is `target/release/planforge`. Smaller-scope binaries (`planforge-translator`, `planforge-searcher`) are built alongside it and are useful for staging.
+`target/release/planforge` is the planner. Every search configuration is reachable from it; there is no second entry point with a different set of capabilities. `target/release/planforge-translator` is built alongside it and stops after translation, for inspecting SAS+ output.
 
 ### CPLEX prerequisites
 
@@ -114,14 +114,20 @@ Common options:
   already restricted tasks are retained unchanged.
 - `--compact-numeric-states` — intern exact canonical `f64` values behind
   compact integer IDs in the search state registry.
+- `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
+  under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
+  `astar(canonical_domain_abstractions(...))` (`--canonical-construction-time`,
+  `--canonical-memory`, `--canonical-time`). Each stage is a child `planforge`
+  process, so stage 1's limits are enforced and stage 2 starts clean.
 
 ## Layout
 
 Workspace crates:
 
-- `planforge` — top-level entry point and CLI.
-- `planforge-translator`, `planforge-searcher` — staged binaries for translator-only and search-only invocations.
-- `planforge-translate`, `planforge-search`, `planforge-sas` — the corresponding libraries.
+- `planforge` — the planner binary: CLI, resource limits, portfolio, plan output.
+- `planforge-searcher` — the `--search` grammar and heuristic construction.
+- `planforge-translate`, `planforge-search`, `planforge-sas` — translation, search and task libraries.
+- `planforge-translator` — translate-only binary, for inspecting SAS+ output.
 - `planforge-cli-utils` — shared CLI plumbing (exit codes, resource limits, allocator).
 - `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.

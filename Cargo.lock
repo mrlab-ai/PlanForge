@@ -990,10 +990,8 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 name = "planforge"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "clap",
  "libc",
- "ordered-float",
  "planforge-cli-utils",
  "planforge-sas",
  "planforge-search",
@@ -1028,14 +1026,6 @@ dependencies = [
 [[package]]
 name = "planforge-cplex"
 version = "0.1.0"
-
-[[package]]
-name = "planforge-portfolio"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
-]
 
 [[package]]
 name = "planforge-py"
@@ -1083,15 +1073,10 @@ dependencies = [
 name = "planforge-searcher"
 version = "0.1.0"
 dependencies = [
- "clap",
- "planforge-cli-utils",
  "planforge-sas",
  "planforge-search",
  "planforge-sgd",
- "serde",
- "time",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

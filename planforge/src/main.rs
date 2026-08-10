@@ -1,6 +1,5 @@
 use clap::Parser;
 use planforge::*;
-use planforge_searcher::exit_code_for_search_status;
 
 fn main() -> std::io::Result<()> {
     let cli = PlannersCli::parse();
@@ -8,6 +7,11 @@ fn main() -> std::io::Result<()> {
         cli.log_level
             .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
     );
+    // The portfolio drives whole `planforge` runs as its stages, so it has to
+    // branch off before this process turns itself into one of them.
+    if cli.portfolio.portfolio {
+        return portfolio::run_portfolio(&cli);
+    }
     #[cfg(unix)]
     if !cli.internal_run {
         return run_wrapped_process(&cli);
