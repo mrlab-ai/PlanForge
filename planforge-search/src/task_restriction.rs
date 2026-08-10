@@ -484,7 +484,7 @@ fn build_task(
         let numeric_type = if root_exprs.contains_key(&original_id) {
             NumericType::Regular
         } else {
-            task.numeric_variables()[original_id].get_type().clone()
+            *task.numeric_variables()[original_id].get_type()
         };
         numeric_variables.push(NumericVariable::new(name, numeric_type, None));
         numeric_initial.push(expr.evaluate(initial_numeric)?);
@@ -537,7 +537,7 @@ fn build_task(
         variables,
         numeric_variables,
         (0..task.get_num_goals())
-            .map(|goal_id| task.get_goal_fact(goal_id).clone())
+            .map(|goal_id| *task.get_goal_fact(goal_id))
             .collect(),
         vec![],
         task.get_initial_propositional_state_values().to_vec(),

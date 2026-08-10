@@ -455,7 +455,7 @@ pub fn get_goal_flaws(
             derived_goal_vars.insert(goal_var);
             continue;
         }
-        if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(goal_fact.clone()) {
+        if !fact_is_hold(goal_fact, packer, buffer) && seen.insert(*goal_fact) {
             out.push(build_prop_flaw_for_fact(
                 task,
                 deltas,
@@ -477,7 +477,7 @@ pub fn get_goal_flaws(
             continue;
         }
         for pre in ax.conditions().iter() {
-            if !fact_is_hold(pre, packer, buffer) && seen.insert(pre.clone()) {
+            if !fact_is_hold(pre, packer, buffer) && seen.insert(*pre) {
                 out.push(build_prop_flaw_for_fact(
                     task,
                     deltas,
@@ -530,7 +530,7 @@ fn build_prop_flaw_for_fact(
         Vec::new()
     };
     Flaw::Propositional(PropFlaw {
-        fact: fact.clone(),
+        fact: *fact,
         dependent_numeric_flaws,
         step,
     })

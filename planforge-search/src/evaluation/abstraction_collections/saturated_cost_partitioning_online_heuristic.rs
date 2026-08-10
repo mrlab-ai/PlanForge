@@ -4294,9 +4294,11 @@ fn compact_goal_cover_variants(
         .saturating_mul(variants_per_goal)
         .saturating_mul(variants_per_goal)
         .min(64);
-    let specialist_coverage_count = guarantee_specialist_coverage
-        .then(|| goal_count.saturating_mul(variants_per_goal.min(4)))
-        .unwrap_or(0);
+    let specialist_coverage_count = if guarantee_specialist_coverage {
+        goal_count.saturating_mul(variants_per_goal.min(4))
+    } else {
+        0
+    };
     let variant_count = pairwise_variant_count.max(specialist_coverage_count);
     (0..variant_count)
         .map(|variant_index| {
@@ -5353,7 +5355,7 @@ mod handcrafted_sailing_tests {
 
         let mut abstractions = Vec::new();
         for (index, spec) in specs.iter().enumerate() {
-            let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal.clone());
+            let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
             let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
                 .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
             abstraction.metadata = DomainAbstractionMetadata {
@@ -5680,7 +5682,7 @@ mod handcrafted_sailing_tests {
             1,
             "expected one saved fact from save_person operators for {person}, got {candidates:?}"
         );
-        candidates[0].clone()
+        candidates[0]
     }
 
     fn route_seed_splits(
@@ -5695,7 +5697,7 @@ mod handcrafted_sailing_tests {
             add_split(&mut seeds, view_id, 25.0, true);
             add_route_grid_values(&mut seeds, view_id, initial[view_id], 25.0, 3.0);
         }
-        seeds.sort_by(|left, right| seed_description(left).cmp(&seed_description(right)));
+        seeds.sort_by_key(|left| seed_description(left));
         seeds.dedup();
         seeds
     }

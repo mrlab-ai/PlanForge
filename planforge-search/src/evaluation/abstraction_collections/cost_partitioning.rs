@@ -1347,9 +1347,11 @@ impl TransitionResidualCosts {
                 if let Some(cost) = residual.uniform_cost_cache.get() {
                     return cost;
                 }
-                let full_regional_reduction = (!residual.full_regional_usage.is_empty())
-                    .then_some(residual.base_cost)
-                    .unwrap_or(0.0);
+                let full_regional_reduction = if !residual.full_regional_usage.is_empty() {
+                    residual.base_cost
+                } else {
+                    0.0
+                };
                 let reduction = max_overlap_reduction(None, residual, residual.base_cost)
                     .max(full_regional_reduction)
                     .max(

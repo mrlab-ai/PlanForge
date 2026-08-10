@@ -33,25 +33,23 @@ pub(super) fn preimage_split_for_expected_successor(
     if expected_interval.is_empty() {
         return None;
     }
-    if concrete_successor < expected_interval.lower
-        || (concrete_successor == expected_interval.lower && !expected_interval.lower_closed)
+    if (concrete_successor < expected_interval.lower
+        || (concrete_successor == expected_interval.lower && !expected_interval.lower_closed))
+        && expected_interval.lower.is_finite()
     {
-        if expected_interval.lower.is_finite() {
-            return Some((
-                expected_interval.lower - delta,
-                !expected_interval.lower_closed,
-            ));
-        }
+        return Some((
+            expected_interval.lower - delta,
+            !expected_interval.lower_closed,
+        ));
     }
-    if concrete_successor > expected_interval.upper
-        || (concrete_successor == expected_interval.upper && !expected_interval.upper_closed)
+    if (concrete_successor > expected_interval.upper
+        || (concrete_successor == expected_interval.upper && !expected_interval.upper_closed))
+        && expected_interval.upper.is_finite()
     {
-        if expected_interval.upper.is_finite() {
-            return Some((
-                expected_interval.upper - delta,
-                expected_interval.upper_closed,
-            ));
-        }
+        return Some((
+            expected_interval.upper - delta,
+            expected_interval.upper_closed,
+        ));
     }
     None
 }
@@ -282,19 +280,17 @@ fn split_for_missing_numeric_requirement(
     requirement: Interval,
     concrete_value: f64,
 ) -> Option<(f64, bool)> {
-    if concrete_value < requirement.lower
-        || (concrete_value == requirement.lower && !requirement.lower_closed)
+    if (concrete_value < requirement.lower
+        || (concrete_value == requirement.lower && !requirement.lower_closed))
+        && requirement.lower.is_finite()
     {
-        if requirement.lower.is_finite() {
-            return Some((requirement.lower, !requirement.lower_closed));
-        }
+        return Some((requirement.lower, !requirement.lower_closed));
     }
-    if concrete_value > requirement.upper
-        || (concrete_value == requirement.upper && !requirement.upper_closed)
+    if (concrete_value > requirement.upper
+        || (concrete_value == requirement.upper && !requirement.upper_closed))
+        && requirement.upper.is_finite()
     {
-        if requirement.upper.is_finite() {
-            return Some((requirement.upper, requirement.upper_closed));
-        }
+        return Some((requirement.upper, requirement.upper_closed));
     }
     None
 }

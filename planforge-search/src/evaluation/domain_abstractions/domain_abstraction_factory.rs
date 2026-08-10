@@ -3034,7 +3034,7 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes,
             hash_multipliers,
         ) {
-            if safety_steps % 64 == 0 {
+            if safety_steps.is_multiple_of(64) {
                 ensure_online_scp_deadline(deadline)?;
             }
             safety_steps += 1;
@@ -3638,7 +3638,7 @@ fn get_comparison_preconditions(
     for f in &op.preconditions {
         if comparison_var_ids.contains(&f.var()) && f.value() != ConditionValue::Unknown.as_usize()
         {
-            out.push(f.clone());
+            out.push(*f);
         }
     }
     out

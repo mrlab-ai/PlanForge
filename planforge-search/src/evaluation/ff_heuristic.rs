@@ -1453,7 +1453,7 @@ impl<'task> FfHeuristic<'task> {
                 continue;
             }
             let op_layer = scratch.op_first_layer[op_id];
-            if op_layer < 0 || op_layer > 1 {
+            if !(0..=1).contains(&op_layer) {
                 continue;
             }
             if let Some(task_idx) = self.op_task_idx[op_id] {
@@ -1494,7 +1494,7 @@ fn compute_numeric_dependency_closure(
             let left = sets[ax.left_var].clone();
             let right = sets[ax.right_var].clone();
             let dst = &mut sets[ax.affected_var];
-            for v in left.into_iter().chain(right.into_iter()) {
+            for v in left.into_iter().chain(right) {
                 if dst.insert(v) {
                     changed = true;
                 }

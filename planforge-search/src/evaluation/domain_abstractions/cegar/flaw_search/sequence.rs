@@ -391,7 +391,7 @@ pub fn get_progression_sequence_precondition_flaws(
                 vec![]
             };
             out.push(Flaw::Propositional(PropFlaw {
-                fact: pre.clone(),
+                fact: *pre,
                 dependent_numeric_flaws,
                 step,
             }));
@@ -418,7 +418,7 @@ pub fn get_goal_sequence_flaws(
             derived_goal_vars.insert(goal_var);
             continue;
         }
-        if !state.fact_is_hold(goal_fact) && seen.insert(goal_fact.clone()) {
+        if !state.fact_is_hold(goal_fact) && seen.insert(*goal_fact) {
             let prop_var_id = goal_fact.var();
             let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id)
             {
@@ -433,7 +433,7 @@ pub fn get_goal_sequence_flaws(
                 vec![]
             };
             out.push(Flaw::Propositional(PropFlaw {
-                fact: goal_fact.clone(),
+                fact: *goal_fact,
                 dependent_numeric_flaws,
                 step,
             }));
@@ -449,7 +449,7 @@ pub fn get_goal_sequence_flaws(
             continue;
         }
         for pre in ax.conditions().iter() {
-            if !state.fact_is_hold(pre) && seen.insert(pre.clone()) {
+            if !state.fact_is_hold(pre) && seen.insert(*pre) {
                 let prop_var_id = pre.var();
                 let dependent_numeric_flaws =
                     if task.numeric_conditions().is_condition_var(prop_var_id) {
@@ -464,7 +464,7 @@ pub fn get_goal_sequence_flaws(
                         vec![]
                     };
                 out.push(Flaw::Propositional(PropFlaw {
-                    fact: pre.clone(),
+                    fact: *pre,
                     dependent_numeric_flaws,
                     step,
                 }));

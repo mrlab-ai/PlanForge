@@ -96,16 +96,12 @@ impl Flaw {
 /// is chosen, not which iteration of the flaw search is run.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SplitDirection {
+    #[default]
     Forward,
     ForwardPartitionDeviation,
     Backward,
-}
-
-impl Default for SplitDirection {
-    fn default() -> Self {
-        SplitDirection::Forward
-    }
 }
 
 impl fmt::Display for SplitDirection {

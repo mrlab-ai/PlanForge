@@ -428,13 +428,13 @@ fn build_candidate_from_transition(
         };
         let var_id = if push_sk {
             let a = sk_pre.first().unwrap();
-            extended_pre_pairs.push(a.clone());
+            extended_pre_pairs.push(*a);
             let v = a.var();
             sk_pre = &sk_pre[1..];
             v
         } else {
             let b = src.first().unwrap();
-            extended_pre_pairs.push(b.clone());
+            extended_pre_pairs.push(*b);
             let v = b.var();
             src = &src[1..];
             v
@@ -466,13 +466,13 @@ fn build_candidate_from_transition(
         };
         let var_id = if push_sk {
             let a = sk_eff.first().unwrap();
-            extended_eff_pairs.push(a.clone());
+            extended_eff_pairs.push(*a);
             let v = a.var();
             sk_eff = &sk_eff[1..];
             v
         } else {
             let b = tgt.first().unwrap();
-            extended_eff_pairs.push(b.clone());
+            extended_eff_pairs.push(*b);
             let v = b.var();
             tgt = &tgt[1..];
             v
@@ -496,18 +496,18 @@ fn build_candidate_from_transition(
         match (sk_prev.first(), trv.first()) {
             (Some(a), Some(b)) => match a.var().cmp(&b.var()) {
                 std::cmp::Ordering::Less => {
-                    extended_prev_pairs.push(a.clone());
+                    extended_prev_pairs.push(*a);
                     sk_prev = &sk_prev[1..];
                 }
                 std::cmp::Ordering::Greater => {
-                    extended_prev_pairs.push(b.clone());
+                    extended_prev_pairs.push(*b);
                     trv = &trv[1..];
                 }
                 std::cmp::Ordering::Equal => {
                     if a.value() != b.value() {
                         prev_conflict = true;
                     }
-                    extended_prev_pairs.push(a.clone());
+                    extended_prev_pairs.push(*a);
                     let v = a.var();
                     sk_prev = &sk_prev[1..];
                     while trv.first().is_some_and(|f| f.var() == v) {
@@ -517,12 +517,12 @@ fn build_candidate_from_transition(
             },
             (Some(_), None) => {
                 let a = sk_prev.first().unwrap();
-                extended_prev_pairs.push(a.clone());
+                extended_prev_pairs.push(*a);
                 sk_prev = &sk_prev[1..];
             }
             (None, Some(_)) => {
                 let b = trv.first().unwrap();
-                extended_prev_pairs.push(b.clone());
+                extended_prev_pairs.push(*b);
                 trv = &trv[1..];
             }
             (None, None) => break,
@@ -1453,7 +1453,7 @@ fn enumerate_partition_combos(
     out: &mut Vec<TransitionInfo>,
     deadline: Option<Instant>,
 ) -> Result<()> {
-    if pos % 4 == 0 {
+    if pos.is_multiple_of(4) {
         ensure_generation_deadline(deadline)?;
     }
     if pos == per_var.len() {

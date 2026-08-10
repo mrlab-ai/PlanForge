@@ -492,7 +492,7 @@ impl<'task> ProjectedTask<'task> {
 
         for &numeric_var_id in &pattern.numeric {
             if numeric_var_id < num_numeric_vars {
-                let numeric_type = base.numeric_variables()[numeric_var_id].get_type().clone();
+                let numeric_type = *base.numeric_variables()[numeric_var_id].get_type();
                 if numeric_type != NumericType::Regular {
                     return Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
                         numeric_var_id,
@@ -1848,7 +1848,7 @@ fn collect_restricted_projected_goal_fact(
                 projected_num_var_to_original,
                 original_num_var_to_projected,
             );
-            goals.push(fact.clone());
+            goals.push(*fact);
         }
         return Ok(());
     }
@@ -1864,7 +1864,7 @@ fn collect_restricted_projected_goal_fact(
                 projected_var_to_original,
                 original_var_to_projected,
             );
-            goals.push(fact.clone());
+            goals.push(*fact);
         }
         for condition in task.axioms()[axiom_id].conditions() {
             collect_restricted_projected_goal_fact(
@@ -1890,7 +1890,7 @@ fn collect_restricted_projected_goal_fact(
             projected_var_to_original,
             original_var_to_projected,
         );
-        goals.push(fact.clone());
+        goals.push(*fact);
     }
     Ok(())
 }

@@ -755,7 +755,7 @@ impl NumericTaskHelper {
             let var_id = condition.var();
             if !self.is_numeric_axiom_var(var_id) {
                 if seen_propositional.insert((condition.var(), condition.value())) {
-                    propositional_facts.push(condition.clone());
+                    propositional_facts.push(*condition);
                 }
                 continue;
             }
@@ -998,7 +998,7 @@ impl NumericTaskHelper {
                 let proposition_id = self.proposition_facts.len();
                 ids.push(proposition_id);
                 let fact = ExplicitFact::new(var_id, value);
-                self.proposition_facts.push(fact.clone());
+                self.proposition_facts.push(fact);
                 self.proposition_var_ids.push(var_id);
                 self.proposition_names
                     .push(task.get_fact_name(&fact).to_string());
@@ -1086,7 +1086,7 @@ impl NumericTaskHelper {
         for effect in operator.effects() {
             let add_fact = ExplicitFact::new(effect.var_id(), effect.value());
             if effect.conditions().is_empty() {
-                action_model.add_facts.push(add_fact.clone());
+                action_model.add_facts.push(add_fact);
                 if let Some(&pre_value) = base_precondition_values.get(&(effect.var_id())) {
                     action_model
                         .del_facts
@@ -1499,7 +1499,7 @@ impl NumericTaskHelper {
                     fact_table
                         .entry(effect_var_id)
                         .or_default()
-                        .push(precondition.clone());
+                        .push(*precondition);
                 }
             }
         }

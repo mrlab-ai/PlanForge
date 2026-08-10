@@ -82,13 +82,14 @@ pub(crate) fn compute_collection_abstract_state_ids(
     let prop_has_resolved_comparisons = has_required_domains && fast_hash_enabled();
 
     scratch.comparisons.clear();
-    if !prop_has_resolved_comparisons && scratch.required_domain_ids.len() > 1 {
-        if let Some(&first_id) = scratch.required_domain_ids.first() {
-            heuristics[first_id].fill_comparison_values_from_projected_state_values(
-                &scratch.numeric,
-                &mut scratch.comparisons,
-            )?;
-        }
+    if !prop_has_resolved_comparisons
+        && scratch.required_domain_ids.len() > 1
+        && let Some(&first_id) = scratch.required_domain_ids.first()
+    {
+        heuristics[first_id].fill_comparison_values_from_projected_state_values(
+            &scratch.numeric,
+            &mut scratch.comparisons,
+        )?;
     }
 
     scratch.abstract_state_ids.clear();

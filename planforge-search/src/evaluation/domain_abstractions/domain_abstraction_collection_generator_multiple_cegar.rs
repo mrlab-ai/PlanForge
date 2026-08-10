@@ -407,7 +407,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
         let mut rng = self.create_rng();
         let mut goals: Vec<_> = (0..task.get_num_goals())
-            .map(|goal_id| task.get_goal_fact(goal_id).clone())
+            .map(|goal_id| *task.get_goal_fact(goal_id))
             .collect();
         if self.config.collection_strategy.uses_ranked_goals() {
             goals.sort_by(|left, right| compare_goals_for_collection(task, left, right));
@@ -468,7 +468,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             } else {
                 goals
                     .get(goal_index)
-                    .map(|goal| SingleGoalTask::new(task, goal.clone()))
+                    .map(|goal| SingleGoalTask::new(task, *goal))
             };
             let abstraction_task: &dyn AbstractNumericTask = single_goal_task
                 .as_ref()
@@ -615,14 +615,14 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 let consumed = abstraction_size.min(remaining_collection_size as u128) as usize;
                 remaining_collection_size = remaining_collection_size.saturating_sub(consumed);
                 generated_abstractions.push(abstraction);
-                if self.config.debug {
-                    if let Some(last) = generated_abstractions.last() {
-                        log_collection_abstraction_debug(
-                            generated_abstractions.len() - 1,
-                            last,
-                            abstraction_task,
-                        );
-                    }
+                if self.config.debug
+                    && let Some(last) = generated_abstractions.last()
+                {
+                    log_collection_abstraction_debug(
+                        generated_abstractions.len() - 1,
+                        last,
+                        abstraction_task,
+                    );
                 }
                 debug!(
                     "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
@@ -752,7 +752,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         active_root_group: Option<&RootGroup>,
     ) -> Vec<InitialSeedSplit> {
         match self.config.collection_strategy {
-            CollectionStrategy::Standard => return Vec::new(),
+            CollectionStrategy::Standard => Vec::new(),
             CollectionStrategy::Complementary => {
                 if self.complementary_uses_target_centered_for_goal_count(
                     goal_count,
@@ -770,7 +770,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     }
                     return seeds;
                 }
-                return Vec::new();
+                Vec::new()
             }
         }
     }
@@ -836,7 +836,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         complementary_direction: ComplementaryDirection,
     ) -> FlawKind {
         match self.config.collection_strategy {
-            CollectionStrategy::Standard => return self.config.flaw_kind,
+            CollectionStrategy::Standard => self.config.flaw_kind,
             CollectionStrategy::Complementary => {
                 if self.complementary_uses_target_centered_for_goal_count(
                     goal_count,
@@ -845,7 +845,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 ) {
                     return FlawKind::TargetCentered;
                 }
-                return self.config.flaw_kind;
+                self.config.flaw_kind
             }
         }
     }
@@ -1369,10 +1369,10 @@ fn target_centered_requirements_for_comparison_fact(
     fact: &ExplicitFact,
     numeric_state: &[f64],
 ) -> Vec<NumericRequirement> {
-    if let Some((numeric_var_id, interval)) = numeric_requirement_for_comparison_fact(task, fact) {
-        if is_refinable_numeric_dimension(task, numeric_var_id) {
-            return vec![NumericRequirement::from_interval(numeric_var_id, interval)];
-        }
+    if let Some((numeric_var_id, interval)) = numeric_requirement_for_comparison_fact(task, fact)
+        && is_refinable_numeric_dimension(task, numeric_var_id)
+    {
+        return vec![NumericRequirement::from_interval(numeric_var_id, interval)];
     }
 
     let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
@@ -1680,7 +1680,7 @@ fn append_interleaved_numeric_seeds(
     seeds: &mut Vec<InitialSeedSplit>,
     mut numeric_seed_groups: Vec<Vec<InitialSeedSplit>>,
 ) {
-    numeric_seed_groups.sort_by(|left, right| seed_group_key(left).cmp(&seed_group_key(right)));
+    numeric_seed_groups.sort_by_key(|left| seed_group_key(left));
     let mut seen = seeds.iter().map(seed_identity).collect::<HashSet<_>>();
     let max_group_len = numeric_seed_groups.iter().map(Vec::len).max().unwrap_or(0);
     for layer in 0..max_group_len {

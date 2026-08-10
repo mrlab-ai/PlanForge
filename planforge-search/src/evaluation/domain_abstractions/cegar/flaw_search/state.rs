@@ -98,7 +98,7 @@ impl<'a> FlawSearchState<'a> {
                 continue;
             }
             for pre in ax.conditions().iter() {
-                if seen.insert(pre.clone()) {
+                if seen.insert(*pre) {
                     state.set_prop_value(pre.var(), pre.value());
                 }
             }

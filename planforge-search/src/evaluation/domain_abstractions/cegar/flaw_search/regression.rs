@@ -157,19 +157,17 @@ fn split_for_missing_numeric_requirement(
     requirement: Interval,
     initial_value: f64,
 ) -> Option<(f64, bool)> {
-    if initial_value < requirement.lower
-        || (initial_value == requirement.lower && !requirement.lower_closed)
+    if (initial_value < requirement.lower
+        || (initial_value == requirement.lower && !requirement.lower_closed))
+        && requirement.lower.is_finite()
     {
-        if requirement.lower.is_finite() {
-            return Some((requirement.lower, !requirement.lower_closed));
-        }
+        return Some((requirement.lower, !requirement.lower_closed));
     }
-    if initial_value > requirement.upper
-        || (initial_value == requirement.upper && !requirement.upper_closed)
+    if (initial_value > requirement.upper
+        || (initial_value == requirement.upper && !requirement.upper_closed))
+        && requirement.upper.is_finite()
     {
-        if requirement.upper.is_finite() {
-            return Some((requirement.upper, requirement.upper_closed));
-        }
+        return Some((requirement.upper, requirement.upper_closed));
     }
     None
 }

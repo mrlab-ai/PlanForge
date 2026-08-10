@@ -105,10 +105,10 @@ impl VariableOrderFinder {
             if !goal_related_propositional_vars.contains(&affected_var_id) {
                 continue;
             }
-            if let Some(numeric_var_id) = causal_graph.comparison_numeric_var(comparison_axiom_id) {
-                if numeric_var_id < is_numeric_goal_variable.len() {
-                    is_numeric_goal_variable[numeric_var_id] = true;
-                }
+            if let Some(numeric_var_id) = causal_graph.comparison_numeric_var(comparison_axiom_id)
+                && numeric_var_id < is_numeric_goal_variable.len()
+            {
+                is_numeric_goal_variable[numeric_var_id] = true;
             }
         }
 

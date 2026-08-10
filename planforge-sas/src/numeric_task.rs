@@ -1246,7 +1246,7 @@ fn evaluate_state_with_axiom_closure(
     numeric: &mut [f64],
 ) -> Result<(), String> {
     let packer = Arc::new(abstract_propositional_packer(task));
-    let mut packed = vec![0u64; packer.num_bins() as usize];
+    let mut packed = vec![0u64; packer.num_bins()];
     for (var_id, value) in propositional.iter().enumerate() {
         packer.set(&mut packed, var_id, *value as u64);
     }
