@@ -17,7 +17,7 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
     ];
     let op = Operator::new(
         "set_changed".into(),
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![planforge_sas::numeric_task::Effect::new(vec![], 0, None, 0)],
         vec![],
         1,
@@ -27,7 +27,7 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1, 0],
         vec![],
@@ -35,7 +35,7 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let partitions = NumericPartitions::trivial(&task);
     let mut generator =
@@ -46,9 +46,16 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
 
     assert!(
         operators.iter().any(|op| {
-            op.preconditions == vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 0)]
+            op.preconditions
+                == vec![
+                    ExplicitFact::propositional(0, 1),
+                    ExplicitFact::propositional(1, 0),
+                ]
                 && op.regression_preconditions
-                    == vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)]
+                    == vec![
+                        ExplicitFact::propositional(0, 0),
+                        ExplicitFact::propositional(1, 0),
+                    ]
         }),
         "expected the branch changing changed=1 to changed=0 to survive"
     );
@@ -78,7 +85,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
     // Operator requires comparison to hold (var0 == 0) and applies x0 += c7.
     let op = Operator::new(
         "op".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![AssignmentEffect::new(
             0,
@@ -103,7 +110,7 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     // Partitions for x0: (-inf,10) and [10,inf)
@@ -156,7 +163,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
 
     let op = Operator::new(
         "op".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![AssignmentEffect::new(
             0,
@@ -181,7 +188,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -258,7 +265,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -289,8 +296,8 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
     .unwrap();
 
     let identity_transition = transitions.iter().find(|trans| {
-        trans.source_partition_facts == vec![ExplicitFact::new(0, 0)]
-            && trans.target_partition_facts == vec![ExplicitFact::new(0, 0)]
+        trans.source_partition_facts == vec![ExplicitFact::propositional(0, 0)]
+            && trans.target_partition_facts == vec![ExplicitFact::propositional(0, 0)]
     });
     assert!(identity_transition.is_some());
     assert_eq!(identity_transition.unwrap().changed_numeric_vars, vec![0]);
@@ -338,7 +345,7 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
         vec![],
         vec![],
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -370,10 +377,10 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     assert!(transitions.iter().any(|trans| {
         trans
             .source_partition_facts
-            .contains(&ExplicitFact::new(0, 0))
+            .contains(&ExplicitFact::propositional(0, 0))
             && trans
                 .target_partition_facts
-                .contains(&ExplicitFact::new(0, 1))
+                .contains(&ExplicitFact::propositional(0, 1))
     }));
     assert!(transitions.iter().all(|trans| {
         trans
@@ -432,7 +439,7 @@ fn multiply_out_unconditional_propositional_effects() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![]);
@@ -450,10 +457,13 @@ fn multiply_out_unconditional_propositional_effects() {
     // multiply_out creates one operator for predecessor value 0 -> 1.
     assert_eq!(abs_ops.len(), 1);
     assert_eq!(abs_ops[0].hash_effect, -1);
-    assert_eq!(abs_ops[0].preconditions, vec![ExplicitFact::new(0, 0)]);
+    assert_eq!(
+        abs_ops[0].preconditions,
+        vec![ExplicitFact::propositional(0, 0)]
+    );
     assert_eq!(
         abs_ops[0].regression_preconditions,
-        vec![ExplicitFact::new(0, 1)]
+        vec![ExplicitFact::propositional(0, 1)]
     );
 }
 
@@ -474,7 +484,7 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
 
     let op = Operator::new(
         "op".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![],
         1,
@@ -493,7 +503,7 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -513,10 +523,13 @@ fn derived_comparison_precondition_forces_unknown_old_value() {
     let abs_ops = generator.build_abstract_operators(&task).unwrap();
     assert_eq!(abs_ops.len(), 1);
     assert_eq!(abs_ops[0].hash_effect, -2);
-    assert_eq!(abs_ops[0].preconditions, vec![ExplicitFact::new(0, 0)]);
+    assert_eq!(
+        abs_ops[0].preconditions,
+        vec![ExplicitFact::propositional(0, 0)]
+    );
     assert_eq!(
         abs_ops[0].regression_preconditions,
-        vec![ExplicitFact::new(0, 2)]
+        vec![ExplicitFact::propositional(0, 2)]
     );
 }
 
@@ -555,7 +568,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -624,7 +637,7 @@ fn derived_comparison_transition_is_skipped_when_target_becomes_unknown() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -711,7 +724,7 @@ fn additive_view_filters_false_equality_precondition() {
         vec![0.0, 10.0, -10.0, 0.0],
         vec![Operator::new(
             "save".into(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![],
             1,
@@ -719,7 +732,7 @@ fn additive_view_filters_false_equality_precondition() {
         vec![],
         vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::Equal)],
         vec![AssignmentAxiom::new(2, CalOperator::Difference, 0, 1)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],
@@ -742,7 +755,7 @@ fn additive_view_filters_false_equality_precondition() {
         &task,
         &mut generator,
         0,
-        &[ExplicitFact::new(0, 0)],
+        &[ExplicitFact::propositional(0, 0)],
         &[],
         None,
     )
@@ -752,7 +765,7 @@ fn additive_view_filters_false_equality_precondition() {
     assert!(transitions.iter().all(|transition| {
         !transition
             .source_partition_facts
-            .contains(&ExplicitFact::new(derived_abs_var, 0))
+            .contains(&ExplicitFact::propositional(derived_abs_var, 0))
     }));
 }
 
@@ -776,7 +789,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
         vec![],
         vec![],
         vec![AssignmentAxiom::new(3, CalOperator::Product, 2, 1)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -837,7 +850,7 @@ fn duplicate_assignment_effects_are_rejected() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -877,10 +890,13 @@ fn conditional_propositional_effect_branches() {
 
     let op = Operator::new(
         "op".into(),
-        vec![ExplicitFact::new(1, 0), ExplicitFact::new(2, 0)],
+        vec![
+            ExplicitFact::propositional(1, 0),
+            ExplicitFact::propositional(2, 0),
+        ],
         vec![
             Effect::new(vec![], 1, Some(0), 1),
-            Effect::new(vec![ExplicitFact::new(0, 1)], 2, Some(0), 1),
+            Effect::new(vec![ExplicitFact::propositional(0, 1)], 2, Some(0), 1),
         ],
         vec![],
         1,
@@ -899,7 +915,7 @@ fn conditional_propositional_effect_branches() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![]);
@@ -933,7 +949,7 @@ fn conditional_assignment_effect_branches() {
 
     let op = Operator::new(
         "op".into(),
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![planforge_sas::numeric_task::Effect::new(
             vec![],
             1,
@@ -945,7 +961,7 @@ fn conditional_assignment_effect_branches() {
             AssignmentOperation::Plus,
             1,
             true,
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
         )],
         1,
     );
@@ -963,7 +979,7 @@ fn conditional_assignment_effect_branches() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -1024,7 +1040,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![

@@ -18,7 +18,7 @@ fn chain_task() -> TaskRef<'static> {
     let step = |name: &str, from: usize, to: usize| {
         Operator::new(
             name.to_string(),
-            vec![ExplicitFact::new(0, from)],
+            vec![ExplicitFact::propositional(0, from)],
             vec![Effect::new(vec![], 0, Some(from), to)],
             vec![],
             1,
@@ -30,7 +30,7 @@ fn chain_task() -> TaskRef<'static> {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(0, 2)],
+        vec![ExplicitFact::propositional(0, 2)],
         vec![],
         vec![0],
         vec![],
@@ -38,7 +38,7 @@ fn chain_task() -> TaskRef<'static> {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ))
 }
 

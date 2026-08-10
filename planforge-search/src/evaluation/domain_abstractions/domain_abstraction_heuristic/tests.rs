@@ -40,7 +40,7 @@ fn comparison_task() -> NumericRootTask {
             ComparisonOperator::GreaterThan,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

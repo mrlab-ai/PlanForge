@@ -62,13 +62,13 @@ fn propositional_task() -> NumericRootTask {
             NumericType::Regular,
             None,
         )],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![0.0],
         vec![Operator::new(
             "set-goal".to_string(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
                 0,
@@ -81,7 +81,7 @@ fn propositional_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -94,13 +94,13 @@ fn comparison_guarded_task() -> NumericRootTask {
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![2, 0],
         vec![0.0, 0.0],
         vec![Operator::new(
             "advance".to_string(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
                 1,
@@ -118,7 +118,7 @@ fn comparison_guarded_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -134,14 +134,14 @@ fn truncated_chain_task() -> NumericRootTask {
             2,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 2)],
+        vec![ExplicitFact::propositional(0, 2)],
         vec![],
         vec![0],
         vec![],
         vec![
             Operator::new(
                 "step-1".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -153,7 +153,7 @@ fn truncated_chain_task() -> NumericRootTask {
             ),
             Operator::new(
                 "step-2".to_string(),
-                vec![ExplicitFact::new(0, 1)],
+                vec![ExplicitFact::propositional(0, 1)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -167,7 +167,7 @@ fn truncated_chain_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -177,14 +177,14 @@ fn relevance_precision_task() -> NumericRootTask {
         Metric::new(true, None),
         vec![simple_var("p", None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
         vec![
             Operator::new(
                 "set-goal".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -196,7 +196,7 @@ fn relevance_precision_task() -> NumericRootTask {
             ),
             Operator::new(
                 "goal-self-loop".to_string(),
-                vec![ExplicitFact::new(0, 1)],
+                vec![ExplicitFact::propositional(0, 1)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -210,7 +210,7 @@ fn relevance_precision_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -242,14 +242,14 @@ fn truncation_gap_task() -> NumericRootTask {
             3,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 3)],
+        vec![ExplicitFact::propositional(0, 3)],
         vec![],
         vec![0],
         vec![],
         vec![
             Operator::new(
                 "to-1".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -261,7 +261,7 @@ fn truncation_gap_task() -> NumericRootTask {
             ),
             Operator::new(
                 "to-2".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -273,7 +273,7 @@ fn truncation_gap_task() -> NumericRootTask {
             ),
             Operator::new(
                 "to-3".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -287,7 +287,7 @@ fn truncation_gap_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -300,14 +300,14 @@ fn cost_only_hidden_numeric_task() -> NumericRootTask {
             NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![0.0, 1.0],
         vec![
             Operator::new(
                 "wait".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![],
                 vec![AssignmentEffect::new(
                     0,
@@ -320,7 +320,7 @@ fn cost_only_hidden_numeric_task() -> NumericRootTask {
             ),
             Operator::new(
                 "finish".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -340,7 +340,7 @@ fn cost_only_hidden_numeric_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -353,13 +353,13 @@ fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
             NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
             NumericVariable::new("zero".to_string(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![0.0, 0.0],
         vec![Operator::new(
             "finish".to_string(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
                 0,
@@ -378,7 +378,7 @@ fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -391,7 +391,7 @@ fn numeric_pair_task() -> NumericRootTask {
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![3.0, 7.0],
@@ -399,7 +399,7 @@ fn numeric_pair_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -421,14 +421,14 @@ fn failed_lookup_chain_task() -> NumericRootTask {
             4,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 4)],
+        vec![ExplicitFact::propositional(0, 4)],
         vec![],
         vec![0],
         vec![],
         vec![
             Operator::new(
                 "to-1".to_string(),
-                vec![ExplicitFact::new(0, 0)],
+                vec![ExplicitFact::propositional(0, 0)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -440,7 +440,7 @@ fn failed_lookup_chain_task() -> NumericRootTask {
             ),
             Operator::new(
                 "to-2".to_string(),
-                vec![ExplicitFact::new(0, 1)],
+                vec![ExplicitFact::propositional(0, 1)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -452,7 +452,7 @@ fn failed_lookup_chain_task() -> NumericRootTask {
             ),
             Operator::new(
                 "to-3".to_string(),
-                vec![ExplicitFact::new(0, 2)],
+                vec![ExplicitFact::propositional(0, 2)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -464,7 +464,7 @@ fn failed_lookup_chain_task() -> NumericRootTask {
             ),
             Operator::new(
                 "to-4".to_string(),
-                vec![ExplicitFact::new(0, 3)],
+                vec![ExplicitFact::propositional(0, 3)],
                 vec![planforge_sas::numeric_task::Effect::new(
                     vec![],
                     0,
@@ -478,7 +478,7 @@ fn failed_lookup_chain_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

@@ -889,8 +889,12 @@ fn format_abstract_fact(
             };
             if abs_val == fact.value() {
                 mapped_concretes.push(
-                    task.get_fact_name(&ExplicitFact::new(fact.var(), concrete_val))
-                        .to_string(),
+                    task.get_fact_name(&ExplicitFact::in_namespace(
+                        fact.namespace(),
+                        fact.var(),
+                        concrete_val,
+                    ))
+                    .to_string(),
                 );
             }
         }
@@ -1006,10 +1010,10 @@ fn build_branch_for_operator(
             if pre_val != abs_val {
                 generator.effect_on_var_scratch[var_id] = Some(abs_val);
                 touched_eff.push(var_id);
-                eff_pairs.push(ExplicitFact::new(var_id, abs_val));
+                eff_pairs.push(ExplicitFact::propositional(var_id, abs_val));
             }
         } else {
-            effects_without_pre.push(ExplicitFact::new(var_id, abs_val));
+            effects_without_pre.push(ExplicitFact::propositional(var_id, abs_val));
         }
     }
 
@@ -1020,9 +1024,9 @@ fn build_branch_for_operator(
         }
         let abs_val = generator.abstract_value(var_id, pre.value());
         if generator.effect_on_var_scratch[var_id].is_some() {
-            pre_pairs.push(ExplicitFact::new(var_id, abs_val));
+            pre_pairs.push(ExplicitFact::in_namespace(pre.namespace(), var_id, abs_val));
         } else if !task.numeric_conditions().is_condition_var(var_id) {
-            prev_pairs.push(ExplicitFact::new(var_id, abs_val));
+            prev_pairs.push(ExplicitFact::propositional(var_id, abs_val));
         }
     }
 
@@ -1039,8 +1043,8 @@ fn build_branch_for_operator(
         }
         let source_abs = generator.abstract_value(var_id, pre.value());
         let target_abs = generator.abstract_value(var_id, ConditionValue::Unknown.as_usize());
-        pre_pairs.push(ExplicitFact::new(var_id, source_abs));
-        eff_pairs.push(ExplicitFact::new(var_id, target_abs));
+        pre_pairs.push(ExplicitFact::condition(var_id, source_abs));
+        eff_pairs.push(ExplicitFact::condition(var_id, target_abs));
     }
 
     // Clear only the slots we touched, so subsequent calls start clean
@@ -1148,16 +1152,17 @@ fn multiply_out_propositional(
         }]);
     }
 
+    let namespace = effects_without_pre[pos].namespace();
     let var_id = effects_without_pre[pos].var();
     let eff = effects_without_pre[pos].value();
     let domain_size = generator.domain_sizes[var_id];
     let mut out: Vec<AbstractOperatorSkeleton> = Vec::new();
     for i in 0..domain_size {
         if i != eff {
-            pre_pairs.push(ExplicitFact::new(var_id, i));
-            eff_pairs.push(ExplicitFact::new(var_id, eff));
+            pre_pairs.push(ExplicitFact::in_namespace(namespace, var_id, i));
+            eff_pairs.push(ExplicitFact::in_namespace(namespace, var_id, eff));
         } else {
-            prev_pairs.push(ExplicitFact::new(var_id, i));
+            prev_pairs.push(ExplicitFact::in_namespace(namespace, var_id, i));
         }
 
         out.extend(multiply_out_propositional(
@@ -1530,10 +1535,13 @@ fn enumerate_partition_combos(
 
     let (var_id, transitions) = &per_var[pos];
     let var_id = *var_id;
+    // Abstraction-internal id space: numeric variables are addressed past the
+    // propositional ones. That offset encoding is not one of the task's fact
+    // namespaces, so these facts carry no namespace of their own.
     let abs_var_id = num_props + var_id;
     for &(src, tgt) in transitions {
-        source_partition_facts.push(ExplicitFact::new(abs_var_id, src));
-        target_partition_facts.push(ExplicitFact::new(abs_var_id, tgt));
+        source_partition_facts.push(ExplicitFact::propositional(abs_var_id, src));
+        target_partition_facts.push(ExplicitFact::propositional(abs_var_id, tgt));
         combo_scratch.push((var_id, src, tgt));
         // `changed_numeric_vars` is seeded with the full set of affected
         // numeric vars at the top of the operator (see

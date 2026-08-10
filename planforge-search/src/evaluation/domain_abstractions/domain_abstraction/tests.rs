@@ -42,7 +42,7 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let conditions = task.numeric_conditions();
@@ -52,9 +52,9 @@ fn comparison_tree_interval_evaluates_definitely_and_unknown() {
 
     // Every value of x0 is below c1, so requiring the comparison to hold is
     // satisfiable and requiring it to fail is not.
-    let requires_true = ExplicitFact::new(0, ConditionValue::True.as_usize());
-    let requires_false = ExplicitFact::new(0, ConditionValue::False.as_usize());
-    let requires_unknown = ExplicitFact::new(0, ConditionValue::Unknown.as_usize());
+    let requires_true = ExplicitFact::propositional(0, ConditionValue::True.as_usize());
+    let requires_false = ExplicitFact::propositional(0, ConditionValue::False.as_usize());
+    let requires_unknown = ExplicitFact::propositional(0, ConditionValue::Unknown.as_usize());
     assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
     assert!(conditions.precondition_is_contradicted(&requires_false, &intervals));
 
@@ -90,7 +90,7 @@ fn reachable_partitions_overlaps_result_interval() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(parts);
@@ -167,7 +167,7 @@ fn trivial_partitions_use_singletons_for_constants() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::trivial(&task);
@@ -200,7 +200,7 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::trivial(&task);
@@ -238,7 +238,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     // The derived variable is expanded into the condition's DAG instead of

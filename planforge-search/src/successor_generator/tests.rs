@@ -39,18 +39,18 @@ fn get_root_task() -> NumericRootTask {
         NumericVariable::new(String::from("total_cost()"), NumericType::Cost, None),
     ];
     let goals = vec![
-        ExplicitFact::new(9, 4),
-        ExplicitFact::new(10, 1),
-        ExplicitFact::new(11, 2),
-        ExplicitFact::new(12, 5),
-        ExplicitFact::new(13, 4),
+        ExplicitFact::propositional(9, 4),
+        ExplicitFact::propositional(10, 1),
+        ExplicitFact::propositional(11, 2),
+        ExplicitFact::propositional(12, 5),
+        ExplicitFact::propositional(13, 4),
     ];
     let mutexes = Vec::new();
     let state = vec![1, 1];
     let numeric_state = vec![1f64, 0f64];
     let operators = vec![Operator::new(
         String::from("drop"),
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![Effect::new(Vec::new(), 1, Some(1), 5)],
         Vec::new(),
         1,
@@ -58,7 +58,7 @@ fn get_root_task() -> NumericRootTask {
     let axioms = Vec::new();
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
-    let global_constraint = ExplicitFact::new(0, 0);
+    let global_constraint = ExplicitFact::propositional(0, 0);
     NumericRootTask::new(
         version,
         metric,

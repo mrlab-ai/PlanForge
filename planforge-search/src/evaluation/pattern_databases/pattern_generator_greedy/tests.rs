@@ -37,7 +37,7 @@ fn sample_task() -> NumericRootTask {
             NumericVariable::new("c".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![],
         vec![0, 2],
         vec![1.0, 0.0],
@@ -55,7 +55,7 @@ fn sample_task() -> NumericRootTask {
             1,
         )],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(1, 0)],
+            vec![ExplicitFact::propositional(1, 0)],
             0,
             1,
             0,
@@ -67,7 +67,7 @@ fn sample_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -81,13 +81,13 @@ fn operator_predecessor_task() -> NumericRootTask {
             simple_var("other", None),
         ],
         vec![],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 0, 0],
         vec![],
         vec![Operator::new(
             "achieve-goal".to_string(),
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
                 1,
@@ -100,7 +100,7 @@ fn operator_predecessor_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -124,13 +124,13 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0, 2],
         vec![5.0, 0.0, 0.0, 0.0],
         vec![Operator::new(
             "achieve-goal".to_string(),
-            vec![ExplicitFact::new(1, 0)],
+            vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
                 0,
@@ -148,7 +148,7 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 fn numeric_goal_task() -> NumericRootTask {
@@ -160,7 +160,7 @@ fn numeric_goal_task() -> NumericRootTask {
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![1.0, 0.0],
@@ -173,7 +173,7 @@ fn numeric_goal_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -279,7 +279,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![5.0, 0.0, 0.0, 0.0],
@@ -292,7 +292,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let restricted = build_restricted_task(&task).unwrap().unwrap();

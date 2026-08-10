@@ -4649,7 +4649,7 @@ fn split_to_guarantee_fact(
                         )
                     })?;
                 let witness_value = prop_values[condition.var()];
-                let witness_fact = ExplicitFact::new(condition.var(), witness_value);
+                let witness_fact = ExplicitFact::propositional(condition.var(), witness_value);
                 return split_to_guarantee_fact(
                     working,
                     semantics,

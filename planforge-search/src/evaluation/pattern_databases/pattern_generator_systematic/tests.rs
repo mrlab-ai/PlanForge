@@ -24,13 +24,13 @@ fn propositional_predecessor_task() -> NumericRootTask {
         Metric::new(true, None),
         vec![simple_var("q", None), simple_var("p", None)],
         vec![],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 0],
         vec![],
         vec![Operator::new(
             "set-goal".to_string(),
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
                 1,
@@ -43,7 +43,7 @@ fn propositional_predecessor_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -56,13 +56,13 @@ fn numeric_goal_task() -> NumericRootTask {
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 0],
         vec![1.0, 0.0],
         vec![],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             1,
             0,
             1,
@@ -74,7 +74,7 @@ fn numeric_goal_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -84,7 +84,10 @@ fn eff_eff_goal_join_task() -> NumericRootTask {
         Metric::new(true, None),
         vec![simple_var("g1", None), simple_var("g2", None)],
         vec![],
-        vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)],
+        vec![
+            ExplicitFact::propositional(0, 1),
+            ExplicitFact::propositional(1, 1),
+        ],
         vec![],
         vec![0, 0],
         vec![],
@@ -101,7 +104,7 @@ fn eff_eff_goal_join_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -116,7 +119,7 @@ fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 0],
         vec![2.0, 1.0, 1.0, 2.0],
@@ -134,7 +137,7 @@ fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
             1,
         )],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             1,
             0,
             1,
@@ -146,7 +149,7 @@ fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

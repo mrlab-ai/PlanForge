@@ -141,13 +141,13 @@ fn one_step_classical_potential_equals_optimal_cost() {
             0,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
         vec![Operator::new(
             "finish".into(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![Effect::new(vec![], 0, Some(0), 1)],
             vec![],
             1,
@@ -155,7 +155,7 @@ fn one_step_classical_potential_equals_optimal_cost() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let (value, _) = optimize_initial(task);
     assert!((value - 1.0).abs() < 1e-7, "got {value}");
@@ -178,7 +178,7 @@ fn additive_numeric_potential_equals_two_required_increments() {
             NumericVariable::new("two".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1],
         vec![0.0, 2.0, 1.0],
@@ -203,7 +203,7 @@ fn additive_numeric_potential_equals_two_required_increments() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let (value, _) = optimize_initial(task);
     assert!((value - 2.0).abs() < 1e-7, "got {value}");
@@ -265,7 +265,7 @@ fn thirty_deterministic_random_duality_instances() {
                 1,
             )],
             numeric_variables,
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             initial_numeric,
@@ -278,7 +278,7 @@ fn thirty_deterministic_random_duality_instances() {
                 ComparisonOperator::GreaterThanOrEqual,
             )],
             vec![],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
         let (value, _) = optimize_initial(task);
         let expected = target * expected_ratio;
@@ -324,7 +324,7 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
             NumericVariable::new("three".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(2, 0)],
+        vec![ExplicitFact::propositional(2, 0)],
         vec![],
         vec![1, 1, 1],
         vec![0.0, 0.0, 2.0, 3.0, 1.0],
@@ -357,7 +357,10 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
             ),
         ],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+            vec![
+                ExplicitFact::propositional(0, 0),
+                ExplicitFact::propositional(1, 0),
+            ],
             2,
             1,
             0,
@@ -367,7 +370,7 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
             ComparisonAxiom::new(1, 1, 3, ComparisonOperator::GreaterThanOrEqual),
         ],
         vec![],
-        ExplicitFact::new(2, 0),
+        ExplicitFact::propositional(2, 0),
     );
     let (value, _) = optimize_initial(task);
     assert!((value - 5.0).abs() < 1e-7, "got {value}");
@@ -398,13 +401,16 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("zero".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![],
         vec![1, 1],
         vec![0.0, 0.0],
         vec![Operator::new(
             "finish".into(),
-            vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 1)],
+            vec![
+                ExplicitFact::propositional(0, 0),
+                ExplicitFact::propositional(1, 1),
+            ],
             vec![Effect::new(vec![], 1, Some(1), 0)],
             vec![],
             1,
@@ -417,7 +423,7 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(1, 0),
+        ExplicitFact::propositional(1, 0),
     ));
     let mut config = NumericPotentialConfig::default();
     config.ignore_numeric_variables = true;
@@ -451,7 +457,7 @@ fn ocp_retains_stuttering_action_constraints() {
             NumericVariable::new("two".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1],
         vec![0.0, 2.0, 1.0],
@@ -476,7 +482,7 @@ fn ocp_retains_stuttering_action_constraints() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let cegar_config = CegarConfig {
         max_abstraction_size: 1,
@@ -546,7 +552,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
             NumericVariable::new("two".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![],
         vec![1, 1],
         vec![0.0, 2.0, 1.0],
@@ -566,7 +572,10 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
             ),
             Operator::new(
                 "finish".into(),
-                vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 1)],
+                vec![
+                    ExplicitFact::propositional(0, 0),
+                    ExplicitFact::propositional(1, 1),
+                ],
                 vec![Effect::new(vec![], 1, Some(1), 0)],
                 vec![],
                 1,
@@ -580,7 +589,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(1, 0),
+        ExplicitFact::propositional(1, 0),
     ));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
@@ -650,7 +659,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
                 NumericVariable::new("two".into(), NumericType::Constant, None),
                 NumericVariable::new("one".into(), NumericType::Constant, None),
             ],
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             vec![0.0, 2.0, 1.0],
@@ -675,7 +684,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
                 ComparisonOperator::GreaterThanOrEqual,
             )],
             vec![],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         ));
         let mut registry = StateRegistry::for_task(task.clone());
         let initial = registry.get_initial_state();
@@ -708,7 +717,7 @@ fn exact_ray_certifies_numeric_dead_end() {
             NumericVariable::new("two".into(), NumericType::Constant, None),
             NumericVariable::new("minus-one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1],
         vec![0.0, 2.0, -1.0],
@@ -733,7 +742,7 @@ fn exact_ray_certifies_numeric_dead_end() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
@@ -774,13 +783,13 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
             NumericVariable::new("resource".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1],
         vec![3.0, 1.0],
         vec![Operator::new(
             "increase-and-finish".into(),
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
             vec![Effect::new(vec![], 0, Some(1), 0)],
             vec![AssignmentEffect::new(
                 0,
@@ -794,7 +803,7 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let potential_task =
         PotentialTask::build(&task, 1e-6, 0.0, false, BoundsProvider::Monotone, false).unwrap();
@@ -824,7 +833,7 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
             NumericVariable::new("two".into(), NumericType::Constant, None),
             NumericVariable::new("minus-one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1],
         vec![0.0, 2.0, -1.0],
@@ -849,7 +858,7 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let config = NumericPotentialConfig {
         bounds: BoundsProvider::Monotone,
@@ -896,7 +905,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             NumericVariable::new("zero".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![],
         vec![1, 1],
         vec![5.0, 2.0, 1.0, 0.0, 0.0, 0.0, 1.0],
@@ -916,7 +925,10 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             ),
             Operator::new(
                 "finish".into(),
-                vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 1)],
+                vec![
+                    ExplicitFact::propositional(0, 0),
+                    ExplicitFact::propositional(1, 1),
+                ],
                 vec![Effect::new(vec![], 1, Some(1), 0)],
                 vec![],
                 1,
@@ -959,7 +971,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             AssignmentAxiom::new(3, CalOperator::Sum, 2, 1),
             AssignmentAxiom::new(4, CalOperator::Difference, 3, 0),
         ],
-        ExplicitFact::new(1, 0),
+        ExplicitFact::propositional(1, 0),
     ));
     let potential_task =
         PotentialTask::build(&*task, 1e-6, 0.0, false, BoundsProvider::All, false).unwrap();

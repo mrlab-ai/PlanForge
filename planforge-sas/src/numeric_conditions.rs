@@ -33,7 +33,9 @@
 mod tests;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use crate::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, NumericVariable};
+use crate::numeric_task::{
+    AbstractNumericTask, ExplicitFact, FactNamespace, NumericType, NumericVariable,
+};
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The three values a propositional variable carrying a numeric condition's
@@ -825,6 +827,24 @@ impl NumericConditions {
     #[inline]
     pub fn is_condition_var(&self, prop_var_id: usize) -> bool {
         matches!(self.by_prop_var.get(prop_var_id), Some(Some(_)))
+    }
+
+    /// The namespace variable `prop_var_id` belongs to.
+    #[inline]
+    pub fn namespace_of(&self, prop_var_id: usize) -> FactNamespace {
+        if self.is_condition_var(prop_var_id) {
+            FactNamespace::Condition
+        } else {
+            FactNamespace::Propositional
+        }
+    }
+
+    /// Build a correctly tagged fact. This is the authoritative constructor
+    /// for callers that hold a variable id and cannot themselves know which
+    /// namespace it names.
+    #[inline]
+    pub fn fact(&self, prop_var_id: usize, value: usize) -> ExplicitFact {
+        ExplicitFact::in_namespace(self.namespace_of(prop_var_id), prop_var_id, value)
     }
 
     #[inline]

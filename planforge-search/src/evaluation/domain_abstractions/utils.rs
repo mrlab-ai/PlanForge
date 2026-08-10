@@ -1082,7 +1082,7 @@ pub(crate) fn dump_distances(
                 if shown > 0 {
                     let mut names: Vec<&str> = Vec::new();
                     for cv in concretes.iter().take(shown) {
-                        let fact = ExplicitFact::new(var_id, *cv);
+                        let fact = ExplicitFact::propositional(var_id, *cv);
                         let n = task.get_fact_name(&fact);
                         if !n.is_empty() {
                             names.push(n);

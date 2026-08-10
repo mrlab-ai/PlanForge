@@ -497,8 +497,8 @@ mod tests {
                 0,
             ),
         ];
-        let left_zero = ExplicitFact::new(1, 0);
-        let right_zero = ExplicitFact::new(2, 0);
+        let left_zero = ExplicitFact::propositional(1, 0);
+        let right_zero = ExplicitFact::propositional(2, 0);
         let preconditions = if duplicate {
             vec![left_zero, right_zero, left_zero]
         } else {
@@ -516,7 +516,7 @@ mod tests {
             Metric::new(true, None),
             variables,
             Vec::new(),
-            vec![ExplicitFact::new(1, 1)],
+            vec![ExplicitFact::propositional(1, 1)],
             Vec::new(),
             vec![1, 0, 0],
             Vec::new(),
@@ -524,7 +524,7 @@ mod tests {
             vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
             Vec::new(),
             Vec::new(),
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         )
     }
 

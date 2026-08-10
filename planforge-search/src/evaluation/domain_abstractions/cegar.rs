@@ -1109,10 +1109,13 @@ fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
         if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var()) {
             let axiom = &task.axioms()[axiom_idx];
             for condition in axiom.conditions() {
-                goals.push(ExplicitFact::new(condition.var(), condition.value()));
+                goals.push(ExplicitFact::propositional(
+                    condition.var(),
+                    condition.value(),
+                ));
             }
         } else {
-            goals.push(ExplicitFact::new(goal.var(), goal.value()));
+            goals.push(ExplicitFact::propositional(goal.var(), goal.value()));
         }
     }
     goals.sort_unstable();

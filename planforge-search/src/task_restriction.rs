@@ -431,7 +431,7 @@ pub fn build_icaps26_restricted_task(
         task.axioms().clone(),
         comparison_axioms,
         Vec::new(),
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     validate_restricted_task(&transformed_task).map_err(|reason| {
         anyhow::anyhow!("ICAPS 2026 restricted task construction failed: {reason}")
@@ -550,7 +550,7 @@ fn build_task(
         task.axioms().clone(),
         comparison_axioms,
         Vec::<AssignmentAxiom>::new(),
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     validate_restricted_task(&transformed_task)
         .map_err(|reason| anyhow::anyhow!("restricted task construction failed: {reason}"))?;
@@ -1059,7 +1059,7 @@ mod tests {
             Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             vec![2.0, 3.0, 5.0, 10.0, 1.0],
@@ -1072,7 +1072,7 @@ mod tests {
                 ComparisonOperator::LessThanOrEqual,
             )],
             vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
 
         let restricted = build_restricted_task(&task)
@@ -1159,7 +1159,7 @@ mod tests {
             Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             vec![4000.0, 6000.0, 2000.0],
@@ -1172,7 +1172,7 @@ mod tests {
                 ComparisonOperator::GreaterThan,
             )],
             vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
 
         let restricted = build_restricted_task(&task)
@@ -1224,7 +1224,7 @@ mod tests {
             Metric::new(true, Some(4)),
             variables,
             numeric_variables,
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             vec![4.0, 6.0, 2.0, 1.0, 0.0],
@@ -1237,7 +1237,7 @@ mod tests {
                 ComparisonOperator::GreaterThan,
             )],
             vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
 
         let restricted = build_restricted_task(&task)
@@ -1279,7 +1279,7 @@ mod tests {
             Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             vec![2.0, 10.0],
@@ -1292,7 +1292,7 @@ mod tests {
                 ComparisonOperator::LessThanOrEqual,
             )],
             vec![],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
 
         assert!(build_restricted_task(&task).unwrap().is_none());
@@ -1331,7 +1331,7 @@ mod tests {
             Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![1],
             vec![2.0, 3.0, 5.0, 10.0],
@@ -1344,7 +1344,7 @@ mod tests {
                 ComparisonOperator::LessThanOrEqual,
             )],
             vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
 
         let error = build_restricted_task(&task).unwrap_err();

@@ -31,7 +31,7 @@ fn initial_state_registration_does_not_mutate_shared_task() {
             0,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -39,7 +39,7 @@ fn initial_state_registration_does_not_mutate_shared_task() {
         vec![PropositionalAxiom::new(vec![], 0, 0, 1)],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let original_propositions = task.get_initial_propositional_state_values().to_vec();
     let original_numeric = task.get_initial_numeric_state_values().to_vec();
@@ -84,7 +84,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
 
     let expensive_op = Operator::new(
         "expensive".to_string(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(Vec::new(), 0, Some(0), 1)],
         vec![crate::numeric_task::AssignmentEffect::new(
             0,
@@ -97,7 +97,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
     );
     let cheap_op = Operator::new(
         "cheap".to_string(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(Vec::new(), 0, Some(0), 1)],
         vec![crate::numeric_task::AssignmentEffect::new(
             0,
@@ -114,7 +114,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         Metric::new(true, Some(0)),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![0.0, 1.0, 5.0],
@@ -122,7 +122,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
 
     let mut state_registry = StateRegistry::for_task(task.clone());
@@ -198,7 +198,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
 
     for compact in [false, true] {
@@ -247,7 +247,7 @@ fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let mut regular = StateRegistry::for_task(task.clone());
     let mut compact = StateRegistry::for_task_with_compact_numeric(task, true);
@@ -274,7 +274,7 @@ fn compact_numeric_states_support_more_than_u16_distinct_values() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let registry = StateRegistry::for_task_with_compact_numeric(task, true);
 

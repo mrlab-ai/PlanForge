@@ -33,7 +33,7 @@ fn from_config_accepts_second_order_simple_flag() {
         Metric::new(true, None),
         vec![simple_var("v0", &["zero", "one"], None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -41,7 +41,7 @@ fn from_config_accepts_second_order_simple_flag() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = LmCutNumericConfig {
         use_second_order_simple: true,
@@ -60,7 +60,7 @@ fn from_config_accepts_irmax() {
         Metric::new(true, None),
         vec![simple_var("v0", &["zero", "one"], None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -68,7 +68,7 @@ fn from_config_accepts_irmax() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = LmCutNumericConfig {
         irmax: true,
@@ -88,7 +88,7 @@ fn from_config_rejects_unimplemented_random_pcf() {
         Metric::new(true, None),
         vec![simple_var("v0", &["zero", "one"], None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -96,7 +96,7 @@ fn from_config_rejects_unimplemented_random_pcf() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = LmCutNumericConfig {
         random_pcf: true,
@@ -118,7 +118,7 @@ fn from_config_accepts_disable_ma() {
         Metric::new(true, None),
         vec![simple_var("v0", &["zero", "one"], None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -126,7 +126,7 @@ fn from_config_accepts_disable_ma() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = LmCutNumericConfig {
         disable_ma: true,
@@ -146,7 +146,7 @@ fn from_config_accepts_constant_assignment() {
         Metric::new(true, None),
         vec![simple_var("v0", &["zero", "one"], None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -154,7 +154,7 @@ fn from_config_accepts_constant_assignment() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = LmCutNumericConfig {
         use_constant_assignment: true,
@@ -174,7 +174,7 @@ fn from_config_accepts_bound_iterations() {
         Metric::new(true, None),
         vec![simple_var("v0", &["zero", "one"], None)],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -182,7 +182,7 @@ fn from_config_accepts_bound_iterations() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = LmCutNumericConfig {
         bound_iterations: 1,

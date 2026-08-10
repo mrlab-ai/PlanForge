@@ -98,13 +98,13 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
             0,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![],
         vec![Operator::new(
             "prevail-left".into(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![],
             1,
@@ -112,7 +112,7 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let source = StateRegion {
         propositions: vec![vec![0, 1]].into(),
@@ -157,14 +157,14 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
         ),
         Operator::new(
             "prevail-left".into(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![],
             1,
         ),
         Operator::new(
             "prevail-right".into(),
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
             vec![],
             vec![],
             1,
@@ -181,7 +181,7 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
             0,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -189,7 +189,7 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let semantics = CartesianSemantics::new(
         &task,
@@ -283,7 +283,7 @@ fn min_growth_uses_projected_transition_count() {
             NumericVariable::new("y".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![0.0, 0.0, 1.0],
@@ -303,7 +303,7 @@ fn min_growth_uses_projected_transition_count() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 1),
+        ExplicitFact::propositional(0, 1),
     );
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
@@ -354,7 +354,7 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
             NumericVariable::new("half".into(), NumericType::Constant, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![-10.0, -2.0, 0.5, 1.0],
@@ -389,7 +389,7 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 1),
+        ExplicitFact::propositional(0, 1),
     );
     let config = CartesianAbstractionConfig {
         split_selection: CartesianSplitSelection::MaxAdditiveSteps,
@@ -437,7 +437,7 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![0.0, 1.0],
@@ -457,7 +457,7 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = CartesianAbstractionConfig::default();
     let semantics = CartesianSemantics::new(&task, &config).unwrap();
@@ -656,7 +656,7 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
             3,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -664,7 +664,7 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 3),
+        ExplicitFact::propositional(0, 3),
     );
     let mut config = CartesianAbstractionConfig {
         split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
@@ -736,7 +736,7 @@ fn native_random_and_least_refined_selectors_are_independent() {
             ),
         ],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0, 0],
         vec![],
@@ -744,7 +744,7 @@ fn native_random_and_least_refined_selectors_are_independent() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let split = |var_id| Split::Propositional {
         state_id: 0,
@@ -821,7 +821,7 @@ fn unchanged_transition_footprints_share_state_dimensions() {
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![0.0, 1.0],
@@ -841,7 +841,7 @@ fn unchanged_transition_footprints_share_state_dimensions() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let source = StateRegion {
@@ -871,7 +871,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
             1,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![0],
         vec![],
@@ -879,7 +879,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 1),
+        ExplicitFact::propositional(0, 1),
     );
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 1,
@@ -909,13 +909,13 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
             0,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
         vec![Operator::new(
             "achieve".into(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![Effect::new(vec![], 0, Some(0), 1)],
             vec![],
             3,
@@ -923,7 +923,7 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let generate = |retain_transition_system| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
@@ -1056,13 +1056,13 @@ fn refines_through_propositional_axiom_goal_support() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![],
         vec![1, 1],
         vec![0.0, 2.0, 1.0],
         vec![increment],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             1,
             1,
             0,
@@ -1074,7 +1074,7 @@ fn refines_through_propositional_axiom_goal_support() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
@@ -1395,7 +1395,7 @@ fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTa
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -1495,20 +1495,20 @@ fn refines_failed_default_derived_goal() {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 1],
         vec![],
         vec![turn_off],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             1,
             1,
             0,
         )],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     assert_solved_with_h(&task, 1.0);
@@ -1615,7 +1615,10 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 0),
+        ],
         vec![],
         vec![2, 2],
         vec![0.0, 0.0, 1.0, 2.0, 3.0],
@@ -1626,7 +1629,7 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
             ComparisonAxiom::new(1, 1, 4, ComparisonOperator::GreaterThanOrEqual),
         ],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let abstractions =
@@ -1749,7 +1752,10 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
             NumericVariable::new("two".into(), NumericType::Constant, None),
             NumericVariable::new("four".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 0),
+        ],
         vec![],
         vec![2, 2],
         vec![0.0, 1.0, 2.0, 4.0],
@@ -1772,7 +1778,7 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
             ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
         ],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let abstractions =
@@ -1862,7 +1868,10 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             NumericVariable::new("four".into(), NumericType::Constant, None),
             NumericVariable::new("two".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 0),
+        ],
         vec![],
         vec![2, 2],
         vec![0.0, 1.0, 4.0, 2.0],
@@ -1885,7 +1894,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
         ],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let abstractions =
@@ -1950,7 +1959,10 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("zero".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 0),
+        ],
         vec![],
         vec![2, 2],
         vec![0.0, 1.0, 0.0],
@@ -1973,7 +1985,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
             ComparisonAxiom::new(1, 0, 2, ComparisonOperator::LessThanOrEqual),
         ],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let abstractions =
@@ -2047,7 +2059,10 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
             NumericVariable::new("four".into(), NumericType::Constant, None),
             NumericVariable::new("two".into(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0), ExplicitFact::new(1, 0)],
+        vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 0),
+        ],
         vec![],
         vec![2, 2],
         vec![0.0, 1.0, 4.0, 2.0],
@@ -2070,7 +2085,7 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
             ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
         ],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let abstractions =
@@ -2238,7 +2253,7 @@ fn goal_collection_preserves_empty_goal_tasks() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let abstractions = CartesianAbstractionCollectionGenerator::new(
         CartesianAbstractionCollectionConfig::default(),
@@ -2337,7 +2352,7 @@ fn numeric_goal_task(
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![2],
         initial_numeric,
@@ -2345,7 +2360,7 @@ fn numeric_goal_task(
         vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

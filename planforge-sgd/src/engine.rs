@@ -2548,7 +2548,7 @@ fn solve_direct_transcription(
                     let local_var = transcription.var_of_fact()[fact] as usize;
                     let task_var = transcription.primary_vars()[local_var];
                     let value = fact - transcription.var_offset()[local_var] as usize;
-                    let name = task.get_fact_name(&ExplicitFact::new(task_var, value));
+                    let name = task.get_fact_name(&ExplicitFact::propositional(task_var, value));
                     if name.is_empty() {
                         format!("var{task_var}={value}")
                     } else {
@@ -5082,7 +5082,7 @@ fn solve_direct_transcription(
                                     let fact = transcription.fact(variable, value) as usize;
                                     temporal_scaffold_gap_fact_values[fact_begin + fact] =
                                         f64::from(
-                                            ExplicitFact::new(task_variable, value)
+                                            ExplicitFact::propositional(task_variable, value)
                                                 .is_hold(exact, &registry),
                                         );
                                 }

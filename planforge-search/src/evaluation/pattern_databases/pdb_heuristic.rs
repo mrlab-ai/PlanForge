@@ -132,13 +132,13 @@ mod tests {
                 NumericType::Regular,
                 None,
             )],
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
             vec![],
             vec![1],
             vec![0.0],
             vec![Operator::new(
                 "leave-goal".to_string(),
-                vec![ExplicitFact::new(0, 1)],
+                vec![ExplicitFact::propositional(0, 1)],
                 vec![Effect::new(vec![], 0, Some(1), 0)],
                 vec![],
                 1,
@@ -146,7 +146,7 @@ mod tests {
             vec![],
             vec![],
             vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         )
     }
 

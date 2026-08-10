@@ -143,7 +143,7 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
     )];
     let op = Operator::new(
         "move".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, None, 1)],
         vec![],
         1,
@@ -153,7 +153,7 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -161,7 +161,7 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 1),
+        ExplicitFact::propositional(0, 1),
     );
     let factory = factory_identity_cutpoints(&task).unwrap();
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
@@ -201,7 +201,10 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
     let operators = vec![
         Operator::new(
             "increase-x".into(),
-            vec![ExplicitFact::new(0, ConditionValue::True.as_usize())],
+            vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::True.as_usize(),
+            )],
             vec![],
             vec![AssignmentEffect::new(
                 0,
@@ -214,7 +217,10 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         ),
         Operator::new(
             "finish".into(),
-            vec![ExplicitFact::new(0, ConditionValue::False.as_usize())],
+            vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::False.as_usize(),
+            )],
             vec![Effect::new(vec![], 1, Some(0), 1)],
             vec![],
             1,
@@ -225,7 +231,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![ConditionValue::Unknown.as_usize(), 0],
         vec![0.0, 10.0, 20.0],
@@ -233,7 +239,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         vec![],
         vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
         vec![],
-        ExplicitFact::new(0, ConditionValue::Unknown.as_usize()),
+        ExplicitFact::propositional(0, ConditionValue::Unknown.as_usize()),
     );
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory
@@ -268,7 +274,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     )];
     let op = Operator::new(
         "move".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, None, 1)],
         vec![],
         1,
@@ -278,7 +284,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -286,7 +292,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 1),
+        ExplicitFact::propositional(0, 1),
     );
     let factory = factory_identity_cutpoints(&task).unwrap();
     let mut operator_generator = factory.make_operator_generator(&task, false).unwrap();
@@ -366,7 +372,7 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
 
     let op = Operator::new(
         "op".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![],
         1,
@@ -385,7 +391,7 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -438,7 +444,7 @@ fn enumerate_states_branches_on_undecidable_comparison() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -505,7 +511,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -530,10 +536,13 @@ fn unknown_comparison_preconditions_are_not_treated_as_fixed() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(0, ConditionValue::Unknown.as_usize())],
+        regression_preconditions: vec![ExplicitFact::propositional(
+            0,
+            ConditionValue::Unknown.as_usize(),
+        )],
         preconditions: vec![
-            ExplicitFact::new(0, ConditionValue::Unknown.as_usize()),
-            ExplicitFact::new(1, 7),
+            ExplicitFact::propositional(0, ConditionValue::Unknown.as_usize()),
+            ExplicitFact::propositional(1, 7),
         ],
         changed_numeric_vars: vec![],
     };
@@ -552,17 +561,17 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
@@ -580,7 +589,7 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -604,17 +613,17 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
@@ -632,7 +641,7 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -654,17 +663,17 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
@@ -682,7 +691,7 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -704,17 +713,17 @@ fn singleton_plan_selection_uses_seeded_rng() {
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
     let op0 = Operator::new(
         "set0".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
     );
     let op1 = Operator::new(
         "set1".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
@@ -732,7 +741,7 @@ fn singleton_plan_selection_uses_seeded_rng() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -752,16 +761,28 @@ fn match_tree_indexes_comparison_variables() {
             concrete_op_ids: vec![0],
             cost: 1.0,
             hash_effect: 0,
-            regression_preconditions: vec![ExplicitFact::new(0, ConditionValue::True.as_usize())],
-            preconditions: vec![ExplicitFact::new(0, ConditionValue::True.as_usize())],
+            regression_preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::True.as_usize(),
+            )],
+            preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::True.as_usize(),
+            )],
             changed_numeric_vars: vec![],
         },
         super::super::abstract_operator_generator::AbstractOperator {
             concrete_op_ids: vec![1],
             cost: 1.0,
             hash_effect: 0,
-            regression_preconditions: vec![ExplicitFact::new(0, ConditionValue::False.as_usize())],
-            preconditions: vec![ExplicitFact::new(0, ConditionValue::False.as_usize())],
+            regression_preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::False.as_usize(),
+            )],
+            preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::False.as_usize(),
+            )],
             changed_numeric_vars: vec![],
         },
     ];
@@ -807,7 +828,7 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -853,20 +874,20 @@ fn abstract_goals_skip_trivial_goal_axiom_preconditions() {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 0],
         vec![],
         vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             1,
             0,
             1,
         )],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -907,8 +928,8 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         variables,
         numeric_variables,
         vec![
-            ExplicitFact::new(0, ConditionValue::True.as_usize()),
-            ExplicitFact::new(1, ConditionValue::False.as_usize()),
+            ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+            ExplicitFact::propositional(1, ConditionValue::False.as_usize()),
         ],
         vec![],
         vec![
@@ -920,7 +941,7 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let factory = factory_identity_cutpoints(&task).unwrap();
@@ -985,7 +1006,7 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
         vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -1065,7 +1086,7 @@ fn additive_numeric_footprint_task() -> (NumericRootTask, DomainAbstractionFacto
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -1128,7 +1149,7 @@ fn additive_numeric_footprint_task_with_partitions(
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let numeric_domain_sizes = vec![x_partitions.len(), 1];
     let partitions =
@@ -1154,8 +1175,8 @@ fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1186,8 +1207,8 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1214,8 +1235,8 @@ fn footprint_active_preimage_allows_boundary_charge() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1241,8 +1262,8 @@ fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1264,8 +1285,8 @@ fn abstract_operator_footprint_allocates_unbounded_changed_tail() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1292,7 +1313,7 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
     )];
     let op = Operator::new(
         "save".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, None, 1)],
         vec![],
         1,
@@ -1302,7 +1323,7 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
         Metric::new(true, None),
         variables,
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -1310,7 +1331,7 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let factory = DomainAbstractionFactory::new(
@@ -1325,8 +1346,8 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(0, 1)],
-        preconditions: vec![ExplicitFact::new(0, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(0, 1)],
+        preconditions: vec![ExplicitFact::propositional(0, 0)],
         changed_numeric_vars: vec![],
     };
 
@@ -1375,7 +1396,7 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -1405,12 +1426,12 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         cost: 1.0,
         hash_effect: 0,
         regression_preconditions: vec![
-            ExplicitFact::new(x_abs_var, 1),
-            ExplicitFact::new(y_abs_var, 0),
+            ExplicitFact::propositional(x_abs_var, 1),
+            ExplicitFact::propositional(y_abs_var, 0),
         ],
         preconditions: vec![
-            ExplicitFact::new(x_abs_var, 0),
-            ExplicitFact::new(y_abs_var, 0),
+            ExplicitFact::propositional(x_abs_var, 0),
+            ExplicitFact::propositional(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
     };
@@ -1471,7 +1492,7 @@ fn footprint_one_finite_dim_suffices() {
     );
     let save = Operator::new(
         "save".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 1, Some(0), 1)],
         vec![],
         1,
@@ -1481,7 +1502,7 @@ fn footprint_one_finite_dim_suffices() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![2, 0],
         vec![0.0, 0.0, 0.5, 0.0],
@@ -1494,7 +1515,7 @@ fn footprint_one_finite_dim_suffices() {
             ComparisonOperator::GreaterThan,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -1523,12 +1544,12 @@ fn footprint_one_finite_dim_suffices() {
         cost: 1.0,
         hash_effect: 0,
         regression_preconditions: vec![
-            ExplicitFact::new(x_abs_var, 1),
-            ExplicitFact::new(y_abs_var, 0),
+            ExplicitFact::propositional(x_abs_var, 1),
+            ExplicitFact::propositional(y_abs_var, 0),
         ],
         preconditions: vec![
-            ExplicitFact::new(x_abs_var, 0),
-            ExplicitFact::new(y_abs_var, 0),
+            ExplicitFact::propositional(x_abs_var, 0),
+            ExplicitFact::propositional(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
     };
@@ -1583,7 +1604,7 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -1614,12 +1635,12 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
         cost: 1.0,
         hash_effect: 0,
         regression_preconditions: vec![
-            ExplicitFact::new(x_abs_var, 1),
-            ExplicitFact::new(y_abs_var, 0),
+            ExplicitFact::propositional(x_abs_var, 1),
+            ExplicitFact::propositional(y_abs_var, 0),
         ],
         preconditions: vec![
-            ExplicitFact::new(x_abs_var, 0),
-            ExplicitFact::new(y_abs_var, 0),
+            ExplicitFact::propositional(x_abs_var, 0),
+            ExplicitFact::propositional(y_abs_var, 0),
         ],
         changed_numeric_vars: vec![0, 1],
     };
@@ -1658,8 +1679,8 @@ fn footprint_width_does_not_change_valid_preimage() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 
@@ -1686,8 +1707,8 @@ fn singleton_preimage_is_preserved_exactly() {
         concrete_op_ids: vec![0],
         cost: 1.0,
         hash_effect: 0,
-        regression_preconditions: vec![ExplicitFact::new(x_abs_var, 1)],
-        preconditions: vec![ExplicitFact::new(x_abs_var, 0)],
+        regression_preconditions: vec![ExplicitFact::propositional(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::propositional(x_abs_var, 0)],
         changed_numeric_vars: vec![0],
     };
 

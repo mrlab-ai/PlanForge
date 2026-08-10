@@ -577,7 +577,7 @@ mod tests {
 
     fn prop_flaw(var: usize, deps: Vec<NumericFlaw>) -> Flaw {
         Flaw::Propositional(PropFlaw {
-            fact: ExplicitFact::new(var, 0),
+            fact: ExplicitFact::propositional(var, 0),
             dependent_numeric_flaws: deps,
             step: 0,
         })

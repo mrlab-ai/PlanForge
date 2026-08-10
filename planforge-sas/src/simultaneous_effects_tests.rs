@@ -38,7 +38,7 @@ fn task_with_effects(effects: Vec<AssignmentEffect>, metric_var: Option<usize>) 
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("total_cost".into(), NumericType::Cost, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![10.0, 3.0, 1.0, 0.0],
@@ -46,7 +46,7 @@ fn task_with_effects(effects: Vec<AssignmentEffect>, metric_var: Option<usize>) 
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -102,7 +102,7 @@ fn unsatisfied_effect_condition_suppresses_the_effect() {
         AssignmentOperation::Plus,
         ONE,
         true,
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
     );
 
     let values = successor_values(vec![effect]);
@@ -118,7 +118,7 @@ fn satisfied_effect_condition_fires_the_effect() {
         AssignmentOperation::Plus,
         ONE,
         true,
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
     );
 
     let values = successor_values(vec![effect]);
@@ -147,7 +147,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("total_cost".into(), NumericType::Cost, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![10.0, 3.0, 1.0, 0.0],
@@ -160,14 +160,14 @@ fn effect_conditions_are_read_from_the_parent_state() {
                 AssignmentOperation::Plus,
                 ONE,
                 true,
-                vec![ExplicitFact::new(0, 1)],
+                vec![ExplicitFact::propositional(0, 1)],
             )],
             1,
         )],
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();

@@ -2669,7 +2669,7 @@ impl DomainAbstractionFactory {
                         .and_then(|m| m.get(val))
                         .copied()
                         .unwrap_or(cond.value());
-                    out.push(ExplicitFact::new(cond.var(), mapped));
+                    out.push(ExplicitFact::propositional(cond.var(), mapped));
                 }
             } else {
                 let v = g.var();
@@ -2683,7 +2683,7 @@ impl DomainAbstractionFactory {
                     .and_then(|m| m.get(val))
                     .copied()
                     .unwrap_or(g.value());
-                out.push(ExplicitFact::new(g.var(), mapped));
+                out.push(ExplicitFact::propositional(g.var(), mapped));
             }
         }
 

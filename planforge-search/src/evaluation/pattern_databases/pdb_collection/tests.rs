@@ -25,13 +25,13 @@ fn sample_task() -> NumericRootTask {
             NumericType::Regular,
             None,
         )],
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![0, 0],
         vec![0.0],
         vec![Operator::new(
             "advance".to_string(),
-            vec![ExplicitFact::new(0, 1)],
+            vec![ExplicitFact::propositional(0, 1)],
             vec![Effect::new(vec![], 1, Some(0), 1)],
             vec![],
             1,
@@ -39,7 +39,7 @@ fn sample_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

@@ -23,7 +23,7 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![2],
         vec![1.0, 0.0],
@@ -48,7 +48,7 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let estimator = NumericSizeEstimator::new(&task);
@@ -76,7 +76,7 @@ fn rejects_unrestricted_numeric_conditions() {
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![2],
         vec![1.0, 5.0, 0.0, 1.0, 0.0],
@@ -101,7 +101,7 @@ fn rejects_unrestricted_numeric_conditions() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![AssignmentAxiom::new(4, CalOperator::Sum, 2, 3)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let _ = NumericSizeEstimator::new(&task);

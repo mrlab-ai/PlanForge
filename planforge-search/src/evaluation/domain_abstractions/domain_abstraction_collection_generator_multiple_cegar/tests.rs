@@ -30,7 +30,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             1,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
@@ -44,7 +44,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         max_abstraction_size: 10,
@@ -286,7 +286,7 @@ fn affine_root_groups_share_immutable_anchors_without_merging_independent_ones()
             AssignmentAxiom::new(5, CalOperator::Difference, 1, 2),
             AssignmentAxiom::new(6, CalOperator::Difference, 0, 3),
         ],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let first = numeric_root_group_key(&task, &task, 4).unwrap();

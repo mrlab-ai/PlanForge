@@ -37,7 +37,10 @@ fn simple_task() -> NumericRootTask {
         Metric::new(true, None),
         vec![simple_var("p"), simple_var("q")],
         vec![],
-        vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)],
+        vec![
+            ExplicitFact::propositional(0, 1),
+            ExplicitFact::propositional(1, 1),
+        ],
         vec![],
         vec![0, 0],
         vec![],
@@ -60,7 +63,7 @@ fn simple_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

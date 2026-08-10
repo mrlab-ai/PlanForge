@@ -473,37 +473,172 @@ impl NumericVariable {
     }
 }
 
-/// Variable/value pair. `u32` fields halve the per-fact footprint compared
-/// to `usize` on 64-bit targets (16 B → 8 B), at the cost of a hard 4 G
-/// ceiling on variable and value IDs — vastly above anything realistic
-/// planning tasks reach. The cap is checked at SAS-load time.
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+/// Panic unless every fact `task` exposes names the namespace the task's own
+/// numeric conditions put its variable in.
+///
+/// A mistagged fact is invisible later: it still denotes a well-formed
+/// variable, just the wrong kind of one, so the search produces a wrong plan
+/// and no crash. That is why this is an assertion and not a diagnostic.
+pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
+    let conditions = task.numeric_conditions();
+    let check = |fact: &ExplicitFact, origin: &dyn fmt::Display| {
+        let expected = conditions.namespace_of(fact.var());
+        assert_eq!(
+            fact.namespace(),
+            expected,
+            "{origin}: {fact:?} is tagged {:?}, but variable {} belongs to {expected:?}",
+            fact.namespace(),
+            fact.var()
+        );
+    };
+
+    for (operator_id, operator) in task.get_operators().iter().enumerate() {
+        let origin = format_args!("operator {operator_id}").to_string();
+        for precondition in operator.preconditions() {
+            check(precondition, &origin);
+        }
+        for effect in operator.effects() {
+            for condition in effect.conditions() {
+                check(condition, &origin);
+            }
+        }
+        for effect in operator.assignment_effects() {
+            for condition in effect.conditions() {
+                check(condition, &origin);
+            }
+        }
+    }
+    for (axiom_id, axiom) in task.axioms().iter().enumerate() {
+        let origin = format_args!("axiom {axiom_id}").to_string();
+        for condition in axiom.conditions() {
+            check(condition, &origin);
+        }
+    }
+    for goal_index in 0..task.get_num_goals() {
+        check(task.get_goal_fact(goal_index), &"goal");
+    }
+}
+
+/// [`assert_fact_namespaces`] in debug builds only. The check walks every fact
+/// of the task, which is linear in the task size and therefore too costly to
+/// pay for on every release run.
+pub fn debug_assert_fact_namespaces(task: &dyn AbstractNumericTask) {
+    if cfg!(debug_assertions) {
+        assert_fact_namespaces(task);
+    }
+}
+
+/// Which id space a fact's variable belongs to.
+///
+/// A propositional variable and a numeric condition are different kinds of
+/// thing that happen to share the packed-state buffer, so a fact carries the
+/// answer instead of leaving callers to rediscover it from
+/// [`NumericConditions::is_condition_var`].
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
+#[repr(u32)]
+pub enum FactNamespace {
+    /// The fact's variable is a genuine propositional variable.
+    Propositional = 0,
+    /// The fact's variable carries the truth value of a numeric condition.
+    Condition = 1,
+}
+
+impl FactNamespace {
+    /// Number of tag bits [`ExplicitFact`] reserves in its variable id.
+    const BITS: u32 = 4;
+
+    #[inline(always)]
+    const fn from_tag(tag: u32) -> Self {
+        match tag {
+            0 => FactNamespace::Propositional,
+            1 => FactNamespace::Condition,
+            // Only `ExplicitFact`'s constructors write the tag, and they only
+            // ever write a discriminant of this enum.
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Variable/value pair, tagged with the variable's [`FactNamespace`].
+///
+/// `u32` fields halve the per-fact footprint compared to `usize` on 64-bit
+/// targets (16 B → 8 B). The namespace occupies the top
+/// [`FactNamespace::BITS`] bits of the variable id, leaving a hard
+/// [`Self::MAX_VAR_ID`] ceiling — vastly above anything realistic planning
+/// tasks reach, and checked at construction.
+///
+/// The tag lives in the *high* bits on purpose: [`Self::var`] is a plain mask
+/// of the low bits, so every existing var-major sort and dense per-variable
+/// sweep keeps its meaning.
+#[derive(Clone, Copy)]
 pub struct ExplicitFact {
+    /// `namespace << (32 - FactNamespace::BITS) | var`.
     var_id: u32,
     value_id: u32,
 }
 
 impl ExplicitFact {
-    /// Constructor accepts `usize` to minimize call-site churn; values are
-    /// narrowed at construction. Out-of-range arguments are caught in
-    /// debug builds.
-    pub fn new(var: usize, value: usize) -> Self {
-        debug_assert!(
-            var <= u32::MAX as usize,
-            "ExplicitFact var {var} > u32::MAX"
+    const VAR_BITS: u32 = u32::BITS - FactNamespace::BITS;
+    const VAR_MASK: u32 = (1 << Self::VAR_BITS) - 1;
+
+    /// Largest variable id a fact can name.
+    pub const MAX_VAR_ID: usize = Self::VAR_MASK as usize;
+
+    /// Fact on a genuine propositional variable.
+    #[inline]
+    pub fn propositional(var: usize, value: usize) -> Self {
+        Self::in_namespace(FactNamespace::Propositional, var, value)
+    }
+
+    /// Fact on the variable carrying a numeric condition's truth value.
+    #[inline]
+    pub fn condition(var: usize, value: usize) -> Self {
+        Self::in_namespace(FactNamespace::Condition, var, value)
+    }
+
+    /// Constructors accept `usize` to minimize call-site churn; values are
+    /// narrowed here, and out-of-range arguments fail rather than silently
+    /// aliasing another variable or bleeding into the namespace tag.
+    pub fn in_namespace(namespace: FactNamespace, var: usize, value: usize) -> Self {
+        assert!(
+            var <= Self::MAX_VAR_ID,
+            "ExplicitFact var {var} exceeds the {} packed variable-id bits",
+            Self::VAR_BITS
         );
         debug_assert!(
             value <= u32::MAX as usize,
             "ExplicitFact value {value} > u32::MAX"
         );
         ExplicitFact {
-            var_id: var as u32,
+            var_id: (namespace as u32) << Self::VAR_BITS | var as u32,
             value_id: value as u32,
         }
     }
+
+    /// The same fact re-tagged. Used by the one pass that owns namespace
+    /// assignment, [`NumericRootTask::assign_fact_namespaces`].
+    #[inline]
+    #[must_use]
+    pub fn with_namespace(self, namespace: FactNamespace) -> Self {
+        ExplicitFact {
+            var_id: (namespace as u32) << Self::VAR_BITS | (self.var_id & Self::VAR_MASK),
+            value_id: self.value_id,
+        }
+    }
+
+    #[inline(always)]
+    pub fn namespace(&self) -> FactNamespace {
+        FactNamespace::from_tag(self.var_id >> Self::VAR_BITS)
+    }
+
+    #[inline(always)]
+    pub fn is_condition(&self) -> bool {
+        self.namespace() == FactNamespace::Condition
+    }
+
     #[inline(always)]
     pub fn var(&self) -> usize {
-        self.var_id as usize
+        (self.var_id & Self::VAR_MASK) as usize
     }
     #[inline(always)]
     pub fn value(&self) -> usize {
@@ -517,9 +652,55 @@ impl ExplicitFact {
     }
 }
 
+/// Identity, ordering and hashing are all over `(variable, value)` and ignore
+/// the namespace tag.
+///
+/// The tag is a function of the variable, so dropping it loses nothing — and
+/// it means the tag can never split one fact into two that compare unequal but
+/// order equal, which would quietly break `sort` + `dedup` pairs and mutex
+/// lookups. Ordering stays variable-major, which is what the successor
+/// generator's decision tree is built from.
+impl PartialEq for ExplicitFact {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.value_id == other.value_id && self.var() == other.var()
+    }
+}
+
+impl Eq for ExplicitFact {}
+
+impl std::hash::Hash for ExplicitFact {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.var().hash(state);
+        self.value_id.hash(state);
+    }
+}
+
+impl Ord for ExplicitFact {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.var(), self.value_id).cmp(&(other.var(), other.value_id))
+    }
+}
+
+impl PartialOrd for ExplicitFact {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl fmt::Debug for ExplicitFact {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Fact(var: {}, value: {})", self.var(), self.value())
+        match self.namespace() {
+            FactNamespace::Propositional => {
+                write!(f, "Fact(var: {}, value: {})", self.var(), self.value())
+            }
+            FactNamespace::Condition => {
+                write!(f, "Fact(cond: {}, value: {})", self.var(), self.value())
+            }
+        }
     }
 }
 
@@ -926,8 +1107,41 @@ impl NumericRootTask {
             numeric_conditions,
             global_constraint,
         };
+        task.assign_fact_namespaces();
         task.close_initial_state_under_axioms();
+        debug_assert_fact_namespaces(&task);
         task
+    }
+
+    /// Tag every fact the task stores with the namespace of its variable.
+    ///
+    /// The parser cannot do this: which propositional variables carry numeric
+    /// conditions only becomes known when `numeric_conditions` is built, which
+    /// happens in [`Self::new`]. So namespace assignment happens exactly once,
+    /// over the whole task at once, and no later consumer has to rediscover
+    /// the "propositional variable -> comparison axiom" mapping to know what
+    /// kind of variable a fact names.
+    fn assign_fact_namespaces(&mut self) {
+        let conditions = Arc::clone(&self.numeric_conditions);
+        let retag = |fact: &mut ExplicitFact| {
+            *fact = fact.with_namespace(conditions.namespace_of(fact.var()));
+        };
+
+        self.goals.iter_mut().for_each(retag);
+        self.mutexes.iter_mut().flatten().for_each(retag);
+        for operator in &mut self.operators {
+            operator.preconditions.iter_mut().for_each(retag);
+            for effect in &mut operator.effects {
+                effect.conditions.iter_mut().for_each(retag);
+            }
+            for effect in &mut operator.assignment_effects {
+                effect.conditions.iter_mut().for_each(retag);
+            }
+        }
+        for axiom in &mut self.axioms {
+            axiom.conditions_mut().iter_mut().for_each(retag);
+        }
+        retag(&mut self.global_constraint);
     }
 
     /// Replace the initial state by its axiom closure.

@@ -47,6 +47,12 @@ impl PropositionalAxiom {
     pub fn conditions(&self) -> &Vec<ExplicitFact> {
         &self.conditions
     }
+
+    /// Only for `NumericRootTask::assign_fact_namespaces`, the single pass that
+    /// owns fact namespace assignment.
+    pub(crate) fn conditions_mut(&mut self) -> &mut Vec<ExplicitFact> {
+        &mut self.conditions
+    }
 }
 
 #[derive(Debug, Clone)]

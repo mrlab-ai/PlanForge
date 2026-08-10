@@ -25,10 +25,10 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         0,
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
     let op = Operator::new(
         "set".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![planforge_sas::numeric_task::Effect::new(
             vec![],
             0,
@@ -51,7 +51,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
@@ -106,7 +106,7 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![3.5],
@@ -114,7 +114,7 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let mut config = CegarConfig {
@@ -173,7 +173,7 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![2],
         vec![1.0, 0.0],
@@ -181,7 +181,7 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let config = CegarConfig {

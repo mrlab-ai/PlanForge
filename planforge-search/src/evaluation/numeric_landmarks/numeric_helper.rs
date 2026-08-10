@@ -507,6 +507,16 @@ impl NumericTaskHelper {
         self.comparison_axiom_by_var.contains_key(&variable_id)
     }
 
+    /// A fact on `variable_id`, tagged with the namespace the helper's own
+    /// comparison-axiom map puts that variable in.
+    pub(crate) fn fact(&self, variable_id: usize, value: usize) -> ExplicitFact {
+        if self.is_comparison_axiom_var(variable_id) {
+            ExplicitFact::condition(variable_id, value)
+        } else {
+            ExplicitFact::propositional(variable_id, value)
+        }
+    }
+
     pub(crate) fn is_numeric_axiom_var(&self, variable_id: usize) -> bool {
         self.fact_to_axiom_marker(variable_id)
             .map(|marker| marker.is_some())
@@ -997,7 +1007,7 @@ impl NumericTaskHelper {
             for value in 0..domain_size {
                 let proposition_id = self.proposition_facts.len();
                 ids.push(proposition_id);
-                let fact = ExplicitFact::new(var_id, value);
+                let fact = task.numeric_conditions().fact(var_id, value);
                 self.proposition_facts.push(fact);
                 self.proposition_var_ids.push(var_id);
                 self.proposition_names
@@ -1084,13 +1094,13 @@ impl NumericTaskHelper {
         }
 
         for effect in operator.effects() {
-            let add_fact = ExplicitFact::new(effect.var_id(), effect.value());
+            let add_fact = ExplicitFact::propositional(effect.var_id(), effect.value());
             if effect.conditions().is_empty() {
                 action_model.add_facts.push(add_fact);
                 if let Some(&pre_value) = base_precondition_values.get(&(effect.var_id())) {
                     action_model
                         .del_facts
-                        .push(ExplicitFact::new(effect.var_id(), pre_value));
+                        .push(ExplicitFact::propositional(effect.var_id(), pre_value));
                 }
             } else {
                 let conditional_preconditions = self
@@ -1106,7 +1116,7 @@ impl NumericTaskHelper {
                 let del_fact = extended_precondition_values
                     .get(&(effect.var_id()))
                     .copied()
-                    .map(|pre_value| ExplicitFact::new(effect.var_id(), pre_value));
+                    .map(|pre_value| ExplicitFact::propositional(effect.var_id(), pre_value));
                 action_model
                     .conditional_fact_effects
                     .push(HelperConditionalExplicitFactEffect {
@@ -1171,10 +1181,11 @@ impl NumericTaskHelper {
             cost: 0.0,
             ..HelperActionModel::default()
         };
-        action_model
-            .add_facts
-            .push(ExplicitFact::new(axiom.var_id(), axiom.effect_value()));
-        action_model.del_facts.push(ExplicitFact::new(
+        action_model.add_facts.push(ExplicitFact::propositional(
+            axiom.var_id(),
+            axiom.effect_value(),
+        ));
+        action_model.del_facts.push(ExplicitFact::propositional(
             axiom.var_id(),
             axiom.precondition_value(),
         ));
@@ -1603,7 +1614,9 @@ impl NumericTaskHelper {
         let operator = comparison_operator_for_fact_value(comparison_axiom, fact_value)?;
         let lhs = comparison_axiom.get_left_var_id();
         let rhs = comparison_axiom.get_right_var_id();
-        let fact = ExplicitFact::new(affected_var_id, fact_value);
+        // A comparison axiom's affected variable is by definition the carrier of
+        // a numeric condition.
+        let fact = ExplicitFact::condition(affected_var_id, fact_value);
         let fact_name = match task.get_fact_name(&fact) {
             "" => format!("comparison fact {affected_var_id}={fact_value}"),
             name => name.to_string(),

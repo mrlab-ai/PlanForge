@@ -5673,7 +5673,7 @@ mod handcrafted_sailing_tests {
             .filter(|operator| operator.name().ends_with(&suffix))
             .flat_map(|operator| operator.effects().iter())
             .filter(|effect| effect.conditions().is_empty())
-            .map(|effect| ExplicitFact::new(effect.var_id(), effect.value()))
+            .map(|effect| ExplicitFact::propositional(effect.var_id(), effect.value()))
             .collect::<Vec<_>>();
         candidates.sort();
         candidates.dedup();
@@ -6253,7 +6253,10 @@ mod tests {
             Metric::new(true, None),
             vec![binary_variable("p"), binary_variable("q")],
             vec![],
-            vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)],
+            vec![
+                ExplicitFact::propositional(0, 1),
+                ExplicitFact::propositional(1, 1),
+            ],
             vec![],
             vec![0, 0],
             vec![],
@@ -6276,7 +6279,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         )
     }
 

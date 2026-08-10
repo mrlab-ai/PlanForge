@@ -71,7 +71,7 @@ fn test_compute_effective_operator_costs_plus_constants() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let task: TaskRef = Arc::new(task);
@@ -171,7 +171,7 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ));
     let registry = StateRegistry::for_task(task.clone());
     let mut search = AStarSearch::new(task, registry, Some(Box::new(FailingHeuristic)), None, None);
@@ -225,13 +225,13 @@ fn one_step_task() -> TaskRef<'static> {
             0,
         )],
         vec![],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![],
         vec![Operator::new(
             "finish".to_string(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![Effect::new(vec![], 0, Some(0), 1)],
             vec![],
             1,
@@ -239,7 +239,7 @@ fn one_step_task() -> TaskRef<'static> {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     ))
 }
 

@@ -74,7 +74,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
         for (index, &domain) in domains.iter().enumerate() {
             if rng.percent(40) {
                 let value = rng.below(domain);
-                preconditions.push(ExplicitFact::new(task_var(index), value));
+                preconditions.push(ExplicitFact::propositional(task_var(index), value));
             }
         }
 
@@ -88,7 +88,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
                 for (other, &other_domain) in domains.iter().enumerate() {
                     if rng.percent(30) {
                         let value = rng.below(other_domain);
-                        conditions.push(ExplicitFact::new(task_var(other), value));
+                        conditions.push(ExplicitFact::propositional(task_var(other), value));
                     }
                 }
                 let required = if rng.percent(30) {
@@ -96,7 +96,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
                     // The SAS parser hoists an effect's `precondition_value`
                     // onto the operator's preconditions; the classical-fragment check verifies
                     // that invariant, so the generator must respect it.
-                    preconditions.push(ExplicitFact::new(task_var(index), value));
+                    preconditions.push(ExplicitFact::propositional(task_var(index), value));
                     Some(value)
                 } else {
                     None
@@ -116,7 +116,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
     }
 
     let goal_var = rng.below(num_primary);
-    let goals = vec![ExplicitFact::new(
+    let goals = vec![ExplicitFact::propositional(
         task_var(goal_var),
         rng.below(domains[goal_var]),
     )];
@@ -142,6 +142,6 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
         vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
         Vec::new(),
         Vec::new(),
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }

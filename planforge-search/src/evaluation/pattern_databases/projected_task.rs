@@ -568,7 +568,7 @@ impl<'task> ProjectedTask<'task> {
 
             let var_fact_names = (0..domain_size)
                 .map(|value| {
-                    let original_fact = ExplicitFact::new(original_var_id, value);
+                    let original_fact = base.numeric_conditions().fact(original_var_id, value);
                     let fact_name = base.get_fact_name(&original_fact);
                     if fact_name.is_empty() {
                         format!("{variable_name}={value}")
@@ -679,13 +679,13 @@ impl<'task> ProjectedTask<'task> {
                 operator
                     .effects()
                     .iter()
-                    .map(|effect| ExplicitFact::new(effect.var_id(), effect.value()))
+                    .map(|effect| ExplicitFact::propositional(effect.var_id(), effect.value()))
                     .collect()
             })
             .collect();
         let axiom_effect_facts: Vec<ExplicitFact> = axioms
             .iter()
-            .map(|axiom| ExplicitFact::new(axiom.var_id(), axiom.effect_value()))
+            .map(|axiom| ExplicitFact::propositional(axiom.var_id(), axiom.effect_value()))
             .collect();
 
         let metric_var_id = if base.metric().var_id().is_none() {
@@ -719,7 +719,7 @@ impl<'task> ProjectedTask<'task> {
             axioms.clone(),
             comparison_axioms.clone(),
             assignment_axioms.clone(),
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
         let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
 
@@ -773,7 +773,7 @@ impl<'task> ProjectedTask<'task> {
             self.axioms.clone(),
             self.comparison_axioms.clone(),
             self.assignment_axioms.clone(),
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         )
     }
 
@@ -1869,17 +1869,19 @@ fn collect_restricted_projected_goal_fact(
     Ok(())
 }
 
+/// Projecting renames a variable; it never changes what kind of variable it is,
+/// so the namespace carries over.
 fn project_fact(fact: &ExplicitFact, var_map: &[Option<usize>]) -> Option<ExplicitFact> {
     var_map
         .get(fact.var())
         .and_then(|mapped| *mapped)
-        .map(|mapped| ExplicitFact::new(mapped, fact.value()))
+        .map(|mapped| ExplicitFact::in_namespace(fact.namespace(), mapped, fact.value()))
 }
 
 fn restore_fact(fact: &ExplicitFact, projected_to_original: &[usize]) -> Option<ExplicitFact> {
     projected_to_original
         .get(fact.var())
-        .map(|&original| ExplicitFact::new(original, fact.value()))
+        .map(|&original| ExplicitFact::in_namespace(fact.namespace(), original, fact.value()))
 }
 
 fn project_effect(effect: &Effect, var_map: &[Option<usize>]) -> Option<Effect> {

@@ -400,7 +400,10 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
     ];
     let action = Operator::new(
         "set-both".to_string(),
-        vec![ExplicitFact::new(1, 0), ExplicitFact::new(2, 0)],
+        vec![
+            ExplicitFact::propositional(1, 0),
+            ExplicitFact::propositional(2, 0),
+        ],
         vec![
             Effect::new(Vec::new(), 1, None, 1),
             Effect::new(Vec::new(), 2, None, 1),
@@ -413,7 +416,10 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
         Metric::new(true, None),
         variables,
         Vec::new(),
-        vec![ExplicitFact::new(1, 1), ExplicitFact::new(2, 1)],
+        vec![
+            ExplicitFact::propositional(1, 1),
+            ExplicitFact::propositional(2, 1),
+        ],
         Vec::new(),
         vec![1, 0, initial_right],
         Vec::new(),
@@ -421,7 +427,7 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
         vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
         Vec::new(),
         Vec::new(),
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -1133,21 +1139,21 @@ fn causal_chain_task() -> NumericRootTask {
     ];
     let move_01 = Operator::new(
         "move-0-1".to_string(),
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![Effect::new(Vec::new(), 1, None, 1)],
         Vec::new(),
         1,
     );
     let move_12 = Operator::new(
         "move-1-2".to_string(),
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![Effect::new(Vec::new(), 1, None, 2)],
         Vec::new(),
         1,
     );
     let move_10 = Operator::new(
         "move-1-0".to_string(),
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![Effect::new(Vec::new(), 1, None, 0)],
         Vec::new(),
         1,
@@ -1157,7 +1163,7 @@ fn causal_chain_task() -> NumericRootTask {
         Metric::new(true, None),
         variables,
         Vec::new(),
-        vec![ExplicitFact::new(1, 2)],
+        vec![ExplicitFact::propositional(1, 2)],
         Vec::new(),
         vec![1, 0],
         Vec::new(),
@@ -1165,7 +1171,7 @@ fn causal_chain_task() -> NumericRootTask {
         vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
         Vec::new(),
         Vec::new(),
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -1218,7 +1224,10 @@ fn clobbered_goals_task(initial_first_goal: bool) -> NumericRootTask {
         Metric::new(true, None),
         variables,
         Vec::new(),
-        vec![ExplicitFact::new(1, 1), ExplicitFact::new(2, 1)],
+        vec![
+            ExplicitFact::propositional(1, 1),
+            ExplicitFact::propositional(2, 1),
+        ],
         Vec::new(),
         vec![1, usize::from(initial_first_goal), 0],
         Vec::new(),
@@ -1226,7 +1235,7 @@ fn clobbered_goals_task(initial_first_goal: bool) -> NumericRootTask {
         vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
         Vec::new(),
         Vec::new(),
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

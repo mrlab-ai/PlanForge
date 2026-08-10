@@ -145,7 +145,7 @@ impl PotentialTask {
         // numeric goal interval.
         for prop_goal in &propositional_goals {
             for comparison in task.comparison_axioms() {
-                let false_fact = ExplicitFact::new(comparison.get_affected_var_id(), 1);
+                let false_fact = ExplicitFact::propositional(comparison.get_affected_var_id(), 1);
                 if prop_goal.var() != false_fact.var()
                     && task.are_facts_mutex(prop_goal, &false_fact)
                 {
@@ -612,7 +612,7 @@ fn build_cpp_numeric_features(
     for goal_id in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_id);
         for comparison in task.comparison_axioms() {
-            let false_fact = ExplicitFact::new(comparison.get_affected_var_id(), 1);
+            let false_fact = ExplicitFact::propositional(comparison.get_affected_var_id(), 1);
             if goal.var() != false_fact.var()
                 && task.are_facts_mutex(goal, &false_fact)
                 && seen_comparisons.insert(comparison.get_affected_var_id())

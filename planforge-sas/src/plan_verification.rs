@@ -202,7 +202,7 @@ mod tests {
     /// Operators: `move_ab` (0→1), `move_bc` (1→2), `reset` (2→0). `reset`
     /// exists so a sequence can be padded past the goal.
     fn chain_task() -> NumericRootTask {
-        chain_task_with(ExplicitFact::new(0, 0), 0)
+        chain_task_with(ExplicitFact::propositional(0, 0), 0)
     }
 
     /// `chain_task`, parameterized by the global constraint and the initial
@@ -234,21 +234,21 @@ mod tests {
         let operators = vec![
             Operator::new(
                 String::from("move_ab"),
-                vec![ExplicitFact::new(1, 0)],
+                vec![ExplicitFact::propositional(1, 0)],
                 vec![Effect::new(Vec::new(), 1, Some(0), 1)],
                 Vec::new(),
                 1,
             ),
             Operator::new(
                 String::from("move_bc"),
-                vec![ExplicitFact::new(1, 1)],
+                vec![ExplicitFact::propositional(1, 1)],
                 vec![Effect::new(Vec::new(), 1, Some(1), 2)],
                 Vec::new(),
                 1,
             ),
             Operator::new(
                 String::from("reset"),
-                vec![ExplicitFact::new(1, 2)],
+                vec![ExplicitFact::propositional(1, 2)],
                 vec![Effect::new(Vec::new(), 1, Some(2), 0)],
                 Vec::new(),
                 1,
@@ -260,7 +260,7 @@ mod tests {
             Metric::new(true, None),
             variables,
             Vec::new(),
-            vec![ExplicitFact::new(1, 2)],
+            vec![ExplicitFact::propositional(1, 2)],
             Vec::new(),
             vec![1, initial_position],
             Vec::new(),
@@ -327,7 +327,7 @@ mod tests {
             ReplayOutcome::Rejected(PlanRejection::InapplicableOperator {
                 step: 0,
                 operator: String::from("move_bc"),
-                fact: ExplicitFact::new(1, 1),
+                fact: ExplicitFact::propositional(1, 1),
             })
         );
         assert!(!result.is_solved());
@@ -343,7 +343,7 @@ mod tests {
             ReplayOutcome::Rejected(PlanRejection::InapplicableOperator {
                 step: 1,
                 operator: String::from("move_ab"),
-                fact: ExplicitFact::new(1, 0),
+                fact: ExplicitFact::propositional(1, 0),
             })
         );
         assert_eq!(result.applied, 1);
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(
             result.outcome,
             ReplayOutcome::Rejected(PlanRejection::GoalNotReached {
-                unsatisfied: vec![ExplicitFact::new(1, 2)],
+                unsatisfied: vec![ExplicitFact::propositional(1, 2)],
             })
         );
         assert_eq!(result.applied, 1);
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(
             result.outcome,
             ReplayOutcome::Rejected(PlanRejection::GoalNotReached {
-                unsatisfied: vec![ExplicitFact::new(1, 2)],
+                unsatisfied: vec![ExplicitFact::propositional(1, 2)],
             })
         );
         assert_eq!(result.states.len(), 1, "only the initial state is visited");
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn empty_sequence_verifies_when_the_initial_state_is_already_a_goal() {
         // Start at the goal position.
-        let result = replay(chain_task_with(ExplicitFact::new(0, 0), 2), &[]);
+        let result = replay(chain_task_with(ExplicitFact::propositional(0, 0), 2), &[]);
         assert_eq!(
             result.outcome,
             ReplayOutcome::Solved(VerifiedPlan {
@@ -390,7 +390,7 @@ mod tests {
     fn violated_global_constraint_is_reported_separately() {
         // Demand the *negation* of the derived atom, which the axiom never
         // produces, so the constraint fails immediately in the initial state.
-        let task = chain_task_with(ExplicitFact::new(0, 1), 0);
+        let task = chain_task_with(ExplicitFact::propositional(0, 1), 0);
         let result = replay(task, &["move_ab", "move_bc"]);
         assert_eq!(
             result.outcome,

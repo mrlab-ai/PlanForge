@@ -46,7 +46,7 @@ fn progression_sequence_flaws_find_precondition_violation() {
     .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 0)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 0)),
         _ => panic!("expected propositional flaw"),
     }
 }
@@ -86,7 +86,7 @@ fn progression_sequence_flaws_find_goal_violation() {
     .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 2)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 2)),
         _ => panic!("expected propositional flaw"),
     }
 }
@@ -130,7 +130,7 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
     );
     let op1 = Operator::new(
         "set_g".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 1, Some(0), 1)],
         vec![],
         1,
@@ -140,7 +140,7 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(1, 1)],
+        vec![ExplicitFact::propositional(1, 1)],
         vec![],
         vec![2, 0],
         vec![-10.0, 3.0, -5.0],
@@ -148,7 +148,7 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let partitions = NumericPartitions::with_partitions(vec![
@@ -217,7 +217,7 @@ fn regression_sequence_flaws_find_precondition_violation() {
     .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
         _ => panic!("expected propositional flaw"),
     }
 }
@@ -256,7 +256,7 @@ fn regression_sequence_flaws_find_initial_state_violation() {
     .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
         _ => panic!("expected propositional flaw"),
     }
 }

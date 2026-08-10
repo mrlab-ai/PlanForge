@@ -469,7 +469,7 @@ pub(crate) fn single_switch_task(
     );
     let set = Operator::new(
         "set".into(),
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![Effect::new(vec![], 0, Some(0), 1)],
         vec![],
         1,
@@ -479,7 +479,7 @@ pub(crate) fn single_switch_task(
         Metric::new(true, None),
         vec![variable],
         vec![],
-        vec![ExplicitFact::new(0, goal_value)],
+        vec![ExplicitFact::propositional(0, goal_value)],
         vec![],
         initial,
         vec![],
@@ -487,6 +487,6 @@ pub(crate) fn single_switch_task(
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }

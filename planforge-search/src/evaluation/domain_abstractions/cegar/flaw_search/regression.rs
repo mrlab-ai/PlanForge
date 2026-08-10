@@ -79,7 +79,7 @@ pub fn get_regression_precondition_flaws(
         if !state.value_is_hold_for_var(eff.var_id(), eff.value()) {
             let eff_var_id = eff.var_id();
             out.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::new(eff_var_id, eff.value()),
+                fact: ExplicitFact::propositional(eff_var_id, eff.value()),
                 dependent_numeric_flaws: vec![],
                 step,
             }));
@@ -99,7 +99,7 @@ pub fn get_init_state_flaws(
     for (var, value) in initial_prop_state.iter().enumerate() {
         if !state.value_is_hold_for_var(var, *value) {
             flaws.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::new(var, *value),
+                fact: ExplicitFact::propositional(var, *value),
                 dependent_numeric_flaws: vec![],
                 step: 0,
             }));
@@ -142,7 +142,7 @@ pub(crate) fn materialize_comparison_requirements(
         let Some(value) = state.concrete_prop[var] else {
             continue;
         };
-        let fact = ExplicitFact::new(var, value);
+        let fact = ExplicitFact::propositional(var, value);
         let Some((numeric_var_id, required_interval)) =
             numeric_requirement_for_comparison_fact(task, &fact)
         else {

@@ -25,7 +25,7 @@ fn base_task(
         Metric::new(true, None),
         vec![simple_var("p", &["f", "t"], None)],
         numeric_variables,
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         numeric_state,
@@ -33,7 +33,7 @@ fn base_task(
         vec![],
         Vec::<ComparisonAxiom>::new(),
         assignment_axioms,
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

@@ -40,7 +40,7 @@ fn regression_flaws_find_precondition_violation() {
         get_regression_flaws(&task, &factory.partitions, &factory.domain_mapping, &plan).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
         _ => panic!("expected propositional flaw"),
     }
 }
@@ -77,7 +77,7 @@ fn regression_flaws_find_initial_state_violation() {
     .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),
+        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
         _ => panic!("expected propositional flaw"),
     }
 }
@@ -120,7 +120,7 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![1],
         vec![0.0, 3.0, 10.0],
@@ -128,7 +128,7 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         vec![],
         comparison_axioms,
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();

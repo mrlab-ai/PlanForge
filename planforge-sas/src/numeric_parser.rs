@@ -228,7 +228,7 @@ fn parse_mutex_group(input: &str) -> IResult<&str, Vec<ExplicitFact>> {
     for _ in 0..num_facts {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (new_input, fact) = parser.parse(input)?;
-        let fact = ExplicitFact::new(fact.0 as usize, fact.1 as usize);
+        let fact = ExplicitFact::propositional(fact.0 as usize, fact.1 as usize);
 
         mutex_group.push(fact);
         let (new_input, _) = line_ending(new_input)?;
@@ -307,7 +307,7 @@ fn parse_goal(input: &str) -> IResult<&str, Vec<ExplicitFact>> {
     for _ in 0..num_goals {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, goal) = parser.parse(input)?;
-        let goal = ExplicitFact::new(goal.0 as usize, goal.1 as usize);
+        let goal = ExplicitFact::propositional(goal.0 as usize, goal.1 as usize);
         goals.push(goal);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -330,7 +330,8 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
     for _ in 0..num_prevail_cond {
         let mut parser = separated_pair(parse_integer, space1, parse_integer);
         let (loop_input, prevail_cond) = parser.parse(input)?;
-        let prevail_cond = ExplicitFact::new(prevail_cond.0 as usize, prevail_cond.1 as usize);
+        let prevail_cond =
+            ExplicitFact::propositional(prevail_cond.0 as usize, prevail_cond.1 as usize);
         preconditions.push(prevail_cond);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -349,7 +350,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         for _ in 0..num_conditions {
             let mut parser = separated_pair(parse_integer, space1, parse_integer);
             let (loop_input2, condition) = parser.parse(loop_input)?;
-            let condition = ExplicitFact::new(condition.0 as usize, condition.1 as usize);
+            let condition = ExplicitFact::propositional(condition.0 as usize, condition.1 as usize);
             effect_conditions.push(condition);
             let (loop_input2, _) = space1(loop_input2)?;
             loop_input = loop_input2;
@@ -362,7 +363,8 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
         let (loop_input, effect_value) = usize(loop_input)?;
 
         if precondition_value != -1 {
-            let precondition = ExplicitFact::new(effect_var_id, precondition_value as usize);
+            let precondition =
+                ExplicitFact::propositional(effect_var_id, precondition_value as usize);
             preconditions.push(precondition);
         }
 
@@ -398,7 +400,7 @@ fn parse_operator(input: &str) -> IResult<&str, Operator> {
             let (rest, _) = space1(rest)?;
             let (rest, value) = usize(rest)?;
             let (rest, _) = space1(rest)?;
-            conditions.push(ExplicitFact::new(var_id, value));
+            conditions.push(ExplicitFact::propositional(var_id, value));
             loop_input = rest;
         }
         let (loop_input, effect_var_id) = usize(loop_input)?;
@@ -458,7 +460,7 @@ fn parse_axiom(input: &str) -> IResult<&str, PropositionalAxiom> {
     for _ in 0..num_conditions {
         let mut parser = separated_pair(parse_integer, tag(" "), parse_integer);
         let (loop_input, condition) = parser.parse(input)?;
-        let condition = ExplicitFact::new(condition.0 as usize, condition.1 as usize);
+        let condition = ExplicitFact::propositional(condition.0 as usize, condition.1 as usize);
         conditions.push(condition);
         let (loop_input, _) = line_ending(loop_input)?;
         input = loop_input;
@@ -600,7 +602,7 @@ fn parse_global_constraint(input: &str) -> IResult<&str, ExplicitFact> {
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_global_constraint")(input)?;
     let (input, _) = line_ending(input)?;
-    let constraint = ExplicitFact::new(constraint_var_id, constraning_value);
+    let constraint = ExplicitFact::propositional(constraint_var_id, constraning_value);
     Ok((input, constraint))
 }
 
@@ -663,7 +665,10 @@ mod tests {
         assert_eq!(effects.len(), 1);
         let effect = &effects[0];
         assert!(effect.is_conditional());
-        assert_eq!(effect.conditions(), &vec![ExplicitFact::new(5, 1)]);
+        assert_eq!(
+            effect.conditions(),
+            &vec![ExplicitFact::propositional(5, 1)]
+        );
         assert_eq!(effect.affected_var_id(), 3);
         assert_eq!(effect.operation(), &AssignmentOperation::Plus);
         assert_eq!(effect.var_id(), 2);
@@ -679,7 +684,10 @@ mod tests {
         let effect = &operator.assignment_effects()[0];
         assert_eq!(
             effect.conditions(),
-            &vec![ExplicitFact::new(5, 1), ExplicitFact::new(6, 0)]
+            &vec![
+                ExplicitFact::propositional(5, 1),
+                ExplicitFact::propositional(6, 0)
+            ]
         );
         assert_eq!(effect.affected_var_id(), 3);
         assert_eq!(effect.var_id(), 2);

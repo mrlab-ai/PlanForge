@@ -492,7 +492,8 @@ fn add_task_operator(
         if !eff.conditions().is_empty() {
             continue;
         }
-        if let Some(fid) = universe.fact_id(&ExplicitFact::new(eff.var_id(), eff.value())) {
+        if let Some(fid) = universe.fact_id(&ExplicitFact::propositional(eff.var_id(), eff.value()))
+        {
             parent_effects.push(fid);
         }
     }
@@ -532,7 +533,7 @@ fn add_task_operator(
         let mut state_deps = parent_state_deps.clone();
         universe.split_conditions(eff.conditions(), &mut preconditions, &mut state_deps);
         let effects = universe
-            .fact_id(&ExplicitFact::new(eff.var_id(), eff.value()))
+            .fact_id(&ExplicitFact::propositional(eff.var_id(), eff.value()))
             .into_iter()
             .collect();
         ops.push(RelaxedOperator {
@@ -591,7 +592,10 @@ fn add_propositional_axiom_operator(
     // An out-of-universe effect means the axiom drives a value of a
     // numeric-axiom variable, which the relaxation cannot represent.
     let effect_fid = universe
-        .fact_id(&ExplicitFact::new(axiom.var_id(), axiom.effect_value()))
+        .fact_id(&ExplicitFact::propositional(
+            axiom.var_id(),
+            axiom.effect_value(),
+        ))
         .ok_or_else(|| {
             format!(
                 "propositional axiom {axiom_idx} effect on \
@@ -606,7 +610,7 @@ fn add_propositional_axiom_operator(
     let mut state_deps: Vec<StateDependentPrecond> = Vec::new();
     universe.split_conditions(axiom.conditions(), &mut preconditions, &mut state_deps);
     universe.split_conditions(
-        &[ExplicitFact::new(
+        &[ExplicitFact::propositional(
             axiom.var_id(),
             axiom.precondition_value(),
         )],
@@ -1132,9 +1136,9 @@ impl<'task> FfHeuristic<'task> {
             if deps.is_empty() {
                 continue;
             }
-            let eligible = deps
-                .iter()
-                .all(|&(var, value)| ExplicitFact::new(var, value).is_hold(live_state, registry));
+            let eligible = deps.iter().all(|&(var, value)| {
+                ExplicitFact::propositional(var, value).is_hold(live_state, registry)
+            });
             scratch.op_eligible[op_id] = eligible;
         }
 

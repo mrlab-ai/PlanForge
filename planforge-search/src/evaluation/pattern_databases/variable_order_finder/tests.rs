@@ -33,7 +33,7 @@ fn goal_cg_level_prefers_goal_numeric_variables() {
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(0, 1)],
+        vec![ExplicitFact::propositional(0, 1)],
         vec![],
         vec![0],
         vec![1.0, 0.0],
@@ -46,7 +46,7 @@ fn goal_cg_level_prefers_goal_numeric_variables() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
     let mut order = VariableOrderFinder::new(&task, GreedyVariableOrderType::GoalCgLevel, true, 0);
 

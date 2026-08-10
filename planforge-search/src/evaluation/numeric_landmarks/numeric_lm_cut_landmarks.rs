@@ -860,7 +860,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut seen = BTreeSet::new();
         for (var, values) in source_region.propositions.iter().enumerate() {
             if values.len() == 1 {
-                let fact = ExplicitFact::new(var, values[0] as usize);
+                let fact = self.numeric_helper.fact(var, values[0] as usize);
                 for proposition_id in self.precondition_proposition_ids(&fact) {
                     if seen.insert(proposition_id) {
                         ids.push(proposition_id);
@@ -1195,7 +1195,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if self.is_numeric_axiom_var(variable_id) && !self.config.ignore_numeric {
                 continue;
             }
-            let fact = ExplicitFact::new(variable_id, value);
+            let fact = self.numeric_helper.fact(variable_id, value);
             let proposition_id = self.get_proposition_id(&fact);
             self.enqueue_if_necessary(proposition_id, 0.0);
         }
@@ -1546,7 +1546,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             if self.is_numeric_axiom_var(variable_id) && !self.config.ignore_numeric {
                 continue;
             }
-            let fact = ExplicitFact::new(variable_id, value);
+            let fact = self.numeric_helper.fact(variable_id, value);
             let proposition_id = self.get_proposition_id(&fact);
             if self.proposition_status(proposition_id) != PropositionStatus::BeforeGoalZone {
                 self.set_proposition_status(proposition_id, PropositionStatus::BeforeGoalZone);
@@ -3322,7 +3322,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .get_action_add_list(operator_id)
             .and_then(|add_facts| add_facts.first())
             .cloned()
-            .unwrap_or_else(|| ExplicitFact::new(axiom.var_id(), axiom.effect_value()));
+            .unwrap_or_else(|| ExplicitFact::propositional(axiom.var_id(), axiom.effect_value()));
         let effect_ids = if self.is_numeric_axiom_var(axiom.var_id()) {
             Vec::new()
         } else {
@@ -3746,7 +3746,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn get_proposition_id_for_effect(&self, effect: &Effect) -> usize {
-        let fact = ExplicitFact::new(effect.var_id(), effect.value());
+        let fact = ExplicitFact::propositional(effect.var_id(), effect.value());
         self.get_proposition_id(&fact)
     }
 

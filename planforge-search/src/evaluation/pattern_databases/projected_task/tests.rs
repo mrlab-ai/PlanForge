@@ -41,13 +41,13 @@ fn restricted_sample_task() -> NumericRootTask {
             NumericVariable::new("limit".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::new(2, 0)],
+        vec![ExplicitFact::propositional(2, 0)],
         vec![],
         vec![0, 2, 1],
         vec![10.0, 0.0],
         vec![Operator::new(
             "inc-x".to_string(),
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![AssignmentEffect::new(
                 1,
@@ -59,7 +59,7 @@ fn restricted_sample_task() -> NumericRootTask {
             1,
         )],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(1, 0)],
+            vec![ExplicitFact::propositional(1, 0)],
             2,
             1,
             0,
@@ -71,7 +71,7 @@ fn restricted_sample_task() -> NumericRootTask {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -117,7 +117,7 @@ fn projection_rejects_an_unrestricted_task() {
         task.metric().clone(),
         variables,
         numeric_variables,
-        vec![ExplicitFact::new(2, 0)],
+        vec![ExplicitFact::propositional(2, 0)],
         vec![],
         task.get_initial_propositional_state_values().to_vec(),
         vec![10.0, 0.0, 0.0],
@@ -130,7 +130,7 @@ fn projection_rejects_an_unrestricted_task() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![AssignmentAxiom::new(2, CalOperator::Sum, 1, 0)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let result = ProjectedTask::new(
@@ -165,7 +165,7 @@ fn projection_rejects_derived_pattern_variables() {
         vec![],
         vec![],
         vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let result = ProjectedTask::new(
@@ -214,7 +214,7 @@ fn projection_closes_over_numeric_effect_sources() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let projected = ProjectedTask::new(
@@ -279,7 +279,7 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let projected = ProjectedTask::new(
@@ -319,7 +319,7 @@ fn projection_closes_over_selected_comparison_operands() {
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("limit".to_string(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::new(0, 0)],
+        vec![ExplicitFact::propositional(0, 0)],
         vec![],
         vec![2],
         vec![1.0, 5.0],
@@ -332,7 +332,7 @@ fn projection_closes_over_selected_comparison_operands() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let projected = ProjectedTask::new(
@@ -359,20 +359,20 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
             variable("derived-goal", Some(0)),
         ],
         vec![],
-        vec![ExplicitFact::new(1, 0)],
+        vec![ExplicitFact::propositional(1, 0)],
         vec![],
         vec![0, 1],
         vec![],
         vec![],
         vec![PropositionalAxiom::new(
-            vec![ExplicitFact::new(0, 0)],
+            vec![ExplicitFact::propositional(0, 0)],
             1,
             1,
             0,
         )],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     );
 
     let projected = ProjectedTask::new(

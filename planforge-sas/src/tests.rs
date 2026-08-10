@@ -7,6 +7,15 @@ use crate::{
 };
 
 pub(crate) fn get_root_task() -> NumericRootTask {
+    root_task_with_extra_preconditions(Vec::new())
+}
+
+/// The fixture task, optionally with extra preconditions on its single
+/// operator. Tests that need a fact on a specific variable to travel through
+/// `NumericRootTask::new` pass it here rather than rebuilding the task.
+pub(crate) fn root_task_with_extra_preconditions(
+    extra_preconditions: Vec<ExplicitFact>,
+) -> NumericRootTask {
     let version = 4;
     let metric = Metric::new(true, Some(1));
     let variables = vec![
@@ -51,20 +60,22 @@ pub(crate) fn get_root_task() -> NumericRootTask {
         NumericVariable::new(String::from("total_cost()"), NumericType::Cost, None),
     ];
     let goals = vec![
-        ExplicitFact::new(9, 4),
-        ExplicitFact::new(10, 1),
-        ExplicitFact::new(11, 2),
-        ExplicitFact::new(12, 5),
-        ExplicitFact::new(13, 4),
+        ExplicitFact::propositional(9, 4),
+        ExplicitFact::propositional(10, 1),
+        ExplicitFact::propositional(11, 2),
+        ExplicitFact::propositional(12, 5),
+        ExplicitFact::propositional(13, 4),
     ];
     let mutexes = Vec::new();
     let state = vec![1, 1, 2];
     let numeric_state = vec![1f64, 0f64];
     // `drop` bumps the cost counter by one, which flips the comparison below
     // and therefore distinguishes the successor from the initial state.
+    let mut preconditions = vec![ExplicitFact::propositional(1, 1)];
+    preconditions.extend(extra_preconditions);
     let operators = vec![Operator::new(
         String::from("drop"),
-        vec![ExplicitFact::new(1, 1)],
+        preconditions,
         vec![Effect::new(Vec::new(), 1, Some(1), 5)],
         vec![AssignmentEffect::new(
             1,
@@ -86,7 +97,7 @@ pub(crate) fn get_root_task() -> NumericRootTask {
     // assignment axiom: axioms define a numeric variable from *other*
     // numeric variables, and a self-referential definition has no fixpoint.
     let assignment_axioms = Vec::new();
-    let global_constraint = ExplicitFact::new(0, 0);
+    let global_constraint = ExplicitFact::propositional(0, 0);
     NumericRootTask::new(
         version,
         metric,
@@ -102,4 +113,69 @@ pub(crate) fn get_root_task() -> NumericRootTask {
         assignment_axioms,
         global_constraint,
     )
+}
+
+#[cfg(test)]
+mod fact_namespace {
+    use super::get_root_task;
+    use crate::numeric_task::{
+        AbstractNumericTask, ExplicitFact, FactNamespace, assert_fact_namespaces,
+    };
+
+    /// The variable the fixture's comparison axiom writes.
+    const CONDITION_VAR: usize = 2;
+
+    #[test]
+    fn tag_survives_var_and_value() {
+        let fact = ExplicitFact::condition(ExplicitFact::MAX_VAR_ID, u32::MAX as usize);
+        assert_eq!(fact.namespace(), FactNamespace::Condition);
+        assert_eq!(fact.var(), ExplicitFact::MAX_VAR_ID);
+        assert_eq!(fact.value(), u32::MAX as usize);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds the 28 packed variable-id bits")]
+    fn var_id_beyond_the_tag_boundary_is_rejected() {
+        ExplicitFact::propositional(ExplicitFact::MAX_VAR_ID + 1, 0);
+    }
+
+    #[test]
+    fn identity_and_order_ignore_the_tag() {
+        let propositional = ExplicitFact::propositional(7, 1);
+        let condition = ExplicitFact::condition(7, 1);
+        assert_eq!(propositional, condition);
+        assert_eq!(propositional.cmp(&condition), std::cmp::Ordering::Equal);
+        // Variable-major, which is what the successor generator sorts on.
+        assert!(ExplicitFact::condition(6, 9) < ExplicitFact::propositional(7, 0));
+    }
+
+    #[test]
+    fn the_task_tags_facts_on_its_condition_variables() {
+        let task = get_root_task();
+        assert!(task.numeric_conditions().is_condition_var(CONDITION_VAR));
+        assert_eq!(
+            task.numeric_conditions().fact(CONDITION_VAR, 0).namespace(),
+            FactNamespace::Condition
+        );
+        assert_eq!(
+            task.numeric_conditions().fact(1, 0).namespace(),
+            FactNamespace::Propositional
+        );
+        assert_fact_namespaces(&task);
+    }
+
+    /// The parser cannot know the namespaces, so it hands facts over untagged
+    /// and `NumericRootTask::new` retags them. A fact on a condition variable
+    /// must come back out tagged even though it went in as propositional.
+    #[test]
+    fn construction_retags_facts_the_parser_could_not_tag() {
+        let task = super::root_task_with_extra_preconditions(vec![ExplicitFact::propositional(
+            CONDITION_VAR,
+            0,
+        )]);
+        let precondition = *task.get_operators()[0].preconditions().last().unwrap();
+        assert_eq!(precondition.var(), CONDITION_VAR);
+        assert_eq!(precondition.namespace(), FactNamespace::Condition);
+        assert_fact_namespaces(&task);
+    }
 }

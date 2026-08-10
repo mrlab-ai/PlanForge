@@ -25,7 +25,10 @@ fn disjoint_effect_task() -> NumericRootTask {
             NumericType::Regular,
             None,
         )],
-        vec![ExplicitFact::new(0, 1), ExplicitFact::new(1, 1)],
+        vec![
+            ExplicitFact::propositional(0, 1),
+            ExplicitFact::propositional(1, 1),
+        ],
         vec![],
         vec![0, 0],
         vec![0.0],
@@ -48,7 +51,7 @@ fn disjoint_effect_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -82,7 +85,7 @@ fn shared_effect_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 
@@ -115,7 +118,7 @@ fn zero_additive_effect_task() -> NumericRootTask {
         vec![],
         vec![],
         vec![],
-        ExplicitFact::new(0, 0),
+        ExplicitFact::propositional(0, 0),
     )
 }
 

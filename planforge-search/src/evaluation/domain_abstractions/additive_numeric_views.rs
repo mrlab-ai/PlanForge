@@ -404,7 +404,7 @@ mod tests {
             vec![],
             vec![],
             vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         )
     }
 
@@ -445,7 +445,7 @@ mod tests {
             vec![],
             vec![],
             vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::new(0, 0),
+            ExplicitFact::propositional(0, 0),
         );
 
         assert!(analyze_additive_numeric_view(&task, 2).is_none());
