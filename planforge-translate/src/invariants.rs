@@ -6,6 +6,7 @@ use super::constraints::{Assignment, ConstraintSystem, NegativeClause};
 use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::tools;
+use super::tools::OrderedSet;
 
 fn invert_list(alist: &[String]) -> HashMap<String, Vec<usize>> {
     let mut result: HashMap<String, Vec<usize>> = HashMap::new();
@@ -359,13 +360,6 @@ impl Invariant {
         vec![]
     }
 
-    pub fn instantiate(&self, parameters: &[String]) -> Vec<Atom> {
-        self.parts
-            .iter()
-            .map(|part| part.instantiate(parameters))
-            .collect()
-    }
-
     pub fn get_covering_assignments(
         &self,
         parameters: &[String],
@@ -384,13 +378,23 @@ impl Invariant {
         balance_checker: &BalanceChecker,
         enqueue_func: &mut dyn FnMut(Invariant),
     ) -> bool {
-        let mut actions_to_check: HashSet<usize> = HashSet::new();
-        for part in &self.parts {
-            if let Some(indices) = balance_checker.get_threats(&part.predicate) {
-                actions_to_check.extend(indices);
+        // The actions are collected in a fixed order, and each is checked at
+        // most once. Which action's check fails first decides which refined
+        // candidates are enqueued, so drawing them from a hash set would make
+        // the invariants found -- and with them the SAS variables -- depend on
+        // the run. Mainline Fast Downward avoids a set here for the same reason
+        // (issue879), and then draws from the collected actions at random to
+        // fail early on average; we keep the collection order instead, which is
+        // reproducible without a pseudo-random generator to agree on.
+        let mut parts: Vec<&InvariantPart> = self.parts.iter().collect();
+        parts.sort();
+        let mut actions_to_check: OrderedSet<usize> = OrderedSet::default();
+        for part in parts {
+            for &action_idx in balance_checker.get_threats(&part.predicate) {
+                actions_to_check.insert(action_idx);
             }
         }
-        for &action_idx in &actions_to_check {
+        for action_idx in actions_to_check.into_vec() {
             let heavy_action = balance_checker.get_heavy_action(action_idx);
             if self.operator_too_heavy(heavy_action) {
                 return false;
@@ -767,14 +771,19 @@ fn negate_literal(cond: &Condition) -> Condition {
 
 /// Placed here to be accessible from Invariant methods.
 pub struct BalanceChecker {
-    pub predicates_to_add_action_indices: HashMap<String, HashSet<usize>>,
+    /// The actions that add each predicate, by action index, in increasing
+    /// order. A set would do as far as the contents go, but the order in which
+    /// the balance check considers the actions has to be reproducible.
+    pub predicates_to_add_action_indices: HashMap<String, Vec<usize>>,
     pub action_to_heavy_action: HashMap<usize, Action>,
     pub actions: Vec<Action>,
 }
 
 impl BalanceChecker {
-    pub fn get_threats(&self, predicate: &str) -> Option<&HashSet<usize>> {
-        self.predicates_to_add_action_indices.get(predicate)
+    pub fn get_threats(&self, predicate: &str) -> &[usize] {
+        self.predicates_to_add_action_indices
+            .get(predicate)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The variant of `actions[action_idx]` with every parameterized effect

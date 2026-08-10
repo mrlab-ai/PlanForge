@@ -2,7 +2,6 @@ use itertools::Itertools;
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
-use std::time::Instant;
 use tracing::info;
 
 use super::invariants::{BalanceChecker, Invariant, InvariantPart};
@@ -11,12 +10,13 @@ use super::pddl::actions::Action;
 use super::pddl::conditions::*;
 use super::pddl::tasks::Task;
 use super::symbols::ObjectId;
+use super::tools;
 
 fn build_balance_checker(
     task: &Task,
     reachable_action_params: &HashMap<String, Vec<Rc<[ObjectId]>>>,
 ) -> BalanceChecker {
-    let mut predicates_to_add_action_indices: HashMap<String, HashSet<usize>> = HashMap::new();
+    let mut predicates_to_add_action_indices: HashMap<String, Vec<usize>> = HashMap::new();
     let mut action_to_heavy_action: HashMap<usize, Action> = HashMap::new();
     let mut actions: Vec<Action> = vec![];
 
@@ -33,10 +33,13 @@ fn build_balance_checker(
             }
             // Check if it's an add effect (Atom, not negated)
             if let Condition::Atom(a) = &eff.peffect {
-                predicates_to_add_action_indices
+                let add_actions = predicates_to_add_action_indices
                     .entry(a.predicate.clone())
-                    .or_default()
-                    .insert(idx);
+                    .or_default();
+                // Several effects of one action can add the same predicate.
+                if add_actions.last() != Some(&idx) {
+                    add_actions.push(idx);
+                }
             }
         }
 
@@ -176,11 +179,12 @@ fn find_invariants(
 
     let balance_checker = build_balance_checker(task, reachable_action_params);
 
-    let start_time = Instant::now();
+    let start_time = tools::process_cpu_time();
     let mut result = vec![];
 
     while let Some(candidate) = candidates.pop_front() {
-        if start_time.elapsed().as_secs() > options::INVARIANT_GENERATION_MAX_TIME {
+        let spent = tools::process_cpu_time() - start_time;
+        if spent.as_secs() > options::INVARIANT_GENERATION_MAX_TIME {
             info!("Time limit reached, aborting invariant generation");
             return result;
         }

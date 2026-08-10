@@ -2,6 +2,34 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
+use std::time::Duration;
+
+/// The CPU time this process has used so far, user and system.
+///
+/// The invariant synthesis works to a time budget, and against a wall clock the
+/// budget decides how many invariants are found by how busy the machine was --
+/// which makes the SAS encoding, and with it every number measured from it,
+/// depend on the load. Mainline Fast Downward reads `time.process_time()` here
+/// for the same reason.
+pub fn process_cpu_time() -> Duration {
+    let mut spent = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `clock_gettime` writes through the pointer we hand it and nowhere
+    // else, and the struct is fully initialized.
+    let result = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut spent) };
+    assert_eq!(
+        result,
+        0,
+        "the process CPU clock is not readable: {}",
+        std::io::Error::last_os_error()
+    );
+    Duration::new(
+        spent.tv_sec.try_into().expect("CPU time is not negative"),
+        spent.tv_nsec.try_into().expect("nanoseconds fit in a u32"),
+    )
+}
 
 /// A set that remembers the order things were inserted in.
 ///
