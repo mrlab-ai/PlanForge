@@ -1043,8 +1043,6 @@ struct GroundedTask<'a> {
     actions: &'a [PropositionalAction],
     axioms: Vec<PropositionalAxiom>,
     metric: &'a (String, PrimitiveNumericExpression),
-    init_constant_predicates: &'a [Atom],
-    init_constant_numerics: &'a [FunctionAssignment],
 }
 
 fn translate_task(
@@ -1108,10 +1106,9 @@ fn translate_task(
 
     // Numeric init values.
     //
-    // Fluents without a SAS numeric variable are not dropped here: the caller
-    // splits `task.num_init` on exactly the same predicate and hands those facts to
-    // `SASTask` as `task.init_constant_numerics`, so skipping them is the
-    // complementary half of that split.
+    // A fluent without a SAS numeric variable is skipped: it holds a constant,
+    // which every expression mentioning it was folded against, so there is no
+    // variable left for its initial value to name.
     let mut num_init_values: Vec<f64> = vec![0.0; translation.numeric_names.len()];
 
     let mut relevant_numeric: Vec<usize> = vec![];
@@ -1293,8 +1290,6 @@ fn translate_task(
         numeric_axioms: sas_num_axioms,
         global_constraint: gc_pair,
         metric: sas_metric,
-        init_constant_predicates: task.init_constant_predicates.to_vec(),
-        init_constant_numerics: task.init_constant_numerics.to_vec(),
     };
     sas_task.canonicalize();
     Ok(sas_task)
@@ -1448,8 +1443,6 @@ pub fn translate_task_from_grounded_internal(
             .then_with(|| left.args.cmp(&right.args))
             .then_with(|| left.ntype.cmp(&right.ntype))
     });
-    let num_fluents_set: HashSet<PrimitiveNumericExpression> =
-        num_fluents_vec.iter().cloned().collect();
 
     // Build goal list
     let goal_list: Vec<Condition> = match goal {
@@ -1526,19 +1519,6 @@ pub fn translate_task_from_grounded_internal(
         "Global constraint must be an atom literal"
     );
 
-    let constant_predicates: Vec<Atom> = task
-        .init
-        .iter()
-        .filter(|atom| !atoms_set.contains(atom))
-        .cloned()
-        .collect();
-    let constant_numerics: Vec<FunctionAssignment> = task
-        .num_init
-        .iter()
-        .filter(|assignment| !num_fluents_set.contains(&assignment.fluent))
-        .cloned()
-        .collect();
-
     let sas_task = translate_task(
         &mut translation,
         GroundedTask {
@@ -1549,8 +1529,6 @@ pub fn translate_task_from_grounded_internal(
             actions: grounded_ops,
             axioms: grounded_axioms.to_vec(),
             metric: &task.metric,
-            init_constant_predicates: &constant_predicates,
-            init_constant_numerics: &constant_numerics,
         },
         &numeric_axioms,
     )?;

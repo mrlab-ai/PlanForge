@@ -101,21 +101,7 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
 ///
 /// The default way in: no SAS+ text is produced, and nothing is parsed.
 pub fn translate_to_task(domain: &str, problem: &str) -> anyhow::Result<NumericRootTask> {
-    translate_to_task_with_groups(domain, problem, false)
-}
-
-/// As [`translate_to_task`], but with one SAS variable per fact instead of the
-/// invariant-based encoding.
-pub fn translate_to_task_fast(domain: &str, problem: &str) -> anyhow::Result<NumericRootTask> {
-    translate_to_task_with_groups(domain, problem, true)
-}
-
-fn translate_to_task_with_groups(
-    domain: &str,
-    problem: &str,
-    fast_groups: bool,
-) -> anyhow::Result<NumericRootTask> {
-    let sas_task = translate_to_sas_task(domain, problem, fast_groups)?;
+    let sas_task = translate_to_sas_task(domain, problem, false)?;
     Ok(planforge_translate::preprocess::reordered_numeric_task(
         sas_task,
     ))

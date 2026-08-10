@@ -48,8 +48,6 @@ pub struct ExploreResult {
     pub grounded_ops: Vec<PropositionalAction>,
     pub grounded_axioms: Vec<PropositionalAxiom>,
     pub numeric_axioms: Vec<InstantiatedNumericAxiom>,
-    pub init_constant_predicates: Vec<Atom>,
-    pub init_constant_numerics: Vec<FunctionAssignment>,
     /// The parameter tuple of every reachable instance of each action, with
     /// the objects interned as the model left them. The invariant synthesis
     /// only asks whether two positions of a tuple hold the same object, so the
@@ -367,20 +365,6 @@ pub fn explore(task: &Task) -> ExploreResult {
     // here, not every declared or referenced numeric expression.
     let num_fluents: Vec<PrimitiveNumericExpression> = fluent_functions.iter().cloned().collect();
 
-    // Determine initial constant predicates and numerics
-    let mut init_constant_predicates: Vec<Atom> = vec![];
-    let mut init_constant_numerics: Vec<FunctionAssignment> = vec![];
-    for atom in &task.init {
-        if !fluent_predicates.contains(&atom.predicate) && !atom.predicate.starts_with("==") {
-            init_constant_predicates.push(atom.clone());
-        }
-    }
-    for assign in &task.num_init {
-        if !fluent_functions.contains(&assign.fluent) {
-            init_constant_numerics.push(assign.clone());
-        }
-    }
-
     ExploreResult {
         relaxed_reachable,
         atoms: reachable_atoms,
@@ -388,8 +372,6 @@ pub fn explore(task: &Task) -> ExploreResult {
         grounded_ops,
         grounded_axioms,
         numeric_axioms: numeric_axioms.into_vec(),
-        init_constant_predicates,
-        init_constant_numerics,
         reachable_action_params,
     }
 }

@@ -42,8 +42,6 @@ pub struct SASTask {
     pub numeric_axioms: Vec<SASNumericAxiom>,
     pub global_constraint: (usize, usize), // (var, value=0)
     pub metric: (String, i64),             // ('<' or '>', metric_var_index) where -1 = unit cost
-    pub init_constant_predicates: Vec<super::pddl::Atom>,
-    pub init_constant_numerics: Vec<super::pddl::FunctionAssignment>,
 }
 
 impl SASTask {

@@ -659,9 +659,6 @@ pub fn trivial_task(solvable: bool) -> SASTask {
     let numeric_axioms = vec![];
     let global_constraint = (0, 0);
     let metric = ("<".to_string(), 0);
-    let init_constant_predicates = vec![];
-    let init_constant_numerics = vec![];
-
     let mut task = SASTask {
         variables,
         numeric_variables: num_variables,
@@ -674,8 +671,6 @@ pub fn trivial_task(solvable: bool) -> SASTask {
         numeric_axioms,
         global_constraint,
         metric,
-        init_constant_predicates,
-        init_constant_numerics,
     };
     task.canonicalize();
     task
