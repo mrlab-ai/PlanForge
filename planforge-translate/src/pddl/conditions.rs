@@ -16,8 +16,8 @@ pub enum Condition {
     ExistentialCondition(ExistentialCondition),
     Atom(Atom),
     NegatedAtom(NegatedAtom),
-    FunctionComparison(FunctionComparison),
-    NegatedFunctionComparison(NegatedFunctionComparison),
+    FunctionComparison(Comparison),
+    NegatedFunctionComparison(Comparison),
 }
 
 // ----- Conjunction -----
@@ -150,75 +150,28 @@ impl fmt::Display for NegatedAtom {
     }
 }
 
-// ----- FunctionComparison -----
-/// comparator is one of "<", "<=", "=", ">=", ">"
+// ----- Comparison -----
+
+/// Two numeric expressions related by a comparator, one of `<`, `<=`, `=`, `>=`
+/// and `>`.
+///
+/// Whether the comparison is asserted or denied is the [`Condition`] variant
+/// holding it, and nothing else: the two used to be separate structs with the
+/// same three fields, of which the third was a `negated` flag that duplicated
+/// the variant and was never read. Negating a comparison is therefore moving the
+/// same payload to the other variant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FunctionComparison {
+pub struct Comparison {
     pub comparator: String,
-    pub parts: Vec<FunctionalExpression>,
-    pub negated: bool,
+    pub operands: Vec<FunctionalExpression>,
 }
 
-impl FunctionComparison {
-    pub fn new(comparator: String, parts: Vec<FunctionalExpression>) -> Self {
-        FunctionComparison {
+impl Comparison {
+    pub fn new(comparator: String, operands: Vec<FunctionalExpression>) -> Self {
+        Comparison {
             comparator,
-            parts,
-            negated: false,
+            operands,
         }
-    }
-
-    pub fn negate(&self) -> NegatedFunctionComparison {
-        NegatedFunctionComparison {
-            comparator: self.comparator.clone(),
-            parts: self.parts.clone(),
-            negated: true,
-        }
-    }
-}
-
-impl fmt::Display for FunctionComparison {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "FunctionComparison({}, {:?})",
-            self.comparator, self.parts
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct NegatedFunctionComparison {
-    pub comparator: String,
-    pub parts: Vec<FunctionalExpression>,
-    pub negated: bool,
-}
-
-impl NegatedFunctionComparison {
-    pub fn new(comparator: String, parts: Vec<FunctionalExpression>) -> Self {
-        NegatedFunctionComparison {
-            comparator,
-            parts,
-            negated: true,
-        }
-    }
-
-    pub fn negate(&self) -> FunctionComparison {
-        FunctionComparison {
-            comparator: self.comparator.clone(),
-            parts: self.parts.clone(),
-            negated: false,
-        }
-    }
-}
-
-impl fmt::Display for NegatedFunctionComparison {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "NegatedFunctionComparison({}, {:?})",
-            self.comparator, self.parts
-        )
     }
 }
 
@@ -296,21 +249,28 @@ impl Condition {
     /// comparison is a leaf of the condition tree and the root of a pair of
     /// expression trees, and both kinds of comparison hold theirs the same way.
     pub fn comparison_operands(&self) -> &[FunctionalExpression] {
+        match self.as_comparison() {
+            Some(comparison) => &comparison.operands,
+            None => &[],
+        }
+    }
+
+    /// The comparison this condition asserts or denies, if it is one.
+    pub fn as_comparison(&self) -> Option<&Comparison> {
         match self {
-            Condition::FunctionComparison(comparison) => &comparison.parts,
-            Condition::NegatedFunctionComparison(comparison) => &comparison.parts,
-            _ => &[],
+            Condition::FunctionComparison(comparison)
+            | Condition::NegatedFunctionComparison(comparison) => Some(comparison),
+            _ => None,
         }
     }
 
     /// The comparator a comparison relates its operands by. Only a comparison
     /// has one, so asking anything else is a caller bug.
     pub fn comparator(&self) -> &str {
-        match self {
-            Condition::FunctionComparison(comparison) => &comparison.comparator,
-            Condition::NegatedFunctionComparison(comparison) => &comparison.comparator,
-            other => panic!("{other} is not a comparison"),
-        }
+        &self
+            .as_comparison()
+            .unwrap_or_else(|| panic!("{self} is not a comparison"))
+            .comparator
     }
 
     /// The same comparison with `map` applied to each of its operands. A
@@ -319,19 +279,16 @@ impl Condition {
         &self,
         map: impl FnMut(&FunctionalExpression) -> FunctionalExpression,
     ) -> Condition {
-        let operands: Vec<FunctionalExpression> =
-            self.comparison_operands().iter().map(map).collect();
+        let Some(comparison) = self.as_comparison() else {
+            return self.clone();
+        };
+        let mapped = Comparison::new(
+            comparison.comparator.clone(),
+            comparison.operands.iter().map(map).collect(),
+        );
         match self {
-            Condition::FunctionComparison(comparison) => Condition::FunctionComparison(
-                FunctionComparison::new(comparison.comparator.clone(), operands),
-            ),
-            Condition::NegatedFunctionComparison(comparison) => {
-                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
-                    comparison.comparator.clone(),
-                    operands,
-                ))
-            }
-            other => other.clone(),
+            Condition::NegatedFunctionComparison(_) => Condition::NegatedFunctionComparison(mapped),
+            _ => Condition::FunctionComparison(mapped),
         }
     }
 
@@ -424,27 +381,8 @@ impl Condition {
                 natom.predicate.clone(),
                 super::substitute(&natom.args, renamings),
             )),
-            Condition::FunctionComparison(fc) => {
-                let new_parts = fc
-                    .parts
-                    .iter()
-                    .map(|p| p.rename_variables(renamings))
-                    .collect();
-                Condition::FunctionComparison(FunctionComparison::new(
-                    fc.comparator.clone(),
-                    new_parts,
-                ))
-            }
-            Condition::NegatedFunctionComparison(nfc) => {
-                let new_parts = nfc
-                    .parts
-                    .iter()
-                    .map(|p| p.rename_variables(renamings))
-                    .collect();
-                Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
-                    nfc.comparator.clone(),
-                    new_parts,
-                ))
+            Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => {
+                self.map_comparison_operands(|operand| operand.rename_variables(renamings))
             }
             other => other.clone(),
         }
@@ -551,8 +489,16 @@ impl fmt::Display for Condition {
             }
             Condition::Atom(a) => write!(f, "{}", a),
             Condition::NegatedAtom(a) => write!(f, "{}", a),
-            Condition::FunctionComparison(fc) => write!(f, "{}", fc),
-            Condition::NegatedFunctionComparison(nfc) => write!(f, "{}", nfc),
+            Condition::FunctionComparison(comparison) => write!(
+                f,
+                "FunctionComparison({}, {:?})",
+                comparison.comparator, comparison.operands
+            ),
+            Condition::NegatedFunctionComparison(comparison) => write!(
+                f,
+                "NegatedFunctionComparison({}, {:?})",
+                comparison.comparator, comparison.operands
+            ),
         }
     }
 }

@@ -43,8 +43,8 @@ pub fn substitute(args: &[String], substitution: &impl Substitution) -> Vec<Stri
 pub use actions::{Action, PropositionalAction};
 pub use axioms::{Axiom, InstantiatedNumericAxiom, NumericAxiom, PropositionalAxiom};
 pub use conditions::{
-    Atom, Condition, Conjunction, Disjunction, ExistentialCondition, FunctionComparison,
-    NegatedAtom, NegatedFunctionComparison, UniversalCondition,
+    Atom, Comparison, Condition, Conjunction, Disjunction, ExistentialCondition, NegatedAtom,
+    UniversalCondition,
 };
 pub use effects::{
     ConditionalEffect, ConjunctiveEffect, Effect, NumericEffect, SimpleEffect, UniversalEffect,

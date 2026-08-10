@@ -269,23 +269,13 @@ fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
             // Negated atoms are generally ignored in exploration (relaxation)
             vec![]
         }
-        Condition::FunctionComparison(fc) => fc
-            .parts
+        Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => cond
+            .comparison_operands()
             .iter()
-            .flat_map(|part| part.primitive_numeric_expressions())
+            .flat_map(crate::pddl::FunctionalExpression::primitive_numeric_expressions)
             .map(|pne| {
                 let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
-                result.extend(pne.args.clone());
-                result
-            })
-            .collect(),
-        Condition::NegatedFunctionComparison(nfc) => nfc
-            .parts
-            .iter()
-            .flat_map(|part| part.primitive_numeric_expressions())
-            .map(|pne| {
-                let mut result = vec![normalize::get_function_predicate(&pne.symbol)];
-                result.extend(pne.args.clone());
+                result.extend(pne.args);
                 result
             })
             .collect(),

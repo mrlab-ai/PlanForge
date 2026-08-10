@@ -364,7 +364,7 @@ impl ReorderedTask {
 
 /// Orders and prunes the variables of `sas` by its causal graph, and writes the
 /// result as the SAS+ file the search reads.
-pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) {
+pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) -> std::io::Result<()> {
     let task = PreprocessedTask::new(sas);
     let metric_index_before = task.metric.index;
 
@@ -390,6 +390,7 @@ pub fn write_reordered_sas<W: Write>(sas: SASTask, outfile: &mut W) {
     info!("Preprocessor task size: {}", reordered.encoding_size());
 
     info!("Writing output...");
-    output::write_sas(&reordered, outfile);
+    output::write_sas(&reordered, outfile)?;
     info!("done");
+    Ok(())
 }

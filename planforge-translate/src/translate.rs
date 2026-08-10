@@ -1611,18 +1611,17 @@ fn condition_to_atom(cond: &Condition) -> Option<Atom> {
     }
 }
 
-/// Create a FunctionComparison or NegatedFunctionComparison condition
-fn make_fc_condition(comparator: &str, parts: &[FunctionalExpression], negated: bool) -> Condition {
+/// The comparison `comparator` relates `operands` by, asserted or denied.
+fn make_fc_condition(
+    comparator: &str,
+    operands: &[FunctionalExpression],
+    negated: bool,
+) -> Condition {
+    let comparison = Comparison::new(comparator.to_owned(), operands.to_vec());
     if negated {
-        Condition::NegatedFunctionComparison(NegatedFunctionComparison::new(
-            comparator.to_string(),
-            parts.to_vec(),
-        ))
+        Condition::NegatedFunctionComparison(comparison)
     } else {
-        Condition::FunctionComparison(FunctionComparison::new(
-            comparator.to_string(),
-            parts.to_vec(),
-        ))
+        Condition::FunctionComparison(comparison)
     }
 }
 
@@ -1631,8 +1630,13 @@ fn negate_condition(cond: &Condition) -> Condition {
     match cond {
         Condition::Atom(a) => Condition::NegatedAtom(a.negate()),
         Condition::NegatedAtom(na) => Condition::Atom(na.negate()),
-        Condition::FunctionComparison(fc) => Condition::NegatedFunctionComparison(fc.negate()),
-        Condition::NegatedFunctionComparison(nfc) => Condition::FunctionComparison(nfc.negate()),
+        // Negating a comparison moves the same payload to the other variant.
+        Condition::FunctionComparison(comparison) => {
+            Condition::NegatedFunctionComparison(comparison.clone())
+        }
+        Condition::NegatedFunctionComparison(comparison) => {
+            Condition::FunctionComparison(comparison.clone())
+        }
         _ => cond.clone(),
     }
 }

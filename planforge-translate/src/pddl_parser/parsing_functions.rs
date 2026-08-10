@@ -155,12 +155,11 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
             let inner_list = inner.as_list();
             // Check if it's a function comparison
             if is_function_comparison(inner_list) {
-                let fc = parse_function_comparison(inner_list, type_dict);
-                match fc {
-                    Condition::FunctionComparison(fc) => {
-                        Condition::NegatedFunctionComparison(fc.negate())
+                match parse_function_comparison(inner_list, type_dict) {
+                    Condition::FunctionComparison(comparison) => {
+                        Condition::NegatedFunctionComparison(comparison)
                     }
-                    _ => panic!("Expected FunctionComparison inside not"),
+                    other => panic!("expected a comparison inside not, got {other}"),
                 }
             } else {
                 // It's a negated literal
@@ -264,7 +263,7 @@ fn parse_function_comparison(
         parts,
     ));
     let zero = FunctionalExpression::NumericConstant(NumericConstant::new(0.0));
-    Condition::FunctionComparison(FunctionComparison::new(comparator, vec![difference, zero]))
+    Condition::FunctionComparison(Comparison::new(comparator, vec![difference, zero]))
 }
 
 pub fn parse_expression(alist: &SExpr) -> FunctionalExpression {

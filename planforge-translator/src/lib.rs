@@ -109,6 +109,6 @@ pub fn translate_to_sas_writer<W: std::io::Write>(
     )
     .map_err(|err| anyhow::anyhow!(err))?;
 
-    planforge_translate::preprocess::write_reordered_sas(sastask, out);
+    planforge_translate::preprocess::write_reordered_sas(sastask, out)?;
     Ok(())
 }
