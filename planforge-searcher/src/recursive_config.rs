@@ -454,13 +454,13 @@ fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicSpec, Stri
         ));
     }
     let arg = &call.args[0];
-    if let Some(key) = &arg.key {
-        if key != "heuristic" {
-            return Err(format!(
-                "`{}(...)` expects `heuristic=...`, got `{key}=...`",
-                call.name
-            ));
-        }
+    if let Some(key) = &arg.key
+        && key != "heuristic"
+    {
+        return Err(format!(
+            "`{}(...)` expects `heuristic=...`, got `{key}=...`",
+            call.name
+        ));
     }
     heuristic_spec_from_value(&arg.value)
 }

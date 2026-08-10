@@ -18,7 +18,8 @@ use crate::evaluation::cegar::progress_concrete_state;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::SplitDirection;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::progression::{
-    get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
+    NumericTransitionStates, get_progression_numeric_deviation_flaws,
+    get_progression_precondition_flaws,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -674,9 +675,11 @@ fn debug_print_concrete_trace(
             let deviation_flaws = get_progression_numeric_deviation_flaws(
                 task,
                 op,
-                &numeric_state,
-                &cand_numeric,
-                expected_abs_numeric_succ,
+                NumericTransitionStates {
+                    current: &numeric_state,
+                    successor: &cand_numeric,
+                    abstract_successor: expected_abs_numeric_succ,
+                },
                 partitions,
                 step,
                 SplitDirection::Forward,

@@ -26,7 +26,7 @@ use super::abstract_operator_generator::{
 use super::additive_numeric_views::AdditiveNumericViews;
 use super::domain_abstraction::NumericPartitions;
 use super::numeric_context::{
-    prepare_comparison_tree_inputs_from_abstract_state,
+    AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
     prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::utils;
@@ -60,6 +60,26 @@ impl OcpTransitionSystemBuild {
 // is a `Vec<usize>` of resolved successor hashes, typically only a handful
 // of entries. For a 1M-state abstraction the cache may peak around tens of
 // MB which is acceptable for the build phase.
+/// The abstraction's mixed-radix hash layout together with the comparison
+/// variables that branch when a state's numeric conditions are re-evaluated.
+/// Every enumeration loop hoists all three once and passes them together.
+#[derive(Clone, Copy)]
+struct ComparisonBranchingLayout<'a> {
+    numeric_domain_sizes: &'a [usize],
+    hash_multipliers: &'a [usize],
+    comparison_var_ids: &'a [usize],
+}
+
+/// What one comparison-enumeration loop remembers across calls: the resolved
+/// successor sets, how many states they hold, and the buffer that serves a
+/// result too large to keep.
+#[derive(Default)]
+struct ComparisonEnumerationMemo {
+    cache: ComparisonEnumerationCache,
+    cached_state_count: usize,
+    overflow: Vec<usize>,
+}
+
 const COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES: usize = 2_000_000;
 const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
 
@@ -334,6 +354,18 @@ impl MatchTree {
     }
 }
 
+/// Everything about one distance-table build that is not the abstraction
+/// itself. All three default to "plain build, no logging, no budget".
+#[derive(Default, Clone, Copy)]
+struct DistanceTableOptions<'a> {
+    /// Log the resulting distances.
+    dump_distances: bool,
+    /// Reuse a match tree the caller already built for these operators.
+    prebuilt_match_tree: Option<&'a MatchTree>,
+    /// Give up once the online-SCP budget is spent.
+    deadline: Option<Instant>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AbstractDistanceTable {
     pub distances: Vec<f64>,
@@ -554,10 +586,12 @@ impl DomainAbstractionFactory {
             task,
             &generator,
             &operators,
-            dump_distances,
             goal_facts,
-            None,
-            deadline,
+            DistanceTableOptions {
+                dump_distances,
+                deadline,
+                ..DistanceTableOptions::default()
+            },
         )?;
         ensure_online_scp_deadline(deadline)?;
         let saturated_costs = self.compute_saturated_costs(task, &generator, &operators, &table)?;
@@ -587,7 +621,11 @@ impl DomainAbstractionFactory {
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         self.build_distance_table_with_operators_for_goals_inner(
-            task, &generator, &operators, false, goal_facts, None, None,
+            task,
+            &generator,
+            &operators,
+            goal_facts,
+            DistanceTableOptions::default(),
         )
     }
 
@@ -1028,10 +1066,12 @@ impl DomainAbstractionFactory {
             task,
             &generator,
             &operators,
-            false,
             &goal_facts,
-            Some(&match_tree),
-            deadline,
+            DistanceTableOptions {
+                prebuilt_match_tree: Some(&match_tree),
+                deadline,
+                ..DistanceTableOptions::default()
+            },
         )?;
 
         if let Some(state_id) = cap_state_id
@@ -1059,10 +1099,12 @@ impl DomainAbstractionFactory {
                 task,
                 &generator,
                 &saturated_operators,
-                false,
                 &goal_facts,
-                Some(&match_tree),
-                deadline,
+                DistanceTableOptions {
+                    prebuilt_match_tree: Some(&match_tree),
+                    deadline,
+                    ..DistanceTableOptions::default()
+                },
             )?;
             return Ok((global_table, tcf));
         }
@@ -1398,10 +1440,12 @@ impl DomainAbstractionFactory {
             task,
             &generator,
             &operators,
-            dump_distances,
             &goal_facts,
-            None,
-            deadline,
+            DistanceTableOptions {
+                dump_distances,
+                deadline,
+                ..DistanceTableOptions::default()
+            },
         )?;
         debug!(
             "domain abstraction factory: built abstract distance table with {} states in {:.3}s",
@@ -1536,10 +1580,11 @@ impl DomainAbstractionFactory {
             task,
             generator,
             operators,
-            dump_distances,
             goal_facts,
-            None,
-            None,
+            DistanceTableOptions {
+                dump_distances,
+                ..DistanceTableOptions::default()
+            },
         )
     }
 
@@ -1548,11 +1593,14 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
-        dump_distances: bool,
         goal_facts: &[ExplicitFact],
-        prebuilt_match_tree: Option<&MatchTree>,
-        deadline: Option<Instant>,
+        options: DistanceTableOptions<'_>,
     ) -> Result<AbstractDistanceTable> {
+        let DistanceTableOptions {
+            dump_distances,
+            prebuilt_match_tree,
+            deadline,
+        } = options;
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
@@ -1684,10 +1732,7 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
-        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
@@ -1697,13 +1742,13 @@ impl DomainAbstractionFactory {
                 let possible_targets = self.enumerate_states_with_evaluated_comparisons_cached(
                     target_hash,
                     task,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    &comparison_var_ids,
+                    ComparisonBranchingLayout {
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids: &comparison_var_ids,
+                    },
                     &[],
-                    &mut comparison_enumeration_cache,
-                    &mut cached_comparison_state_count,
-                    &mut comparison_enumeration_scratch,
+                    &mut comparison_enumeration_memo,
                 )?;
                 if !possible_targets.contains(&target_hash) {
                     continue;
@@ -1775,13 +1820,13 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             base_predecessor,
                             task,
-                            numeric_domain_sizes,
-                            hash_multipliers,
-                            &comparison_var_ids,
+                            ComparisonBranchingLayout {
+                                numeric_domain_sizes,
+                                hash_multipliers,
+                                comparison_var_ids: &comparison_var_ids,
+                            },
                             &comparison_preconditions[abstract_op_id],
-                            &mut comparison_enumeration_cache,
-                            &mut cached_comparison_state_count,
-                            &mut comparison_enumeration_scratch,
+                            &mut comparison_enumeration_memo,
                         )?;
                     for &source_hash in possible_predecessors.iter() {
                         if !push_source(
@@ -1878,13 +1923,13 @@ impl DomainAbstractionFactory {
                     let possible_states = self.enumerate_states_with_evaluated_comparisons_cached(
                         state_hash,
                         task,
-                        numeric_domain_sizes,
-                        hash_multipliers,
-                        &comparison_var_ids,
+                        ComparisonBranchingLayout {
+                            numeric_domain_sizes,
+                            hash_multipliers,
+                            comparison_var_ids: &comparison_var_ids,
+                        },
                         &[],
-                        &mut comparison_enumeration_cache,
-                        &mut cached_comparison_state_count,
-                        &mut comparison_enumeration_scratch,
+                        &mut comparison_enumeration_memo,
                     )?;
                     if !possible_states.contains(&state_hash) {
                         continue;
@@ -2369,10 +2414,7 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
-        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
@@ -2427,13 +2469,13 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             base_predecessor,
                             _task,
-                            generator.numeric_domain_sizes(),
-                            generator.hash_multipliers(),
-                            &comparison_var_ids,
+                            ComparisonBranchingLayout {
+                                numeric_domain_sizes: generator.numeric_domain_sizes(),
+                                hash_multipliers: generator.hash_multipliers(),
+                                comparison_var_ids: &comparison_var_ids,
+                            },
                             &comparison_preconditions[abstract_op_id],
-                            &mut comparison_enumeration_cache,
-                            &mut cached_comparison_state_count,
-                            &mut comparison_enumeration_scratch,
+                            &mut comparison_enumeration_memo,
                         )?;
                     for &source_hash in possible_predecessors.iter() {
                         consider_source(source_hash, &mut saturated)?;
@@ -2482,10 +2524,7 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
-        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
 
         let mut applicable_operator_ids = Vec::new();
         for target_hash in 0..num_states {
@@ -2563,13 +2602,13 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             base_predecessor,
                             task,
-                            generator.numeric_domain_sizes(),
-                            generator.hash_multipliers(),
-                            &comparison_var_ids,
+                            ComparisonBranchingLayout {
+                                numeric_domain_sizes: generator.numeric_domain_sizes(),
+                                hash_multipliers: generator.hash_multipliers(),
+                                comparison_var_ids: &comparison_var_ids,
+                            },
                             &comparison_preconditions[abstract_op_id],
-                            &mut comparison_enumeration_cache,
-                            &mut cached_comparison_state_count,
-                            &mut comparison_enumeration_scratch,
+                            &mut comparison_enumeration_memo,
                         )?;
                     for &source_hash in possible_predecessors.iter() {
                         consider_source(source_hash, &mut saturated_costs);
@@ -2706,7 +2745,7 @@ impl DomainAbstractionFactory {
             let concrete_value = if comparison_var_ids.contains(&var)
                 && let Some(tree) = self.numeric_conditions.for_var(var)
             {
-                ConditionValue::from(tree.evaluate_point(&num_init)).as_usize()
+                ConditionValue::from(tree.evaluate_point(num_init)).as_usize()
             } else {
                 prop_init[var]
             };
@@ -2726,7 +2765,7 @@ impl DomainAbstractionFactory {
             let concrete_value = self
                 .additive_numeric_views
                 .get(num_var_id)
-                .map(|view| view.evaluate(&num_init))
+                .map(|view| view.evaluate(num_init))
                 .unwrap_or(num_init[num_var_id]);
             let val = float_tolerance::canonicalize(concrete_value);
             ensure!(
@@ -2813,10 +2852,12 @@ impl DomainAbstractionFactory {
             task,
             self.numeric_conditions.all(),
             &self.partitions,
-            state_hash,
-            self.domain_sizes.len(),
-            numeric_domain_sizes,
-            hash_multipliers,
+            AbstractStateHash {
+                hash: state_hash,
+                num_props: self.domain_sizes.len(),
+                numeric_domain_sizes,
+                hash_multipliers,
+            },
         )
     }
 
@@ -2897,10 +2938,12 @@ impl DomainAbstractionFactory {
                     task,
                     self.numeric_conditions.all(),
                     &self.partitions,
-                    base_state_hash,
-                    num_props,
-                    numeric_domain_sizes,
-                    hash_multipliers,
+                    AbstractStateHash {
+                        hash: base_state_hash,
+                        num_props,
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                    },
                     &mut numeric_intervals,
                 )?;
                 intervals_built = true;
@@ -2934,17 +2977,14 @@ impl DomainAbstractionFactory {
         &self,
         base_state_hash: usize,
         task: &dyn AbstractNumericTask,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
+        layout: ComparisonBranchingLayout<'_>,
         fixed_comparisons: &[ExplicitFact],
-        cache: &'a mut ComparisonEnumerationCache,
-        cached_state_count: &mut usize,
-        scratch: &'a mut Vec<usize>,
+        memo: &'a mut ComparisonEnumerationMemo,
     ) -> Result<&'a [usize]> {
         let key = comparison_enumeration_signature(base_state_hash, fixed_comparisons);
-        if cache.contains_key(&key) {
-            let states = cache
+        if memo.cache.contains_key(&key) {
+            let states = memo
+                .cache
                 .get(&key)
                 .expect("comparison enumeration cache key disappeared");
             return Ok(states.as_slice());
@@ -2953,24 +2993,25 @@ impl DomainAbstractionFactory {
         let states = self.enumerate_states_with_evaluated_comparisons(
             base_state_hash,
             task,
-            numeric_domain_sizes,
-            hash_multipliers,
-            comparison_var_ids,
+            layout.numeric_domain_sizes,
+            layout.hash_multipliers,
+            layout.comparison_var_ids,
             fixed_comparisons,
         )?;
-        if cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
-            && *cached_state_count + states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
+        if memo.cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
+            && memo.cached_state_count + states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
         {
-            *cached_state_count += states.len();
-            cache.insert(key, states);
-            let states = cache
+            memo.cached_state_count += states.len();
+            memo.cache.insert(key, states);
+            let states = memo
+                .cache
                 .get(&key)
                 .expect("inserted comparison enumeration cache entry missing");
             return Ok(states.as_slice());
         }
-        scratch.clear();
-        scratch.extend_from_slice(&states);
-        Ok(scratch.as_slice())
+        memo.overflow.clear();
+        memo.overflow.extend_from_slice(&states);
+        Ok(memo.overflow.as_slice())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3000,10 +3041,7 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
-        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
 
         let mut current_hash = table.initial_state_hash;
         if current_hash >= dist.len() || !dist[current_hash].is_finite() {
@@ -3098,13 +3136,13 @@ impl DomainAbstractionFactory {
                 let possible_successors = self.enumerate_states_with_evaluated_comparisons_cached(
                     base_successor,
                     task,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    comparison_var_ids,
+                    ComparisonBranchingLayout {
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                    },
                     &[],
-                    &mut comparison_enumeration_cache,
-                    &mut cached_comparison_state_count,
-                    &mut comparison_enumeration_scratch,
+                    &mut comparison_enumeration_memo,
                 )?;
                 for cand in possible_successors.iter().copied() {
                     consider_successor(cand);
@@ -3147,13 +3185,13 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             cand_pred_i64 as usize,
                             task,
-                            numeric_domain_sizes,
-                            hash_multipliers,
-                            comparison_var_ids,
+                            ComparisonBranchingLayout {
+                                numeric_domain_sizes,
+                                hash_multipliers,
+                                comparison_var_ids,
+                            },
                             &comparison_preconditions[cand_op_id],
-                            &mut comparison_enumeration_cache,
-                            &mut cached_comparison_state_count,
-                            &mut comparison_enumeration_scratch,
+                            &mut comparison_enumeration_memo,
                         )?;
                     possible_predecessors.contains(&current_hash)
                 } else {
@@ -3229,10 +3267,7 @@ impl DomainAbstractionFactory {
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
-        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
         let comparison_branching = !comparison_var_ids.is_empty();
 
         for state_hash in 0..num_states {
@@ -3251,13 +3286,13 @@ impl DomainAbstractionFactory {
                 let alts = self.enumerate_states_with_evaluated_comparisons_cached(
                     state_hash,
                     task,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    comparison_var_ids,
+                    ComparisonBranchingLayout {
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                    },
                     &[],
-                    &mut comparison_enumeration_cache,
-                    &mut cached_comparison_state_count,
-                    &mut comparison_enumeration_scratch,
+                    &mut comparison_enumeration_memo,
                 )?;
                 if !alts.contains(&state_hash) {
                     continue;
@@ -3308,13 +3343,13 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             predecessor_i64 as usize,
                             task,
-                            numeric_domain_sizes,
-                            hash_multipliers,
-                            comparison_var_ids,
+                            ComparisonBranchingLayout {
+                                numeric_domain_sizes,
+                                hash_multipliers,
+                                comparison_var_ids,
+                            },
                             &comparison_preconditions[op_id],
-                            &mut comparison_enumeration_cache,
-                            &mut cached_comparison_state_count,
-                            &mut comparison_enumeration_scratch,
+                            &mut comparison_enumeration_memo,
                         )?;
 
                     for pred in possible_predecessors.iter().copied() {
@@ -3367,13 +3402,10 @@ impl DomainAbstractionFactory {
     ) -> Result<f64> {
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_cache: ComparisonEnumerationCache =
-            ComparisonEnumerationCache::default();
-        let mut cached_comparison_state_count = 0usize;
-        let mut comparison_enumeration_scratch: Vec<usize> = Vec::new();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
         let comparison_branching = !comparison_var_ids.is_empty();
 
-        for state_hash in 0..num_states {
+        for (state_hash, distance) in distances.iter_mut().enumerate() {
             if state_hash % 4096 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
@@ -3389,19 +3421,19 @@ impl DomainAbstractionFactory {
                 let alts = self.enumerate_states_with_evaluated_comparisons_cached(
                     state_hash,
                     task,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    comparison_var_ids,
+                    ComparisonBranchingLayout {
+                        numeric_domain_sizes,
+                        hash_multipliers,
+                        comparison_var_ids,
+                    },
                     &[],
-                    &mut comparison_enumeration_cache,
-                    &mut cached_comparison_state_count,
-                    &mut comparison_enumeration_scratch,
+                    &mut comparison_enumeration_memo,
                 )?;
                 if !alts.contains(&state_hash) {
                     continue;
                 }
             }
-            distances[state_hash] = 0.0;
+            *distance = 0.0;
             heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
 
@@ -3445,13 +3477,13 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             predecessor_base,
                             task,
-                            numeric_domain_sizes,
-                            hash_multipliers,
-                            comparison_var_ids,
+                            ComparisonBranchingLayout {
+                                numeric_domain_sizes,
+                                hash_multipliers,
+                                comparison_var_ids,
+                            },
                             &comparison_preconditions[op_id],
-                            &mut comparison_enumeration_cache,
-                            &mut cached_comparison_state_count,
-                            &mut comparison_enumeration_scratch,
+                            &mut comparison_enumeration_memo,
                         )?;
 
                     for pred in possible_predecessors.iter().copied() {
@@ -3595,7 +3627,7 @@ fn abstract_operator_costs_from_footprints(
 ) -> Result<Vec<f64>> {
     let has_reductions = residual_costs.has_reductions();
     let mut operator_costs = vec![f64::INFINITY; num_operators];
-    for abstract_op_id in 0..num_operators {
+    for (abstract_op_id, operator_cost) in operator_costs.iter_mut().enumerate() {
         if abstract_op_id % 64 == 0 {
             ensure_online_scp_deadline(deadline)?;
         }
@@ -3606,7 +3638,7 @@ fn abstract_operator_costs_from_footprints(
             !footprint.labels.is_empty(),
             "abstract operator {abstract_op_id} has no concrete footprint labels"
         );
-        operator_costs[abstract_op_id] = footprint
+        *operator_cost = footprint
             .labels
             .iter()
             .map(|label| {
@@ -3623,7 +3655,7 @@ fn abstract_operator_costs_from_footprints(
             })
             .fold(f64::INFINITY, f64::min);
         ensure!(
-            operator_costs[abstract_op_id].is_finite(),
+            operator_cost.is_finite(),
             "residual cost for abstract operator {abstract_op_id} is not finite"
         );
     }

@@ -71,9 +71,9 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
     let mut operators = Vec::with_capacity(num_operators);
     for op_index in 0..num_operators {
         let mut preconditions = Vec::new();
-        for index in 0..num_primary {
+        for (index, &domain) in domains.iter().enumerate() {
             if rng.percent(40) {
-                let value = rng.below(domains[index]);
+                let value = rng.below(domain);
                 preconditions.push(ExplicitFact::new(task_var(index), value));
             }
         }
@@ -85,9 +85,9 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
             let count = rng.below(3);
             for _ in 0..count {
                 let mut conditions = Vec::new();
-                for other in 0..num_primary {
+                for (other, &other_domain) in domains.iter().enumerate() {
                     if rng.percent(30) {
-                        let value = rng.below(domains[other]);
+                        let value = rng.below(other_domain);
                         conditions.push(ExplicitFact::new(task_var(other), value));
                     }
                 }

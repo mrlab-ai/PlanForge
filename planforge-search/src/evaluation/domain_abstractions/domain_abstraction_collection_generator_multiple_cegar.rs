@@ -139,6 +139,22 @@ struct RootGroup {
     numeric_var_ids: HashSet<usize>,
 }
 
+/// Which variables one collection member may split, and where it starts.
+struct MemberVariableChoice {
+    init_split_var_ids: Option<HashSet<usize>>,
+    initial_seed_splits: Vec<InitialSeedSplit>,
+    blacklisted_prop_var_ids: HashSet<usize>,
+    blacklisted_numeric_var_ids: HashSet<usize>,
+}
+
+/// How one collection member refines: which flaws it looks for, which way it
+/// splits them, and the seed that breaks its ties.
+struct MemberRefinement {
+    random_seed: Option<u64>,
+    flaw_kind: FlawKind,
+    split_direction: Option<SplitDirection>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct NumericRootGroupKey {
     coefficient_shape: Vec<OrderedFloat<f64>>,
@@ -361,14 +377,20 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         &self,
         max_abstraction_size: usize,
         remaining_time: f64,
-        init_split_var_ids: Option<HashSet<usize>>,
-        initial_seed_splits: Vec<InitialSeedSplit>,
-        blacklisted_prop_var_ids: HashSet<usize>,
-        blacklisted_numeric_var_ids: HashSet<usize>,
-        random_seed: Option<u64>,
-        flaw_kind: FlawKind,
-        split_direction: Option<SplitDirection>,
+        variable_choice: MemberVariableChoice,
+        refinement: MemberRefinement,
     ) -> CegarConfig {
+        let MemberVariableChoice {
+            init_split_var_ids,
+            initial_seed_splits,
+            blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids,
+        } = variable_choice;
+        let MemberRefinement {
+            random_seed,
+            flaw_kind,
+            split_direction,
+        } = refinement;
         CegarConfig {
             max_abstraction_size,
             max_iterations: CegarConfig::default().max_iterations,
@@ -541,13 +563,17 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let cegar_config = self.build_cegar_config(
                 remaining_abstraction_size,
                 remaining_generation_time,
-                init_split_var_ids,
-                initial_seed_splits,
-                blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids,
-                Some(cegar_random_seed),
-                flaw_kind,
-                split_direction,
+                MemberVariableChoice {
+                    init_split_var_ids,
+                    initial_seed_splits,
+                    blacklisted_prop_var_ids,
+                    blacklisted_numeric_var_ids,
+                },
+                MemberRefinement {
+                    random_seed: Some(cegar_random_seed),
+                    flaw_kind,
+                    split_direction,
+                },
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;

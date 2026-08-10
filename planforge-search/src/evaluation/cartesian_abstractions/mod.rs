@@ -301,11 +301,14 @@ impl CartesianRefinementHierarchy {
         leaf_node_id: usize,
         old_state_id: usize,
         new_state_id: usize,
-        var_id: usize,
-        boundary: f64,
-        lower_includes_boundary: bool,
-        old_state_is_lower: bool,
+        split: NumericSplit,
     ) -> Result<()> {
+        let NumericSplit {
+            var_id,
+            boundary,
+            lower_includes_boundary,
+            old_state_is_lower,
+        } = split;
         ensure!(
             boundary.is_finite(),
             "Cartesian split boundary must be finite"
@@ -343,6 +346,26 @@ impl CartesianRefinementHierarchy {
         };
         Ok(())
     }
+}
+
+/// What is left of the collection's state and time budget when one member is
+/// about to be built.
+#[derive(Debug, Clone, Copy)]
+struct MemberBudget {
+    remaining_states: usize,
+    remaining_time: Option<Duration>,
+}
+
+/// Where a numeric refinement cuts one variable's range, and on which side of
+/// the cut the state being split ends up.
+#[derive(Debug, Clone, Copy)]
+struct NumericSplit {
+    var_id: usize,
+    boundary: f64,
+    /// Whether `boundary` itself belongs to the lower child.
+    lower_includes_boundary: bool,
+    /// Whether the state that existed before the split becomes the lower child.
+    old_state_is_lower: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1008,7 +1031,7 @@ impl<'task> CartesianSemantics<'task> {
             let Some(view) = view else {
                 continue;
             };
-            let initial_value = view.evaluate(&initial_numeric);
+            let initial_value = view.evaluate(initial_numeric);
             numeric_integer_lattice[numeric_var_id] =
                 approximately_equal(initial_value, initial_value.round())
                     && (0..operator_count).all(|op_id| {
@@ -2061,8 +2084,10 @@ impl CartesianAbstractionCollectionGenerator {
                 &member,
                 goal_count,
                 abstraction_id,
-                remaining_states,
-                remaining_time,
+                MemberBudget {
+                    remaining_states,
+                    remaining_time,
+                },
             )?;
 
             let state_count = abstraction.num_states();
@@ -2126,9 +2151,12 @@ impl CartesianAbstractionCollectionGenerator {
         &self,
         member: &CollectionMember,
         goal_count: usize,
-        remaining_states: usize,
-        remaining_time: Option<Duration>,
+        budget: MemberBudget,
     ) -> CartesianAbstractionConfig {
+        let MemberBudget {
+            remaining_states,
+            remaining_time,
+        } = budget;
         let mut config = self.config.abstraction.clone();
         config.max_states = config.max_states.min(remaining_states);
         // Whichever of the two budgets exist bind; the tighter one wins.
@@ -2161,11 +2189,9 @@ impl CartesianAbstractionCollectionGenerator {
         member: &CollectionMember,
         goal_count: usize,
         abstraction_id: usize,
-        remaining_states: usize,
-        remaining_time: Option<Duration>,
+        budget: MemberBudget,
     ) -> Result<BuiltMember> {
-        let abstraction_config =
-            self.member_abstraction_config(member, goal_count, remaining_states, remaining_time);
+        let abstraction_config = self.member_abstraction_config(member, goal_count, budget);
         let goal_task = (goal_count > 0)
             .then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
         let abstraction_task = goal_task
@@ -5265,10 +5291,12 @@ fn apply_split(
                 leaf_node_id,
                 old_state_id,
                 new_state_id,
-                var_id,
-                boundary,
-                lower_includes_boundary,
-                witness_is_lower,
+                NumericSplit {
+                    var_id,
+                    boundary,
+                    lower_includes_boundary,
+                    old_state_is_lower: witness_is_lower,
+                },
             )?;
             if witness_is_lower {
                 (lower_region, upper_region)

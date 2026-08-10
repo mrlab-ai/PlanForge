@@ -5300,7 +5300,7 @@ mod handcrafted_sailing_tests {
                 Some(
                     abstraction
                         .hierarchy
-                        .map_state(&initial_prop, &initial_numeric)
+                        .map_state(initial_prop, initial_numeric)
                         .expect("failed to map sailing initial state"),
                 )
             })
@@ -5620,7 +5620,7 @@ mod handcrafted_sailing_tests {
             .map(|component| {
                 Some(
                     component
-                        .abstract_state_hash_from_state_values(&prop, &numeric)
+                        .abstract_state_hash_from_state_values(prop, numeric)
                         .expect("failed to hash initial state for handcrafted abstraction"),
                 )
             })
@@ -5697,7 +5697,7 @@ mod handcrafted_sailing_tests {
             add_split(&mut seeds, view_id, 25.0, true);
             add_route_grid_values(&mut seeds, view_id, initial[view_id], 25.0, 3.0);
         }
-        seeds.sort_by_key(|left| seed_description(left));
+        seeds.sort_by_key(seed_description);
         seeds.dedup();
         seeds
     }
@@ -6338,9 +6338,11 @@ mod tests {
         let mut cartesian = cartesian_abstraction(&task);
         cartesian.transition_system.transitions.clear();
         cartesian.abstract_operator_footprints.clear();
-        let mut domain_config = CegarConfig::default();
-        domain_config.max_abstraction_size = 16;
-        domain_config.compute_operator_footprints = true;
+        let domain_config = CegarConfig {
+            max_abstraction_size: 16,
+            compute_operator_footprints: true,
+            ..Default::default()
+        };
         let mut domain = DomainAbstractionGenerator::new(domain_config)
             .unwrap()
             .generate(&task)
@@ -6720,10 +6722,12 @@ mod tests {
     #[test]
     fn abstract_operator_scp_combines_all_backend_types() {
         let task = independent_goals_task();
-        let mut domain_config = CegarConfig::default();
-        domain_config.max_abstraction_size = 16;
-        domain_config.combine_labels = false;
-        domain_config.compute_operator_footprints = true;
+        let domain_config = CegarConfig {
+            max_abstraction_size: 16,
+            combine_labels: false,
+            compute_operator_footprints: true,
+            ..Default::default()
+        };
         let domain = DomainAbstractionGenerator::new(domain_config)
             .unwrap()
             .generate(&task)
@@ -6749,10 +6753,12 @@ mod tests {
     #[test]
     fn offline_diversification_supports_mixed_abstraction_backends() {
         let task = std::sync::Arc::new(independent_goals_task());
-        let mut domain_config = CegarConfig::default();
-        domain_config.max_abstraction_size = 16;
-        domain_config.combine_labels = false;
-        domain_config.compute_operator_footprints = true;
+        let domain_config = CegarConfig {
+            max_abstraction_size: 16,
+            combine_labels: false,
+            compute_operator_footprints: true,
+            ..Default::default()
+        };
         let domain = DomainAbstractionGenerator::new(domain_config)
             .unwrap()
             .generate(&*task)

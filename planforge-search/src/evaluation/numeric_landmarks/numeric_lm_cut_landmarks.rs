@@ -537,7 +537,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         if self.use_bounds {
             let initial_numeric_values = self.task.get_initial_numeric_state_values();
             self.numeric_bound
-                .calculate_bounds(&initial_numeric_values, self.config.bound_iterations);
+                .calculate_bounds(initial_numeric_values, self.config.bound_iterations);
         }
         if debug_summary {
             let infinite_operators = self

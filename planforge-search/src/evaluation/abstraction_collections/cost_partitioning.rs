@@ -2473,65 +2473,63 @@ fn max_overlap_reduction(
         suffix
     };
 
+    /// The part of the branch-and-bound that does not change as it recurses:
+    /// the reductions being chosen from, the best-case remaining sum per
+    /// suffix, the query they must stay compatible with, and the bound above
+    /// which no branch can improve.
+    struct SearchSpace<'a> {
+        relevant: &'a [&'a ResidualReduction],
+        suffix: &'a [f64],
+        query: Option<&'a TransitionCondition>,
+        cap: f64,
+    }
+
     fn search(
+        space: &SearchSpace<'_>,
         index: usize,
         selected: &mut Vec<usize>,
         current_sum: f64,
         best: &mut f64,
-        cap: f64,
-        query: Option<&TransitionCondition>,
-        relevant: &[&ResidualReduction],
-        suffix: &[f64],
     ) {
-        if index == relevant.len() {
+        if index == space.relevant.len() {
             *best = best.max(current_sum);
             return;
         }
-        if *best >= cap - EPSILON {
+        if *best >= space.cap - EPSILON {
             return;
         }
-        if current_sum + suffix[index] <= *best + EPSILON {
+        if current_sum + space.suffix[index] <= *best + EPSILON {
             return;
         }
 
-        let reduction = relevant[index];
-        if can_add_reduction(query, selected, &reduction.condition, relevant) {
+        let reduction = space.relevant[index];
+        if can_add_reduction(space.query, selected, &reduction.condition, space.relevant) {
             selected.push(index);
             search(
+                space,
                 index + 1,
                 selected,
                 current_sum + reduction.amount.max(0.0),
                 best,
-                cap,
-                query,
-                relevant,
-                suffix,
             );
             selected.pop();
         }
-        search(
-            index + 1,
-            selected,
-            current_sum,
-            best,
-            cap,
-            query,
-            relevant,
-            suffix,
-        );
+        search(space, index + 1, selected, current_sum, best);
     }
 
     let mut best = 0.0;
     let mut selected = Vec::new();
     search(
+        &SearchSpace {
+            relevant: &relevant,
+            suffix: &suffix,
+            query,
+            cap,
+        },
         0,
         &mut selected,
         0.0,
         &mut best,
-        cap,
-        query,
-        &relevant,
-        &suffix,
     );
     best.min(cap)
 }

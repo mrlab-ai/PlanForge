@@ -251,9 +251,11 @@ pub(crate) fn progress_and_get_deviation_flaws(
     let deviation_flaws = get_progression_numeric_deviation_flaws(
         axiom_evaluator.numeric_task.as_ref(),
         op,
-        numeric_state,
-        &next_numeric_state,
-        expected_abs_numeric_state,
+        NumericTransitionStates {
+            current: numeric_state,
+            successor: &next_numeric_state,
+            abstract_successor: expected_abs_numeric_state,
+        },
         partitions,
         step,
         direction,
@@ -264,6 +266,16 @@ pub(crate) fn progress_and_get_deviation_flaws(
     }
 
     Ok((Some(next_prop_state), Some(next_numeric_state), flawed))
+}
+
+/// The concrete and abstract numeric states either side of one plan step.
+pub struct NumericTransitionStates<'a> {
+    /// Concrete numeric values before the operator.
+    pub current: &'a [f64],
+    /// Concrete numeric values after the operator.
+    pub successor: &'a [f64],
+    /// Partition ids the abstract plan expects after the operator.
+    pub abstract_successor: &'a [usize],
 }
 
 /// Emit numeric deviation flaws for an operator whose abstract successor
@@ -277,18 +289,19 @@ pub(crate) fn progress_and_get_deviation_flaws(
 pub fn get_progression_numeric_deviation_flaws(
     task: &dyn AbstractNumericTask,
     op: &Operator,
-    numeric_current_state: &[f64],
-    numeric_successor_state: &[f64],
-    abstract_numeric_successor_state: &[usize],
+    states: NumericTransitionStates<'_>,
     partitions: &NumericPartitions,
     step: usize,
     direction: SplitDirection,
 ) -> Vec<Flaw> {
+    let NumericTransitionStates {
+        current,
+        successor,
+        abstract_successor,
+    } = states;
     let mut flaws: Vec<Flaw> = Vec::new();
 
-    let num_vars = numeric_successor_state
-        .len()
-        .min(abstract_numeric_successor_state.len());
+    let num_vars = successor.len().min(abstract_successor.len());
     for var_id in 0..num_vars {
         // Forward direction only emits a flaw if the operator actually
         // modifies this variable. Backward inspects every variable whose
@@ -310,24 +323,19 @@ pub fn get_progression_numeric_deviation_flaws(
             }
         }
 
-        let abstract_value = abstract_numeric_successor_state[var_id];
+        let abstract_value = abstract_successor[var_id];
         let Some(parts) = partitions.partitions(var_id) else {
             continue;
         };
-        let Some(correct_abstract_value) =
-            partition_for_value(parts, numeric_successor_state[var_id])
-        else {
+        let Some(correct_abstract_value) = partition_for_value(parts, successor[var_id]) else {
             continue;
         };
         if abstract_value == correct_abstract_value {
             continue;
         }
 
-        let concrete_next_value = numeric_successor_state[var_id];
-        let concrete_current_value = numeric_current_state
-            .get(var_id)
-            .copied()
-            .unwrap_or(concrete_next_value);
+        let concrete_next_value = successor[var_id];
+        let concrete_current_value = current.get(var_id).copied().unwrap_or(concrete_next_value);
         if concrete_next_value == concrete_current_value {
             continue;
         }

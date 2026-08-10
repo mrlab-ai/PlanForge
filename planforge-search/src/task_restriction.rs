@@ -384,10 +384,12 @@ pub fn build_icaps26_restricted_task(
             &root_exprs,
             &original_to_transformed,
             EffectCoordinateMode::AllTransformed,
-            &mut constants,
-            &mut numeric_variables,
-            &mut numeric_initial,
-            &mut transformed_to_expr,
+            &mut TransformedNumerics {
+                constants: &mut constants,
+                variables: &mut numeric_variables,
+                initial: &mut numeric_initial,
+                to_expr: &mut transformed_to_expr,
+            },
         )?);
     }
 
@@ -501,10 +503,12 @@ fn build_task(
             root_exprs,
             &original_to_transformed,
             EffectCoordinateMode::OriginalMapping,
-            &mut constants,
-            &mut numeric_variables,
-            &mut numeric_initial,
-            &mut transformed_to_expr,
+            &mut TransformedNumerics {
+                constants: &mut constants,
+                variables: &mut numeric_variables,
+                initial: &mut numeric_initial,
+                to_expr: &mut transformed_to_expr,
+            },
         )?);
     }
 
@@ -641,10 +645,7 @@ fn transform_operator(
     root_exprs: &BTreeMap<usize, AffineExpression>,
     original_to_transformed: &[Option<usize>],
     coordinate_mode: EffectCoordinateMode,
-    constants: &mut ConstantPool,
-    numeric_variables: &mut Vec<NumericVariable>,
-    numeric_initial: &mut Vec<f64>,
-    transformed_to_expr: &mut Vec<AffineExpression>,
+    numerics: &mut TransformedNumerics<'_>,
 ) -> Result<Operator> {
     let has_assignment = operator
         .assignment_effects()
@@ -657,10 +658,7 @@ fn transform_operator(
             initial_numeric,
             original_to_transformed,
             coordinate_mode,
-            constants,
-            numeric_variables,
-            numeric_initial,
-            transformed_to_expr,
+            numerics,
         );
     }
 
@@ -712,7 +710,8 @@ fn transform_operator(
                 })
             })
             .collect::<Vec<_>>(),
-        EffectCoordinateMode::AllTransformed => transformed_to_expr
+        EffectCoordinateMode::AllTransformed => numerics
+            .to_expr
             .iter()
             .enumerate()
             .map(|(transformed_id, expr)| {
@@ -731,13 +730,7 @@ fn transform_operator(
         if approx_eq(delta, 0.0) {
             continue;
         }
-        let const_id = constants.get_or_insert(
-            delta,
-            numeric_variables,
-            numeric_initial,
-            transformed_to_expr,
-            task.numeric_variables().len(),
-        );
+        let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
         assignment_effects.push(AssignmentEffect::new(
             transformed_id,
             AssignmentOperation::Plus,
@@ -762,10 +755,7 @@ fn transform_operator_with_assignment(
     initial_numeric: &[f64],
     original_to_transformed: &[Option<usize>],
     coordinate_mode: EffectCoordinateMode,
-    constants: &mut ConstantPool,
-    numeric_variables: &mut Vec<NumericVariable>,
-    numeric_initial: &mut Vec<f64>,
-    transformed_to_expr: &mut Vec<AffineExpression>,
+    numerics: &mut TransformedNumerics<'_>,
 ) -> Result<Operator> {
     let mut additive_deltas = vec![0.0; task.numeric_variables().len()];
     let mut assigned_constants = vec![None; task.numeric_variables().len()];
@@ -820,12 +810,12 @@ fn transform_operator_with_assignment(
             .iter()
             .filter_map(|&mapped| mapped)
             .collect::<Vec<_>>(),
-        EffectCoordinateMode::AllTransformed => (0..transformed_to_expr.len()).collect(),
+        EffectCoordinateMode::AllTransformed => (0..numerics.to_expr.len()).collect(),
     };
     let transformed_effects = coordinate_ids
         .into_iter()
         .map(|transformed_id| {
-            let expr = &transformed_to_expr[transformed_id];
+            let expr = &numerics.to_expr[transformed_id];
             let successor_expr = expr.apply_effects(&additive_deltas, &assigned_constants);
             let delta_expr = successor_expr.clone().sub(expr.clone());
             (transformed_id, successor_expr, delta_expr)
@@ -838,13 +828,7 @@ fn transform_operator_with_assignment(
             if approx_eq(delta, 0.0) {
                 continue;
             }
-            let const_id = constants.get_or_insert(
-                delta,
-                numeric_variables,
-                numeric_initial,
-                transformed_to_expr,
-                task.numeric_variables().len(),
-            );
+            let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
             assignment_effects.push(AssignmentEffect::new(
                 transformed_id,
                 AssignmentOperation::Plus,
@@ -859,13 +843,8 @@ fn transform_operator_with_assignment(
             "restricted task cannot express assignment effect on transformed numeric variable {transformed_id} in operator {}",
             operator.name()
         );
-        let const_id = constants.get_or_insert(
-            successor_expr.constant,
-            numeric_variables,
-            numeric_initial,
-            transformed_to_expr,
-            task.numeric_variables().len(),
-        );
+        let const_id =
+            numerics.intern_constant(successor_expr.constant, task.numeric_variables().len());
         assignment_effects.push(AssignmentEffect::new(
             transformed_id,
             AssignmentOperation::Assign,
@@ -887,6 +866,33 @@ fn transform_operator_with_assignment(
 #[derive(Default)]
 struct ConstantPool {
     by_bits: HashMap<u64, usize>,
+}
+
+/// The numeric side of the task under construction.
+///
+/// `variables`, `initial` and `to_expr` are parallel — one entry per
+/// transformed numeric variable — and interning a constant appends to all
+/// three, so an operator transform always needs the whole set rather than any
+/// one of them.
+struct TransformedNumerics<'a> {
+    constants: &'a mut ConstantPool,
+    variables: &'a mut Vec<NumericVariable>,
+    initial: &'a mut Vec<f64>,
+    to_expr: &'a mut Vec<AffineExpression>,
+}
+
+impl TransformedNumerics<'_> {
+    /// Id of the constant numeric variable holding `value`, creating it on
+    /// first use.
+    fn intern_constant(&mut self, value: f64, num_original_numeric: usize) -> usize {
+        self.constants.get_or_insert(
+            value,
+            self.variables,
+            self.initial,
+            self.to_expr,
+            num_original_numeric,
+        )
+    }
 }
 
 impl ConstantPool {

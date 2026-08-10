@@ -173,10 +173,9 @@ impl<'a> TreeBuilder<'a> {
             next_condition_by_operator.push(0);
         }
 
-        let mut leaves: Vec<LeafEntry> = Vec::new();
-        leaves.push(LeafEntry {
+        let leaves: Vec<LeafEntry> = vec![LeafEntry {
             applicable_operators: Box::from([] as [u32; 0]),
-        });
+        }];
         let empty_leaf = NodeId::leaf(0);
 
         TreeBuilder {

@@ -389,8 +389,10 @@ pub(super) fn fix_single_flaw_max_refined(
         numeric_domain_sizes,
         prop_multiplier,
     );
-    // Match numeric-FD: highest score first, random order within an equal-score tier.
-    candidates.sort_by(|a, b| b.score.cmp(&a.score));
+    // Match numeric-FD: highest score first, random order within an equal-score
+    // tier. `sort_by_key` rather than `sort_unstable_by_key` because the tier
+    // shuffle below relies on equal-score candidates keeping their input order.
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.score));
     let mut tier_start = 0;
     while tier_start < candidates.len() {
         let score = candidates[tier_start].score;
@@ -506,8 +508,8 @@ pub(super) fn fix_closest_to_goal(flaws: &[Flaw]) -> ChosenFlaws {
             restricted_dep: None,
         })
         .collect();
-    // `b.cmp` is used instead of `a.cmp` to order them by step at reverse order.
-    candidates.sort_unstable_by(|a, b| b.score.cmp(&a.score));
+    // `Reverse` orders them by step descending.
+    candidates.sort_unstable_by_key(|candidate| std::cmp::Reverse(candidate.score));
 
     candidates
 }

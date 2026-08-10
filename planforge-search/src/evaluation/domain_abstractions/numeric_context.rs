@@ -61,23 +61,29 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state(
     task: &dyn AbstractNumericTask,
     comparison_trees: &[NumericCondition],
     partitions: &NumericPartitions,
-    state_hash: usize,
-    num_props: usize,
-    numeric_domain_sizes: &[usize],
-    hash_multipliers: &[usize],
+    state: AbstractStateHash<'_>,
 ) -> Result<Vec<Interval>> {
     let mut buf = Vec::new();
     prepare_comparison_tree_inputs_from_abstract_state_into(
         task,
         comparison_trees,
         partitions,
-        state_hash,
-        num_props,
-        numeric_domain_sizes,
-        hash_multipliers,
+        state,
         &mut buf,
     )?;
     Ok(buf)
+}
+
+/// One abstract state, plus the mixed-radix layout needed to read the
+/// variables back out of its hash.
+#[derive(Clone, Copy)]
+pub struct AbstractStateHash<'a> {
+    pub hash: usize,
+    /// Propositional variables precede the numeric ones in the abstraction's
+    /// variable order, so this is where the numeric ones start.
+    pub num_props: usize,
+    pub numeric_domain_sizes: &'a [usize],
+    pub hash_multipliers: &'a [usize],
 }
 
 /// Resize-and-fill variant for callers that re-evaluate this on many states
@@ -86,12 +92,15 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
     task: &dyn AbstractNumericTask,
     comparison_trees: &[NumericCondition],
     partitions: &NumericPartitions,
-    state_hash: usize,
-    num_props: usize,
-    numeric_domain_sizes: &[usize],
-    hash_multipliers: &[usize],
+    state: AbstractStateHash<'_>,
     out: &mut Vec<Interval>,
 ) -> Result<()> {
+    let AbstractStateHash {
+        hash: state_hash,
+        num_props,
+        numeric_domain_sizes,
+        hash_multipliers,
+    } = state;
     let num_numeric_vars = task.numeric_variables().len();
     ensure!(
         numeric_domain_sizes.len() == num_numeric_vars,
@@ -155,26 +164,5 @@ pub fn evaluate_comparison_tree_from_initial_state(
 ) -> Result<Option<bool>> {
     let mut numeric_intervals =
         prepare_comparison_tree_inputs_from_initial_state(task, std::slice::from_ref(tree))?;
-    Ok(tree.evaluate_interval_and_fill(&mut numeric_intervals))
-}
-
-pub fn evaluate_comparison_tree_from_abstract_state(
-    task: &dyn AbstractNumericTask,
-    tree: &NumericCondition,
-    partitions: &NumericPartitions,
-    state_hash: usize,
-    num_props: usize,
-    numeric_domain_sizes: &[usize],
-    hash_multipliers: &[usize],
-) -> Result<Option<bool>> {
-    let mut numeric_intervals = prepare_comparison_tree_inputs_from_abstract_state(
-        task,
-        std::slice::from_ref(tree),
-        partitions,
-        state_hash,
-        num_props,
-        numeric_domain_sizes,
-        hash_multipliers,
-    )?;
     Ok(tree.evaluate_interval_and_fill(&mut numeric_intervals))
 }

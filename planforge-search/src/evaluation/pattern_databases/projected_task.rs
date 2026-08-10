@@ -597,8 +597,7 @@ impl<'task> ProjectedTask<'task> {
             Vec::with_capacity(projected_num_var_to_original.len());
         let mut projected_numeric_values: Vec<f64> =
             Vec::with_capacity(projected_num_var_to_original.len());
-        for projected_index in 0..projected_num_var_to_original.len() {
-            let source_original = projected_num_var_to_original[projected_index];
+        for &source_original in &projected_num_var_to_original {
             numeric_variables.push(base.numeric_variables()[source_original].clone());
             projected_numeric_values.push(base_initial_numeric_values[source_original]);
         }
@@ -1360,7 +1359,7 @@ impl<'task> ProjectedTask<'task> {
         projected_index: usize,
         state: &ConcreteState,
         registry: &StateRegistry<'_>,
-        numeric_value_cache: &mut Vec<Option<f64>>,
+        numeric_value_cache: &mut [Option<f64>],
     ) -> Result<f64, String> {
         let original_numeric_var = self
             .projected_num_var_to_original

@@ -369,6 +369,25 @@ pub struct ExpansionContext {
     pub parent_metric: f64,
 }
 
+/// The parent and successor views one operator application reads and writes.
+///
+/// Bundled so applying an operator takes the whole transition rather than five
+/// individually orderable slices; nothing is copied, the fields are the same
+/// borrows the caller already holds.
+struct NumericTransition<'a> {
+    /// The parent state's numeric values. Every effect operand is read from
+    /// here, so the reads stay independent of effect order.
+    parent_values: &'a [f64],
+    /// The successor's numeric values, updated in place.
+    current_values: &'a mut [f64],
+    /// This operator's contribution to each cost variable.
+    cost_part: &'a mut [f64],
+    /// The successor's packed buffer, updated in place.
+    next_buffer: &'a mut [u64],
+    /// The parent's packed buffer, read for effect conditions and operands.
+    previous_buffer: &'a [u64],
+}
+
 /// Static counter for generating unique registry IDs.
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -1253,12 +1272,14 @@ impl<'a> StateRegistry<'a> {
         // successor is new, we run the full axiom pass after dedup.
         let defer_full_axioms = self.has_axiom_derived_bits;
         self.apply_numeric_effects_inner(
-            &ctx.parent_numeric,
-            successor_values,
-            cost_values,
+            NumericTransition {
+                parent_values: &ctx.parent_numeric,
+                current_values: successor_values,
+                cost_part: cost_values,
+                next_buffer,
+                previous_buffer,
+            },
             operator,
-            next_buffer,
-            previous_buffer,
             !defer_full_axioms,
         )?;
 
@@ -1561,22 +1582,10 @@ impl<'a> StateRegistry<'a> {
     /// This is the improved version that works directly with buffers for efficiency.
     fn apply_numeric_effects(
         &self,
-        parent_values: &[f64],
-        current_values: &mut [f64],
-        cost_part: &mut [f64],
+        transition: NumericTransition<'_>,
         operator: &Operator,
-        next_buffer: &mut [u64],
-        previous_buffer: &[u64],
     ) -> Result<(), StateInsertError> {
-        self.apply_numeric_effects_inner(
-            parent_values,
-            current_values,
-            cost_part,
-            operator,
-            next_buffer,
-            previous_buffer,
-            true,
-        )
+        self.apply_numeric_effects_inner(transition, operator, true)
     }
 
     /// Like `apply_numeric_effects`, but if `run_full_axioms` is false the
@@ -1587,14 +1596,17 @@ impl<'a> StateRegistry<'a> {
     /// new state worth registering — see `get_successor_state_with_buffers_and_cost`.
     fn apply_numeric_effects_inner(
         &self,
-        parent_values: &[f64],
-        current_values: &mut [f64],
-        cost_part: &mut [f64],
+        transition: NumericTransition<'_>,
         operator: &Operator,
-        next_buffer: &mut [u64],
-        previous_buffer: &[u64],
         run_full_axioms: bool,
     ) -> Result<(), StateInsertError> {
+        let NumericTransition {
+            parent_values,
+            current_values,
+            cost_part,
+            next_buffer,
+            previous_buffer,
+        } = transition;
         // All assignment effects of one operator take effect simultaneously:
         // every right-hand side, left-hand side and effect condition reads the
         // state *before* the operator was applied. An operator with
@@ -1784,12 +1796,14 @@ impl<'a> StateRegistry<'a> {
 
         self.apply_propositional_effects(&mut next_buffer, state, operator);
         self.apply_numeric_effects(
-            &parent_numeric_values,
-            &mut successor_numeric_values,
-            cost_values.as_mut_slice(),
+            NumericTransition {
+                parent_values: &parent_numeric_values,
+                current_values: &mut successor_numeric_values,
+                cost_part: cost_values.as_mut_slice(),
+                next_buffer: &mut next_buffer,
+                previous_buffer,
+            },
             operator,
-            &mut next_buffer,
-            previous_buffer,
         )?;
 
         let new_metric = self

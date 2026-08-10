@@ -436,7 +436,7 @@ impl SgdConfig {
         let bad = |field: &'static str, problem: String| SgdConfigError { field, problem };
 
         match self.horizon {
-            HorizonPolicy::Fixed(horizon) if horizon == 0 => {
+            HorizonPolicy::Fixed(0) => {
                 return Err(bad("horizon", "must be at least 1".into()));
             }
             HorizonPolicy::Dovetail { start, growth, max } => {
@@ -901,9 +901,11 @@ mod tests {
 
     #[test]
     fn inert_off_mode_causal_links_can_be_omitted_but_copy_modes_keep_them() {
-        let mut config = SgdConfig::default();
-        config.causal_link_weight = 0.0;
-        config.causal_link_integrality_final = 0.0;
+        let mut config = SgdConfig {
+            causal_link_weight: 0.0,
+            causal_link_integrality_final: 0.0,
+            ..Default::default()
+        };
         assert!(!config.causal_links_enabled());
 
         config.causal_copy = CausalCopyMode::Shadow;
@@ -914,8 +916,10 @@ mod tests {
 
     #[test]
     fn invalid_values_are_rejected_with_the_field_named() {
-        let mut config = SgdConfig::default();
-        config.particles = 0;
+        let config = SgdConfig {
+            particles: 0,
+            ..Default::default()
+        };
         let error = config.validate().expect_err("zero particles is invalid");
         assert_eq!(error.field, "particles");
 
@@ -929,15 +933,19 @@ mod tests {
             "remelt_stop_progress"
         );
 
-        let mut config = SgdConfig::default();
-        config.horizon = HorizonPolicy::Fixed(0);
+        let config = SgdConfig {
+            horizon: HorizonPolicy::Fixed(0),
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("zero horizon").field,
             "horizon"
         );
 
-        let mut config = SgdConfig::default();
-        config.top_residual_fraction = 1.5;
+        let config = SgdConfig {
+            top_residual_fraction: 1.5,
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("fraction above one").field,
             "top_residual_fraction"
@@ -950,15 +958,19 @@ mod tests {
             "action_temperature_end"
         );
 
-        let mut config = SgdConfig::default();
-        config.slot_slack_window = 1;
+        let config = SgdConfig {
+            slot_slack_window: 1,
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("unit slack window").field,
             "slot_slack_window"
         );
 
-        let mut config = SgdConfig::default();
-        config.insertion_min_prefix_fraction = 1.01;
+        let config = SgdConfig {
+            insertion_min_prefix_fraction: 1.01,
+            ..Default::default()
+        };
         assert_eq!(
             config
                 .validate()
@@ -1009,20 +1021,24 @@ mod tests {
 
         // A NaN dovetail growth slips past a naive `growth <= 1.0` guard,
         // because every comparison with NaN is false.
-        let mut config = SgdConfig::default();
-        config.horizon = HorizonPolicy::Dovetail {
-            start: 4,
-            growth: f64::NAN,
-            max: 64,
+        let config = SgdConfig {
+            horizon: HorizonPolicy::Dovetail {
+                start: 4,
+                growth: f64::NAN,
+                max: 64,
+            },
+            ..Default::default()
         };
         assert_eq!(config.validate().expect_err("NaN growth").field, "horizon");
 
         // Asking to refresh more particles than exist is rejected, not clamped:
         // clamping would make the reported refresh count a lie.
-        let mut config = SgdConfig::default();
-        config.particles = 2;
-        config.refresh = true;
-        config.refresh_particles = 100;
+        let config = SgdConfig {
+            particles: 2,
+            refresh: true,
+            refresh_particles: 100,
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("too many refreshes").field,
             "refresh_particles"
@@ -1096,22 +1112,28 @@ mod tests {
 
     #[test]
     fn staged_scalar_domains_are_enforced() {
-        let mut config = SgdConfig::default();
-        config.applicability_barrier_margin = 1.0;
+        let config = SgdConfig {
+            applicability_barrier_margin: 1.0,
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("unit barrier margin").field,
             "applicability_barrier_margin"
         );
 
-        let mut config = SgdConfig::default();
-        config.polish_p_norm = 0.5;
+        let config = SgdConfig {
+            polish_p_norm: 0.5,
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("sublinear polish norm").field,
             "polish_p_norm"
         );
 
-        let mut config = SgdConfig::default();
-        config.q_action_temperature = (0.5, 1.0);
+        let config = SgdConfig {
+            q_action_temperature: (0.5, 1.0),
+            ..Default::default()
+        };
         assert_eq!(
             config.validate().expect_err("heating Q schedule").field,
             "q_action_temperature_end"

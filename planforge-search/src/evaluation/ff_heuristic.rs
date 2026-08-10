@@ -276,19 +276,20 @@ struct FactUniverse {
 
 impl FactUniverse {
     fn build(task: &dyn AbstractNumericTask) -> Result<Self, String> {
-        let num_props = task.variables().len();
-        let mut id_by_var_value: Vec<Vec<Option<FactId>>> = (0..num_props)
-            .map(|var_id| vec![None; task.variables()[var_id].domain_size()])
+        let mut id_by_var_value: Vec<Vec<Option<FactId>>> = task
+            .variables()
+            .iter()
+            .map(|variable| vec![None; variable.domain_size()])
             .collect();
         let mut var_value: Vec<(usize, usize)> = Vec::new();
         let mut to_axiom: Vec<Option<AxiomIdx>> = Vec::new();
 
-        for var_id in 0..num_props {
+        for (var_id, values) in id_by_var_value.iter_mut().enumerate() {
             if task.numeric_conditions().is_condition_var(var_id) {
                 continue;
             }
-            for value in 0..task.variables()[var_id].domain_size() {
-                id_by_var_value[var_id][value] = Some(var_value.len());
+            for (value, fact_id) in values.iter_mut().enumerate() {
+                *fact_id = Some(var_value.len());
                 var_value.push((var_id, value));
                 to_axiom.push(None);
             }

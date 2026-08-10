@@ -72,7 +72,7 @@ fn cutpoint_partitions_for_task(
 
     let mut cutpoints_by_var: Vec<BTreeSet<NotNan<f64>>> = vec![BTreeSet::new(); num_numeric_vars];
     for condition in task.numeric_conditions().iter() {
-        let constant_values = constant_leaf_values(condition, task, &initial_numeric_values);
+        let constant_values = constant_leaf_values(condition, task, initial_numeric_values);
         if constant_values.is_empty() {
             continue;
         }

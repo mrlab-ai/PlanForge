@@ -42,6 +42,16 @@ struct ExpansionTrace {
     evaluated_successors: bool,
 }
 
+/// The operator that produced one successor, in the three forms the search
+/// needs it: the operator itself, its id in the task and in the successor
+/// generator, and the metric cost its application incurred.
+struct AppliedOperator<'a> {
+    operator: &'a Operator,
+    operator_id: usize,
+    op_id: u32,
+    metric_op_cost: f64,
+}
+
 /// The values every successor of one expansion shares.
 struct ParentExpansion {
     state_id: StateID,
@@ -929,11 +939,13 @@ impl<'a> AStarSearch<'a> {
                 })?;
             self.process_successor(
                 &parent,
-                operator,
-                operator_id,
-                op_id,
+                AppliedOperator {
+                    operator,
+                    operator_id,
+                    op_id,
+                    metric_op_cost,
+                },
                 &succ_state,
-                metric_op_cost,
                 start_time,
             )?;
         }
@@ -951,13 +963,16 @@ impl<'a> AStarSearch<'a> {
     fn process_successor(
         &mut self,
         parent: &ParentExpansion,
-        operator: &Operator,
-        operator_id: usize,
-        op_id: u32,
+        applied: AppliedOperator<'_>,
         succ_state: &ConcreteState,
-        metric_op_cost: f64,
         start_time: &Instant,
     ) -> Result<()> {
+        let AppliedOperator {
+            operator,
+            operator_id,
+            op_id,
+            metric_op_cost,
+        } = applied;
         let succ_state_id = succ_state.get_id();
         let new_g_value =
             parent.g_value + self.operator_cost(operator_id, operator, metric_op_cost);

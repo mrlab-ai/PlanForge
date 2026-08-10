@@ -8,7 +8,6 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyFileNotFoundError, PyValueError};
 use pyo3::prelude::*;
 
-use planforge_core;
 use planforge_sas::numeric_task::{NumericRootTask, Operator, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
