@@ -498,45 +498,28 @@ pub fn parse_global_constraint(alist: &[SExpr], type_dict: &HashMap<String, Vec<
     Axiom::new_global_constraint(name, parameters, num_external, condition)
 }
 
+/// Parses the body of a `(:derived (HEAD ?x - t ...) CONDITION)` block, i.e.
+/// `alist` is the block with `:derived` already stripped.
+///
+/// A derived predicate quantifies over exactly its head's arguments, so all of
+/// them are external and the body may not introduce free variables of its own.
 pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Axiom {
-    let name = alist[0].as_atom().to_string();
-    let mut parameters = vec![];
-    let mut condition = Condition::Truth;
+    assert_eq!(
+        alist.len(),
+        2,
+        "(:derived HEAD CONDITION) takes exactly two elements, got {}: {alist:?}",
+        alist.len()
+    );
+    assert!(
+        alist[0].is_list(),
+        "the head of a derived predicate is `(NAME ?x - t ...)`, got the atom {:?}",
+        alist[0].as_atom()
+    );
 
-    let mut i = 1;
-    while i < alist.len() {
-        let key = alist[i].as_atom();
-        match key {
-            ":parameters" => {
-                i += 1;
-                let params_list = alist[i].as_list();
-                parameters = parse_typed_list(params_list, true, "object");
-            }
-            ":vars" => {
-                i += 1;
-                let vars_list = alist[i].as_list();
-                let extra_params = parse_typed_list(vars_list, true, "object");
-                parameters.extend(extra_params);
-            }
-            ":context" | ":condition" => {
-                i += 1;
-                condition = parse_condition(&alist[i], type_dict);
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    let num_external = parameters
-        .iter()
-        .position(|_| false) // All parameters are external for axioms
-        .unwrap_or(parameters.len());
-    // Actually for axioms, num_external_parameters = len(parameters) from :parameters
-    // and additional ones from :vars are internal
-    // We can't easily track this here, so let's use a simpler approach:
-    // The name itself encodes the head, and parameters up to :vars boundary are external
-
-    Axiom::new(name, parameters, num_external, condition)
+    let head = parse_predicate(alist[0].as_list());
+    let condition = parse_condition(&alist[1], type_dict);
+    let num_external = head.arguments.len();
+    Axiom::new(head.name, head.arguments, num_external, condition)
 }
 
 /// Combines parsed domain and problem S-expressions into a Task.
@@ -599,9 +582,16 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
             ":action" => {
                 actions.push(parse_action(&section[1..], &type_dict));
             }
-            ":derived" | ":axiom" => {
+            ":derived" => {
                 axioms.push(parse_axiom(&section[1..], &type_dict));
             }
+            // PDDL 2.1's `(:axiom :vars ... :context ... :implies ...)` is a
+            // different block shape, not a spelling of `:derived`; parsing it
+            // as one would silently take `:vars` for the head predicate.
+            ":axiom" => panic!(
+                "the PDDL 2.1 `(:axiom ...)` block is not supported; write the derived \
+                 predicate as `(:derived (NAME ?x - t) CONDITION)`"
+            ),
             ":global-constraint" => {
                 axioms.push(parse_global_constraint(&section[1..], &type_dict));
             }
