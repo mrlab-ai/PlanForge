@@ -8,42 +8,13 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::interval::Interval;
 
 use super::*;
+use crate::evaluation::domain_abstractions::cegar::flaw_search::single_switch_task;
 
 // TODO: Test also sequence flaws beyond the first flaw.
 
 #[test]
 fn progression_sequence_flaws_find_precondition_violation() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "v".into(),
-        vec!["v0".into(), "v1".into()],
-        None,
-        0,
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
-    let op = Operator::new(
-        "set".into(),
-        vec![ExplicitFact::new(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = single_switch_task(2, 1, vec![0]);
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::trivial(&task);
@@ -61,12 +32,12 @@ fn progression_sequence_flaws_find_precondition_violation() {
         .unwrap()
         .expect("plan exists");
 
-    // Make the stored wildcard plan invalid in the concrete initial state.
-    task.set_initial_propositional_state_values(vec![1]);
-
+    // The same task started at `v=1` makes the stored wildcard plan invalid:
+    // the operator's precondition `v=0` no longer holds.
+    let flawed_task = single_switch_task(2, 1, vec![1]);
     let mut flaws = Vec::new();
     get_sequence_progression_flaws(
-        &task,
+        &flawed_task,
         factory.partitions(),
         &factory.domain_mapping,
         &plan,
@@ -82,37 +53,7 @@ fn progression_sequence_flaws_find_precondition_violation() {
 
 #[test]
 fn progression_sequence_flaws_find_goal_violation() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "v".into(),
-        vec!["v0".into(), "v1".into(), "v2".into()],
-        None,
-        0,
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 2)];
-    let op = Operator::new(
-        "set".into(),
-        vec![ExplicitFact::new(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = single_switch_task(3, 2, vec![0]);
 
     let (mut domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     // Put 1 and 2 in the same mapping group.
@@ -132,8 +73,8 @@ fn progression_sequence_flaws_find_goal_violation() {
         .unwrap()
         .expect("plan exists");
 
-    task.set_initial_propositional_state_values(vec![0]);
-
+    // The abstraction cannot tell `v=1` from `v=2`, so the wildcard plan stops
+    // at `v=1` and the concrete goal `v=2` stays open.
     let mut flaws = Vec::new();
     get_sequence_progression_flaws(
         &task,
@@ -243,37 +184,7 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
 
 #[test]
 fn regression_sequence_flaws_find_precondition_violation() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "v".into(),
-        vec!["v0".into(), "v1".into(), "v2".into()],
-        None,
-        0,
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 2)];
-    let op = Operator::new(
-        "set".into(),
-        vec![ExplicitFact::new(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = single_switch_task(3, 2, vec![0]);
 
     let (mut domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     // Put 1 and 2 in the same mapping group.
@@ -293,8 +204,8 @@ fn regression_sequence_flaws_find_precondition_violation() {
         .unwrap()
         .expect("plan exists");
 
-    task.set_initial_propositional_state_values(vec![0]);
-
+    // The abstraction cannot tell `v=1` from `v=2`, so regressing the goal
+    // `v=2` through `set` leaves the unachievable precondition `v=1`.
     let mut flaws = Vec::new();
     get_sequence_regression_flaws(
         &task,
@@ -313,37 +224,7 @@ fn regression_sequence_flaws_find_precondition_violation() {
 
 #[test]
 fn regression_sequence_flaws_find_initial_state_violation() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "v".into(),
-        vec!["v0".into(), "v1".into(), "v2".into()],
-        None,
-        0,
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
-    let op = Operator::new(
-        "set".into(),
-        vec![ExplicitFact::new(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = single_switch_task(3, 1, vec![0]);
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::trivial(&task);
@@ -361,12 +242,12 @@ fn regression_sequence_flaws_find_initial_state_violation() {
         .unwrap()
         .expect("plan exists");
 
-    // Make initial state violation.
-    task.set_initial_propositional_state_values(vec![1]);
-
+    // The same task started at `v=1` violates the plan's initial-state
+    // requirement `v=0`.
+    let flawed_task = single_switch_task(3, 1, vec![1]);
     let mut flaws = Vec::new();
     get_sequence_regression_flaws(
-        &task,
+        &flawed_task,
         &factory.partitions,
         &factory.domain_mapping,
         &plan,

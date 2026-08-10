@@ -1,5 +1,3 @@
-use std::cell::{Ref, RefMut};
-
 use anyhow::{Context, Result, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use std::sync::Arc;
@@ -172,28 +170,12 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         &self.goal
     }
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
+    fn get_initial_propositional_state_values(&self) -> &[usize] {
         self.base.get_initial_propositional_state_values()
     }
 
-    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
+    fn get_initial_numeric_state_values(&self) -> &[f64] {
         self.base.get_initial_numeric_state_values()
-    }
-
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
-        self.base.get_initial_propositional_state_values_mut()
-    }
-
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
-        self.base.get_initial_numeric_state_values_mut()
-    }
-
-    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
-        self.base.set_initial_numeric_state_values(values)
-    }
-
-    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
-        self.base.set_initial_propositional_state_values(values)
     }
 
     fn convert_ancestor_state_values(

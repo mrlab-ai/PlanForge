@@ -184,7 +184,8 @@ impl ConcreteState {
 
     /// Get the propositional state values as a vector.
     pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<usize> {
-        let mut values = Vec::with_capacity(state_registry.task.variables().len());
+        let mut values =
+            Vec::with_capacity(state_registry.global_state_packer.numeric_slot_offset());
         self.fill_state(state_registry, &mut values);
         values
     }
@@ -192,10 +193,9 @@ impl ConcreteState {
     /// Fill `output` with the propositional state values without allocating a new vector.
     pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<usize>) {
         let buffer = state_registry.get_buffer(self.pool_offset);
-        let task = &state_registry.task;
         let state_packer = &state_registry.global_state_packer;
 
-        output.resize(task.variables().len(), 0);
+        output.resize(state_packer.numeric_slot_offset(), 0);
         output
             .iter_mut()
             .enumerate()
@@ -207,10 +207,11 @@ impl ConcreteState {
         state_registry: &StateRegistry,
         var_id: usize,
     ) -> Result<usize, InvalidIndex> {
-        if var_id >= state_registry.task.variables().len() {
+        let num_propositional_slots = state_registry.global_state_packer.numeric_slot_offset();
+        if var_id >= num_propositional_slots {
             return Err(InvalidIndex {
                 index: var_id,
-                length: state_registry.task.variables().len(),
+                length: num_propositional_slots,
             });
         }
 
@@ -246,7 +247,7 @@ impl ConcreteState {
 
     /// Return the number of propositional variables in this state.
     pub fn len(&self, state_registry: &StateRegistry) -> usize {
-        state_registry.task.variables().len()
+        state_registry.global_state_packer.numeric_slot_offset()
     }
 
     /// Return `true` if the state has no variables (should never happen in practice).
@@ -257,7 +258,7 @@ impl ConcreteState {
     /// Create a debug representation of this state with variable values.
     pub fn debug_with_registry(&self, registry: &StateRegistry) -> String {
         let task = &registry.task;
-        let num_variables = task.variables().len();
+        let num_variables = registry.global_state_packer.numeric_slot_offset();
         let num_regular_numeric_vars = task
             .numeric_variables()
             .iter()
@@ -541,23 +542,27 @@ impl<'a> StateRegistry<'a> {
                 .map(|ty| (var_id, ty))
         });
 
-        // Collect packer var ids for non-derived (input) variables.
-        // Propositional vars are 0..num_prop_vars; numeric Regular vars start
-        // at num_prop_vars in the packer's variable index space.
-        let prop_vars = task.variables();
+        // Collect packer slots for the non-derived (input) variables. The
+        // propositional slots are the ones below the packer's numeric offset;
+        // the regular numeric variables follow in order from there.
+        let numeric_slot_offset = global_state_packer.numeric_slot_offset();
+        assert_eq!(
+            numeric_slot_offset,
+            task.variables().len(),
+            "the packer's propositional section must cover exactly the task's propositional variables"
+        );
         let mut non_derived_var_ids: Vec<usize> = Vec::new();
         let mut has_propositional_derived = false;
-        for (i, _) in prop_vars.iter().enumerate() {
-            match task.get_variable_axiom_layer(i) {
-                Ok(None) => non_derived_var_ids.push(i),
-                Ok(Some(_)) => {
-                    has_propositional_derived = true;
-                }
-                Err(_) => non_derived_var_ids.push(i),
+        for var_id in 0..numeric_slot_offset {
+            let axiom_layer = task
+                .get_variable_axiom_layer(var_id)
+                .expect("variable id below the packer's numeric offset must exist in the task");
+            match axiom_layer {
+                None => non_derived_var_ids.push(var_id),
+                Some(_) => has_propositional_derived = true,
             }
         }
-        let num_prop_vars = prop_vars.len();
-        let mut numeric_packer_index = num_prop_vars;
+        let mut numeric_packer_index = numeric_slot_offset;
         for &ty in &numeric_var_types {
             if ty == NumericType::Regular {
                 non_derived_var_ids.push(numeric_packer_index);
@@ -838,8 +843,8 @@ impl<'a> StateRegistry<'a> {
 
         // Get copies of initial state values to avoid borrowing conflicts.
         let initial_propositional_values =
-            self.task.get_initial_propositional_state_values().clone();
-        let initial_numeric_values = self.task.get_initial_numeric_state_values().clone();
+            self.task.get_initial_propositional_state_values().to_vec();
+        let initial_numeric_values = self.task.get_initial_numeric_state_values().to_vec();
 
         // Pack propositional variables.
         self.pack_propositional_variables(&mut init_buffer, &initial_propositional_values);
@@ -884,7 +889,7 @@ impl<'a> StateRegistry<'a> {
         buffer: &mut [u64],
         initial_numeric_values: &[f64],
     ) -> Vec<f64> {
-        let mut numeric_var_index = self.task.get_initial_propositional_state_values().len();
+        let mut numeric_var_index = self.global_state_packer.numeric_slot_offset();
         let mut constant_index = 0;
         let mut cost_variables = Vec::new();
 
@@ -945,11 +950,14 @@ impl<'a> StateRegistry<'a> {
     fn log_initial_state_info(&self, cost_variables: &[f64]) {
         use tracing::info;
 
-        let initial_propositional_len = self.task.get_initial_propositional_state_values().len();
+        // Regular numeric variables are the ones whose recorded index is a
+        // packer slot in the numeric section; cost and constant variables index
+        // dense side storage and always land below the offset.
+        let numeric_slot_offset = self.global_state_packer.numeric_slot_offset();
         let regular_count = self
             .numeric_indices
             .iter()
-            .filter(|&&idx| idx.is_some() && idx.unwrap() >= initial_propositional_len)
+            .filter(|index| index.is_some_and(|index| index >= numeric_slot_offset))
             .count();
         let constant_count = self.numeric_constants.len();
         let derived_count = self
@@ -1053,7 +1061,7 @@ impl<'a> StateRegistry<'a> {
         buffer: &mut [u64],
         numeric_values: &[f64],
     ) -> Result<Vec<f64>, StateInsertError> {
-        let mut regular_index = self.task.get_initial_propositional_state_values().len();
+        let mut regular_index = self.global_state_packer.numeric_slot_offset();
         let mut cost_variables = Vec::new();
 
         for (i, &value) in numeric_values.iter().enumerate() {
@@ -1410,16 +1418,17 @@ impl<'a> StateRegistry<'a> {
         numeric_output: &mut Vec<f64>,
         evaluate_arithmetic_axioms: bool,
     ) -> Result<(), InvalidIndex> {
+        let buffer = state.buffer(self);
+        let state_packer = &self.global_state_packer;
+
         propositional_output.clear();
-        propositional_output.reserve(self.task.variables().len());
+        propositional_output.extend(
+            (0..state_packer.numeric_slot_offset())
+                .map(|slot| state_packer.get(buffer, slot) as usize),
+        );
 
         numeric_output.clear();
         numeric_output.resize(self.task.numeric_variables().len(), 0.0);
-
-        let buffer = state.buffer(self);
-        let state_packer = &self.global_state_packer;
-        propositional_output
-            .extend((0..self.task.variables().len()).map(|i| state_packer.get(buffer, i) as usize));
 
         let cost_info_borrow = self.cost_info.borrow();
         let cost_variables = cost_info_borrow.get(state.get_id());

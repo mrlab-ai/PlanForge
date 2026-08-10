@@ -5138,7 +5138,7 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
 
 #[cfg(test)]
 mod handcrafted_sailing_tests {
-    use std::cell::{Ref, RefMut};
+
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -5921,23 +5921,11 @@ mod handcrafted_sailing_tests {
             assert_eq!(index, 0, "SingleGoalTask only exposes one goal");
             &self.goal
         }
-        fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
+        fn get_initial_propositional_state_values(&self) -> &[usize] {
             self.base.get_initial_propositional_state_values()
         }
-        fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
+        fn get_initial_numeric_state_values(&self) -> &[f64] {
             self.base.get_initial_numeric_state_values()
-        }
-        fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
-            self.base.get_initial_propositional_state_values_mut()
-        }
-        fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
-            self.base.get_initial_numeric_state_values_mut()
-        }
-        fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
-            self.base.set_initial_numeric_state_values(values)
-        }
-        fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
-            self.base.set_initial_propositional_state_values(values)
         }
         fn convert_ancestor_state_values(
             &self,

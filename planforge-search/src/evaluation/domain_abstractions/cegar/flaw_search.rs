@@ -442,3 +442,51 @@ pub(crate) fn can_split_numeric_var(
     };
     parts[part_id].can_split_at(value, include_in_lower)
 }
+
+/// A single-variable fixture for the flaw-search tests.
+///
+/// The task has one propositional variable `v` with `domain_size` values, one
+/// operator `set` with precondition `v=0` and effect `v:=1`, and the goal
+/// `v=goal_value`. `initial` fixes the concrete initial state, which is how the
+/// tests make a wildcard plan computed for one initial state inapplicable in
+/// another.
+#[cfg(test)]
+pub(crate) fn single_switch_task(
+    domain_size: usize,
+    goal_value: usize,
+    initial: Vec<usize>,
+) -> planforge_sas::numeric_task::NumericRootTask {
+    use planforge_sas::numeric_task::{
+        Effect, ExplicitVariable, Metric, NumericRootTask, Operator,
+    };
+
+    let variable = ExplicitVariable::new(
+        domain_size,
+        "v".into(),
+        (0..domain_size).map(|value| format!("v{value}")).collect(),
+        None,
+        0,
+    );
+    let set = Operator::new(
+        "set".into(),
+        vec![ExplicitFact::new(0, 0)],
+        vec![Effect::new(vec![], 0, Some(0), 1)],
+        vec![],
+        1,
+    );
+    NumericRootTask::new(
+        4,
+        Metric::new(true, None),
+        vec![variable],
+        vec![],
+        vec![ExplicitFact::new(0, goal_value)],
+        vec![],
+        initial,
+        vec![],
+        vec![set],
+        vec![],
+        vec![],
+        vec![],
+        ExplicitFact::new(0, 0),
+    )
+}

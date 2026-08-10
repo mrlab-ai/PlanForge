@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{BTreeSet, HashSet};
 use std::fmt;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
@@ -179,12 +177,11 @@ pub struct ProjectedTask<'task> {
     propositional_packer: IntDoublePacker,
     initial_packed_propositional: Vec<u64>,
     compiled_axiom_evaluator_data: CompiledAxiomEvaluatorData,
-    compiled_axiom_evaluator_scratch: RefCell<CompiledAxiomEvaluatorScratch>,
     operator_effect_facts: Vec<Vec<ExplicitFact>>,
     goals: Vec<ExplicitFact>,
     axiom_effect_facts: Vec<ExplicitFact>,
-    state: Rc<RefCell<Vec<usize>>>,
-    numeric_state: Rc<RefCell<Vec<f64>>>,
+    state: Vec<usize>,
+    numeric_state: Vec<f64>,
     projected_var_to_original: Vec<usize>,
     projected_num_var_to_original: Vec<usize>,
     original_var_to_projected: Vec<Option<usize>>,
@@ -461,10 +458,7 @@ impl<'task> ProjectedTask<'task> {
         let num_vars = base.variables().len();
         let num_numeric_vars = base.numeric_variables().len();
 
-        let base_initial_numeric_values = {
-            let values = base.get_initial_numeric_state_values();
-            values.to_vec()
-        };
+        let base_initial_numeric_values = base.get_initial_numeric_state_values();
 
         let mut projected_var_to_original: Vec<usize> = Vec::new();
         let mut projected_num_var_to_original: Vec<usize> = Vec::new();
@@ -598,7 +592,6 @@ impl<'task> ProjectedTask<'task> {
             .iter()
             .map(|&original| initial_prop_values[original])
             .collect();
-        drop(initial_prop_values);
 
         let mut numeric_variables: Vec<NumericVariable> =
             Vec::with_capacity(projected_num_var_to_original.len());
@@ -730,9 +723,6 @@ impl<'task> ProjectedTask<'task> {
             ExplicitFact::new(0, 0),
         );
         let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
-        let compiled_axiom_evaluator_scratch = RefCell::new(CompiledAxiomEvaluatorScratch::new(
-            &compiled_axiom_evaluator_data,
-        ));
 
         let propositional_packer = projected_propositional_packer_from_variables(&variables);
         let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins()];
@@ -754,12 +744,11 @@ impl<'task> ProjectedTask<'task> {
             propositional_packer,
             initial_packed_propositional,
             compiled_axiom_evaluator_data,
-            compiled_axiom_evaluator_scratch,
             operator_effect_facts,
             goals,
             axiom_effect_facts,
-            state: Rc::new(RefCell::new(projected_prop_values)),
-            numeric_state: Rc::new(RefCell::new(projected_numeric_values)),
+            state: projected_prop_values,
+            numeric_state: projected_numeric_values,
             projected_var_to_original,
             projected_num_var_to_original,
             original_var_to_projected,
@@ -779,8 +768,8 @@ impl<'task> ProjectedTask<'task> {
             self.numeric_variables.clone(),
             self.goals.clone(),
             vec![],
-            self.state.borrow().clone(),
-            self.numeric_state.borrow().clone(),
+            self.state.clone(),
+            self.numeric_state.clone(),
             self.operators.clone(),
             self.axioms.clone(),
             self.comparison_axioms.clone(),
@@ -1061,8 +1050,8 @@ impl<'task> ProjectedTask<'task> {
     pub fn evaluated_initial_state_values(
         &self,
     ) -> Result<(Vec<usize>, Vec<f64>), ProjectedTaskBuildError> {
-        let mut propositional = self.state.borrow().clone();
-        let mut numeric = self.numeric_state.borrow().clone();
+        let mut propositional = self.state.clone();
+        let mut numeric = self.numeric_state.clone();
         self.evaluate_axiom_closure(&mut propositional, &mut numeric)?;
         Ok((propositional, numeric))
     }
@@ -1091,8 +1080,8 @@ impl<'task> ProjectedTask<'task> {
     }
 
     pub fn evaluated_initial_state(&self) -> Result<EvaluatedState, ProjectedTaskBuildError> {
-        let mut propositional = self.state.borrow().clone();
-        let mut numeric = self.numeric_state.borrow().clone();
+        let mut propositional = self.state.clone();
+        let mut numeric = self.numeric_state.clone();
         let mut packed = self.initial_packed_propositional.clone();
         self.evaluate_axiom_closure_with_buffer(&mut propositional, &mut numeric, &mut packed)?;
         Ok((propositional, numeric, packed))
@@ -1425,7 +1414,9 @@ impl<'task> ProjectedTask<'task> {
             &self.propositional_packer,
             &self.compiled_axiom_evaluator_data,
         );
-        let mut scratch = self.compiled_axiom_evaluator_scratch.borrow_mut();
+        // The closure runs once per projected task, not per state, so a
+        // fresh scratch buffer here costs nothing worth caching.
+        let mut scratch = CompiledAxiomEvaluatorScratch::new(&self.compiled_axiom_evaluator_data);
 
         axiom_evaluator
             .evaluate_arithmetic_axioms(numeric)
@@ -1649,28 +1640,12 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.goals[index]
     }
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
-        self.state.borrow()
+    fn get_initial_propositional_state_values(&self) -> &[usize] {
+        &self.state
     }
 
-    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
-        self.numeric_state.borrow()
-    }
-
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
-        self.state.borrow_mut()
-    }
-
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
-        self.numeric_state.borrow_mut()
-    }
-
-    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
-        *self.numeric_state.borrow_mut() = values;
-    }
-
-    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
-        *self.state.borrow_mut() = values;
+    fn get_initial_numeric_state_values(&self) -> &[f64] {
+        &self.numeric_state
     }
 
     fn convert_ancestor_state_values(

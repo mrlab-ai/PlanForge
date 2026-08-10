@@ -90,13 +90,32 @@ impl VariableInfo {
 pub struct IntDoublePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: usize,
+    /// First slot of the regular-numeric section of the buffer.
+    ///
+    /// A concrete-state packer lays out the propositional variables first and
+    /// the regular numeric variables after them, so this is the one place that
+    /// decides where the numeric section starts. Packers without a numeric
+    /// section report the slot count, which makes "slot below the offset" mean
+    /// "propositional slot" for every packer.
+    numeric_slot_offset: usize,
 }
 
 impl IntDoublePacker {
+    /// Packer for `ranges` alone, with no regular-numeric section.
     pub fn new(ranges: &[u64]) -> Self {
+        Self::with_numeric_slot_offset(ranges, ranges.len())
+    }
+
+    fn with_numeric_slot_offset(ranges: &[u64], numeric_slot_offset: usize) -> Self {
+        assert!(
+            numeric_slot_offset <= ranges.len(),
+            "numeric section starts at slot {numeric_slot_offset}, past the {} packed slots",
+            ranges.len()
+        );
         let mut packer = IntDoublePacker {
             var_infos: vec![],
             num_bins: 0,
+            numeric_slot_offset,
         };
         packer.pack_bins(ranges);
         packer
@@ -122,7 +141,7 @@ impl IntDoublePacker {
         numeric_range: u64,
     ) -> Self {
         let conditions = task.numeric_conditions();
-        let mut domain_sizes = vec![];
+        let mut domain_sizes = Vec::with_capacity(task.variables().len());
         for (var_id, var) in task.variables().iter().enumerate() {
             domain_sizes.push(if conditions.is_condition_var(var_id) {
                 let domain_size = var.domain_size();
@@ -139,16 +158,24 @@ impl IntDoublePacker {
                 var.domain_size() as u64
             });
         }
+        let numeric_slot_offset = domain_sizes.len();
         for numeric_var in task.numeric_variables().iter() {
             if numeric_var.get_type() == &NumericType::Regular {
                 domain_sizes.push(numeric_range);
             }
         }
-        IntDoublePacker::new(&domain_sizes)
+        IntDoublePacker::with_numeric_slot_offset(&domain_sizes, numeric_slot_offset)
     }
 
     pub fn num_bins(&self) -> usize {
         self.num_bins
+    }
+
+    /// First slot of the regular-numeric section; equivalently, the number of
+    /// propositional slots. Consumers must read the boundary from here instead
+    /// of recomputing it from the task, so the layout has a single definition.
+    pub fn numeric_slot_offset(&self) -> usize {
+        self.numeric_slot_offset
     }
 
     /// Build a per-bin bit mask covering the slots of the variables in

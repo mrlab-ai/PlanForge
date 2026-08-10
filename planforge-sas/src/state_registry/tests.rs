@@ -49,13 +49,10 @@ fn initial_state_registration_does_not_mutate_shared_task() {
 
     assert_eq!(initial.get_state(&registry), [1]);
     assert_eq!(
-        task.get_initial_propositional_state_values().as_slice(),
+        task.get_initial_propositional_state_values(),
         original_propositions
     );
-    assert_eq!(
-        task.get_initial_numeric_state_values().as_slice(),
-        original_numeric
-    );
+    assert_eq!(task.get_initial_numeric_state_values(), original_numeric);
 }
 
 #[test]

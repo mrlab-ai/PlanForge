@@ -379,14 +379,31 @@ pub struct AxiomEvaluator<'a> {
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
     axiom_default_values: Vec<usize>,
-    queue: RefCell<Vec<LiteralRef>>,
-    unsatisfied_conditions: RefCell<Vec<usize>>,
+}
+
+/// Scratch buffers for the propositional axiom closure.
+///
+/// The closure overwrites both buffers before it reads them, so one scratch
+/// per thread is equivalent to one per evaluator — and keeps the evaluator
+/// itself immutable, hence `Sync` and shareable across a parallel search.
+#[derive(Debug)]
+struct ClosureScratch {
+    queue: Vec<LiteralRef>,
+    unsatisfied_conditions: Vec<usize>,
+}
+
+thread_local! {
+    static CLOSURE_SCRATCH: RefCell<ClosureScratch> = const {
+        RefCell::new(ClosureScratch {
+            queue: Vec::new(),
+            unsatisfied_conditions: Vec::new(),
+        })
+    };
 }
 
 impl<'a> AxiomEvaluator<'a> {
     pub fn new(numeric_task: TaskRef<'a>, state_packer: Arc<IntDoublePacker>) -> Self {
         let compiled = build_compiled_axiom_evaluator_data(&*numeric_task);
-        let rule_count = compiled.rules.len();
 
         AxiomEvaluator {
             numeric_task,
@@ -399,8 +416,6 @@ impl<'a> AxiomEvaluator<'a> {
             last_arithmetic_axiom_layer: compiled.last_arithmetic_axiom_layer,
             nbf_info_by_layer: compiled.nbf_info_by_layer,
             axiom_default_values: compiled.axiom_default_values,
-            queue: RefCell::new(Vec::new()),
-            unsatisfied_conditions: RefCell::new(vec![0; rule_count]),
         }
     }
 
@@ -456,27 +471,29 @@ impl<'a> AxiomEvaluator<'a> {
             return Ok(());
         }
 
-        let mut queue = self.queue.borrow_mut();
-        queue.clear();
-        let mut unsatisfied_conditions = self.unsatisfied_conditions.borrow_mut();
-        if unsatisfied_conditions.len() != self.rules.len() {
+        CLOSURE_SCRATCH.with_borrow_mut(|scratch| {
+            let ClosureScratch {
+                queue,
+                unsatisfied_conditions,
+            } = scratch;
+            queue.clear();
             unsatisfied_conditions.resize(self.rules.len(), 0);
-        }
 
-        self.seed_queue_from_state(buffer, &mut queue)?;
-        self.fire_trivial_rules(buffer, &mut queue, &mut unsatisfied_conditions);
+            self.seed_queue_from_state(buffer, queue)?;
+            self.fire_trivial_rules(buffer, queue, unsatisfied_conditions);
 
-        let layer_count = self.nbf_info_by_layer.len();
-        for layer_no in 0..layer_count {
-            self.propagate_horn_rules(buffer, &mut queue, &mut unsatisfied_conditions);
-            // The last layer has nothing above it that could read the
-            // negation-by-failure literals, so it does not produce them.
-            if layer_no + 1 != layer_count {
-                self.enqueue_unproven_literals(buffer, &mut queue, layer_no);
+            let layer_count = self.nbf_info_by_layer.len();
+            for layer_no in 0..layer_count {
+                self.propagate_horn_rules(buffer, queue, unsatisfied_conditions);
+                // The last layer has nothing above it that could read the
+                // negation-by-failure literals, so it does not produce them.
+                if layer_no + 1 != layer_count {
+                    self.enqueue_unproven_literals(buffer, queue, layer_no);
+                }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Queue every literal the closure may start from, and reset the derived

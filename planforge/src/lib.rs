@@ -269,7 +269,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         let sas_text = planforge_translator::translate_to_sas_string(domain, problem)
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         (
-            NumericRootTask::from_str(&sas_text),
+            NumericRootTask::try_from_str(&sas_text).map_err(std::io::Error::other)?,
             format!("{domain} + {problem} (in-memory)"),
         )
     } else {

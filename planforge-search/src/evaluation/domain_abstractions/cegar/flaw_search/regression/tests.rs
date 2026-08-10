@@ -4,46 +4,17 @@ use crate::evaluation::domain_abstractions::{
 };
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
+    NumericType, NumericVariable, Operator,
 };
 use planforge_sas::utils::interval::Interval;
 
 use super::*;
+use crate::evaluation::domain_abstractions::cegar::flaw_search::single_switch_task;
 
 #[test]
 fn regression_flaws_find_precondition_violation() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "v".into(),
-        vec!["v0".into(), "v1".into(), "v2".into()],
-        None,
-        0,
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 2)];
-    let op = Operator::new(
-        "set".into(),
-        vec![ExplicitFact::new(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = single_switch_task(3, 2, vec![0]);
 
     let (mut domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     // Put 1 and 2 in the same mapping group.
@@ -63,8 +34,8 @@ fn regression_flaws_find_precondition_violation() {
         .unwrap()
         .expect("plan exists");
 
-    task.set_initial_propositional_state_values(vec![0]);
-
+    // The abstraction cannot tell `v=1` from `v=2`, so regressing the goal
+    // `v=2` through `set` leaves the unachievable precondition `v=1`.
     let flaws =
         get_regression_flaws(&task, &factory.partitions, &factory.domain_mapping, &plan).unwrap();
     assert_eq!(flaws.len(), 1);
@@ -76,37 +47,7 @@ fn regression_flaws_find_precondition_violation() {
 
 #[test]
 fn regression_flaws_find_initial_state_violation() {
-    let variables = vec![ExplicitVariable::new(
-        3,
-        "v".into(),
-        vec!["v0".into(), "v1".into(), "v2".into()],
-        None,
-        0,
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::new(0, 1)];
-    let op = Operator::new(
-        "set".into(),
-        vec![ExplicitFact::new(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::new(0, 0),
-    );
+    let task = single_switch_task(3, 1, vec![0]);
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::trivial(&task);
@@ -124,11 +65,16 @@ fn regression_flaws_find_initial_state_violation() {
         .unwrap()
         .expect("plan exists");
 
-    // Make initial state violation.
-    task.set_initial_propositional_state_values(vec![1]);
-
-    let flaws =
-        get_regression_flaws(&task, &factory.partitions, &factory.domain_mapping, &plan).unwrap();
+    // The same task started at `v=1` violates the plan's initial-state
+    // requirement `v=0`.
+    let flawed_task = single_switch_task(3, 1, vec![1]);
+    let flaws = get_regression_flaws(
+        &flawed_task,
+        &factory.partitions,
+        &factory.domain_mapping,
+        &plan,
+    )
+    .unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::new(0, 1)),

@@ -1079,7 +1079,7 @@ mod tests {
         assert_eq!(transformed.numeric_variables()[1].name(), "limit");
         assert_eq!(transformed.get_variable_axiom_layer(0), Ok(Some(0)));
         assert_eq!(
-            transformed.get_initial_numeric_state_values().as_slice(),
+            transformed.get_initial_numeric_state_values(),
             &[5.0, 10.0, 1.0]
         );
         assert_eq!(transformed.comparison_axioms()[0].get_left_var_id(), 0);

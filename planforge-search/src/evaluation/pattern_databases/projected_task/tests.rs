@@ -93,10 +93,7 @@ fn projection_builds_a_compact_restricted_transition_system() {
     assert_eq!(projected.get_num_cmp_axioms(), 1);
     assert_eq!(projected.get_num_axioms(), 0);
     assert_eq!(projected.get_num_goals(), 1);
-    assert_eq!(
-        projected.get_initial_numeric_state_values().as_slice(),
-        &[0.0, 10.0]
-    );
+    assert_eq!(projected.get_initial_numeric_state_values(), &[0.0, 10.0]);
 }
 
 #[test]

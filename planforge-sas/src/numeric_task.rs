@@ -7,14 +7,15 @@ use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, build_assignment_axiom_lookup, linearize_numeric_var,
     linearize_operator_assignment_effects,
 };
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    fmt,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{fmt, sync::Arc};
 
-pub trait AbstractNumericTask {
+/// A planning task the search can read.
+///
+/// The trait is read-only: a task's initial state is closed under its axioms
+/// once, when the task is built, so nothing needs to mutate it afterwards.
+/// That is what lets the trait require `Send + Sync`, which in turn makes
+/// [`TaskRef`] shareable across threads.
+pub trait AbstractNumericTask: Send + Sync {
     fn variables(&self) -> &Vec<ExplicitVariable>;
     fn numeric_variables(&self) -> &Vec<NumericVariable>;
     fn assignment_axioms(&self) -> &Vec<AssignmentAxiom>;
@@ -73,14 +74,12 @@ pub trait AbstractNumericTask {
     fn get_num_goals(&self) -> usize;
     fn get_goal_fact(&self, index: usize) -> &ExplicitFact;
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>>;
-    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>>;
-
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>>;
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>>;
-
-    fn set_initial_propositional_state_values(&self, values: Vec<usize>);
-    fn set_initial_numeric_state_values(&self, values: Vec<f64>);
+    /// The initial values of the propositional variables, already closed
+    /// under the task's axioms.
+    fn get_initial_propositional_state_values(&self) -> &[usize];
+    /// The initial values of the numeric variables, already closed under the
+    /// task's axioms.
+    fn get_initial_numeric_state_values(&self) -> &[f64];
 
     fn convert_ancestor_state_values(
         &self,
@@ -307,23 +306,11 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
         (**self).get_goal_fact(index)
     }
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
+    fn get_initial_propositional_state_values(&self) -> &[usize] {
         (**self).get_initial_propositional_state_values()
     }
-    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
+    fn get_initial_numeric_state_values(&self) -> &[f64] {
         (**self).get_initial_numeric_state_values()
-    }
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
-        (**self).get_initial_propositional_state_values_mut()
-    }
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
-        (**self).get_initial_numeric_state_values_mut()
-    }
-    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
-        (**self).set_initial_propositional_state_values(values)
-    }
-    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
-        (**self).set_initial_numeric_state_values(values)
     }
     fn convert_ancestor_state_values(
         &self,
@@ -881,8 +868,8 @@ pub struct NumericRootTask {
     numeric_variables: Vec<NumericVariable>,
     goals: Vec<ExplicitFact>,
     mutexes: Vec<Vec<ExplicitFact>>,
-    state: Rc<RefCell<Vec<usize>>>,
-    numeric_state: Rc<RefCell<Vec<f64>>>,
+    state: Vec<usize>,
+    numeric_state: Vec<f64>,
     operators: Vec<Operator>,
     abstract_propositional_var_ids: Vec<usize>,
     abstract_numeric_var_ids: Vec<usize>,
@@ -921,15 +908,15 @@ impl NumericRootTask {
             )
             .unwrap_or_else(|error| panic!("malformed numeric axioms in SAS task: {error}")),
         );
-        let task = NumericRootTask {
+        let mut task = NumericRootTask {
             version,
             metric,
             variables,
             numeric_variables,
             goals,
             mutexes,
-            state: Rc::new(RefCell::new(state)),
-            numeric_state: Rc::new(RefCell::new(numeric_state)),
+            state,
+            numeric_state,
             operators,
             abstract_propositional_var_ids,
             abstract_numeric_var_ids,
@@ -955,14 +942,14 @@ impl NumericRootTask {
     /// The closure is a function of the non-derived variables alone, so it is
     /// idempotent: applying it to an already-closed state is a no-op, which is
     /// what makes it safe for a task built out of another task's initial state.
-    fn close_initial_state_under_axioms(&self) {
+    fn close_initial_state_under_axioms(&mut self) {
         let (propositional, numeric) = self
             .evaluated_initial_abstract_state_values()
             .unwrap_or_else(|error| {
                 panic!("initial state does not satisfy the task's own axioms: {error}")
             });
-        self.set_initial_propositional_state_values(propositional);
-        self.set_initial_numeric_state_values(numeric);
+        self.state = propositional;
+        self.numeric_state = numeric;
     }
 
     /// The fact that must hold in every reachable state.
@@ -987,21 +974,15 @@ impl NumericRootTask {
         Self::try_from_str(&file_content)
     }
 
-    /// Parse a `NumericRootTask` from the preprocessor's text format, returning a
-    /// descriptive error instead of panicking on malformed input.
+    /// Parse a `NumericRootTask` from the preprocessor's text format held in
+    /// memory. Equivalent to `try_from_file` minus the disk read; used by the
+    /// in-memory translate→preprocess→search pipeline so the binary
+    /// `output` file never has to materialize on disk.
     pub fn try_from_str(content: &str) -> Result<Self, String> {
         match parse_numeric_sas_output(content) {
             Ok((_, task)) => Ok(task),
             Err(err) => Err(format!("failed to parse numeric SAS output: {err}")),
         }
-    }
-
-    /// Parse a `NumericRootTask` from the preprocessor's text format held in
-    /// memory. Equivalent to `from_file` minus the disk read; used by the
-    /// in-memory translate→preprocess→search pipeline so the binary
-    /// `output` file never has to materialize on disk.
-    pub fn from_str(content: &str) -> Self {
-        Self::try_from_str(content).expect("failed to parse numeric SAS output")
     }
 
     /// Returns a reference to the metric configuration
@@ -1196,28 +1177,12 @@ impl AbstractNumericTask for NumericRootTask {
         &self.goals[index]
     }
 
-    fn get_initial_propositional_state_values(&self) -> Ref<'_, Vec<usize>> {
-        self.state.borrow()
+    fn get_initial_propositional_state_values(&self) -> &[usize] {
+        &self.state
     }
 
-    fn get_initial_numeric_state_values(&self) -> Ref<'_, Vec<f64>> {
-        self.numeric_state.borrow()
-    }
-
-    fn get_initial_propositional_state_values_mut(&self) -> RefMut<'_, Vec<usize>> {
-        self.state.borrow_mut()
-    }
-
-    fn get_initial_numeric_state_values_mut(&self) -> RefMut<'_, Vec<f64>> {
-        self.numeric_state.borrow_mut()
-    }
-
-    fn set_initial_numeric_state_values(&self, values: Vec<f64>) {
-        *self.numeric_state.borrow_mut() = values;
-    }
-
-    fn set_initial_propositional_state_values(&self, values: Vec<usize>) {
-        *self.state.borrow_mut() = values;
+    fn get_initial_numeric_state_values(&self) -> &[f64] {
+        &self.numeric_state
     }
 
     fn convert_ancestor_state_values(
