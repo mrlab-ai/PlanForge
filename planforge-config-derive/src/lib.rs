@@ -1,5 +1,17 @@
 //! `#[derive(ApplyOptions)]` proc macro for `planforge-search` typed configs.
 //!
+//! It is a crate of its own because a `proc-macro = true` crate has to be, and
+//! it pays for itself at the call-site count: 7 config structs and 112
+//! `--search` options as of this writing, against roughly 370 lines of
+//! hand-written `match` arms and `ORDER` lists. The lines are the smaller half
+//! of the argument. `for_each_option` resolves *positional* arguments through
+//! `ORDER`, and the derive builds `ORDER` from the field declaration order, so
+//! `greedy_numeric_pdb(321)` cannot come to mean a different option than the
+//! struct says. Hand-written or `macro_rules!`-generated, that is 112 chances
+//! for the two lists to drift silently -- and a `macro_rules!` version would
+//! additionally have to own the struct definitions, which rustfmt does not
+//! format inside a macro invocation.
+//!
 //! Emits `impl ApplyOptions for X` where `X` is a struct with named fields.
 //! Each non-`#[option(skip)]` field becomes a match arm in the generated
 //! `apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>`.

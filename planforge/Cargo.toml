@@ -27,10 +27,10 @@ planforge-sas = { path = "../planforge-sas" }
 planforge-translate = { path = "../planforge-translate" }
 planforge-search = { path = "../planforge-search" }
 planforge-searcher = { path = "../planforge-searcher" }
-planforge-cli-utils = { path = "../planforge-cli-utils" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"
+mimalloc = { version = "0.1", default-features = false }
 time = "0.3"
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = [

@@ -17,18 +17,12 @@ fn main() -> std::io::Result<()> {
         return run_wrapped_process(&cli);
     }
 
-    planforge_search::resource_limits::reserve_memory_padding(cli.max_memory)
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    #[cfg(unix)]
-    planforge_cli_utils::install_oom_recovery(
-        planforge_search::resource_limits::release_padding_for_oom,
-    );
-
+    install_process_hooks(cli.max_memory)?;
     match run_internal(&cli) {
         Ok(result) => std::process::exit(exit_code_for_search_status(&result.status)),
         Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
             tracing::info!("Time limit reached during heuristic construction.");
-            std::process::exit(planforge_cli_utils::EXIT_TIMEOUT);
+            std::process::exit(EXIT_TIMEOUT);
         }
         Err(error) => Err(error),
     }

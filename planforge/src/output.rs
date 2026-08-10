@@ -6,9 +6,12 @@
 
 use std::fs;
 
-use planforge_cli_utils::{EXIT_OUT_OF_MEMORY, EXIT_SUCCESS, EXIT_TIMEOUT};
 use planforge_search::search::{SearchResult, SearchStatus};
 use tracing::info;
+
+pub const EXIT_SUCCESS: i32 = 0;
+pub const EXIT_OUT_OF_MEMORY: i32 = 6;
+pub const EXIT_TIMEOUT: i32 = 7;
 
 pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
     match status {

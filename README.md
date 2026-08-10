@@ -125,13 +125,16 @@ Common options:
 Workspace crates:
 
 - `planforge` — both binaries: the planner (`planforge`) and the translate-only
-  staging tool (`planforge-translator`), plus CLI, resource limits, portfolio
-  and plan output.
+  staging tool (`planforge-translator`), plus the CLI, the reporting allocator,
+  the resource limits, the portfolio and the plan output.
 - `planforge-searcher` — which search engine a `--search` spec names.
 - `planforge-translate`, `planforge-search`, `planforge-sas` — translation, search and task libraries.
   Adding a heuristic is a change to `planforge-search` alone: the heuristic's own
   module, and one arm of `heuristic_factory::build_heuristic_from_spec`.
-- `planforge-cli-utils` — shared CLI plumbing (exit codes, resource limits, allocator).
+- `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
+  `proc-macro` crate is its own compilation unit. It serves 7 config structs and
+  112 `--search` options, and derives each config's positional-argument order
+  from its field order.
 - `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.
 

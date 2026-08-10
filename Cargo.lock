@@ -993,7 +993,7 @@ dependencies = [
  "anyhow",
  "clap",
  "libc",
- "planforge-cli-utils",
+ "mimalloc",
  "planforge-sas",
  "planforge-search",
  "planforge-searcher",
@@ -1001,17 +1001,6 @@ dependencies = [
  "time",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "planforge-cli-utils"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "libc",
- "mimalloc",
- "tracing",
 ]
 
 [[package]]

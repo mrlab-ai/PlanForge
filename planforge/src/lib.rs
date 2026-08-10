@@ -6,18 +6,25 @@
 //! code -- and delegates the planning itself to `planforge-translate` and
 //! `planforge-searcher`/`planforge-search`.
 
+mod allocator;
+mod limits;
 pub mod output;
 pub mod portfolio;
 #[cfg(test)]
 mod tests;
 
 pub use output::{
-    exit_code_for_search_status, print_plan_result, print_search_result, write_plan_file,
+    EXIT_TIMEOUT, exit_code_for_search_status, print_plan_result, print_search_result,
+    write_plan_file,
 };
 pub use portfolio::PortfolioOptions;
 
+use allocator::register_event_handlers;
 use clap::Parser;
-use planforge_cli_utils::*;
+use limits::{
+    apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
+    parse_time_limit,
+};
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::HeuristicBuildError;
@@ -116,7 +123,7 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let mut child_args = vec![OsString::from("--internal-run")];
     let memory_limit = cli
         .max_memory
-        .map(planforge_cli_utils::effective_rss_limit)
+        .map(limits::effective_rss_limit)
         .transpose()?;
     if let Some(max_memory) = memory_limit {
         child_args.push(OsString::from("--max-memory"));
@@ -154,9 +161,7 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let mut child = command.spawn()?;
     #[cfg(target_os = "linux")]
     let status = match memory_limit {
-        Some(memory_limit) => {
-            planforge_cli_utils::wait_with_memory_limit(&mut child, memory_limit)?
-        }
+        Some(memory_limit) => limits::wait_with_memory_limit(&mut child, memory_limit)?,
         None => child.wait()?,
     };
     #[cfg(not(target_os = "linux"))]
@@ -164,6 +169,17 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     let exit_code = normalize_wrapped_exit(status, time_limit, memory_limit);
 
     std::process::exit(exit_code)
+}
+
+/// Install the process-level hooks the in-process run depends on: the memory
+/// padding that lets an out-of-memory condition be *reported* rather than
+/// aborted, and the recovery hook the allocator calls to release it.
+pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
+    planforge_search::resource_limits::reserve_memory_padding(memory_limit)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    #[cfg(unix)]
+    allocator::install_oom_recovery(planforge_search::resource_limits::release_padding_for_oom);
+    Ok(())
 }
 
 /// Run search for an already-parsed task and return the result. Contains no
