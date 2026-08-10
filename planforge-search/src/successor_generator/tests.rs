@@ -70,6 +70,84 @@ fn get_root_task() -> NumericRootTask {
     )
 }
 
+/// A task whose emission order the decision tree cannot get right by itself:
+/// one variable, and three operators whose ids straddle the branch's shared
+/// immediate list — `0` needs `v=0`, `1` needs nothing, `2` needs `v=1`.
+fn immediate_list_straddling_task() -> NumericRootTask {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        String::from("v"),
+        vec![String::from("v=0"), String::from("v=1")],
+        None,
+        0,
+    )];
+    let operator = |name: &str, preconditions: Vec<ExplicitFact>| {
+        Operator::new(
+            String::from(name),
+            preconditions,
+            vec![Effect::new(Vec::new(), 0, None, 1)],
+            Vec::new(),
+            1,
+        )
+    };
+    NumericRootTask::new(
+        4,
+        Metric::new(true, Some(0)),
+        variables,
+        vec![NumericVariable::new(
+            String::from("total_cost()"),
+            NumericType::Cost,
+            None,
+        )],
+        vec![ExplicitFact::propositional(0, 1)],
+        Vec::new(),
+        vec![0],
+        vec![0f64],
+        vec![
+            operator("needs_zero", vec![ExplicitFact::propositional(0, 0)]),
+            operator("needs_nothing", Vec::new()),
+            operator("needs_one", vec![ExplicitFact::propositional(0, 1)]),
+        ],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        ExplicitFact::propositional(0, 0),
+    )
+}
+
+/// Emission is in ascending operator-id order, which is what keeps A*
+/// tie-breaking independent of how the task numbers its variables.
+///
+/// The fixture pins that this cannot be achieved by ordering the tree at
+/// construction time: `needs_nothing` sits in the root branch's immediate
+/// list, so it is emitted either before or after both value children. State
+/// `v=0` wants it emitted last, state `v=1` wants it emitted first, and one
+/// tree has to serve both.
+#[test]
+fn applicable_operators_are_emitted_in_operator_id_order() {
+    let task = immediate_list_straddling_task();
+    let tree = SuccessorTree::new(&task);
+
+    let mut applicable: Vec<u32> = Vec::new();
+    tree.get_applicable_operators(&[0], &mut applicable);
+    assert_eq!(applicable, vec![0, 1]);
+
+    applicable.clear();
+    tree.get_applicable_operators(&[1], &mut applicable);
+    assert_eq!(applicable, vec![1, 2]);
+}
+
+/// `get_applicable_operators` appends, so it may only order what it appended.
+#[test]
+fn applicable_operators_leave_the_caller_s_prefix_alone() {
+    let task = immediate_list_straddling_task();
+    let tree = SuccessorTree::new(&task);
+
+    let mut applicable: Vec<u32> = vec![7, 3];
+    tree.get_applicable_operators(&[0], &mut applicable);
+    assert_eq!(applicable, vec![7, 3, 0, 1]);
+}
+
 #[test]
 fn test_grounded_successor_generator() {
     let task = get_root_task();
