@@ -5,23 +5,18 @@
 //! `apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>`.
 //!
 //! Field attributes:
-//! - `#[option(skip)]`               — not exposed as a CLI option.
-//! - `#[option(rename = "alias")]`   — CLI key differs from field name.
-//! - `#[option(flatten)]`            — catch-all: unknown keys delegate to
-//!                                     this field's `apply_options` (the
-//!                                     field's type must impl `ApplyOptions`).
-//!                                     Only one `flatten` per struct.
-//! - `#[option(nested = "key")]`     — explicit named arm whose value is a
-//!                                     `Call`; its args are routed through
-//!                                     this field's `apply_options`. Can be
-//!                                     combined with `flatten` on the same
-//!                                     field (so the same nested config is
-//!                                     reachable both ways).
+//! - `#[option(skip)]` — not exposed as a CLI option.
+//! - `#[option(rename = "alias")]` — CLI key differs from field name.
+//! - `#[option(flatten)]` — catch-all: unknown keys delegate to this field's
+//!   `apply_options` (the field's type must impl `ApplyOptions`). Only one
+//!   `flatten` per struct.
+//! - `#[option(nested = "key")]` — explicit named arm whose value is a `Call`;
+//!   its args are routed through this field's `apply_options`. Can be combined
+//!   with `flatten` on the same field, so the same nested config is reachable
+//!   both ways.
 //! - `#[option(also_sets = "path")]` — after setting the field, also assign
-//!                                     `self.<path>` from it. Useful for
-//!                                     coupled keys mirrored into a sub-
-//!                                     config. Repeatable: multiple paths
-//!                                     write multiple times.
+//!   `self.<path>` from it. Useful for coupled keys mirrored into a
+//!   sub-config. Repeatable: multiple paths write multiple times.
 //!
 //! `flatten` and `nested` imply a struct-shaped field (delegation target);
 //! `also_sets` is for plain assignment-style fields. `also_sets` and
