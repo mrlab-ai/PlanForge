@@ -49,9 +49,16 @@ impl PropositionalAxiom {
     }
 
     /// Only for `NumericRootTask::assign_fact_namespaces`, the single pass that
-    /// owns fact namespace assignment.
+    /// owns fact namespace assignment, and for
+    /// `NumericRootTask::renumber_condition_variables_last`.
     pub(crate) fn conditions_mut(&mut self) -> &mut Vec<ExplicitFact> {
         &mut self.conditions
+    }
+
+    /// Only for `NumericRootTask::renumber_condition_variables_last`, the single
+    /// pass that assigns propositional variable ids.
+    pub(crate) fn set_var_id(&mut self, var_id: usize) {
+        self.var_id = var_id;
     }
 }
 
