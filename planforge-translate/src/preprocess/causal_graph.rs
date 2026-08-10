@@ -5,14 +5,15 @@ use std::ops::Deref;
 
 use tracing::{debug, info};
 
-use super::GlobalConstraint;
 use super::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
 use super::fact::ExplicitFact;
 use super::max_dag::MaxDag;
 use super::mutex_group::MutexGroup;
 use super::operator::Operator;
 use super::scc::Scc;
+use super::state::State;
 use super::variable::{ExplicitVariable, NumType, NumericVariable};
+use super::{GlobalConstraint, Metric, PreprocessedTask, ReorderedTask};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EitherVar {
@@ -61,7 +62,10 @@ pub struct CausalGraph {
     mutexes: Vec<MutexGroup>,
     goals: Vec<ExplicitFact>,
     global_constraint: Option<GlobalConstraint>,
-    metric_var: usize,
+    metric: Metric,
+    /// Carried through untouched; the causal graph renumbers variables, and the
+    /// initial state is read back by the writer under the new numbering.
+    initial_state: State,
     prune_variables: bool,
 
     weighted_graph: WeightedGraph,
@@ -73,20 +77,21 @@ pub struct CausalGraph {
 }
 
 impl CausalGraph {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        variables: Vec<ExplicitVariable>,
-        numeric_variables: Vec<NumericVariable>,
-        operators: Vec<Operator>,
-        axioms: Vec<AxiomRelational>,
-        ass_axioms: Vec<AxiomNumericComputation>,
-        comp_axioms: Vec<AxiomFunctionalComparison>,
-        mutexes: Vec<MutexGroup>,
-        goals: Vec<ExplicitFact>,
-        global_constraint: Option<GlobalConstraint>,
-        metric_var: usize,
-        prune_variables: bool,
-    ) -> Self {
+    pub fn new(task: PreprocessedTask, prune_variables: bool) -> Self {
+        let PreprocessedTask {
+            metric,
+            variables,
+            numeric_variables,
+            mutexes,
+            initial_state,
+            goals,
+            operators,
+            axioms_rel: axioms,
+            axioms_func_comp: comp_axioms,
+            axioms_numeric: ass_axioms,
+            global_constraint,
+        } = task;
+
         let mut weighted_graph: WeightedGraph = BTreeMap::new();
         for v in variables.iter() {
             weighted_graph.insert(EitherVar::ExplicitVariable(v.index), BTreeMap::new());
@@ -128,7 +133,8 @@ impl CausalGraph {
             mutexes,
             goals,
             global_constraint,
-            metric_var,
+            metric,
+            initial_state,
             prune_variables,
             weighted_graph,
             predecessor_graph,
@@ -338,7 +344,6 @@ impl CausalGraph {
         (result, weighted_graph)
     }
 
-    #[allow(clippy::needless_range_loop)]
     fn calculate_topological_pseudo_sort(
         goals: &[ExplicitFact],
         weighted_graph: WeightedGraph,
@@ -358,8 +363,10 @@ impl CausalGraph {
                 }
 
                 let mut subgraph: Vec<Vec<(usize, u64)>> = Vec::new();
-                for i in 0..num_scc_vars {
-                    let all_edges = weighted_graph.get(&curr_scc[i]).unwrap();
+                for scc_var in curr_scc {
+                    let all_edges = weighted_graph
+                        .get(scc_var)
+                        .expect("every variable of the component is a node of the graph");
                     let mut subgraph_edges: Vec<(usize, u64)> = Vec::new();
                     for (target, cost) in all_edges {
                         if let Some(index_it) = variable_to_index.get(target) {
@@ -422,7 +429,7 @@ impl CausalGraph {
             }
         }
 
-        self.set_variable_instrumentation_necessary(&mut numeric_variables, self.metric_var);
+        self.set_variable_instrumentation_necessary(&mut numeric_variables, self.metric.index);
         for op in &self.operators {
             for num_eff in op.get_num_eff() {
                 let var = num_eff.var;
@@ -550,11 +557,10 @@ impl CausalGraph {
         }
     }
 
-    pub fn get_metric_index(&self) -> usize {
-        let index = self.numeric_variables.borrow()[self.metric_var].get_level();
-        assert!(index >= 0);
-
-        index as usize
+    fn reordered_metric_index(&self) -> usize {
+        let level = self.numeric_variables.borrow()[self.metric.index].get_level();
+        usize::try_from(level)
+            .expect("the metric variable is necessary, so the reordering gave it a level")
     }
 
     pub fn dump(&self) {
@@ -650,23 +656,9 @@ impl CausalGraph {
         );
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn finalize(
-        mut self,
-    ) -> (
-        Vec<ExplicitVariable>,
-        Vec<NumericVariable>,
-        Vec<ExplicitVariable>,
-        Vec<NumericVariable>,
-        Vec<Operator>,
-        Vec<AxiomRelational>,
-        Vec<AxiomNumericComputation>,
-        Vec<AxiomFunctionalComparison>,
-        Vec<MutexGroup>,
-        Vec<ExplicitFact>,
-        Option<GlobalConstraint>,
-        usize,
-    ) {
+    /// Drops what the pruning made unreachable and answers with the task under
+    /// its new variable numbering.
+    pub fn finalize(mut self) -> ReorderedTask {
         self.strip_mutexes();
         self.strip_operators();
         self.strip_axiom_relationals();
@@ -675,32 +667,36 @@ impl CausalGraph {
 
         self.check_and_repair_empty_axiom_layers();
 
-        let metric_index = self.get_metric_index();
+        let mut metric = self.metric.clone();
+        metric.index = self.reordered_metric_index();
 
-        let variables: Vec<ExplicitVariable> = self.variables.take();
-        let numeric_variables: Vec<NumericVariable> = self.numeric_variables.take();
-        let mut ordered_vars = Vec::with_capacity(self.propositional_ordering.len());
-        for v in &self.propositional_ordering {
-            ordered_vars.push(variables[*v].clone());
-        }
-        let mut ordered_numeric_vars = Vec::with_capacity(self.numeric_ordering.len());
-        for v in &self.numeric_ordering {
-            ordered_numeric_vars.push(numeric_variables[*v].clone());
-        }
+        let original_variables: Vec<ExplicitVariable> = self.variables.take();
+        let original_numeric_variables: Vec<NumericVariable> = self.numeric_variables.take();
+        let variables = self
+            .propositional_ordering
+            .iter()
+            .map(|&v| original_variables[v].clone())
+            .collect();
+        let numeric_variables = self
+            .numeric_ordering
+            .iter()
+            .map(|&v| original_numeric_variables[v].clone())
+            .collect();
 
-        (
+        ReorderedTask {
+            metric,
+            original_variables,
+            original_numeric_variables,
             variables,
             numeric_variables,
-            ordered_vars,
-            ordered_numeric_vars,
-            self.operators,
-            self.axioms,
-            self.ass_axioms,
-            self.comp_axioms,
-            self.mutexes,
-            self.goals,
-            self.global_constraint,
-            metric_index,
-        )
+            mutexes: self.mutexes,
+            initial_state: self.initial_state,
+            goals: self.goals,
+            operators: self.operators,
+            axioms_rel: self.axioms,
+            axioms_func_comp: self.comp_axioms,
+            axioms_numeric: self.ass_axioms,
+            global_constraint: self.global_constraint,
+        }
     }
 }

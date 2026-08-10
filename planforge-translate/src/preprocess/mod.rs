@@ -145,108 +145,100 @@ impl PreprocessedTask {
     }
 }
 
+/// The task after the causal graph has ordered and pruned its variables.
+///
+/// `original_variables` and `original_numeric_variables` are indexed by a
+/// variable's *old* id and hold the level it was given, or `-1` if it was
+/// pruned; every reference in an operator, axiom, mutex group or goal is still
+/// phrased in old ids and is remapped through them on the way out.
+pub struct ReorderedTask {
+    pub metric: Metric,
+    pub original_variables: Vec<ExplicitVariable>,
+    pub original_numeric_variables: Vec<NumericVariable>,
+    /// The variables that survived, in their new order.
+    pub variables: Vec<ExplicitVariable>,
+    pub numeric_variables: Vec<NumericVariable>,
+    pub mutexes: Vec<MutexGroup>,
+    pub initial_state: State,
+    pub goals: Vec<ExplicitFact>,
+    pub operators: Vec<Operator>,
+    pub axioms_rel: Vec<AxiomRelational>,
+    pub axioms_func_comp: Vec<AxiomFunctionalComparison>,
+    pub axioms_numeric: Vec<AxiomNumericComputation>,
+    pub global_constraint: Option<GlobalConstraint>,
+}
+
+impl ReorderedTask {
+    /// The number of facts, variables, goals and effects the search will hold,
+    /// which is what "how big is this task" means in the logs.
+    fn encoding_size(&self) -> usize {
+        let facts: usize = self.variables.iter().map(ExplicitVariable::get_range).sum();
+        let mut size =
+            self.variables.len() + self.numeric_variables.len() + facts + self.goals.len();
+        size += self
+            .mutexes
+            .iter()
+            .map(MutexGroup::get_encoding_size)
+            .sum::<usize>();
+        size += self
+            .operators
+            .iter()
+            .map(Operator::get_encoding_size)
+            .sum::<usize>();
+        size += self
+            .axioms_rel
+            .iter()
+            .map(AxiomRelational::get_encoding_size)
+            .sum::<usize>();
+        size += self
+            .axioms_numeric
+            .iter()
+            .map(AxiomNumericComputation::get_encoding_size)
+            .sum::<usize>();
+        size += self
+            .axioms_func_comp
+            .iter()
+            .map(AxiomFunctionalComparison::get_encoding_size)
+            .sum::<usize>();
+        size
+    }
+}
+
 /// Orders and prunes the variables of `task` by its causal graph, and writes
 /// the result as the SAS+ file the search reads.
 ///
 /// `prune_variables` drops the variables no goal, global constraint or metric
 /// depends on. Turning it off keeps every variable and only reorders.
 pub fn write_reordered_sas<W: Write>(task: &SASTask, prune_variables: bool, outfile: &mut W) {
-    let PreprocessedTask {
-        mut metric,
-        variables,
-        numeric_variables,
-        mutexes,
-        initial_state,
-        goals,
-        operators,
-        axioms_rel,
-        axioms_func_comp,
-        axioms_numeric,
-        global_constraint,
-    } = PreprocessedTask::from_sas(task);
+    let translated = PreprocessedTask::from_sas(task);
+    let metric_index_before = translated.metric.index;
 
     info!("Building causal graph...");
-    let old_metric_index = metric.index;
-    let (
-        orig_variables,
-        orig_numeric_variables,
-        ordered_variables,
-        ordered_numeric_variables,
-        operators,
-        axioms_rel,
-        axioms_numeric,
-        axioms_func_comp,
-        mutexes,
-        goals,
-        global_constraint,
-        new_metric_index,
-    ) = CausalGraph::new(
-        variables,
-        numeric_variables,
-        operators,
-        axioms_rel,
-        axioms_numeric,
-        axioms_func_comp,
-        mutexes,
-        goals,
-        global_constraint,
-        metric.index,
-        prune_variables,
-    )
-    .finalize();
+    let reordered = CausalGraph::new(translated, prune_variables).finalize();
 
-    metric.index = new_metric_index;
     debug!(
         "Metric index changed from {} to {}",
-        old_metric_index, new_metric_index
+        metric_index_before, reordered.metric.index
     );
-
-    let mut facts = 0;
-    let mut derived_vars = 0;
-    for var in &ordered_variables {
-        facts += var.get_range();
-        if var.is_derived() {
-            derived_vars += 1;
-        }
-    }
-    info!("Preprocessor facts: {}", facts);
-    info!("Preprocessor derived variables: {}", derived_vars);
-
-    let mut task_size =
-        ordered_variables.len() + ordered_numeric_variables.len() + facts + goals.len();
-    for mutex in &mutexes {
-        task_size += mutex.get_encoding_size();
-    }
-    for op in &operators {
-        task_size += op.get_encoding_size();
-    }
-    for axiom in &axioms_rel {
-        task_size += axiom.get_encoding_size();
-    }
-    for axiom in &axioms_numeric {
-        task_size += axiom.get_encoding_size();
-    }
-    for axiom in &axioms_func_comp {
-        task_size += axiom.get_encoding_size();
-    }
-    info!("Preprocessor task size: {}", task_size);
+    info!(
+        "Preprocessor facts: {}",
+        reordered
+            .variables
+            .iter()
+            .map(ExplicitVariable::get_range)
+            .sum::<usize>()
+    );
+    info!(
+        "Preprocessor derived variables: {}",
+        reordered
+            .variables
+            .iter()
+            .filter(|var| var.is_derived())
+            .count()
+    );
+    info!("Preprocessor task size: {}", reordered.encoding_size());
 
     info!("Writing output...");
-    to_sas_writer(
-        &orig_variables,
-        &orig_numeric_variables,
-        &ordered_variables,
-        &ordered_numeric_variables,
-        &metric,
-        &mutexes,
-        &initial_state,
-        &goals,
-        &operators,
-        &axioms_rel,
-        &axioms_numeric,
-        &axioms_func_comp,
-        &global_constraint,
-        outfile,
-    );
+    to_sas_writer(&reordered, outfile);
     info!("done");
 }

@@ -2,35 +2,28 @@ use std::io::Write;
 
 use tracing::debug;
 
-use super::axiom::{AxiomFunctionalComparison, AxiomNumericComputation, AxiomRelational};
-use super::fact::ExplicitFact;
-use super::mutex_group::MutexGroup;
-use super::operator::Operator;
-use super::state::State;
-use super::variable::{ExplicitVariable, NumericVariable};
-use super::{GlobalConstraint, Metric, PRE_FILE_VERSION};
+use super::{PRE_FILE_VERSION, ReorderedTask};
 
 /// Writes the reordered task in the SAS+ format the search reads. Every
 /// variable reference is remapped through the level the causal graph gave it;
 /// `orig_vars` and `orig_numeric_vars` are indexed by the old id and only
 /// carry that mapping.
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
-pub fn to_sas_writer<W: Write>(
-    orig_vars: &[ExplicitVariable],
-    orig_numeric_vars: &[NumericVariable],
-    ordered_vars: &[ExplicitVariable],
-    ordered_numeric_vars: &[NumericVariable],
-    metric: &Metric,
-    mutexes: &Vec<MutexGroup>,
-    initial_state: &State,
-    goals: &Vec<ExplicitFact>,
-    operators: &Vec<Operator>,
-    axioms_rel: &Vec<AxiomRelational>,
-    axioms_func_ass: &Vec<AxiomNumericComputation>,
-    axioms_func_comp: &Vec<AxiomFunctionalComparison>,
-    constraint: &Option<GlobalConstraint>,
-    outfile: &mut W,
-) {
+pub fn to_sas_writer<W: Write>(task: &ReorderedTask, outfile: &mut W) {
+    let ReorderedTask {
+        metric,
+        original_variables: orig_vars,
+        original_numeric_variables: orig_numeric_vars,
+        variables: ordered_vars,
+        numeric_variables: ordered_numeric_vars,
+        mutexes,
+        initial_state,
+        goals,
+        operators,
+        axioms_rel,
+        axioms_func_comp,
+        axioms_numeric: axioms_func_ass,
+        global_constraint: constraint,
+    } = task;
     writeln!(outfile, "begin_version").unwrap();
     writeln!(outfile, "{}", PRE_FILE_VERSION).unwrap();
     writeln!(outfile, "end_version").unwrap();
@@ -82,18 +75,25 @@ pub fn to_sas_writer<W: Write>(
     }
     writeln!(outfile, "end_numeric_state").unwrap();
 
-    let mut ordered_goal_values: Vec<i32> = vec![-1; num_vars];
+    // The goal is written in the new variable order. A goal variable is
+    // necessary by definition, so the reordering always gave it a level; a goal
+    // that lost its variable would silently weaken the task.
+    let mut goal_values: Vec<Option<usize>> = vec![None; num_vars];
     for goal in goals {
-        let var_index = orig_vars[goal.var].get_level();
-        if var_index > -1 {
-            ordered_goal_values[var_index as usize] = goal.value as i32;
-        }
+        let level = orig_vars[goal.var].get_level();
+        let level = usize::try_from(level).unwrap_or_else(|_| {
+            panic!(
+                "goal on {} survived the relevance analysis without a level",
+                orig_vars[goal.var].get_name()
+            )
+        });
+        goal_values[level] = Some(goal.value);
     }
     writeln!(outfile, "begin_goal").unwrap();
     writeln!(outfile, "{}", goals.len()).unwrap();
-    for i in 0..num_vars {
-        if ordered_goal_values[i] != -1 {
-            writeln!(outfile, "{} {}", i, ordered_goal_values[i]).unwrap();
+    for (var, value) in goal_values.iter().enumerate() {
+        if let Some(value) = value {
+            writeln!(outfile, "{} {}", var, value).unwrap();
         }
     }
     writeln!(outfile, "end_goal").unwrap();

@@ -14,14 +14,13 @@ impl MaxDag {
         }
     }
 
-    #[allow(clippy::needless_range_loop)]
     pub fn get_result(&self) -> Vec<usize> {
         let num_nodes = self.weighted_graph.len();
         if tracing::enabled!(Level::DEBUG) {
-            for i in 0..num_nodes {
-                debug!("From {}:", i);
-                for trans in &self.weighted_graph[i] {
-                    debug!(" {} [weight {}]", trans.0, trans.1);
+            for (node, edges) in self.weighted_graph.iter().enumerate() {
+                debug!("From {}:", node);
+                for (target, weight) in edges {
+                    debug!(" {} [weight {}]", target, weight);
                 }
                 debug!("");
             }
@@ -36,9 +35,9 @@ impl MaxDag {
 
         let mut heap: BTreeMap<(u64, usize), usize> = BTreeMap::new();
         let mut heap_positions: Vec<(u64, usize)> = Vec::new();
-        for node in 0..num_nodes {
-            debug!("node {} has {} edges", node, incoming_weights[node]);
-            let key = (incoming_weights[node], node);
+        for (node, &weight) in incoming_weights.iter().enumerate() {
+            debug!("node {} has {} edges", node, weight);
+            let key = (weight, node);
             heap.insert(key, node);
             heap_positions.push(key);
         }
