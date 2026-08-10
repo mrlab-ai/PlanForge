@@ -1,5 +1,6 @@
 use crate::{
     axioms::{ComparisonAxiom, PropositionalAxiom},
+    numeric_conditions::ConditionValue,
     numeric_task::{
         AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
         NumericRootTask, NumericType, NumericVariable, Operator,
@@ -44,18 +45,17 @@ pub(crate) fn root_task_with_extra_preconditions(
             1,
         ),
         // The comparison axiom's target: a derived variable carrying the
-        // verdict of `1.0 > total_cost`, three-valued like every numeric
-        // condition and defaulting to `Unknown`.
+        // verdict of `1.0 > total_cost`, two-valued like every numeric
+        // condition and defaulting to `False`.
         ExplicitVariable::new(
-            3,
+            ConditionValue::DOMAIN_SIZE,
             String::from("var-cost-below-one"),
             vec![
                 String::from("cost-below-one"),
                 String::from("not-cost-below-one"),
-                String::from("unknown-cost-below-one"),
             ],
             Some(0),
-            2,
+            ConditionValue::False.as_usize(),
         ),
     ];
     let numeric_variables = vec![
