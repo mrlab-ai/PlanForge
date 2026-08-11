@@ -60,6 +60,13 @@ struct Shape {
     cyclic: usize,
     /// Compiled numeric conditions feeding the propositional axioms.
     comparisons: usize,
+    /// Goals at a derived variable's axiom *default* value - a negated derived
+    /// goal. No rule proves such a goal, so an abstraction that keys its goal
+    /// handling by the derived variable rather than by the derived fact hands it
+    /// the body of a rule establishing the opposite fact and measures the
+    /// distance to the negation of the goal. One fixture has one; pinned at zero
+    /// everywhere else, because that is what let the bug stay latent.
+    default_value_goals: usize,
 }
 
 /// Optimum of every fixture, measured with `planforge --search 'astar(blind())'`
@@ -72,6 +79,7 @@ const FIXTURE_OPTIMA: &[(&str, f64, u64)] = &[
     ("goal-condition", 5.0, 5),
     ("layered-chain", 4.0, 4),
     ("negated-dependency", 3.0, 3),
+    ("negated-goal", 3.0, 3),
     ("numeric-body", 3.0, 3),
     ("recursive-closure", 3.0, 3),
 ];
@@ -82,26 +90,31 @@ const FIXTURE_OPTIMA: &[(&str, f64, u64)] = &[
 #[rustfmt::skip]
 const FIXTURE_SHAPES: &[(&str, Shape)] = &[
     ("conjunctive-chain",
-     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
     ("cyclic-negation",
-     Shape { layers: 1, true_defaults: 0, proved: 2, cyclic: 4, comparisons: 0 }),
+     Shape { layers: 1, true_defaults: 0, proved: 2, cyclic: 4, comparisons: 0, default_value_goals: 0 }),
     ("disjunctive-support",
-     Shape { layers: 1, true_defaults: 0, proved: 1, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 1, true_defaults: 0, proved: 1, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
     ("goal-condition",
-     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
     // `proved: 0` since issue454: the pair that used to have two rules was
     // `flawed` at its *default* value. `flawed <- cracked and not dirty` has a
     // two-literal body, so the cross-product negation produced both
     // `not flawed <- not cracked` and `not flawed <- dirty`. Nothing here is
     // disjunctively *proved* - every derived predicate has one `:derived` clause.
     ("layered-chain",
-     Shape { layers: 3, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 3, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
     ("negated-dependency",
-     Shape { layers: 2, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 2, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 0 }),
+    // The only fixture with a negated derived goal, and the only one solvable
+    // under the `domain_abstraction` family: it has no derived precondition, and
+    // a domain abstraction has no propositional axioms to establish one with.
+    ("negated-goal",
+     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0, default_value_goals: 1 }),
     ("numeric-body",
-     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 1 }),
+     Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 1, default_value_goals: 0 }),
     ("recursive-closure",
-     Shape { layers: 1, true_defaults: 0, proved: 1, cyclic: 4, comparisons: 0 }),
+     Shape { layers: 1, true_defaults: 0, proved: 1, cyclic: 4, comparisons: 0, default_value_goals: 0 }),
 ];
 
 /// The pinned shape of `name`, which [`assert_fixture_set_is_pinned`] has
@@ -212,6 +225,10 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
             .filter(|&&var| supports_itself(var, &supports))
             .count(),
         comparisons: task.comparison_axioms().len(),
+        default_value_goals: (0..task.get_num_goals())
+            .map(|goal_id| task.get_goal_fact(goal_id))
+            .filter(|goal| defaults.get(&goal.var()) == Some(&goal.value()))
+            .count(),
     }
 }
 
