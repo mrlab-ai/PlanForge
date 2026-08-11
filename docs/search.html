@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search configurations — PlanForge</title>
+<meta name="description" content="The PlanForge --search grammar: the A*, greedy best-first and fast/slow engines, every heuristic name the planner accepts, the abstraction sources and combinators, and the two optional build features.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+
+<header class="site">
+  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
+  <p class="tagline">A grounded numeric planner written in Rust.</p>
+  <nav class="site" aria-label="Sections">
+    <ul>
+      <li><a href="index.html">Overview</a></li>
+      <li><a href="search.html" aria-current="page">Search configurations</a></li>
+      <li><a href="pddl.html">Supported PDDL</a></li>
+      <li><a href="development.html">Development</a></li>
+      <li><a href="about.html">Credits &amp; licence</a></li>
+    </ul>
+  </nav>
+  <p class="source-line"><span class="label">Source:</span>
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
+    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
+</header>
+
+<main id="main">
+
+<h1>Search configurations</h1>
+
+<p class="lead">One option, <code>--search</code>, selects the search engine and
+its heuristic. Its value is a nested call expression, and it defaults to
+<code>astar(blind())</code>. Always quote it: the parentheses are shell
+metacharacters.</p>
+
+<h2 id="grammar">The grammar</h2>
+
+<p>A configuration is a call. A call is a name, then a parenthesised and
+comma-separated argument list. An argument is either positional or
+<code>key=value</code>, and its value is a literal or another call. Whitespace
+after commas is ignored.</p>
+
+<pre><code>--search 'astar(blind())'
+--search 'astar(lmcutnumeric())'
+--search 'gbfs(ff())'
+--search 'astar(domain_abstraction(), mpd=true)'
+--search 'astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())'
+--search 'astar(canonical(domain(), cartesian()))'</code></pre>
+
+<p>A single redundant <code>search(...)</code> wrapper is accepted, so
+<code>search(astar(blind()))</code> parses as <code>astar(blind())</code>. An
+engine called with no argument gets <code>blind</code>. Anything the parser does
+not recognise is a hard error rather than a fallback: an unknown engine is
+rejected while the command line is being parsed, and an unknown heuristic is
+rejected before search starts, with the offending name quoted back at you.</p>
+
+<pre><code>$ planforge --search 'astar(nope())' domain.pddl problem.pddl
+Error: Custom { kind: Other, error: "unknown heuristic `nope`" }</code></pre>
+
+<h2 id="engines">Engines</h2>
+
+<dl>
+  <dt><code>astar(&lt;h&gt;)</code>, optionally <code>astar(&lt;h&gt;, mpd=true)</code></dt>
+  <dd>A*, ordering the open list on <code>f = g + h</code>. With an admissible
+    heuristic the plan it returns is cost-optimal. <code>mpd=true</code>
+    re-evaluates a state when it is popped rather than trusting the value it was
+    inserted with, which pays off for heuristics that strengthen as construction
+    continues.</dd>
+
+  <dt><code>gbfs(&lt;h&gt;)</code></dt>
+  <dd>Greedy best-first search, ordering on <code>h</code> alone. Usually much
+    faster than A* with the same heuristic, and with no optimality guarantee at
+    all. This is the configuration to use with <code>ff()</code>.</dd>
+
+  <dt><code>astar_fs(fast=&lt;h&gt;, slow=&lt;h&gt;)</code></dt>
+  <dd>A* with two admissible heuristics. The cheap one orders the open list; the
+    expensive one is evaluated lazily, when a state is about to be expanded. Both
+    arguments are required and both must be named.</dd>
+
+  <dt><code>sgd(...)</code></dt>
+  <dd>Not a search engine. It synthesises a plan by gradient descent over a
+    horizon-wide transcription of the task, with no open list and no state
+    registry, and shares <code>--search</code> only to reuse the translation,
+    resource-limit and plan-writing machinery. It requires the optional
+    <a href="#features"><code>sgd</code> build feature</a> and reports no search
+    statistics.</dd>
+</dl>
+
+<h2 id="heuristics">Heuristics</h2>
+
+<p>These are the names the heuristic factory accepts. Aliases are separated by a
+slash. Per-heuristic options are numerous and are documented where they are
+parsed, in
+<a href="https://github.com/mrlab-ai/PlanForge/blob/main/planforge-search/src/heuristic_factory.rs"><code>planforge-search/src/heuristic_factory.rs</code></a>
+and its <code>abstraction_config</code> module.</p>
+
+<h3>Always available</h3>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th scope="col">Name</th><th scope="col">Admissible</th><th scope="col">What it is</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>blind</code></td><td>yes</td><td>Zero on goal states and the task's minimum action cost elsewhere. The baseline, and the default.</td></tr>
+    <tr><td><code>lmcutnumeric</code></td><td>yes</td><td>Numeric landmark-cut. Usable on its own or as the residual-cost component inside a cost partitioning.</td></tr>
+    <tr><td><code>ff</code></td><td>no</td><td>Relaxed-plan heuristic with a monotonic numeric relaxation: each numeric variable carries a reachable <code>(min, max)</code> envelope through the relaxed planning graph, and a comparison becomes available once its envelope admits it.</td></tr>
+    <tr><td><code>domain_abstraction</code></td><td>yes</td><td>A single domain abstraction built by CEGAR, refining on comparison axioms as well as on facts.</td></tr>
+    <tr><td><code>cartesian_abstraction</code></td><td>yes</td><td>A single numeric Cartesian CEGAR abstraction.</td></tr>
+    <tr><td><code>canonical_domain_abstractions</code></td><td>yes</td><td>A generated collection of domain abstractions, combined canonically: the maximum over the additive subsets.</td></tr>
+    <tr><td><code>multi_domain_abstractions</code></td><td>yes</td><td>A collection of domain abstractions from repeated CEGAR runs.</td></tr>
+    <tr><td><code>max_cartesian_abstraction</code> / <code>canonical_cartesian_abstraction</code></td><td>yes</td><td>The same two combinations over Cartesian abstractions.</td></tr>
+    <tr><td><code>greedy_numeric_pdb</code>, <code>canonical_numeric_pdb</code>, <code>max_numeric_pdb</code></td><td>yes</td><td>Numeric pattern databases: goal-distance tables over projections onto selected variable subsets, taken greedily, canonically, or by maximum.</td></tr>
+    <tr><td><code>max(...)</code>, <code>canonical(...)</code>, <code>scp(...)</code> / <code>cost_partitioning(...)</code></td><td>yes</td><td>Combinators. They take <a href="#sources">abstraction sources</a> and differ only in how the components are added up: maximum, canonical, or saturated cost partitioning.</td></tr>
+    <tr><td><code>scp_online(...)</code> / <code>scp_online_cartesian(...)</code></td><td>yes</td><td>Saturated cost partitioning computed during search, per state, instead of from a table built up front.</td></tr>
+    <tr><td><code>fillscp(...)</code> / <code>fill_scp(...)</code>, and the <code>_cartesian</code> spellings</td><td>yes</td><td>Per-label saturated cost partitioning topped up with LM-cut over the residual costs.</td></tr>
+    <tr><td><code>check_admissible(&lt;h&gt;)</code></td><td>—</td><td>A debugging wrapper. See <a href="#check-admissible">below</a>.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Requires the <code>cplex</code> feature</h3>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th scope="col">Name</th><th scope="col">What it is</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>numeric_potential(...)</code></td><td>Admissible numeric and propositional potential functions, with initial-state, all-states, sampled and diverse-portfolio objectives.</td></tr>
+    <tr><td><code>posthoc_optimization(...)</code> / <code>pho(...)</code></td><td>Post-hoc optimisation over a CEGAR-built domain-abstraction collection: one LP per state, solved in the dual, whose model stays resident so only the objective changes between states.</td></tr>
+    <tr><td><code>pot_da_ocp(...)</code></td><td>A joint optimal cost partitioning over potential functions and a domain abstraction.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Asking for one of these from a build without the feature is a configuration
+error, not a silent downgrade to something weaker:</p>
+
+<pre><code>$ planforge --search 'astar(numeric_potential(opt=initial_state))' domain.pddl problem.pddl
+Error: Custom { kind: Other, error: "the requested LP-backed heuristic requires unrestricted CPLEX, which is not compiled into this build; rebuild with `--features cplex` and set CPLEX_ROOT" }</code></pre>
+
+<h2 id="sources">Abstraction sources</h2>
+
+<p><code>max</code>, <code>canonical</code> and <code>scp</code> do not build
+abstractions themselves; they combine whatever they are given. What they are
+given is one or more sources, and a combinator with no source is an error:</p>
+
+<pre><code>$ planforge --search 'astar(max())' domain.pddl problem.pddl
+Error: Custom { kind: Other, error: "`max` requires at least one domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), or pdb(...) source" }</code></pre>
+
+<dl>
+  <dt><code>domain(...)</code> / <code>domain_abstractions(...)</code></dt>
+  <dd>Domain abstractions built by CEGAR.</dd>
+  <dt><code>cartesian(...)</code> / <code>cartesian_abstraction(...)</code></dt>
+  <dd>A single numeric Cartesian CEGAR abstraction.</dd>
+  <dt><code>cartesian_collection(...)</code> / <code>cartesian_abstraction_collection(...)</code></dt>
+  <dd>A collection of them, sized by <code>max_states</code> and
+    <code>max_collection_size</code>.</dd>
+  <dt><code>icaps26_cartesian(...)</code></dt>
+  <dd>Cartesian abstractions under the published split-selection policies
+    described on the <a href="about.html#references">credits page</a>. It accepts
+    <code>pick=random|min_unwanted|max_unwanted</code> and requires
+    <code>--restrict-task</code>.</dd>
+  <dt><code>pdb(...)</code> / <code>numeric_pdb(...)</code></dt>
+  <dd>Numeric pattern databases.</dd>
+</dl>
+
+<p>Separating the two halves means the collection you build and the way you add
+it up vary independently. <code>construction_max_time</code> on the combinator is
+one shared budget covering both source generation and offline table
+construction.</p>
+
+<pre><code>planforge --search 'astar(canonical(domain()))' domain.pddl problem.pddl
+
+planforge --restrict-task \
+    --search 'astar(canonical(cartesian()))' domain.pddl problem.pddl
+
+planforge --restrict-task \
+    --search 'astar(canonical(cartesian_collection(max_states=1000,max_collection_size=100000),construction_max_time=900))' \
+    domain.pddl problem.pddl</code></pre>
+
+<p>Pattern databases and Cartesian abstractions are defined over restricted
+tasks, so they ask for <code>--restrict-task</code> by name rather than guessing
+what you meant:</p>
+
+<pre><code>$ planforge --search 'astar(canonical(pdb()))' domain.pddl problem.pddl
+Error: Custom { kind: Other, error: "task is not restricted: comparison axiom 0 has derived left operand 8; use `--restrict-task` or provide an already restricted task" }</code></pre>
+
+<div class="callout">
+  <h3>Abstractions need a conjunctive goal</h3>
+  <p>An abstract operator is derived from a task operator, and no task operator
+    writes a derived variable — only the axioms do. A goal on a
+    <code>:derived</code> predicate is therefore a goal an abstraction has nothing
+    to reach for, so every abstraction family refuses such a task by name instead
+    of inventing an interpretation of it. Numeric comparisons are deliberately
+    unaffected; refining a comparison's operands is what the numeric CEGAR loop
+    is for.</p>
+  <p>Non-abstraction configurations — <code>blind</code>, <code>ff</code>,
+    <code>lmcutnumeric</code> — solve those tasks normally, because they test the
+    goal in a state the axiom evaluator has already closed. See
+    <a href="pddl.html#limits">the limits section</a>.</p>
+</div>
+
+<h2 id="check-admissible">Checking a heuristic instead of trusting it</h2>
+
+<p><code>check_admissible(&lt;h&gt;)</code> forwards every query to
+<code>&lt;h&gt;</code> and compares the answer against the true goal distance of
+the same state, which it computes by blind A* over the concrete task. An estimate
+above the true distance costs A* its optimality guarantee, so the wrapper reports
+it as an evaluation error rather than letting the search continue on a broken
+bound.</p>
+
+<pre><code>planforge --search 'astar(check_admissible(lmcutnumeric()))' \
+    tests/assets/numeric-pddl-files/delivery/domain.pddl \
+    tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code></pre>
+
+<p>It is a development tool and it is expensive, because it solves the remaining
+task from scratch for every state it sees. On the delivery fixture used in the
+<a href="index.html#quick-start">quick start</a>, wrapping
+<code>lmcutnumeric</code> leaves the search identical — the same 73 expansions
+and the same cost-22 plan — and takes the search from about 0.04 seconds to about
+49 seconds. Use it when you suspect a heuristic, not in an experiment.</p>
+
+<h2 id="features">Optional build features</h2>
+
+<p>Both optional features are off by default, and a default build does not
+compile their dependencies at all. CI has a job whose only purpose is to assert
+that, by inspecting the dependency graph rather than trusting the manifest.</p>
+
+<dl>
+  <dt><code>cplex</code></dt>
+  <dd>The LP-backed heuristics, against the native IBM ILOG CPLEX 22.2 C API.
+    Build with
+    <code>CPLEX_ROOT=/path/to/CPLEX_Studio/cplex cargo build --release --features cplex</code>.
+    <code>CPLEX_ROOT</code> must contain <code>include/ilcplex/cplex.h</code> and
+    <code>lib/x86-64_linux/static_pic/libcplex.a</code>. The planner links the
+    position-independent static library, uses one solver thread, and checks at
+    heuristic start-up that the licence in force accepts and solves a
+    1001-column model, so a size-restricted licence such as the Community
+    Edition is rejected up front rather than mid-experiment.</dd>
+
+  <dt><code>sgd</code></dt>
+  <dd>The gradient engine behind <code>--search 'sgd(...)'</code>, and with it an
+    autograd backend. Build with
+    <code>cargo build --release -p planforge --features sgd</code>. Without the
+    feature the engine is not silently absent — asking for it fails and says
+    what to do:
+    <pre><code>Error: Custom { kind: Other, error: "`sgd(...)` requires the `sgd` cargo feature; rebuild with `cargo build --release -p planforge --features sgd`" }</code></pre></dd>
+</dl>
+
+<h2 id="other-options">The rest of the command line</h2>
+
+<dl>
+  <dt><code>--max-time DURATION</code></dt>
+  <dd>Wall-clock budget, written as <code>45s</code>, <code>30m</code> or
+    <code>1h</code>.</dd>
+  <dt><code>--max-memory SIZE</code></dt>
+  <dd>Memory cap, written as <code>4096M</code> or <code>8G</code>. On Linux this
+    is enforced against resident memory by a parent process, with a looser
+    address-space limit behind it as a backstop, because the allocator reserves
+    address space well ahead of the pages it commits. Heuristic construction and
+    search give back a fixed memory reserve as the limit approaches, which buys
+    enough room to exit with a report instead of being killed by an external
+    Slurm or cgroup limit.</dd>
+  <dt><code>--restrict-task</code></dt>
+  <dd>Convert the task to its restricted representation; an already restricted
+    task is left alone.</dd>
+  <dt><code>--compact-numeric-states</code></dt>
+  <dd>Store exact canonical numeric values behind checked 32-bit interned ids in
+    the state registry, which shrinks states on tasks with many numeric
+    variables.</dd>
+  <dt><code>--portfolio</code></dt>
+  <dd>Two sequential stages instead of one search: LM-cut under a tight budget,
+    then canonical domain abstractions. Each stage is a child process, so the
+    first stage's limits are actually enforced and the second starts clean. The
+    per-stage budgets are <code>--lmcut-time</code>,
+    <code>--lmcut-memory</code>, <code>--canonical-construction-time</code>,
+    <code>--canonical-memory</code> and <code>--canonical-time</code>.</dd>
+  <dt><code>--log-level LEVEL</code></dt>
+  <dd>How much the planner prints. Informational output goes to standard output,
+    warnings and errors to standard error.</dd>
+</dl>
+
+<p>Input is one positional argument for a SAS+ file, or two for a PDDL domain and
+problem. <code>planforge --help</code> prints the authoritative list.</p>
+
+</main>
+
+<footer class="site">
+  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
+    source is at
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
+    Questions and bug reports belong in the
+    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
+  <p>The planner's library crates are licensed under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
+    binary crates under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
+    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
+    detail. The text of this website is available under
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PlanForge — an optimal numeric planner in Rust</title>
+<meta name="description" content="PlanForge is a grounded numeric planner written in Rust. It reads PDDL with numeric fluents, or pre-translated SAS+, and returns a sequential plan that is cost-optimal under A* with an admissible heuristic.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+
+<header class="site">
+  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
+  <p class="tagline">A grounded numeric planner written in Rust.</p>
+  <nav class="site" aria-label="Sections">
+    <ul>
+      <li><a href="index.html" aria-current="page">Overview</a></li>
+      <li><a href="search.html">Search configurations</a></li>
+      <li><a href="pddl.html">Supported PDDL</a></li>
+      <li><a href="development.html">Development</a></li>
+      <li><a href="about.html">Credits &amp; licence</a></li>
+    </ul>
+  </nav>
+  <p class="source-line"><span class="label">Source:</span>
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
+    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
+</header>
+
+<main id="main">
+
+<h1>PlanForge</h1>
+
+<p class="lead">PlanForge reads a planning task written in PDDL with numeric
+fluents, grounds it, and searches for a sequential plan. Under A* with an
+admissible heuristic the plan it returns is cost-optimal. It is one binary, and
+every configuration described on this site is reachable from that binary.</p>
+
+<p>It is developed by <a href="https://mrlab.ai">MRlab</a>, the Machine
+Reasoning Lab at Linköping University, and it began as a Rust port of a numeric
+extension of <a href="https://www.fast-downward.org/">Fast Downward</a>. That
+lineage is described on the <a href="about.html">credits page</a>, together with
+the licence terms it carries with it.</p>
+
+<h2 id="what-it-does">What it does</h2>
+
+<ul>
+  <li><strong>Input.</strong> A PDDL domain and problem pair, or a single
+    pre-translated SAS+ file. Translation and grounding happen in process: the
+    planner never writes SAS+ text on the way to its own search. A separate
+    <code>planforge-translator</code> binary exists for when the text itself is
+    what you want.</li>
+  <li><strong>Numbers.</strong> Numeric fluents in preconditions, goals and
+    effects; comparisons and their negations; the five PDDL assignment operators;
+    arithmetic expressions over fluents and constants. See
+    <a href="pddl.html">Supported PDDL</a> for the exact list and for the
+    limits.</li>
+  <li><strong>Search.</strong> A* for optimal planning, greedy best-first search
+    when a plan matters more than its cost, and a two-heuristic A* variant that
+    orders the open list with a cheap admissible heuristic and confirms with an
+    expensive one.</li>
+  <li><strong>Heuristics.</strong> Blind, a numeric LM-cut, numeric pattern
+    databases, CEGAR-built domain abstractions and Cartesian abstractions,
+    combined by maximisation, the canonical combination, or saturated cost
+    partitioning; an FF-style relaxed-plan heuristic for the non-admissible
+    case. LP-backed heuristics (numeric potentials, post-hoc optimisation)
+    require an optional CPLEX build.</li>
+  <li><strong>Output.</strong> The plan is printed and written to
+    <code>sas_plan</code> in the working directory, followed by a statistics
+    block in the same shape Fast Downward prints.</li>
+  <li><strong>Budgets.</strong> <code>--max-time</code> and
+    <code>--max-memory</code> are enforced by the planner itself, so a task that
+    runs out of either exits with a plain report instead of being killed from
+    outside.</li>
+</ul>
+
+<p>The current version is <code>0.1.0</code>. The admissible paths (A* with
+blind, numeric LM-cut, pattern databases, and the canonical and
+saturated-cost-partitioning combinations of domain abstractions) are the ones
+the test suite pins instance by instance; preferred-operator support is not
+implemented.</p>
+
+<h2 id="quick-start">Quick start</h2>
+
+<p>You need a stable Rust toolchain. The crates use edition 2024, so 1.85 or
+newer. Nothing else: no nightly features, no system libraries, no Python.</p>
+
+<pre><code>git clone https://github.com/mrlab-ai/PlanForge.git
+cd PlanForge
+cargo build --release --bin planforge</code></pre>
+
+<p>That produces <code>target/release/planforge</code>. The repository ships
+small PDDL fixtures under <code>tests/assets/</code>, so you can solve something
+immediately. This one is a numeric delivery task with two robots:</p>
+
+<pre><code>./target/release/planforge \
+    --search 'astar(lmcutnumeric())' \
+    tests/assets/numeric-pddl-files/delivery/domain.pddl \
+    tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code></pre>
+
+<p>Real output from that command, with the grounding log and the intermediate
+search progress lines removed at the points marked <code>[...]</code>:</p>
+
+<pre><code>2026-08-11T12:08:08.616Z  INFO Starting A* search with HeuristicSpec { name: "lmcutnumeric", args: [] }, mpd=false...
+2026-08-11T12:08:08.616Z  INFO Initial heuristic value for lmcutnumeric: 22
+[...]
+2026-08-11T12:08:08.652Z  INFO Solution found!
+2026-08-11T12:08:08.652Z  INFO   1: pick item2 rooma right1 bot1
+2026-08-11T12:08:08.652Z  INFO   2: pick item3 rooma left2 bot2
+2026-08-11T12:08:08.652Z  INFO   3: pick item1 rooma left1 bot1
+2026-08-11T12:08:08.652Z  INFO   4: move bot1 rooma roomc
+2026-08-11T12:08:08.652Z  INFO   5: drop item1 roomc left1 bot1
+2026-08-11T12:08:08.652Z  INFO   6: pick item4 rooma right2 bot2
+2026-08-11T12:08:08.652Z  INFO   7: move bot2 rooma roomb
+2026-08-11T12:08:08.652Z  INFO   8: drop item3 roomb left2 bot2
+2026-08-11T12:08:08.652Z  INFO   9: drop item4 roomb right2 bot2
+2026-08-11T12:08:08.652Z  INFO   10: drop item2 roomc right1 bot1
+2026-08-11T12:08:08.652Z  INFO Plan length: 10 step(s).
+2026-08-11T12:08:08.652Z  INFO Plan cost: 22.000000
+2026-08-11T12:08:08.652Z  INFO Expanded 73 state(s).
+2026-08-11T12:08:08.652Z  INFO Reopened 0 state(s).
+2026-08-11T12:08:08.652Z  INFO Evaluated 593 state(s).
+2026-08-11T12:08:08.652Z  INFO Evaluations: 597
+2026-08-11T12:08:08.652Z  INFO Generated 848 state(s).
+2026-08-11T12:08:08.652Z  INFO Dead ends: 0 state(s).
+2026-08-11T12:08:08.652Z  INFO Number of registered states: 593
+2026-08-11T12:08:08.652Z  INFO Search time: 0.035801s</code></pre>
+
+<p>The same plan is left in <code>sas_plan</code>, one grounded action per line
+in the usual parenthesised form:</p>
+
+<pre><code>(pick item2 rooma right1 bot1)
+(pick item3 rooma left2 bot2)
+(pick item1 rooma left1 bot1)
+(move bot1 rooma roomc)
+(drop item1 roomc left1 bot1)
+(pick item4 rooma right2 bot2)
+(move bot2 rooma roomb)
+(drop item3 roomb left2 bot2)
+(drop item4 roomb right2 bot2)
+(drop item2 roomc right1 bot1)</code></pre>
+
+<p>Swap the heuristic and the cost stays at 22 while the work changes by three
+orders of magnitude. Every row below is a real run of the command above on the
+same fixture, with only <code>--search</code> altered:</p>
+
+<div class="scroll">
+<table>
+  <caption>tests/assets/numeric-pddl-files/delivery/pfile1.pddl, default build,
+    one run per row. Expansion counts are deterministic and reproduce exactly;
+    the times are from one machine and are indicative only.</caption>
+  <thead>
+    <tr><th scope="col"><code>--search</code></th><th scope="col">Plan cost</th><th scope="col">Expanded</th><th scope="col">Evaluated</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>astar(blind())</code></td><td class="num">22</td><td class="num">35 242</td><td class="num">41 175</td></tr>
+    <tr><td><code>astar(domain_abstraction())</code></td><td class="num">22</td><td class="num">6 657</td><td class="num">16 241</td></tr>
+    <tr><td><code>astar(lmcutnumeric())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td></tr>
+    <tr><td><code>astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td></tr>
+    <tr><td><code>gbfs(ff())</code></td><td class="num">22</td><td class="num">11</td><td class="num">104</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="note">The last row is greedy best-first search, which offers no
+optimality guarantee. On this instance it happened to return a plan of optimal
+cost; on another instance it may not.</p>
+
+<h2 id="pre-translated">Running a pre-translated task</h2>
+
+<p>When you want to translate once and search many times, translate to SAS+
+first and hand the planner a single file:</p>
+
+<pre><code>./target/release/planforge-translator translate \
+    tests/assets/numeric-pddl-files/delivery/domain.pddl \
+    tests/assets/numeric-pddl-files/delivery/pfile1.pddl \
+    --output delivery.sas
+
+./target/release/planforge --search 'astar(lmcutnumeric())' delivery.sas</code></pre>
+
+<p>Both routes report the same 49 propositional and 12 numeric variables, expand
+the same 73 states and return the same cost-22 plan.</p>
+
+<h2 id="sections">Where to go next</h2>
+
+<ul class="cards">
+  <li><a href="search.html">Search configurations</a>
+    <p>The <code>--search</code> grammar, the four engines, every heuristic name
+      the planner accepts, and the two optional build features.</p></li>
+  <li><a href="pddl.html">Supported PDDL</a>
+    <p>Which constructs the translator reads, what the numeric fragment covers,
+      and where the honest limits are.</p></li>
+  <li><a href="development.html">Development</a>
+    <p>Workspace layout, the test suite that pins every fixture's optimal cost,
+      the CI jobs and the local verification gate.</p></li>
+  <li><a href="about.html">Credits &amp; licence</a>
+    <p>The Fast Downward lineage, the references the implementation follows,
+      publication status, and the licence terms for code and for this site.</p></li>
+</ul>
+
+</main>
+
+<footer class="site">
+  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
+    source is at
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
+    Questions and bug reports belong in the
+    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
+  <p>The planner's library crates are licensed under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
+    binary crates under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
+    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
+    detail. The text of this website is available under
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>

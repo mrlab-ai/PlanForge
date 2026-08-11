@@ -1,0 +1,385 @@
+/* PlanForge website stylesheet.
+ *
+ * Hand-written for this site. No framework, no reset library, no imported or
+ * remotely hosted font, no icon set, no third-party file of any kind. Every
+ * page that uses it loads exactly two files: its own HTML and this stylesheet,
+ * so the site renders identically with no network connection.
+ *
+ * Colours are chosen so that every text/background pair clears the WCAG 2.1
+ * AA contrast ratio of 4.5:1 for body text in both the light and the dark
+ * scheme; the lowest pair here is about 7:1.
+ */
+
+:root {
+  --bg: #fcfcfa;
+  --surface: #f2f2ee;
+  --border: #d5d5cc;
+  --text: #1a1c1f;
+  --muted: #4a5057;
+  --link: #0b4f8f;
+  --visited: #6a2a8c;
+  --accent: #8a3a12;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --surface: #1e2226;
+    --border: #343b41;
+    --text: #e6e8ea;
+    --muted: #a8b0b8;
+    --link: #7cc0ff;
+    --visited: #d4a8f0;
+    --accent: #f0a878;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Anchor targets should not hide under the sticky-free header. */
+  scroll-padding-top: 1rem;
+}
+
+body {
+  margin: 0;
+  padding: 0 1.25rem 4rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+
+.wrap {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+/* --- Skip link: visible only once focused, so keyboard users can jump the nav. */
+
+.skip {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  background: var(--surface);
+  color: var(--text);
+  border: 2px solid var(--link);
+  padding: 0.5rem 0.75rem;
+  z-index: 10;
+}
+
+.skip:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}
+
+/* --- Header and navigation. */
+
+header.site {
+  border-bottom: 1px solid var(--border);
+  padding: 1.75rem 0 1rem;
+  margin-bottom: 2rem;
+}
+
+.wordmark {
+  display: inline-block;
+  font-size: 1.75rem;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+  color: var(--text);
+  margin: 0;
+}
+
+.wordmark .plan {
+  font-weight: 400;
+}
+
+.wordmark .forge {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+a.wordmark:hover .forge,
+a.wordmark:focus-visible .forge {
+  text-decoration: underline;
+}
+
+.tagline {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+}
+
+nav.site ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  margin: 1.1rem 0 0;
+  padding: 0;
+}
+
+nav.site a {
+  display: inline-block;
+  padding: 0.15rem 0;
+}
+
+nav.site a[aria-current="page"] {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.source-line {
+  margin: 1rem 0 0;
+  font-size: 0.95rem;
+}
+
+.source-line .label {
+  color: var(--muted);
+}
+
+/* --- Typography. */
+
+h1 {
+  font-size: 1.9rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.75rem;
+}
+
+h2 {
+  font-size: 1.35rem;
+  line-height: 1.25;
+  margin: 2.5rem 0 0.6rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+h3 {
+  font-size: 1.1rem;
+  margin: 1.75rem 0 0.4rem;
+}
+
+p,
+ul,
+ol,
+dl,
+table,
+pre,
+figure {
+  margin: 0 0 1rem;
+}
+
+ul,
+ol {
+  padding-left: 1.4rem;
+}
+
+li + li {
+  margin-top: 0.3rem;
+}
+
+li > ul,
+li > ol {
+  margin: 0.3rem 0 0;
+}
+
+dt {
+  font-weight: 600;
+  margin-top: 0.9rem;
+}
+
+dd {
+  margin: 0.15rem 0 0 1.2rem;
+}
+
+.lead {
+  font-size: 1.15rem;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+a {
+  color: var(--link);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:visited {
+  color: var(--visited);
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--link);
+  outline-offset: 2px;
+}
+
+/* --- Code. */
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.9375em;
+}
+
+:not(pre) > code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+  /* Long option strings must be allowed to break rather than widen the page. */
+  overflow-wrap: break-word;
+}
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  padding: 0.8rem 0.9rem;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+}
+
+figure {
+  padding: 0;
+}
+
+figcaption {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin-top: -0.6rem;
+}
+
+/* --- Tables. */
+
+.scroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding-bottom: 0.4rem;
+}
+
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--surface);
+}
+
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Callout used for limitations and warnings. */
+
+.callout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+  padding: 0.8rem 0.9rem;
+  margin: 0 0 1rem;
+}
+
+.callout > :last-child {
+  margin-bottom: 0;
+}
+
+.callout h3 {
+  margin-top: 0;
+}
+
+/* --- Card list used on the front page for the section index. */
+
+.cards {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 40rem) {
+  .cards {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.cards li {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.8rem 0.9rem;
+}
+
+.cards a {
+  font-weight: 600;
+}
+
+.cards p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+/* --- Footer. */
+
+footer.site {
+  border-top: 1px solid var(--border);
+  margin-top: 3rem;
+  padding-top: 1rem;
+  color: var(--muted);
+  font-size: 0.925rem;
+}
+
+footer.site p {
+  margin: 0 0 0.5rem;
+}
