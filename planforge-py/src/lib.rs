@@ -482,6 +482,17 @@ impl Task {
     }
 }
 
+/// One-call solve: pick a source, pick a search, get a result.
+///
+/// The parameter list is the published Python signature -- PyO3 maps one
+/// keyword to one Rust parameter, and `tests/test_smoke.py` calls all eight by
+/// name -- so the argument count cannot be reduced by extracting a struct. The
+/// two ways to shrink it are both worse than the lint: a `**kwargs` dict loses
+/// the introspectable signature and turns a misspelled keyword from PyO3's
+/// `TypeError` into hand-rolled validation, and folding the four source
+/// keywords into one argument is a breaking API change. `Task.from_pddl`,
+/// `Task.from_sas`, `Task.from_sas_text` and `Task.solve` are the decomposed
+/// form for callers who want it; this stays the flat one.
 #[pyfunction]
 #[pyo3(signature = (*, domain=None, problem=None, sas=None, sas_text=None,
                     search=None, max_time=None, max_memory=None, restrict_task=false))]

@@ -1,3 +1,15 @@
+//! Numeric potential heuristics, behind the `cplex` feature.
+//!
+//! The three `too_many_arguments` allows below stay for the same reason as the
+//! two in `tests.rs`: this file compiles only against a proprietary CPLEX
+//! installation, which neither this checkout nor CI has. No clippy run here can
+//! confirm the lints still fire or that a refactor still builds, and
+//! `-D warnings` under `--features cplex` would break the build for whoever does
+//! have CPLEX. The portfolio builders below take the same eight -- task,
+//! optimizer, registry, initial state, initial `h`, config, sampler -- and want
+//! the same parameter struct the rest of the crate now uses; that is a change
+//! for someone who can compile it.
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::Path;
