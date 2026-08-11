@@ -21,8 +21,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::abstraction_collections::canonical_heuristic::CanonicalAbstractionHeuristic;
+use planforge_search::evaluation::abstraction_collections::component::AbstractionComponent;
+use planforge_search::evaluation::check_admissible::CheckAdmissibleHeuristic;
+use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+    DomainAbstractionCollectionGeneratorMultipleCegar,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+};
+use planforge_search::evaluation::heuristic::Heuristic;
+use planforge_search::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+use planforge_search::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
     LandmarkCutNumericHeuristic, LmCutNumericConfig,
 };
@@ -345,6 +355,169 @@ fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
              inadmissible axiom relaxation would overestimate here"
         );
     }
+}
+
+/// Domain abstractions of the negated-goal fixture are admissible and keep the
+/// optimum.
+///
+/// `negated-goal` is the one fixture the `domain_abstraction` family can build at
+/// all: an abstract operator never writes a derived variable, so a derived
+/// *precondition* leaves the abstraction unable to establish it and the generator
+/// refuses with an abstract dead end, which is what the other eight fixtures get.
+/// What is left is the goal, and a goal at a derived variable's default value is
+/// the case the abstraction used to restate as the body of the rule proving the
+/// *opposite* fact: `(not (alarm v1))` became `(breach v1)`. That reversal is not
+/// a weaker bound but a wrong one — `arm` cannot reopen a breach once the vault is
+/// sealed, so the cheapest goal state came out as h = infinity, was pruned as a
+/// dead end, and A* returned the four-action plan through `deliver-open` instead
+/// of the three-action optimum.
+///
+/// A single abstraction does not see it: with `init_split_method = InitValue` it
+/// never refines `sealed` far enough for the substituted goal to become
+/// unreachable, and answers the same 2 either way. It takes the collection, whose
+/// members seed their init split on different variables, so this test builds one.
+/// The two clock-free stopping rules keep it a function of its inputs rather than
+/// of the machine — see `sailing_simple_tests::standard_round7_collection_config`
+/// for why that matters.
+#[test]
+fn domain_abstractions_of_a_negated_derived_goal_are_admissible_and_keep_the_optimum() {
+    let name = "negated-goal";
+    let &(_, cost, length) = FIXTURE_OPTIMA
+        .iter()
+        .find(|(pinned, _, _)| *pinned == name)
+        .expect("the negated-goal fixture is pinned");
+    let expected = Solution { cost, length };
+
+    let task = fixture_task(name);
+    assert_eq!(
+        pinned_shape(name).default_value_goals,
+        1,
+        "{name} is the fixture that has to carry the negated derived goal"
+    );
+
+    let abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+            max_abstraction_size: 10_000,
+            max_collection_size: 10_000,
+            stagnation_limit: 0.0,
+            enable_blacklist_on_stagnation: false,
+            compute_operator_footprints: false,
+            ..Default::default()
+        },
+    )
+    .generate_collection(&task)
+    .unwrap_or_else(|error| {
+        panic!("{name}: domain abstractions must build over a negated derived goal: {error:#}")
+    });
+    assert!(
+        abstractions.len() > 1,
+        "{name}: the collection has to hold more than one abstraction for the members to \
+         disagree on which variables they refine, got {}",
+        abstractions.len()
+    );
+
+    let task_ref: TaskRef<'_> = Arc::new(&task);
+    let components = abstractions
+        .into_iter()
+        .enumerate()
+        .map(|(index, abstraction)| {
+            AbstractionComponent::domain(Some(format!("negated_goal_{index}")), abstraction)
+        })
+        .collect();
+    let canonical = CanonicalAbstractionHeuristic::new(None, &task, components)
+        .expect("the canonical heuristic constructs over the collection");
+    let guarded = CheckAdmissibleHeuristic::new(
+        Some(Box::new(canonical) as Box<dyn Heuristic + '_>),
+        Arc::clone(&task_ref),
+    )
+    .expect("the admissibility guard constructs over the fixture");
+
+    let registry = StateRegistry::for_task(Arc::clone(&task_ref));
+    let mut search = AStarSearch::new(task_ref, registry, Some(Box::new(guarded)), None, None);
+    let result = search.search().unwrap_or_else(|error| {
+        panic!("{name}: guarded canonical domain-abstraction A* failed: {error}")
+    });
+
+    let plan = match (&result.status, &result.plan) {
+        (SearchStatus::Solved(_), Some(plan)) => plan,
+        (status, _) => panic!(
+            "{name}: the guarded canonical domain abstraction must solve the fixture, got \
+             {status:?}"
+        ),
+    };
+    let found = Solution {
+        cost: result
+            .solution_cost
+            .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
+        length: plan.len() as u64,
+    };
+    assert!(
+        found.matches(&expected),
+        "{name}: guarded canonical domain-abstraction A* returned {found:?}, expected the \
+         optimum {expected:?}"
+    );
+}
+
+/// A pattern database of the negated-goal fixture is admissible.
+///
+/// The projected task walks each goal and, for a goal at a derived variable,
+/// replaces it by the body of the deriving rule. That expansion is what pulls the
+/// body variables into the projection, and for a positive derived goal it is a
+/// necessary condition, so the projected goal stays implied by the real one. At
+/// the derived variable's default value it is the *opposite* condition: the
+/// projected goal came out as `(breach v1)` where the real goal wants no breach,
+/// and a pattern holding both `breach` and `sealed` then measured the distance to
+/// a state the goal excludes.
+///
+/// The greedy generator is the one that gets there: `haul` reads `(breach v1)` and
+/// leads to `(delivered v1)`, which makes `breach` a causal predecessor of a goal
+/// variable and therefore a pattern member. The failure is pure inadmissibility -
+/// A* still returned the optimum here - so `check_admissible` is what names it.
+#[test]
+fn a_pattern_database_of_a_negated_derived_goal_is_admissible() {
+    let name = "negated-goal";
+    let &(_, cost, length) = FIXTURE_OPTIMA
+        .iter()
+        .find(|(pinned, _, _)| *pinned == name)
+        .expect("the negated-goal fixture is pinned");
+    let expected = Solution { cost, length };
+
+    let task = fixture_task(name);
+    let pdb = GreedyNumericPdbHeuristic::new(
+        &task as &dyn AbstractNumericTask,
+        GreedyPatternGeneratorConfig::default(),
+    )
+    .unwrap_or_else(|error| panic!("{name}: the greedy numeric PDB must build: {error}"));
+
+    let task_ref: TaskRef<'_> = Arc::new(&task);
+    let guarded = CheckAdmissibleHeuristic::new(
+        Some(Box::new(pdb) as Box<dyn Heuristic + '_>),
+        Arc::clone(&task_ref),
+    )
+    .expect("the admissibility guard constructs over the fixture");
+
+    let registry = StateRegistry::for_task(Arc::clone(&task_ref));
+    let mut search = AStarSearch::new(task_ref, registry, Some(Box::new(guarded)), None, None);
+    let result = search
+        .search()
+        .unwrap_or_else(|error| panic!("{name}: guarded greedy-PDB A* failed: {error}"));
+
+    let plan = match (&result.status, &result.plan) {
+        (SearchStatus::Solved(_), Some(plan)) => plan,
+        (status, _) => {
+            panic!("{name}: the guarded greedy PDB must solve the fixture, got {status:?}")
+        }
+    };
+    let found = Solution {
+        cost: result
+            .solution_cost
+            .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
+        length: plan.len() as u64,
+    };
+    assert!(
+        found.matches(&expected),
+        "{name}: guarded greedy-PDB A* returned {found:?}, expected the optimum {expected:?}"
+    );
 }
 
 /// The same optima through the `..._fast` translation path, which asks for

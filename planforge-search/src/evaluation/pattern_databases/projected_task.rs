@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -1685,15 +1685,26 @@ fn push_unique_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
     }
 }
 
+/// The rule that derives each derived *fact*, for the goal walk to expand a
+/// derived goal into.
+///
+/// Keyed by the fact rather than by its variable. Since issue454 every rule
+/// proves its head, so a goal at a derived variable's *default* value — a
+/// negated derived goal — has no deriving rule and must not be expanded: its
+/// body is the condition under which the *opposite* fact holds, and pulling that
+/// into the projected goal makes the projection ask for the negation of the
+/// goal, which overestimates and is therefore inadmissible. When several rules
+/// derive the same fact the last one wins, which is an arbitrary choice among
+/// the disjuncts.
 fn build_propositional_axiom_lookup(
     task: &dyn AbstractNumericTask,
     num_vars: usize,
-) -> Vec<Option<usize>> {
-    let mut lookup = vec![None; num_vars];
+) -> HashMap<(usize, usize), usize> {
+    let mut lookup = HashMap::new();
     for (axiom_id, axiom) in task.axioms().iter().enumerate() {
         let affected = axiom.var_id();
-        if affected < lookup.len() {
-            lookup[affected] = Some(axiom_id);
+        if affected < num_vars {
+            lookup.insert((affected, axiom.effect_value()), axiom_id);
         }
     }
     lookup
@@ -1757,7 +1768,7 @@ impl VariableProjection<'_> {
 fn collect_restricted_projected_goals(
     task: &dyn AbstractNumericTask,
     pattern: &Pattern,
-    propositional_axiom_by_affected_var: &[Option<usize>],
+    propositional_axiom_by_affected_var: &HashMap<(usize, usize), usize>,
     mut projection: VariableProjection<'_>,
 ) -> Result<Vec<ExplicitFact>, ProjectedTaskBuildError> {
     let members = PatternMembers {
@@ -1788,7 +1799,7 @@ fn collect_restricted_projected_goal_fact(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
     members: &PatternMembers,
-    propositional_axiom_by_affected_var: &[Option<usize>],
+    propositional_axiom_by_affected_var: &HashMap<(usize, usize), usize>,
     mut projection: VariableProjection<'_>,
     goals: &mut Vec<ExplicitFact>,
     visited_vars: &mut HashSet<usize>,
@@ -1822,11 +1833,7 @@ fn collect_restricted_projected_goal_fact(
         return Ok(());
     }
 
-    if let Some(axiom_id) = propositional_axiom_by_affected_var
-        .get(fact.var())
-        .copied()
-        .flatten()
-    {
+    if let Some(&axiom_id) = propositional_axiom_by_affected_var.get(&(fact.var(), fact.value())) {
         if members.regular.contains(&fact.var()) {
             push_unique_mapping(
                 fact.var(),

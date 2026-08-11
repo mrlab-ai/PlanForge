@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use anyhow::{Result, ensure};
 use planforge_sas::{
@@ -15,7 +15,7 @@ use super::target_centered::{
 };
 use super::{
     Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
-    dependent_numeric_flaws_for_comparison_prop_var,
+    dependent_numeric_flaws_for_comparison_prop_var, goal_requirements,
 };
 use crate::evaluation::domain_abstractions::{
     additive_numeric_views::numeric_dimension_delta_for_operator,
@@ -448,48 +448,16 @@ pub fn get_goal_flaws(
     step: usize,
     direction: SplitDirection,
 ) -> Vec<Flaw> {
-    let task = partitioned.task;
-    let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
-    let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
-    let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
-    for goal_id in 0..num_goals {
-        let goal_fact = task.get_goal_fact(goal_id);
-        let goal_var = goal_fact.var();
-        let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
-        if goal_is_derived {
-            derived_goal_vars.insert(goal_var);
-            continue;
-        }
-        if !fact_is_hold(goal_fact, state.packer, state.prop) && seen.insert(*goal_fact) {
+    for requirement in goal_requirements(partitioned.task) {
+        if !fact_is_hold(&requirement, state.packer, state.prop) {
             out.push(build_prop_flaw_for_fact(
                 partitioned,
-                goal_fact,
+                &requirement,
                 state.numeric,
                 step,
                 direction,
             ));
-        }
-    }
-
-    // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
-    for ax in task.axioms().iter() {
-        if ax.conditions().is_empty() {
-            continue;
-        }
-        if !derived_goal_vars.is_empty() && !derived_goal_vars.contains(&ax.var_id()) {
-            continue;
-        }
-        for pre in ax.conditions().iter() {
-            if !fact_is_hold(pre, state.packer, state.prop) && seen.insert(*pre) {
-                out.push(build_prop_flaw_for_fact(
-                    partitioned,
-                    pre,
-                    state.numeric,
-                    step,
-                    direction,
-                ));
-            }
         }
     }
     out

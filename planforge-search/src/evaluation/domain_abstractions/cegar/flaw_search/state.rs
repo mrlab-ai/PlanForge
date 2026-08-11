@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use anyhow::{Result, ensure};
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
@@ -10,6 +8,7 @@ use planforge_sas::{
 };
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
+use crate::evaluation::domain_abstractions::cegar::flaw_search::goal_requirements;
 use crate::evaluation::domain_abstractions::utils::get_initial_state;
 use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
 
@@ -57,9 +56,6 @@ impl<'a> FlawSearchState<'a> {
         task: &dyn AbstractNumericTask,
         domain_mapping: &'a DomainMapping,
     ) -> FlawSearchState<'a> {
-        let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
-        let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
-
         let mut state = FlawSearchState {
             concrete_prop: vec![None; task.get_num_variables()],
             abstract_prop: vec![None; task.get_num_variables()],
@@ -78,30 +74,8 @@ impl<'a> FlawSearchState<'a> {
             }
         }
 
-        for goal_id in 0..task.get_num_goals() {
-            let goal_fact = task.get_goal_fact(goal_id);
-            let goal_var = goal_fact.var();
-            let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
-            if goal_is_derived {
-                derived_goal_vars.insert(goal_var);
-                continue;
-            }
-            state.set_prop_value(goal_var, goal_fact.value());
-        }
-
-        // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
-        for ax in task.axioms().iter() {
-            if ax.conditions().is_empty() {
-                continue;
-            }
-            if !derived_goal_vars.is_empty() && !derived_goal_vars.contains(&ax.var_id()) {
-                continue;
-            }
-            for pre in ax.conditions().iter() {
-                if seen.insert(*pre) {
-                    state.set_prop_value(pre.var(), pre.value());
-                }
-            }
+        for requirement in goal_requirements(task) {
+            state.set_prop_value(requirement.var(), requirement.value());
         }
 
         state

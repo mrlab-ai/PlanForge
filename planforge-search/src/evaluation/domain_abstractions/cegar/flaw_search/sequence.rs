@@ -1,15 +1,13 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::BTreeSet;
-
 use anyhow::{Result, ensure};
 use planforge_sas::{
     axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
+    numeric_task::{AbstractNumericTask, Operator},
 };
 
-use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
+use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_requirements};
 use crate::evaluation::domain_abstractions::{
     abstract_operator_generator::DomainMapping,
     additive_numeric_views::numeric_dimension_delta_for_operator,
@@ -403,70 +401,28 @@ pub fn get_goal_sequence_flaws(
     state: &FlawSearchState,
     step: usize,
 ) -> Vec<Flaw> {
-    let num_goals = task.get_num_goals();
     let mut out: Vec<Flaw> = Vec::new();
-    let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
-    let mut derived_goal_vars: BTreeSet<usize> = BTreeSet::new();
-    for goal_id in 0..num_goals {
-        let goal_fact = task.get_goal_fact(goal_id);
-        let goal_var = goal_fact.var();
-        let goal_is_derived = task.axioms().iter().any(|ax| ax.var_id() == goal_var);
-        if goal_is_derived {
-            derived_goal_vars.insert(goal_var);
+    for requirement in goal_requirements(task) {
+        if state.fact_is_hold(&requirement) {
             continue;
         }
-        if !state.fact_is_hold(goal_fact) && seen.insert(*goal_fact) {
-            let prop_var_id = goal_fact.var();
-            let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id)
-            {
-                dependent_numeric_flaws_in_interval_for_comparison_prop_var(
-                    task,
-                    partitions,
-                    prop_var_id,
-                    state,
-                    step,
-                )
-            } else {
-                vec![]
-            };
-            out.push(Flaw::Propositional(PropFlaw {
-                fact: *goal_fact,
-                dependent_numeric_flaws,
+        let prop_var_id = requirement.var();
+        let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id) {
+            dependent_numeric_flaws_in_interval_for_comparison_prop_var(
+                task,
+                partitions,
+                prop_var_id,
+                state,
                 step,
-            }));
-        }
-    }
-
-    // Reconstruct (potentially hidden) goal conditions from propositional goal axioms.
-    for ax in task.axioms().iter() {
-        if ax.conditions().is_empty() {
-            continue;
-        }
-        if !derived_goal_vars.is_empty() && !derived_goal_vars.contains(&ax.var_id()) {
-            continue;
-        }
-        for pre in ax.conditions().iter() {
-            if !state.fact_is_hold(pre) && seen.insert(*pre) {
-                let prop_var_id = pre.var();
-                let dependent_numeric_flaws =
-                    if task.numeric_conditions().is_condition_var(prop_var_id) {
-                        dependent_numeric_flaws_in_interval_for_comparison_prop_var(
-                            task,
-                            partitions,
-                            prop_var_id,
-                            state,
-                            step,
-                        )
-                    } else {
-                        vec![]
-                    };
-                out.push(Flaw::Propositional(PropFlaw {
-                    fact: *pre,
-                    dependent_numeric_flaws,
-                    step,
-                }));
-            }
-        }
+            )
+        } else {
+            vec![]
+        };
+        out.push(Flaw::Propositional(PropFlaw {
+            fact: requirement,
+            dependent_numeric_flaws,
+            step,
+        }));
     }
     out
 }
