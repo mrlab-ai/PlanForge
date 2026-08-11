@@ -1,8 +1,9 @@
 /* PlanForge website stylesheet.
  *
  * Written for this site. There is no framework, no reset library, no web font
- * and no icon set. Every page loads four files: its own HTML, this one, the
- * logo and the icon. The pages are ordered so that they still read correctly
+ * and no icon set; the one icon, the GitHub mark in the header, is inlined in
+ * the page. Every page loads four files: its own HTML, this one, the logo and
+ * the favicon. The pages are ordered so that they still read correctly
  * with no stylesheet at all.
  *
  * Colours are picked so that every text and background pair is above the WCAG
@@ -87,6 +88,28 @@ header {
 .repo {
   margin: 0;
   font-size: 0.9rem;
+}
+
+.repo a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.repo a:visited {
+  color: var(--muted);
+}
+
+.repo a:hover,
+.repo a:focus-visible {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+.repo svg {
+  flex: none;
 }
 
 /* The logo carries the site name, so there is no separate text title. Sizing by

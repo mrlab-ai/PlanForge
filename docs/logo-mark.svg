@@ -1,99 +1,128 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="16 308 360 331" width="360" height="331" role="img" aria-labelledby="pf-mark-title">
-  <title id="pf-mark-title">PlanForge: an anvil with a search graph on its face</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="20 364 446 421" width="446" height="421" role="img" aria-labelledby="pf-mark-title pf-mark-desc">
+  <title id="pf-mark-title">PlanForge</title>
+  <desc id="pf-mark-desc">An anvil under a burst of sparks, with a four node search graph across its face. Construction guides are drawn around it.</desc>
 
-  <!-- Hand-drawn artwork. Geometry is unmodified; only the framing changed from
-       the drawing file: the opaque background rectangle is gone so the mark sits
-       on any colour, and the viewBox is cropped to the ink (28,320 to 364,627)
-       plus a 12 unit margin, instead of the 1024 square canvas that was mostly
-       empty. The gradient id is namespaced so it cannot collide when this file
-       is inlined next to another SVG. logo.svg holds this same mark plus the
-       wordmark in the same coordinate frame. Keep the two in step. -->
+  <!-- Hand-drawn artwork. Geometry is unmodified. What changed from the drawing
+       file is only what a web asset needs: the opaque background rectangle is
+       gone so the logo sits on any colour, the viewBox is cropped to the ink
+       of the mark alone (32,376 to 454,773) with an even 12 unit margin, the ids
+       are namespaced so they cannot collide if this file is ever inlined next to
+       another SVG, and the colours moved into a stylesheet so the dark scheme
+       below can reach them.
+
+       logo.svg holds this same mark plus the wordmark in the same coordinate
+       frame, and favicon.svg a reduction of it. Keep all three in step. -->
 
   <style>
-    /* Colours live here rather than only in presentation attributes so the dark
-       scheme below can override them. The presentation attributes are kept as a
-       fallback for renderers that ignore stylesheets; CSS wins where both apply.
+    /* The artwork is navy on transparent, which disappears against a dark page.
+       For a reader who prefers a dark scheme the navy gradient flips to light
+       steel, and everything drawn on top of the anvil inverts with it or it
+       would vanish in turn: the graph links and node rings go dark, the metal
+       highlights go dark, and the construction guides lighten. The sparks need
+       no variant, because the orange carries on either background.
 
-       In the dark scheme the navy gradient flips to light steel, so the anvil
-       does not disappear into a dark page. Everything drawn on top of the anvil
-       then has to invert too, or it would vanish in turn: the graph links and
-       the node rings go dark, the highlight strokes go dark, and the
-       construction marks lighten. The sparks are left alone, because the orange
-       carries on either background. */
-    .g1 { stop-color: #0c2439 }
-    .g2 { stop-color: #061727 }
-    .guides { stroke: #6e7883 }
-    .hl { stroke: #d8dee3 }
-    .links { stroke: #ffffff }
-    .ring { fill: #f5f6f7 }
-    .core { fill: #9ca3aa }
+       Colours live here rather than only in presentation attributes so the media
+       query can override them. The attributes stay as a fallback for renderers
+       that ignore stylesheets, and CSS wins where both apply. */
+    .n1 { stop-color: #0b2942 }
+    .n2 { stop-color: #071c2f }
+    .n3 { stop-color: #041523 }
+    .guides { stroke: #77838e }
+    .hl { stroke: #edf2f5 }
+    .links { stroke: #f8fafb }
+    .ring { fill: #f7f8f9 }
+    .core { fill: #aeb5bb }
 
     @media (prefers-color-scheme: dark) {
-      .g1 { stop-color: #dbe3ea }
-      .g2 { stop-color: #aebbc7 }
-      .guides { stroke: #8a949f }
-      .hl { stroke: #7e8b98 }
-      .links { stroke: #0d2135 }
-      .ring { fill: #0d2135 }
-      .core { fill: #6d7a87 }
+      .n1 { stop-color: #e6edf3 }
+      .n2 { stop-color: #ccd8e1 }
+      .n3 { stop-color: #b0bfcb }
+      .guides { stroke: #8d99a5 }
+      .hl { stroke: #5d6b78 }
+      .links { stroke: #0a1c2e }
+      .ring { fill: #0a1c2e }
+      .core { fill: #616e7b }
     }
   </style>
 
   <defs>
-    <linearGradient id="pf-navy" x1="0" y1="0" x2="0" y2="1">
-      <stop class="g1" offset="0" stop-color="#0c2439"/>
-      <stop class="g2" offset="1" stop-color="#061727"/>
+    <linearGradient id="pf-navy" x1="0" y1="0" x2="0.9" y2="1">
+      <stop class="n1" offset="0" stop-color="#0b2942"/>
+      <stop class="n2" offset="0.55" stop-color="#071c2f"/>
+      <stop class="n3" offset="1" stop-color="#041523"/>
+    </linearGradient>
+    <linearGradient id="pf-orange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff7a00"/>
+      <stop offset="1" stop-color="#ff5900"/>
     </linearGradient>
   </defs>
 
-  <!-- construction marks -->
-  <g class="guides" fill="none" stroke="#6e7883" stroke-width="3" stroke-linecap="round" opacity="0.95">
-    <path d="M64 416 H174" stroke-dasharray="7 9"/>
-    <path d="M64 416 V443" stroke-dasharray="7 9"/>
-    <path d="M64 405 V428 M53 416 H75"/>
-    <path d="M64 493 V574" stroke-dasharray="7 9"/>
-    <path d="M64 574 H167" stroke-dasharray="7 9"/>
-    <path d="M101 614 V581" stroke-dasharray="7 9"/>
-    <path d="M89 614 H116 M101 602 V626"/>
-    <path d="M101 602 C101 560 119 538 151 531" stroke-dasharray="7 9"/>
-    <path d="M325 474 C345 499 351 528 344 562" stroke-dasharray="7 9"/>
+  <!-- Hand-drawn technical construction guides -->
+  <g class="guides" fill="none" stroke="#77838e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M82 496 H218" stroke-dasharray="10 11"/>
+    <path d="M82 496 V534" stroke-dasharray="10 11"/>
+    <path d="M82 594 V702" stroke-dasharray="10 11"/>
+    <path d="M82 702 H211" stroke-dasharray="10 11"/>
+    <path d="M202 754 V717" stroke-dasharray="10 11"/>
+    <path d="M203 718 C198 667 233 627 286 613" stroke-dasharray="10 11"/>
+    <path d="M406 568 C442 611 446 671 413 719" stroke-dasharray="10 11"/>
+    <path d="M82 478 V514 M64 496 H100"/>
+    <path d="M82 684 V720 M64 702 H100"/>
+    <path d="M202 736 V772 M184 754 H220"/>
   </g>
 
-  <!-- spark -->
-  <g fill="#ff6800">
-    <path d="M221 320 L230 397 L214 421 Z"/>
-    <path d="M181 371 L210 415 L196 421 Z"/>
-    <path d="M258 371 L235 418 L248 412 Z"/>
-    <path d="M172 400 L201 421 L190 425 Z"/>
-    <path d="M274 393 L248 417 L258 419 Z"/>
-    <path d="M181 418 L204 431 L188 429 Z"/>
-    <path d="M261 418 L237 431 L251 430 Z"/>
+  <!-- Forging sparks -->
+  <g fill="url(#pf-orange)">
+    <path d="M276 376 L286 463 L276 508 L266 463 Z"/>
+    <path d="M226 441 L263 501 L244 489 Z"/>
+    <path d="M326 441 L289 501 L308 489 Z"/>
+    <path d="M214 477 L248 505 L226 498 Z"/>
+    <path d="M338 477 L304 505 L326 498 Z"/>
+    <path d="M218 507 L249 517 L232 520 Z"/>
+    <path d="M334 507 L303 517 L320 520 Z"/>
   </g>
 
-  <!-- anvil -->
-  <path fill="url(#pf-navy)" d="     M28 449     C55 449 89 450 142 450     L142 437     L365 437     L365 462     C333 467 305 481 290 501     C275 520 277 549 290 573     C297 585 305 593 316 597     L325 597     L325 617     L133 617     L133 597     L147 597     C160 585 171 565 174 546     C177 527 170 513 157 503     C145 494 128 489 108 486     C78 481 49 467 28 449 Z"/>
-
-  <!-- subtle top and base highlights -->
-  <path d="M145 439 C197 451 284 444 354 439" fill="none" class="hl" stroke="#d8dee3" stroke-width="2" opacity="0.9"/>
-  <path d="M137 597 C184 592 257 594 321 598" fill="none" class="hl" stroke="#d8dee3" stroke-width="2" opacity="0.8"/>
-
-  <!-- graph links -->
-  <g class="links" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M191 497 L305 456"/>
-    <path d="M191 497 L258 549"/>
-    <path d="M258 549 L201 602"/>
-  </g>
-
-  <!-- graph nodes -->
+  <!-- Anvil mark, constructed from original paths rather than a raster trace -->
   <g>
-    <circle cx="305" cy="456" r="17" class="ring" fill="#f5f6f7"/>
-    <circle cx="305" cy="456" r="9" class="core" fill="#9ca3aa"/>
-    <circle cx="191" cy="497" r="17" class="ring" fill="#f5f6f7"/>
-    <circle cx="191" cy="497" r="9" class="core" fill="#9ca3aa"/>
-    <circle cx="258" cy="549" r="17" class="ring" fill="#f5f6f7"/>
-    <circle cx="258" cy="549" r="9" class="core" fill="#9ca3aa"/>
-    <circle cx="201" cy="602" r="17" class="ring" fill="#f5f6f7"/>
-    <circle cx="201" cy="602" r="9" class="core" fill="#9ca3aa"/>
-  </g>
+    <path fill="url(#pf-navy)" d="
+      M32 541
+      C72 541 118 542 177 541
+      L177 526
+      H455
+      V559
+      C415 564 386 581 371 607
+      C349 645 359 691 401 728
+      H414
+      V753
+      H164
+      V728
+      H181
+      C205 708 218 682 214 657
+      C211 636 198 621 175 614
+      C116 603 70 582 32 541 Z"/>
 
+    <!-- crisp metal highlights -->
+    <path d="M39 546 C90 550 132 551 168 552" fill="none" class="hl" stroke="#edf2f5" stroke-width="3" stroke-linecap="round" opacity="0.9"/>
+    <path d="M184 531 C253 542 345 538 441 532" fill="none" class="hl" stroke="#edf2f5" stroke-width="3" stroke-linecap="round" opacity="0.9"/>
+    <path d="M175 730 C241 724 324 725 402 729" fill="none" class="hl" stroke="#edf2f5" stroke-width="3" stroke-linecap="round" opacity="0.78"/>
+
+    <!-- graph connections -->
+    <g class="links" fill="none" stroke="#f8fafb" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M238 603 L385 548"/>
+      <path d="M238 603 L326 668"/>
+      <path d="M326 668 L249 741"/>
+    </g>
+
+    <!-- graph nodes -->
+    <g>
+      <circle cx="385" cy="548" r="24" class="ring" fill="#f7f8f9"/>
+      <circle cx="385" cy="548" r="14" class="core" fill="#aeb5bb"/>
+      <circle cx="238" cy="603" r="24" class="ring" fill="#f7f8f9"/>
+      <circle cx="238" cy="603" r="14" class="core" fill="#aeb5bb"/>
+      <circle cx="326" cy="668" r="24" class="ring" fill="#f7f8f9"/>
+      <circle cx="326" cy="668" r="14" class="core" fill="#aeb5bb"/>
+      <circle cx="249" cy="741" r="24" class="ring" fill="#f7f8f9"/>
+      <circle cx="249" cy="741" r="14" class="core" fill="#aeb5bb"/>
+    </g>
+  </g>
 </svg>

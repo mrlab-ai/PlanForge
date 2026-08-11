@@ -1,48 +1,76 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 280 377 377" width="377" height="377" role="img" aria-labelledby="pf-icon-title">
-  <title id="pf-icon-title">PlanForge</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="16 337 455 455" width="455" height="455" role="img" aria-labelledby="pf-mark-title pf-mark-desc">
+  <title id="pf-mark-title">PlanForge</title>
+  <desc id="pf-mark-desc">An anvil under a burst of sparks.</desc>
 
   <!-- Deliberately a reduction of logo-mark.svg, not a copy of it. Rendered at
-       16 pixels the construction marks, the highlight strokes and the search
-       graph all collapse into grey noise across the anvil's waist, so this icon
+       16 pixels the construction guides, the metal highlights and the search
+       graph collapse into grey noise across the anvil's waist, so this icon
        keeps only the two shapes that still read at that size: the anvil and the
        sparks. Both paths are unmodified. The viewBox is square and centred on
-       the remaining ink (28,320 to 365,617) so browsers can scale it to any
-       icon slot without letterboxing. -->
+       what is left, so browsers can scale it into any icon slot without
+       letterboxing. -->
 
   <style>
-    /* A dark navy anvil is nearly invisible against a dark browser chrome, so
-       the gradient flips to light steel when the reader prefers a dark scheme.
-       The stop colours live here, not only in the presentation attributes, so
-       the media query can override them; the attributes stay as a fallback for
-       renderers that ignore stylesheets, and CSS wins where both apply. The
-       sparks need no variant, because the orange carries on either background. */
-    .g1 { stop-color: #0c2439 }
-    .g2 { stop-color: #061727 }
+    /* The artwork is navy on transparent, which disappears against a dark page,
+       so for a reader who prefers a dark scheme the navy gradient flips to light
+       steel. The sparks need no variant, because the orange carries on either
+       background.
+
+       Colours live here rather than only in presentation attributes so the media
+       query can override them. The attributes stay as a fallback for renderers
+       that ignore stylesheets, and CSS wins where both apply. */
+    .n1 { stop-color: #0b2942 }
+    .n2 { stop-color: #071c2f }
+    .n3 { stop-color: #041523 }
 
     @media (prefers-color-scheme: dark) {
-      .g1 { stop-color: #dbe3ea }
-      .g2 { stop-color: #aebbc7 }
+      .n1 { stop-color: #e6edf3 }
+      .n2 { stop-color: #ccd8e1 }
+      .n3 { stop-color: #b0bfcb }
     }
   </style>
 
   <defs>
-    <linearGradient id="pf-navy" x1="0" y1="0" x2="0" y2="1">
-      <stop class="g1" offset="0" stop-color="#0c2439"/>
-      <stop class="g2" offset="1" stop-color="#061727"/>
+    <linearGradient id="pf-navy" x1="0" y1="0" x2="0.9" y2="1">
+      <stop class="n1" offset="0" stop-color="#0b2942"/>
+      <stop class="n2" offset="0.55" stop-color="#071c2f"/>
+      <stop class="n3" offset="1" stop-color="#041523"/>
+    </linearGradient>
+    <linearGradient id="pf-orange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff7a00"/>
+      <stop offset="1" stop-color="#ff5900"/>
     </linearGradient>
   </defs>
 
-  <!-- spark -->
-  <g fill="#ff6800">
-    <path d="M221 320 L230 397 L214 421 Z"/>
-    <path d="M181 371 L210 415 L196 421 Z"/>
-    <path d="M258 371 L235 418 L248 412 Z"/>
-    <path d="M172 400 L201 421 L190 425 Z"/>
-    <path d="M274 393 L248 417 L258 419 Z"/>
-    <path d="M181 418 L204 431 L188 429 Z"/>
-    <path d="M261 418 L237 431 L251 430 Z"/>
+  <!-- Forging sparks -->
+  <g fill="url(#pf-orange)">
+    <path d="M276 376 L286 463 L276 508 L266 463 Z"/>
+    <path d="M226 441 L263 501 L244 489 Z"/>
+    <path d="M326 441 L289 501 L308 489 Z"/>
+    <path d="M214 477 L248 505 L226 498 Z"/>
+    <path d="M338 477 L304 505 L326 498 Z"/>
+    <path d="M218 507 L249 517 L232 520 Z"/>
+    <path d="M334 507 L303 517 L320 520 Z"/>
   </g>
 
-  <!-- anvil -->
-  <path fill="url(#pf-navy)" d="     M28 449     C55 449 89 450 142 450     L142 437     L365 437     L365 462     C333 467 305 481 290 501     C275 520 277 549 290 573     C297 585 305 593 316 597     L325 597     L325 617     L133 617     L133 597     L147 597     C160 585 171 565 174 546     C177 527 170 513 157 503     C145 494 128 489 108 486     C78 481 49 467 28 449 Z"/>
+  <!-- Anvil mark, constructed from original paths rather than a raster trace -->
+  <g>
+    <path fill="url(#pf-navy)" d="
+      M32 541
+      C72 541 118 542 177 541
+      L177 526
+      H455
+      V559
+      C415 564 386 581 371 607
+      C349 645 359 691 401 728
+      H414
+      V753
+      H164
+      V728
+      H181
+      C205 708 218 682 214 657
+      C211 636 198 621 175 614
+      C116 603 70 582 32 541 Z"/>
+
+  </g>
 </svg>
