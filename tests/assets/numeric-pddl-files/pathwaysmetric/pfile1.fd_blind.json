@@ -11,19 +11,11 @@
   "source_domain": "/home/markus/data/ipc2023/pathwaysmetric/domain.pddl",
   "source_problem": "/home/markus/data/ipc2023/pathwaysmetric/pfile1.pddl",
   "stats": {
-    "dead_ends": 0,
-    "evaluated": 17459,
-    "evaluations": 17459,
-    "expanded": 11302,
-    "generated": 69368,
+    "solution_found": true,
     "plan_cost": 12.0,
-    "plan_length": 12,
-    "registered_states": 17459,
-    "reopened": 0,
-    "search_time_line": "Search time: 0.059651s",
-    "search_time_s": 0.059651,
-    "solution_found": true
+    "plan_length": 12
   },
   "timed_out": false,
-  "wall_time_s": 0.1885770670050988
+  "wall_time_s": 0.1885770670050988,
+  "note": "plan_cost and plan_length are a reference optimum. Search counters were removed: they came from a different planner and never matched ours, and nothing read them."
 }

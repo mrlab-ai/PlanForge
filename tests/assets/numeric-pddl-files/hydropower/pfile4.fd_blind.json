@@ -11,19 +11,11 @@
   "source_domain": "/home/markus/data/ipc2023/hydropower/domain.pddl",
   "source_problem": "/home/markus/data/ipc2023/hydropower/pfile4.pddl",
   "stats": {
-    "dead_ends": 0,
-    "evaluated": 21230,
-    "evaluations": 21230,
-    "expanded": 19851,
-    "generated": 39700,
+    "solution_found": true,
     "plan_cost": 35.0,
-    "plan_length": 35,
-    "registered_states": 21230,
-    "reopened": 0,
-    "search_time_line": "Search time: 0.045279s",
-    "search_time_s": 0.045279,
-    "solution_found": true
+    "plan_length": 35
   },
   "timed_out": false,
-  "wall_time_s": 0.058201898995321244
+  "wall_time_s": 0.058201898995321244,
+  "note": "plan_cost and plan_length are a reference optimum. Search counters were removed: they came from a different planner and never matched ours, and nothing read them."
 }

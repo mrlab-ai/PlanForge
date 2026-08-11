@@ -11,19 +11,11 @@
   "source_domain": "/home/markus/data/ipc2023/drone/domain.pddl",
   "source_problem": "/home/markus/data/ipc2023/drone/pfile2.pddl",
   "stats": {
-    "dead_ends": 0,
-    "evaluated": 1586,
-    "evaluations": 1586,
-    "expanded": 1166,
-    "generated": 4660,
+    "solution_found": true,
     "plan_cost": 10.0,
-    "plan_length": 10,
-    "registered_states": 1586,
-    "reopened": 0,
-    "search_time_line": "Search time: 0.002337s",
-    "search_time_s": 0.002337,
-    "solution_found": true
+    "plan_length": 10
   },
   "timed_out": false,
-  "wall_time_s": 0.008831079001538455
+  "wall_time_s": 0.008831079001538455,
+  "note": "plan_cost and plan_length are a reference optimum. Search counters were removed: they came from a different planner and never matched ours, and nothing read them."
 }

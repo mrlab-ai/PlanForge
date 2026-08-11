@@ -11,19 +11,11 @@
   "source_domain": "/home/markus/data/ipc2026/onlycraft-opt/domain.pddl",
   "source_problem": "/home/markus/data/ipc2026/onlycraft-opt/P01_opt.pddl",
   "stats": {
-    "dead_ends": 0,
-    "evaluated": 624,
-    "evaluations": 624,
-    "expanded": 261,
-    "generated": 1632,
+    "solution_found": true,
     "plan_cost": 5.0,
-    "plan_length": 5,
-    "registered_states": 624,
-    "reopened": 0,
-    "search_time_line": "Search time: 0.000846s",
-    "search_time_s": 0.000846,
-    "solution_found": true
+    "plan_length": 5
   },
   "timed_out": false,
-  "wall_time_s": 0.007069771003443748
+  "wall_time_s": 0.007069771003443748,
+  "note": "plan_cost and plan_length are a reference optimum. Search counters were removed: they came from a different planner and never matched ours, and nothing read them."
 }
