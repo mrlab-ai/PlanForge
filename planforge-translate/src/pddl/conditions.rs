@@ -416,6 +416,20 @@ impl Condition {
         matches!(self, Condition::Atom(_) | Condition::NegatedAtom(_))
     }
 
+    /// Whether the SAS+ encoding expresses this condition as a single fact.
+    ///
+    /// A propositional literal names one value of the variable its atom belongs
+    /// to; a numeric comparison gets a *condition variable* of its own, whose
+    /// truth the comparison axioms compute. Both are one `(variable, value)`
+    /// pair, so both can appear anywhere the encoding takes a conjunction of
+    /// facts — a precondition, an axiom body, or the goal.
+    ///
+    /// Everything else — a disjunction, a quantifier, a nested conjunction — has
+    /// no single fact standing for it and has to be compiled away first.
+    pub fn is_single_fact(&self) -> bool {
+        self.is_literal() || self.as_comparison().is_some()
+    }
+
     /// Check if this condition is negated (NegatedAtom or NegatedFunctionComparison)
     pub fn is_negated(&self) -> bool {
         matches!(

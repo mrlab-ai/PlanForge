@@ -1451,10 +1451,17 @@ pub fn translate_task_from_grounded_internal(
         other => vec![other.clone()],
     };
 
+    // `substitute_complicated_goal` has left a conjunction of facts, so every
+    // conjunct is a propositional literal or a numeric comparison. Only a
+    // negative literal needs anything here: its atom must keep a variable with a
+    // value standing for "absent", which is what `compute_groups` uses this set
+    // for. A comparison already has a two-valued variable of its own.
     let mut negative_in_goal: HashSet<Atom> = HashSet::new();
     for item in &goal_list {
         match item {
-            Condition::Atom(_) => {}
+            Condition::Atom(_)
+            | Condition::FunctionComparison(_)
+            | Condition::NegatedFunctionComparison(_) => {}
             Condition::NegatedAtom(negated) => {
                 negative_in_goal.insert(Atom::new(negated.predicate.clone(), negated.args.clone()));
             }

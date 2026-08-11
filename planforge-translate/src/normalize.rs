@@ -154,14 +154,25 @@ fn remove_universal(condition: &Condition) -> Condition {
     condition.with_parts(vec![remove_universal(&body)])
 }
 
+/// Hides a goal the SAS+ encoding cannot express behind a derived predicate.
+///
+/// The encoding takes a conjunction of facts, so a goal whose conjuncts are each
+/// [`Condition::is_single_fact`] is emitted as it stands. A numeric comparison is
+/// one of those: it gets a condition variable of its own, exactly as it does in a
+/// precondition, and the goal names that variable directly. Only a genuinely
+/// non-conjunctive goal — disjunctive, quantified, nested — becomes an axiom, and
+/// then the goal is the derived atom the axiom proves.
+///
+/// That last case is the expensive one for the search: no operator writes a
+/// derived variable, so a heuristic that reasons about how the goal is reached
+/// has to look through the axiom to its body. Keeping numeric comparisons out of
+/// it is therefore not just cosmetic — a numeric goal is the common case here.
 fn substitute_complicated_goal(task: &mut Task) {
     let goal = &task.goal;
-    // If goal is not a simple conjunction of literals, create an axiom
     let needs_substitution = match goal {
-        Condition::Conjunction(conj) => conj.parts.iter().any(|p| !p.is_literal()),
-        Condition::Atom(_) | Condition::NegatedAtom(_) => false,
+        Condition::Conjunction(conj) => conj.parts.iter().any(|p| !p.is_single_fact()),
         Condition::Truth => false,
-        _ => true,
+        other => !other.is_single_fact(),
     };
 
     if needs_substitution {

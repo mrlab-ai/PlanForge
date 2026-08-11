@@ -74,6 +74,27 @@ const WITH_REPEATED_NUMERIC_EFFECT_TARGET: &[&str] = &["mprime"];
 /// a hand-written fixture for that path.
 const WITH_CONDITIONAL_NUMERIC_EFFECT: &[&str] = &[];
 
+/// Benchmarks whose goal contains a numeric comparison, and how many.
+///
+/// Each comparison is one *condition* goal fact, naming the variable whose truth
+/// the comparison axioms compute. The count is pinned rather than just the set
+/// because a goal of several comparisons is where the encoding used to lose the
+/// most: the whole goal, propositional conjuncts included, went behind one
+/// `@goal-reachable` axiom. Drone is the witness — four propositional goals and
+/// three comparisons, once a single derived fact.
+const NUMERIC_GOAL_COMPARISONS: &[(&str, usize)] = &[
+    ("counters-sym", 1),
+    ("drone", 3),
+    ("farmland", 3),
+    ("farmland2", 3),
+    ("fn-counters-small_instances", 1),
+    ("forestfire", 1),
+    ("hydropower", 1),
+    ("onlycraft-opt", 1),
+    ("pathwaysmetric", 1),
+    ("plant-watering", 2),
+];
+
 fn benchmarks_root() -> PathBuf {
     corpus::assets().join("numeric-pddl-files")
 }
@@ -526,6 +547,54 @@ fn numeric_effect_shapes_are_pinned_per_benchmark() {
         "benchmarks with a conditional numeric effect",
         &with_conditional,
         WITH_CONDITIONAL_NUMERIC_EFFECT,
+    );
+}
+
+/// No benchmark goal is hidden behind an axiom, and the comparisons in the ones
+/// that have numeric goals are pinned per benchmark.
+///
+/// The two halves are one test because they are one property. A numeric goal used
+/// to be compiled into a `@goal-reachable` derived predicate, which made every
+/// such benchmark's goal a single axiom-derived fact: the comparison count would
+/// have been zero and the derived count one. Checking only the first half would
+/// pass on a task with no numeric goal at all.
+#[test]
+fn benchmark_goals_are_conjunctions_of_facts() {
+    let mut with_comparisons: Vec<(String, usize)> = Vec::new();
+
+    for (name, _, task) in translated_benchmarks() {
+        let mut comparisons = 0;
+        for index in 0..task.get_num_goals() {
+            let fact = task.get_goal_fact(index);
+            if fact.is_condition() {
+                comparisons += 1;
+                continue;
+            }
+            assert!(
+                task.variables()[fact.var()].axiom_layer().is_none(),
+                "{name}: goal fact {fact:?} names the derived variable {:?}; a numeric goal \
+                 belongs on its own condition variable, not behind an axiom",
+                task.get_variable_name(fact.var())
+            );
+        }
+        if comparisons > 0 {
+            with_comparisons.push((name.to_string(), comparisons));
+        }
+    }
+
+    let discovered: Vec<String> = with_comparisons
+        .iter()
+        .map(|(name, count)| format!("{name}={count}"))
+        .collect();
+    let pinned: Vec<String> = NUMERIC_GOAL_COMPARISONS
+        .iter()
+        .filter(|(name, _)| !TOO_SLOW_TO_TRANSLATE_IN_TEST_BUILDS.contains(name))
+        .map(|(name, count)| format!("{name}={count}"))
+        .collect();
+    assert_fixture_set_is_pinned(
+        "benchmarks with a numeric goal",
+        &discovered,
+        &pinned.iter().map(String::as_str).collect::<Vec<_>>(),
     );
 }
 
