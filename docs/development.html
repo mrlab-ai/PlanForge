@@ -3,143 +3,159 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Development — PlanForge</title>
-<meta name="description" content="How PlanForge is built and verified: the workspace crates, the test suite that pins every fixture's optimal plan cost, the six CI jobs, and the tiered local verification gate.">
+<title>Development - PlanForge</title>
+<meta name="description" content="How PlanForge is built and checked: the workspace crates, the test suite that pins every fixture's cheapest plan cost, the six continuous integration jobs, and the local check script.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
-<div class="wrap">
 
-<header class="site">
-  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
-  <p class="tagline">A grounded numeric planner written in Rust.</p>
-  <nav class="site" aria-label="Sections">
+<header>
+  <p class="site"><a href="index.html">PlanForge</a></p>
+  <nav aria-label="Site">
     <ul>
-      <li><a href="index.html">Overview</a></li>
-      <li><a href="search.html">Search configurations</a></li>
-      <li><a href="pddl.html">Supported PDDL</a></li>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="search.html">Search options</a></li>
+      <li><a href="pddl.html">PDDL support</a></li>
       <li><a href="development.html" aria-current="page">Development</a></li>
-      <li><a href="about.html">Credits &amp; licence</a></li>
+      <li><a href="about.html">Credits and licence</a></li>
     </ul>
   </nav>
-  <p class="source-line"><span class="label">Source:</span>
-    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
-    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
 </header>
 
 <main id="main">
 
 <h1>Development</h1>
 
-<p class="lead">PlanForge is a Cargo workspace of small crates on stable Rust.
-There is no build system beyond Cargo, no code generation step and no vendored
-C++. Everything below runs from a clone.</p>
+<p>PlanForge is a Cargo workspace of small crates on stable Rust. There is no
+build system beyond Cargo, no code generation step and no vendored C++.</p>
+
+<p>Everything on this page runs from a fresh clone.</p>
 
 <h2 id="building">Building</h2>
 
-<pre><code>cargo build --release            # both binaries
-cargo build --release --bin planforge</code></pre>
+<pre><code>cargo build --release                    # both binaries
+cargo build --release --bin planforge    # just the planner</code></pre>
 
-<p>The release profile uses link-time optimisation and a single codegen unit, so
-a full optimised build is around a minute of compiling rather than seconds. A
-second profile, <code>experiment</code>, keeps the optimiser but drops LTO for
-the cases where you are relinking after every one-line change.</p>
+<p>The release profile turns on link-time optimisation and uses a single codegen
+unit. A full optimised build is therefore about a minute of compiling rather than
+a few seconds.</p>
+
+<p>There is a second profile called <code>experiment</code>. It keeps the
+optimiser but drops link-time optimisation, which matters when you are relinking
+after every one-line change.</p>
+
+<pre><code>cargo build --profile experiment</code></pre>
 
 <h2 id="layout">Workspace layout</h2>
 
 <dl>
   <dt><code>planforge</code></dt>
-  <dd>Both binaries — the planner and the translate-only staging tool — plus the
-    command line, the reporting allocator, the resource limits, the portfolio and
-    the plan output. This is the only crate that knows about processes and
-    files.</dd>
+  <dd>Both binaries, plus the command line, the reporting allocator, the resource
+    limits, the portfolio and the plan output. This is the only crate that knows
+    about processes and files.</dd>
 
   <dt><code>planforge-searcher</code></dt>
-  <dd>The <code>--search</code> grammar: which engine, with which heuristics.
+  <dd>The <code>--search</code> grammar. Which algorithm, with which heuristics.
     Only the shape of a configuration lives here, which is why adding a heuristic
     never touches this crate.</dd>
 
   <dt><code>planforge-search</code></dt>
-  <dd>The search engines, the heuristics and the abstractions. Adding a heuristic
-    is a change to this crate alone: its own module, and one arm of
-    <code>heuristic_factory::build_heuristic_from_spec</code>.</dd>
+  <dd>The search algorithms, the heuristics and the abstractions. This is where
+    almost all of the planner is.</dd>
 
   <dt><code>planforge-translate</code></dt>
-  <dd>The PDDL reader, grounder, invariant analysis and SAS+ writer.</dd>
+  <dd>The PDDL reader, the grounder, the invariant analysis and the
+    SAS<sup>+</sup> writer.</dd>
 
   <dt><code>planforge-sas</code></dt>
   <dd>The task representation and the state registry that everything else is
     written against.</dd>
 
   <dt><code>planforge-config-derive</code></dt>
-  <dd>The <code>ApplyOptions</code> derive macro. It is separate because a
-    procedural macro has to be its own compilation unit, and it serves over a
-    hundred <code>--search</code> options, deriving each configuration's
-    positional-argument order from its field order.</dd>
+  <dd>The derive macro that turns a configuration struct into an option parser. It
+    is a separate crate because a procedural macro has to be its own compilation
+    unit. It serves over a hundred <code>--search</code> options, and it takes
+    each option's positional order from the order of the struct fields.</dd>
 
   <dt><code>planforge-cplex</code></dt>
-  <dd>A small checked wrapper over the native CPLEX C API and its sparse LP
-    model. Optional; see the
-    <a href="search.html#features"><code>cplex</code> feature</a>.</dd>
+  <dd>A checked wrapper over the native CPLEX interface and its sparse linear
+    program. Optional. See the
+    <a href="search.html#feature-cplex"><code>cplex</code> feature</a>.</dd>
 
   <dt><code>planforge-sgd</code></dt>
-  <dd>The gradient plan-synthesis engine and its transcription. Optional; see the
-    <a href="search.html#features"><code>sgd</code> feature</a>.</dd>
+  <dd>The gradient plan-synthesis engine and its transcription of a task.
+    Optional. See the
+    <a href="search.html#feature-sgd"><code>sgd</code> feature</a>.</dd>
 
   <dt><code>planforge-py</code></dt>
   <dd>Python bindings.</dd>
 
   <dt><code>tests</code></dt>
   <dd>The integration test suite, described below.</dd>
+
+  <dt><code>tutorials/rust-goal-count</code></dt>
+  <dd>A worked example of writing a heuristic against the crates above.</dd>
 </dl>
+
+<p>Adding a heuristic is a change to one crate. You add a module under
+<code>planforge-search/src/evaluation/</code> and one arm to
+<code>build_heuristic_from_spec</code> in
+<code>planforge-search/src/heuristic_factory.rs</code>. The
+<code>--search</code> parser does not need to learn the name, and neither does
+the command line.</p>
 
 <h2 id="tests">Tests</h2>
 
 <pre><code>cargo test --workspace --exclude planforge-cplex</code></pre>
 
 <p><code>planforge-cplex</code> is excluded because it links against a
-proprietary CPLEX installation that is not present on a normal machine or in
-CI.</p>
+proprietary CPLEX installation, which is not present on a normal machine or in
+continuous integration.</p>
 
 <p>The correctness gate is not a set of smoke tests. The <code>tests</code> crate
-pins the known optimal plan cost and plan length of every fixture under
-<code>tests/assets/</code>, and the tables of expected values are compared
-set-wise against the fixtures actually on disk. So a planner regression changes a
-plan cost and the suite fails, and adding a fixture without pinning its optimum
-also fails — you cannot quietly widen the corpus without stating what the right
-answer is. Alongside that, the suite covers translator output, preprocessor
-invariants, state-registry deduplication and heuristic admissibility.</p>
+pins the cheapest plan cost and the plan length of every fixture under
+<code>tests/assets/</code>.</p>
+
+<p>The tables of expected values are compared against the fixtures actually on
+disk, as sets. That has two consequences. A planner regression that changes a
+plan cost fails the suite. Adding a fixture without pinning its cost also fails
+the suite, so the corpus cannot be widened without saying what the right answer
+is.</p>
+
+<p>Beyond plan costs, the suite covers translator output, preprocessor
+invariants, deduplication in the state registry, and heuristic admissibility.</p>
 
 <h2 id="ci">Continuous integration</h2>
 
 <p>One workflow,
 <a href="https://github.com/mrlab-ai/PlanForge/blob/main/.github/workflows/ci.yml"><code>.github/workflows/ci.yml</code></a>,
 runs on every push to <code>main</code> and <code>dev</code> and on every pull
-request, with warnings promoted to errors. Six jobs:</p>
+request. Warnings are promoted to errors.</p>
 
 <div class="scroll">
 <table>
+  <caption>The six jobs.</caption>
   <thead>
     <tr><th scope="col">Job</th><th scope="col">What it enforces</th></tr>
   </thead>
   <tbody>
     <tr><td>rustfmt</td><td><code>cargo fmt --all --check</code>. Formatting is not a review topic.</td></tr>
-    <tr><td>clippy</td><td>The whole workspace, all targets, no warnings. The backlog was cleared to zero without adding suppressions to get there, so the job means "no new lints".</td></tr>
+    <tr><td>clippy</td><td>The whole workspace, all targets, no warnings. The backlog was cleared to zero without adding suppressions, so this job means "no new lints".</td></tr>
     <tr><td>test</td><td>The suite above, in a debug build.</td></tr>
-    <tr><td>release tests</td><td>The optimised-only cases, which are the few instances whose search is minutes unoptimised and seconds optimised.</td></tr>
-    <tr><td>optional features</td><td>Compiles and tests the <code>sgd</code> feature. Nothing else in CI would build it, so without this job the optional code would rot unnoticed.</td></tr>
-    <tr><td>default build excludes optional backends</td><td>Inspects the dependency graph to prove a default build does not compile the autograd backend. The manifest is not accepted as evidence, because the dependency appears in <code>Cargo.lock</code> either way; only the build graph settles it.</td></tr>
+    <tr><td>release tests</td><td>The cases that only make sense optimised. These are the instances whose search takes minutes unoptimised and seconds optimised.</td></tr>
+    <tr><td>optional features</td><td>Compiles and tests the <code>sgd</code> feature. Nothing else in continuous integration would build it, so without this job the optional code would rot unnoticed.</td></tr>
+    <tr><td>default build excludes optional backends</td><td>Inspects the build graph to prove that a default build does not compile the automatic differentiation backend. The manifest is not accepted as evidence, because the dependency appears in <code>Cargo.lock</code> either way. Only the build graph settles it.</td></tr>
   </tbody>
 </table>
 </div>
 
-<h2 id="gate">The local verification gate</h2>
+<h2 id="gate">The local check script</h2>
 
 <p><a href="https://github.com/mrlab-ai/PlanForge/blob/main/tools/gate.sh"><code>tools/gate.sh</code></a>
-is the pre-commit counterpart. It is tiered because the checks answer different
-questions and the expensive ones are wasted on changes that cannot possibly
-alter behaviour:</p>
+is the counterpart to run before you commit. It has tiers, because the checks
+answer different questions and the expensive ones are wasted on a change that
+cannot alter behaviour.</p>
 
 <pre><code>tools/gate.sh fast [crate...]   # does the crate I touched still work?
 tools/gate.sh semantic          # did plan costs or expansion counts move?
@@ -147,59 +163,61 @@ tools/gate.sh full              # the same, across the whole benchmark set
 tools/gate.sh timing "astar(lmcutnumeric())"
 tools/gate.sh all</code></pre>
 
-<p>Two things about it are worth knowing, because both were learned the hard
-way.</p>
+<p>Two things about it are worth knowing. Both were learned the hard way.</p>
 
-<p>First, <code>semantic</code> and <code>full</code> compare plan costs and
-expansion counts against a saved baseline binary and deliberately ignore the
-clock. Costs and expansions are semantics: an optimisation level cannot change
-them, and identical counts are therefore a real gate where a timing comparison is
-noise.</p>
+<h3 id="gate-semantics">Costs and expansions are the real gate</h3>
 
-<p>Second, <code>timing</code> defaults to the default search configuration,
-<code>astar(blind())</code> — which touches no heuristic code at all. If your
-change is in a heuristic, an abstraction, LM-cut or the numeric bounds, that tier
-exercises none of it and any difference it shows is machine drift. Pass a
-configuration that reaches your change. The script prints a warning when the
-configuration contains <code>blind</code>, and it interleaves the two binaries in
-ABBA order so that drift cancels rather than being reported as a speed-up.</p>
+<p><code>semantic</code> and <code>full</code> compare plan costs and expansion
+counts against a saved baseline binary, and they ignore the clock on purpose.</p>
+
+<p>A cost and an expansion count are semantics. No optimisation level can change
+them. So identical counts are real evidence, where a timing comparison on the
+same data would be noise.</p>
+
+<h3 id="gate-timing">The timing tier needs a configuration that reaches your change</h3>
+
+<p><code>timing</code> defaults to the default search configuration, which is
+<code>astar(blind())</code>. That configuration touches no heuristic code at
+all.</p>
+
+<p>So if your change is in a heuristic, an abstraction, LM-cut or the numeric
+bounds, the default tier exercises none of it, and any difference it reports is
+machine drift. Pass a configuration that reaches your change.</p>
+
+<p>The script prints a warning when the configuration contains
+<code>blind</code>. It also interleaves the two binaries in ABBA order, so that
+drift cancels out instead of being reported as a speed-up.</p>
 
 <h2 id="contributing">Contributing</h2>
 
 <p>Bug reports and patches are welcome through the
-<a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a> and pull
-requests on <a href="https://github.com/mrlab-ai/PlanForge">GitHub</a>. Two
-conventions worth knowing before you start:</p>
+<a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a> and as
+pull requests on
+<a href="https://github.com/mrlab-ai/PlanForge">GitHub</a>.</p>
 
-<ul>
-  <li><strong>A new heuristic is a local change.</strong> Add a module under
-    <code>planforge-search/src/evaluation/</code> and one arm to
-    <code>build_heuristic_from_spec</code>. The <code>--search</code> parser does
-    not need to learn the name, and neither does the command line.</li>
-  <li><strong>Impossible states fail fast.</strong> The codebase prefers an
-    assertion, a panic or a typed error over a conservative fallback. Validate
-    external input and return a clear error; for a violated internal invariant,
-    stop. Substituting a default for a missing value, or skipping data that does
-    not parse, is the pattern most likely to be sent back in review.</li>
-</ul>
+<p>One convention is worth knowing before you start. <strong>An impossible state
+fails fast.</strong> The codebase prefers an assertion, a panic or a typed error
+over a conservative fallback.</p>
+
+<p>Validate external input and return a clear error for it. For a violated
+internal invariant, stop. Substituting a default for a missing value, or skipping
+data that does not parse, is the pattern most likely to be sent back in
+review.</p>
 
 </main>
 
-<footer class="site">
-  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
-    source is at
+<footer>
+  <p>Source:
     <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
-    Questions and bug reports belong in the
-    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
-  <p>The planner's library crates are licensed under the
-    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
-    binary crates under the
-    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
-    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
-    detail. The text of this website is available under
+    Developed by <a href="https://mrlab.ai">MRlab</a>, Linköping University.</p>
+  <p>The library crates are under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and the
+    binaries under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>. See
+    <a href="about.html#licence">Credits and licence</a>. The text of this site
+    is under
     <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
 </footer>
 
-</div>
 </body>
 </html>

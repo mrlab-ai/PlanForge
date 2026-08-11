@@ -3,131 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Credits &amp; licence — PlanForge</title>
-<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of Numeric Fast Downward, itself a fork of Fast Downward, the people and publications behind both, the references the implementation follows, and the licence terms for the code and for this website.">
+<title>Credits and licence - PlanForge</title>
+<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of Numeric Fast Downward, itself a fork of Fast Downward, the people and publications behind both, and the licence terms for the code and for this website.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
-<div class="wrap">
 
-<header class="site">
-  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
-  <p class="tagline">A grounded numeric planner written in Rust.</p>
-  <nav class="site" aria-label="Sections">
+<header>
+  <p class="site"><a href="index.html">PlanForge</a></p>
+  <nav aria-label="Site">
     <ul>
-      <li><a href="index.html">Overview</a></li>
-      <li><a href="search.html">Search configurations</a></li>
-      <li><a href="pddl.html">Supported PDDL</a></li>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="search.html">Search options</a></li>
+      <li><a href="pddl.html">PDDL support</a></li>
       <li><a href="development.html">Development</a></li>
-      <li><a href="about.html" aria-current="page">Credits &amp; licence</a></li>
+      <li><a href="about.html" aria-current="page">Credits and licence</a></li>
     </ul>
   </nav>
-  <p class="source-line"><span class="label">Source:</span>
-    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
-    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
 </header>
 
 <main id="main">
 
-<h1>Credits &amp; licence</h1>
+<h1>Credits and licence</h1>
 
 <h2 id="lineage">Where PlanForge comes from</h2>
 
 <p>PlanForge began as a Rust port of
 <a href="https://github.com/dgnad/numeric-fast-downward">Numeric Fast
-Downward</a>, which is itself a fork of
-<a href="https://www.fast-downward.org/">Fast Downward</a>. The
-line of descent runs in that order, and naming only the last link would
-misdescribe it:</p>
+Downward</a>. Numeric Fast Downward is itself a fork of
+<a href="https://www.fast-downward.org/">Fast Downward</a>.</p>
 
-<p class="fragment"><strong>PlanForge</strong> &larr; <strong>Numeric Fast
-Downward</strong> &larr; <strong>Fast Downward</strong></p>
+<p>So the line of descent has three links, in that order. Naming only the last of
+them would misdescribe it.</p>
 
-<p>The middle link is the one that matters most here. Mainline Fast Downward has
-no numeric support at all: numeric fluents, numeric conditions, comparison
-axioms and the numeric heuristics that this planner is mostly made of come from
-Numeric Fast Downward, not from mainline. So Numeric Fast Downward is the direct
-predecessor, and mainline is its ancestor rather than ours.</p>
+<p>The middle link is the one that matters most. Mainline Fast Downward has no
+numeric support at all. Numeric fluents, numeric conditions, comparison axioms
+and the numeric heuristics that most of this planner is made of come from Numeric
+Fast Downward. Numeric Fast Downward is the direct predecessor, and mainline is
+its ancestor rather than ours.</p>
 
-<p>What the port kept is more than an idea. The task representation, the SAS+
-translation pipeline, the shape of the statistics block the planner prints, and
-several of the numeric heuristics follow the predecessor closely, and the code
-says so where it matters: numeric LM-cut, the numeric bounds, the successor
-generator and the abstraction machinery carry explicit
-<code>PARITY(numeric-fd)</code> comments marking the places where the Rust
+<p>The port kept more than an idea. The task representation, the SAS<sup>+</sup>
+translation pipeline, the shape of the statistics block, and several of the
+numeric heuristics follow the predecessor closely.</p>
+
+<p>The code says so where it matters. Numeric LM-cut, the numeric bounds, the
+successor generator and the abstraction machinery carry explicit
+<code>PARITY(numeric-fd)</code> comments. Each one marks a place where the Rust
 behaviour is deliberately identical to the reference implementation, quirks
-included, so that a difference in a plan cost can be attributed rather than
-guessed at. Where the two implementations do disagree, the disagreement is
-treated as a bug in one of them and tracked, not quietly normalised away.</p>
+included. The point of those markers is that a difference in a plan cost can then
+be attributed rather than guessed at.</p>
 
-<h3 id="nfd">Numeric Fast Downward</h3>
+<p>Where the two implementations do disagree, the disagreement is treated as a bug
+in one of them and tracked. It is not quietly normalised away.</p>
+
+<h2 id="nfd">Numeric Fast Downward</h2>
 
 <p>Numeric Fast Downward is published at
-<a href="https://github.com/dgnad/numeric-fast-downward">github.com/dgnad/numeric-fast-downward</a>,
-and an earlier public tree of the same project is at
-<a href="https://github.com/Kurorororo/numeric-fast-downward">github.com/Kurorororo/numeric-fast-downward</a>;
-both are under the GNU GPL v3. The particular working tree PlanForge was ported
-from is a private repository, so it is not linked here — at the file the port
-follows most closely, it is identical to the second of those two.</p>
+<a href="https://github.com/dgnad/numeric-fast-downward">github.com/dgnad/numeric-fast-downward</a>.
+An earlier public tree of the same project is at
+<a href="https://github.com/Kurorororo/numeric-fast-downward">github.com/Kurorororo/numeric-fast-downward</a>.
+Both are under the GNU GPL v3.</p>
 
-<p>Its history begins with an initial commit by <strong>Chiara Piacentini</strong> in
-September 2020 and continues to the end of 2024; by commit count the bulk of the
-work in that tree is by <strong>Ryo Kuroiwa</strong> and
-<strong>Daniel Gnad</strong>, with further contributions from
-<strong>Eyal Weiss</strong> and <strong>Misha Gruntov</strong>. That history is
-squashed, so it records who worked on the tree but not the full authorship of
-what came before it; the credit above should be read as "these are the people the
-repository names", not as a complete author list for numeric Fast Downward as a
-body of work.</p>
+<p>The particular working tree PlanForge was ported from is a private repository,
+so it is not linked here. At the file the port follows most closely, it is
+identical to the second of the two above.</p>
 
-<p>Its numeric heuristics implement published results. These are the references
-carried in Numeric Fast Downward's own plugin documentation — that is, the papers
-the predecessor's code cites for itself, transcribed rather than inferred:</p>
+<p>Its history begins with an initial commit by <strong>Chiara
+Piacentini</strong> in September 2020 and runs to the end of 2024. By commit
+count the bulk of the work in that tree is by <strong>Ryo Kuroiwa</strong> and
+<strong>Daniel Gnad</strong>, with further contributions from <strong>Eyal
+Weiss</strong> and <strong>Misha Gruntov</strong>.</p>
+
+<p>That history is squashed. It records who worked on the tree, but not the full
+authorship of what came before it. So the credit above should be read as the
+people the repository names, not as a complete author list for numeric Fast
+Downward as a body of work.</p>
+
+<h3 id="nfd-references">Published work behind the numeric heuristics</h3>
+
+<p>These are the references carried in Numeric Fast Downward's own plugin
+documentation. They are the papers the predecessor's code cites for itself,
+transcribed rather than inferred.</p>
 
 <ul>
-  <li>C. Piacentini, M. P. Castro, A. A. Ciré and J. C. Beck, “Linear and
-    Integer Programming-Based Heuristics for Cost-Optimal Numeric Planning”,
-    <em>AAAI</em>, 2018, pp. 6254–6261.</li>
-  <li>C. Piacentini, M. P. Castro, A. A. Ciré and J. C. Beck, “Compiling Optimal
-    Numeric Planning to Mixed Integer Linear Programming”, <em>ICAPS</em>, 2018,
-    pp. 383–387.</li>
-  <li>E. Scala, P. Haslum, D. Magazzeni and S. Thiébaux, “Landmarks for Numeric
-    Planning Problems”, <em>IJCAI</em>, 2017.</li>
-  <li>E. Scala, P. Haslum, S. Thiébaux and M. Ramirez, “Subgoaling Techniques for
-    Satisficing and Optimal Numeric Planning”, <em>Journal of Artificial
-    Intelligence Research</em> 68, 2020, pp. 691–752.</li>
+  <li>C. Piacentini, M. P. Castro, A. A. Ciré and J. C. Beck, "Linear and
+    Integer Programming-Based Heuristics for Cost-Optimal Numeric Planning",
+    <em>AAAI</em>, 2018, pp. 6254-6261.</li>
+  <li>C. Piacentini, M. P. Castro, A. A. Ciré and J. C. Beck, "Compiling Optimal
+    Numeric Planning to Mixed Integer Linear Programming", <em>ICAPS</em>, 2018,
+    pp. 383-387.</li>
+  <li>E. Scala, P. Haslum, D. Magazzeni and S. Thiébaux, "Landmarks for Numeric
+    Planning Problems", <em>IJCAI</em>, 2017.</li>
+  <li>E. Scala, P. Haslum, S. Thiébaux and M. Ramirez, "Subgoaling Techniques for
+    Satisficing and Optimal Numeric Planning", <em>Journal of Artificial
+    Intelligence Research</em> 68, 2020, pp. 691-752.</li>
 </ul>
 
-<p class="note">Not every one of these corresponds to something PlanForge
-implements — the mixed-integer-programming compilations in particular have no
-counterpart here. They are listed because they are the numeric-planning results
-the predecessor is built on, and the port inherits its design from that work.
-Numeric Fast Downward's own source does not name a publication for its numeric
-LM-cut, which is the heuristic PlanForge follows most closely, so no citation is
-offered for it here rather than a guessed one.</p>
+<p>Not every one of these corresponds to something PlanForge implements. The
+mixed-integer programming compilations in particular have no counterpart here.
+They are listed because they are the numeric planning results the predecessor is
+built on, and the port inherits its design from that work.</p>
 
-<h3 id="mainline">What came from current mainline Fast Downward</h3>
+<p>Numeric Fast Downward's own source does not name a publication for its numeric
+LM-cut, which is the heuristic PlanForge follows most closely. So no citation is
+offered for it here, rather than a guessed one.</p>
+
+<h2 id="mainline">What came from current mainline Fast Downward</h2>
 
 <p>The translator is not a port of the fork's 2015-era translator. Where mainline
 Fast Downward has since changed how translation works, PlanForge follows the
-current design, and the source cites the mainline issues it is matching:
-<code>issue453</code> and <code>issue454</code> for axiom handling — every axiom
-proves its head, and default-value axioms move into the SAS task — and
-<code>issue879</code> for keeping invariant-candidate order deterministic so that
-the SAS variables do not depend on the run. The strongly-connected-component
-analysis is Tarjan's algorithm written iteratively, for the same reason mainline
-made that change: recursion depth on large tasks. This is why the translator
-resembles current Fast Downward more than it resembles the fork it descends
-from.</p>
+current design.</p>
+
+<p>The source cites the mainline issues it is matching. <code>issue453</code> and
+<code>issue454</code> are for axiom handling, where every axiom proves its head
+and default-value axioms move into the SAS task. <code>issue879</code> is for
+keeping the order of invariant candidates deterministic, so that the SAS variables
+do not depend on the run.</p>
+
+<p>The strongly-connected-component analysis is Tarjan's algorithm written
+iteratively, for the same reason mainline made that change: recursion depth on
+large tasks.</p>
+
+<p>This is why the translator resembles current Fast Downward more than it
+resembles the fork it descends from.</p>
 
 <p>What the port changed is the whole of the implementation. There is no C++ and
-no Python in the pipeline: the PDDL reader, the grounder, the invariant analysis,
-the search engines, the abstractions and the state registry are Rust, and several
-capabilities on this site — the Cartesian abstractions, the saturated cost
-partitionings, the gradient engine — have no counterpart in either predecessor.
-Being a derivative work all the same, PlanForge carries its predecessors'
-copyleft licensing forward, as described <a href="#licence">below</a>.</p>
+no Python in the pipeline. The PDDL reader, the grounder, the invariant analysis,
+the search algorithms, the abstractions and the state registry are all Rust.</p>
+
+<p>Several things on this site have no counterpart in either predecessor. The
+Cartesian abstractions, the saturated cost partitionings and the gradient engine
+are new here. PlanForge is a derivative work all the same, so it carries its
+predecessors' copyleft licensing forward, as described
+<a href="#licence">below</a>.</p>
 
 <h2 id="people">People</h2>
 
@@ -136,69 +145,74 @@ Reasoning Lab at Linköping University, Sweden.</p>
 
 <p>As recorded in the repository's commit history, the code has been written by
 Markus Fritzsche and Martín Pozo, with a contribution from Jendrik Seipp. The
-commit history is the authoritative record; this page will fall out of date
+commit history is the authoritative record. This page will fall out of date
 before it does.</p>
 
 <h2 id="publications">Publications</h2>
 
-<div class="callout">
-  <p><strong>Publications to be added.</strong> The repository does not yet
-    contain a citation for a paper describing PlanForge itself, and rather than
-    guess at a title, author list or venue, this section is left as a placeholder
-    until there is one to cite. When papers exist they will be listed here with
-    full bibliographic details and a link to the published version.</p>
-</div>
+<p>There is no paper describing PlanForge itself yet. The repository does not
+contain a citation for one.</p>
+
+<p>Rather than guess at a title, an author list or a venue, this section is a
+placeholder. When papers exist they will be listed here with full bibliographic
+details and a link to the published version.</p>
 
 <h2 id="references">Prior work the implementation follows</h2>
 
-<p>Several components implement published algorithms. These are other people's
-results, and PlanForge claims none of them; the citations below are the ones
-recorded in the source files that implement them, so that a reader can go from a
-module to the paper it came from. No abstracts, figures or text from any of these
-works are reproduced here or in the repository.</p>
+<p>Several components implement published algorithms. Those are other people's
+results and PlanForge claims none of them.</p>
+
+<p>The citations below are the ones recorded in the source files that implement
+them, so that a reader can go from a module to the paper it came from. No
+abstract, figure or passage from any of these works is reproduced here or in the
+repository.</p>
 
 <ul>
-  <li><strong>The FF heuristic.</strong> J. Hoffmann and B. Nebel, “The FF
-    Planning System”, <em>Journal of Artificial Intelligence Research</em>, 2001.
-    PlanForge's <code>ff</code> heuristic is this relaxed-plan heuristic.</li>
-  <li><strong>Numeric relaxation for FF.</strong> J. Hoffmann, “The Metric-FF
-    Planning System”, <em>Journal of Artificial Intelligence Research</em>, 2003.
-    The monotonic numeric relaxation that gives each numeric variable a reachable
-    envelope through the relaxed planning graph follows this work.</li>
+  <li><strong>The FF heuristic.</strong> J. Hoffmann and B. Nebel, "The FF
+    Planning System", <em>Journal of Artificial Intelligence Research</em>, 2001.
+    PlanForge's <a href="search.html#ff"><code>ff</code></a> heuristic is this
+    relaxed-plan heuristic.</li>
+  <li><strong>Numeric relaxation for FF.</strong> J. Hoffmann, "The Metric-FF
+    Planning System", <em>Journal of Artificial Intelligence Research</em>, 2003.
+    The monotonic numeric relaxation follows this work.</li>
   <li><strong>Post-hoc optimisation.</strong> F. Pommerening, G. Röger and
-    M. Helmert, “Getting the Most Out of Pattern Databases for Classical
-    Planning”, <em>IJCAI</em>, 2013. The
-    <code>posthoc_optimization</code> heuristic solves this LP over a
-    CEGAR-built abstraction collection.</li>
+    M. Helmert, "Getting the Most Out of Pattern Databases for Classical
+    Planning", <em>IJCAI</em>, 2013. The
+    <a href="search.html#pho"><code>posthoc_optimization</code></a> heuristic
+    solves this linear program over a collection of abstractions built by
+    refinement.</li>
   <li><strong>Split selection for Cartesian abstractions.</strong> Schindler,
     Speck and Helmert, <em>ICAPS</em>, 2026. The
-    <code>icaps26_cartesian</code> abstraction source implements the
-    full-task, first-flaw and desired-region split policies from this paper.
-    <span class="note">(Title and full author names to be added: the repository
-    records the authors and the venue but not the title, and it is not guessed
-    here.)</span></li>
+    <a href="search.html#source-icaps26"><code>icaps26_cartesian</code></a>
+    abstraction source implements the full-task, first-flaw and desired-region
+    split policies from this paper. The title and the full author names are still
+    to be added. The repository records the authors and the venue but not the
+    title, and it is not guessed here.</li>
 </ul>
 
-<p class="note">Digital object identifiers are not yet listed for these entries.
-They will be added rather than approximated.</p>
+<p>Digital object identifiers are not listed for these entries yet. They will be
+added rather than approximated.</p>
 
 <h2 id="benchmarks">Benchmarks</h2>
 
-<p>No benchmark set is redistributed with PlanForge or from this site. The small
-PDDL tasks in the repository are regression fixtures with pinned optimal costs,
-not a benchmark suite. For the numeric domains themselves, see the
+<p>No benchmark set is shipped with PlanForge or from this site. The PDDL tasks in
+the repository are regression fixtures with pinned costs, not a benchmark
+suite.</p>
+
+<p>For classical benchmarks, use Fast Downward's own collection at
+<a href="https://github.com/aibasel/downward-benchmarks">github.com/aibasel/downward-benchmarks</a>.
+For numeric domains, go to the numeric tracks of the
 <a href="https://www.icaps-conference.org/competitions/">International Planning
-Competition</a> pages and the
-<a href="https://github.com/potassco/pddl-instances">collected PDDL instance
-repositories</a>.</p>
+Competition</a>. See <a href="pddl.html#benchmarks">PDDL support</a> for which of
+those PlanForge can read.</p>
 
 <h2 id="licence">Licence</h2>
 
-<h3>The planner</h3>
+<h3 id="licence-planner">The planner</h3>
 
-<p>PlanForge is free software under version 3 of the GNU copyleft licences,
-split by crate. The <code>license</code> field of each crate manifest is
-authoritative; at the time of writing it is:</p>
+<p>PlanForge is free software under version 3 of the GNU copyleft licences, split
+by crate. The <code>license</code> field of each crate manifest is authoritative.
+At the time of writing it is as follows.</p>
 
 <div class="scroll">
 <table>
@@ -208,85 +222,88 @@ authoritative; at the time of writing it is:</p>
   <tbody>
     <tr>
       <td><a href="https://www.gnu.org/licenses/lgpl-3.0.html">LGPL-3.0</a></td>
-      <td><code>planforge-sas</code>, <code>planforge-translate</code>,
-        <code>planforge-search</code>, <code>planforge-config-derive</code>,
-        <code>planforge-cplex</code> — the libraries.</td>
+      <td>The libraries: <code>planforge-sas</code>,
+        <code>planforge-translate</code>, <code>planforge-search</code>,
+        <code>planforge-config-derive</code> and
+        <code>planforge-cplex</code>.</td>
     </tr>
     <tr>
       <td><a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0</a></td>
-      <td><code>planforge</code>, <code>planforge-searcher</code>,
-        <code>planforge-sgd</code>, <code>planforge-py</code>,
-        <code>tests</code> — the binaries, the Python bindings and the
-        integration tests.</td>
+      <td>The binaries, the Python bindings and the integration tests:
+        <code>planforge</code>, <code>planforge-searcher</code>,
+        <code>planforge-sgd</code>, <code>planforge-py</code> and
+        <code>tests</code>.</td>
     </tr>
   </tbody>
 </table>
 </div>
 
-<p>In practice: the planner you run is covered by the GPL v3, and the library
-crates you might link into your own project are covered by the LGPL v3, which is
-the GPL v3 plus additional permissions for linking. The repository's
-<code>LICENSE</code> file carries the GNU General Public License v3 text; the
-Lesser GPL is defined on top of it and both are linked above. If you are deciding
-what you may do, read the crate manifest for the crate you actually depend on.</p>
+<p>In practice: the planner you run is covered by the GPL v3. The library crates
+you might link into your own project are covered by the LGPL v3, which is the
+GPL v3 plus additional permissions for linking.</p>
+
+<p>The repository's <code>LICENSE</code> file carries the text of the GNU General
+Public License v3. The Lesser GPL is defined on top of that text, and both are
+linked above. If you are deciding what you may do, read the manifest of the crate
+you actually depend on.</p>
 
 <h3 id="upstream-licence">Why it is copyleft</h3>
 
 <p>The obligation is inherited, not chosen. Fast Downward is distributed under the
-GNU General Public License v3, Numeric Fast Downward carries the same licence —
-its public repositories ship the GPL v3 text and are marked GPL-3.0 — and
-PlanForge is a port of that fork. The copyleft flows down the whole chain, which
-is why the licence table above is GPL and LGPL rather than something more
-permissive.</p>
+GNU General Public License v3. Numeric Fast Downward carries the same licence:
+its public repositories ship the GPL v3 text and are marked GPL-3.0. PlanForge is
+a port of that fork.</p>
 
-<p class="note">One detail, for completeness: the private working tree PlanForge
-was actually ported from carries no top-level licence file of its own. The
-statement above therefore rests on the licence of the public Numeric Fast Downward
-repositories, which is where that code is published, rather than on a declaration
-inside the tree itself.</p>
+<p>So the copyleft flows down the whole chain. That is why the table above is GPL
+and LGPL rather than something more permissive.</p>
 
-<h3>This website</h3>
+<p>One detail, for completeness. The private working tree PlanForge was ported
+from carries no top-level licence file of its own. The statement above therefore
+rests on the licence of the public Numeric Fast Downward repositories, which is
+where that code is published, rather than on a declaration inside the tree
+itself.</p>
+
+<h3 id="licence-site">This website</h3>
 
 <p>The text, HTML and CSS of this website are released under
 <a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons
-Attribution 4.0 International (CC BY 4.0)</a>. You may copy, quote, translate,
-adapt and republish them, including commercially, provided you credit the
-PlanForge project and link back to this site at
-<a href="https://mrlab.ai/PlanForge/">mrlab.ai/PlanForge</a>. That licence covers
-the documentation on this site only, not the planner, which is licensed as
-above.</p>
+Attribution 4.0 International</a>, which is CC BY 4.0.</p>
 
-<p>The site has no third-party content to license: no web fonts, no stylesheet
-framework, no JavaScript library, no icon set and no images. Every byte of it was
-written for this site, and it loads nothing from any other host, so visiting it
-discloses nothing about you to a third party.</p>
+<p>You may copy, quote, translate, adapt and republish them, including
+commercially, provided you credit the PlanForge project and link back to
+<a href="https://mrlab.ai/PlanForge/">mrlab.ai/PlanForge</a>. That licence covers
+the documentation on this site only. It does not cover the planner, which is
+licensed as above.</p>
+
+<p>There is no third-party content on this site to license. Every page loads two
+files: its own HTML and one stylesheet. There is no web font, no stylesheet
+framework, no JavaScript and no icon set, and nothing is requested from another
+host. Visiting the site therefore discloses nothing about you to a third
+party.</p>
 
 <h2 id="contact">Contact</h2>
 
-<p>There is no mailing list. Bug reports, questions about a configuration, and
+<p>There is no mailing list. Bug reports, questions about a configuration and
 patches all belong in the
 <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a> on the
-<a href="https://github.com/mrlab-ai/PlanForge">GitHub repository</a>. A report
-that includes the domain and problem files, the exact <code>--search</code> string
-and the planner's output is one somebody can act on.</p>
+<a href="https://github.com/mrlab-ai/PlanForge">GitHub repository</a>.</p>
+
+<p>A report is easiest to act on when it includes the domain file, the problem
+file, the exact <code>--search</code> string and the planner's output.</p>
 
 </main>
 
-<footer class="site">
-  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
-    source is at
+<footer>
+  <p>Source:
     <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
-    Questions and bug reports belong in the
-    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
-  <p>The planner's library crates are licensed under the
-    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
-    binary crates under the
-    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
-    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
-    detail. The text of this website is available under
+    Developed by <a href="https://mrlab.ai">MRlab</a>, Linköping University.</p>
+  <p>The library crates are under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and the
+    binaries under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>. See
+    <a href="#licence">Credits and licence</a>. The text of this site is under
     <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
 </footer>
 
-</div>
 </body>
 </html>

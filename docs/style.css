@@ -1,40 +1,33 @@
 /* PlanForge website stylesheet.
  *
- * Hand-written for this site. No framework, no reset library, no imported or
- * remotely hosted font, no icon set, no third-party file of any kind. Every
- * page that uses it loads exactly two files: its own HTML and this stylesheet,
- * so the site renders identically with no network connection.
+ * Written for this site. There is no framework, no reset library, no web font
+ * and no icon set. Every page loads two files: its own HTML and this file. The
+ * pages are ordered so that they still read correctly with no stylesheet at
+ * all.
  *
- * Colours are chosen so that every text/background pair clears the WCAG 2.1
- * AA contrast ratio of 4.5:1 for body text in both the light and the dark
- * scheme; the lowest pair here is about 7:1.
+ * Colours are picked so that every text and background pair is above the WCAG
+ * 2.1 AA contrast ratio of 4.5:1, in the light scheme and in the dark one.
  */
 
 :root {
-  --bg: #fcfcfa;
-  --surface: #f2f2ee;
-  --border: #d5d5cc;
+  --bg: #ffffff;
+  --shade: #f4f4f1;
+  --border: #ccccc4;
   --text: #1a1c1f;
   --muted: #4a5057;
   --link: #0b4f8f;
   --visited: #6a2a8c;
-  --accent: #8a3a12;
-  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, "Noto Sans", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-    "DejaVu Sans Mono", "Liberation Mono", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #14171a;
-    --surface: #1e2226;
-    --border: #343b41;
+    --bg: #16181b;
+    --shade: #21252a;
+    --border: #3a4147;
     --text: #e6e8ea;
-    --muted: #a8b0b8;
+    --muted: #a9b1b8;
     --link: #7cc0ff;
     --visited: #d4a8f0;
-    --accent: #f0a878;
   }
 }
 
@@ -45,142 +38,100 @@
 }
 
 html {
-  /* Anchor targets should not hide under the sticky-free header. */
   scroll-padding-top: 1rem;
 }
 
 body {
-  margin: 0;
-  padding: 0 1.25rem 4rem;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-body);
-  font-size: 1.0625rem;
-  line-height: 1.65;
-  -webkit-text-size-adjust: 100%;
-}
-
-.wrap {
   max-width: 46rem;
   margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.6;
 }
 
-/* --- Skip link: visible only once focused, so keyboard users can jump the nav. */
+/* The skip link is off screen until it takes focus. */
 
 .skip {
   position: absolute;
   left: -10000px;
-  top: 0;
-  background: var(--surface);
-  color: var(--text);
-  border: 2px solid var(--link);
-  padding: 0.5rem 0.75rem;
-  z-index: 10;
 }
 
 .skip:focus {
   left: 0.5rem;
   top: 0.5rem;
+  background: var(--bg);
+  border: 2px solid var(--link);
+  padding: 0.4rem 0.6rem;
 }
 
-/* --- Header and navigation. */
+/* Header and navigation. */
 
-header.site {
+header {
   border-bottom: 1px solid var(--border);
-  padding: 1.75rem 0 1rem;
-  margin-bottom: 2rem;
+  padding-bottom: 0.6rem;
+  margin-bottom: 1.5rem;
 }
 
-.wordmark {
-  display: inline-block;
-  font-size: 1.75rem;
-  line-height: 1.1;
-  letter-spacing: -0.015em;
-  text-decoration: none;
-  color: var(--text);
+.site {
   margin: 0;
-}
-
-.wordmark .plan {
-  font-weight: 400;
-}
-
-.wordmark .forge {
+  font-size: 1.25rem;
   font-weight: 700;
-  color: var(--accent);
 }
 
-a.wordmark:hover .forge,
-a.wordmark:focus-visible .forge {
-  text-decoration: underline;
+.site a {
+  color: var(--text);
+  text-decoration: none;
 }
 
-.tagline {
-  margin: 0.35rem 0 0;
-  color: var(--muted);
-  font-size: 1rem;
-}
-
-nav.site ul {
+nav ul {
   list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 1.1rem;
-  margin: 1.1rem 0 0;
+  margin: 0.5rem 0 0;
   padding: 0;
 }
 
-nav.site a {
-  display: inline-block;
-  padding: 0.15rem 0;
+nav li {
+  display: inline;
+  margin-right: 1rem;
 }
 
-nav.site a[aria-current="page"] {
+nav a[aria-current="page"] {
   color: var(--text);
-  font-weight: 600;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 3px;
+  font-weight: 700;
 }
 
-.source-line {
-  margin: 1rem 0 0;
-  font-size: 0.95rem;
-}
-
-.source-line .label {
-  color: var(--muted);
-}
-
-/* --- Typography. */
+/* Text. */
 
 h1 {
-  font-size: 1.9rem;
+  font-size: 1.7rem;
   line-height: 1.2;
-  letter-spacing: -0.01em;
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.8rem;
 }
 
 h2 {
-  font-size: 1.35rem;
+  font-size: 1.3rem;
   line-height: 1.25;
-  margin: 2.5rem 0 0.6rem;
-  padding-bottom: 0.25rem;
-  border-bottom: 1px solid var(--border);
+  margin: 2rem 0 0.5rem;
 }
 
 h3 {
-  font-size: 1.1rem;
-  margin: 1.75rem 0 0.4rem;
+  font-size: 1.05rem;
+  margin: 1.5rem 0 0.4rem;
+}
+
+h4 {
+  font-size: 1rem;
+  margin: 1.2rem 0 0.3rem;
 }
 
 p,
 ul,
 ol,
 dl,
-table,
-pre,
-figure {
-  margin: 0 0 1rem;
+pre {
+  margin: 0 0 0.9rem;
 }
 
 ul,
@@ -188,214 +139,101 @@ ol {
   padding-left: 1.4rem;
 }
 
-li + li {
-  margin-top: 0.3rem;
-}
-
-li > ul,
-li > ol {
-  margin: 0.3rem 0 0;
-}
-
 dt {
-  font-weight: 600;
-  margin-top: 0.9rem;
+  font-weight: 700;
+  margin-top: 0.7rem;
 }
 
 dd {
-  margin: 0.15rem 0 0 1.2rem;
-}
-
-.lead {
-  font-size: 1.15rem;
-}
-
-.note {
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-/* A run of inline `code` chips, e.g. a list of `:requirements` flags. Each chip
-   is already boxed, so the only thing needed is room to wrap without the boxes
-   touching. Colours are untouched. */
-.fragment {
-  line-height: 2;
+  margin: 0 0 0 1.4rem;
 }
 
 a {
   color: var(--link);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
 }
 
 a:visited {
   color: var(--visited);
 }
 
-a:hover {
-  text-decoration-thickness: 2px;
-}
-
 :focus-visible {
-  outline: 3px solid var(--link);
+  outline: 2px solid var(--link);
   outline-offset: 2px;
 }
 
-/* --- Code. */
+/* Code. */
 
 code,
-kbd,
-samp,
 pre {
-  font-family: var(--font-mono);
-  font-size: 0.9375em;
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  font-size: 0.9em;
 }
 
 :not(pre) > code {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 0.05em 0.3em;
-  /* Long option strings must be allowed to break rather than widen the page. */
+  background: var(--shade);
+  padding: 0 0.2em;
   overflow-wrap: break-word;
 }
 
 pre {
-  background: var(--surface);
+  background: var(--shade);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 3px;
-  padding: 0.8rem 0.9rem;
+  padding: 0.7rem 0.8rem;
   overflow-x: auto;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 pre code {
   background: none;
-  border: 0;
-  padding: 0;
-  white-space: pre;
-}
-
-figure {
   padding: 0;
 }
 
-figcaption {
-  color: var(--muted);
-  font-size: 0.9rem;
-  margin-top: -0.6rem;
-}
-
-/* --- Tables. */
+/* Tables. A table that is wider than the page scrolls inside this wrapper
+   instead of widening the page. */
 
 .scroll {
   overflow-x: auto;
-  margin-bottom: 1rem;
+  margin-bottom: 0.9rem;
 }
 
 table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 0.95rem;
-  margin: 0;
+  font-size: 0.9rem;
 }
 
 caption {
   text-align: left;
   color: var(--muted);
-  font-size: 0.9rem;
-  padding-bottom: 0.4rem;
+  padding-bottom: 0.3rem;
 }
 
 th,
 td {
   border: 1px solid var(--border);
-  padding: 0.4rem 0.6rem;
+  padding: 0.3rem 0.5rem;
   text-align: left;
   vertical-align: top;
 }
 
 th {
-  background: var(--surface);
+  background: var(--shade);
 }
 
 td.num {
   text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 
-/* A cell whose content is a negative result. `--accent` is the palette colour
-   already used for the wordmark and the callout rule, so contrast is unchanged.
-   The meaning is carried by the cell's own words ("Ignored", "Not supported"),
-   never by the colour alone. */
-td.bad {
-  color: var(--accent);
-  font-weight: 600;
-}
+/* Footer. */
 
-/* --- Callout used for limitations and warnings. */
-
-.callout {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 3px;
-  padding: 0.8rem 0.9rem;
-  margin: 0 0 1rem;
-}
-
-.callout > :last-child {
-  margin-bottom: 0;
-}
-
-.callout h3 {
-  margin-top: 0;
-}
-
-/* --- Card list used on the front page for the section index. */
-
-.cards {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 0.9rem;
-  grid-template-columns: 1fr;
-}
-
-@media (min-width: 40rem) {
-  .cards {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.cards li {
-  margin: 0;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 0.8rem 0.9rem;
-}
-
-.cards a {
-  font-weight: 600;
-}
-
-.cards p {
-  margin: 0.25rem 0 0;
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-/* --- Footer. */
-
-footer.site {
+footer {
   border-top: 1px solid var(--border);
-  margin-top: 3rem;
-  padding-top: 1rem;
+  margin-top: 2.5rem;
+  padding-top: 0.8rem;
   color: var(--muted);
-  font-size: 0.925rem;
+  font-size: 0.9rem;
 }
 
-footer.site p {
-  margin: 0 0 0.5rem;
+footer p {
+  margin: 0 0 0.4rem;
 }

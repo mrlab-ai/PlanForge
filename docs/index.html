@@ -3,143 +3,117 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PlanForge — an optimal numeric planner in Rust</title>
-<meta name="description" content="PlanForge is a grounded numeric planner written in Rust. It reads PDDL with numeric fluents, or pre-translated SAS+, and returns a sequential plan that is cost-optimal under A* with an admissible heuristic.">
+<title>PlanForge</title>
+<meta name="description" content="PlanForge is a numeric planner written in Rust. It reads a planning task in PDDL, grounds it, and searches for a sequential plan.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
-<div class="wrap">
 
-<header class="site">
-  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
-  <p class="tagline">A grounded numeric planner written in Rust.</p>
-  <nav class="site" aria-label="Sections">
+<header>
+  <p class="site"><a href="index.html">PlanForge</a></p>
+  <nav aria-label="Site">
     <ul>
-      <li><a href="index.html" aria-current="page">Overview</a></li>
-      <li><a href="search.html">Search configurations</a></li>
-      <li><a href="pddl.html">Supported PDDL</a></li>
+      <li><a href="index.html" aria-current="page">Home</a></li>
+      <li><a href="search.html">Search options</a></li>
+      <li><a href="pddl.html">PDDL support</a></li>
       <li><a href="development.html">Development</a></li>
-      <li><a href="about.html">Credits &amp; licence</a></li>
+      <li><a href="about.html">Credits and licence</a></li>
     </ul>
   </nav>
-  <p class="source-line"><span class="label">Source:</span>
-    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
-    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
 </header>
 
 <main id="main">
 
 <h1>PlanForge</h1>
 
-<p class="lead">PlanForge reads a planning task written in PDDL with numeric
-fluents, grounds it, and searches for a sequential plan. Under A* with an
-admissible heuristic the plan it returns is cost-optimal. It is one binary, and
-every configuration described on this site is reachable from that binary.</p>
+<p>PlanForge is a numeric planner. It reads a planning task written in PDDL,
+grounds it, and searches for a sequential plan.</p>
 
-<p>It is developed by <a href="https://mrlab.ai">MRlab</a>, the Machine
-Reasoning Lab at Linköping University, and it began as a Rust port of
+<p>The task may use numeric fluents. The numbers stay in the task. They are
+handled by the search and by most of the heuristics rather than compiled
+away.</p>
+
+<p>PlanForge is written in Rust and is developed by
+<a href="https://mrlab.ai">MRlab</a>, the Machine Reasoning Lab at Linköping
+University. It started as a Rust port of
 <a href="https://github.com/dgnad/numeric-fast-downward">Numeric Fast
-Downward</a>, itself a fork of
-<a href="https://www.fast-downward.org/">Fast Downward</a>. That lineage
-is described on the <a href="about.html#lineage">credits page</a>, together with
-the people and publications behind it and the licence terms it carries with
-it.</p>
+Downward</a>, which is a fork of
+<a href="https://www.fast-downward.org/">Fast Downward</a>. The
+<a href="about.html#lineage">credits page</a> describes that lineage and the
+licence terms.</p>
 
-<h2 id="what-it-does">What it does</h2>
+<h2 id="how-it-works">How it works</h2>
 
-<p>PlanForge has the same two-part structure as Fast Downward and its numeric
-extension: a <strong>translator</strong> that turns PDDL into a finite-domain
-SAS<sup>+</sup> task, and a <strong>planner</strong> that searches that task
-under a choice of heuristics.</p>
+<p>PlanForge runs in two steps. This is the same division of labour that Fast
+Downward uses.</p>
 
-<h3 id="translator">1. The translator: PDDL to SAS<sup>+</sup></h3>
+<p>The first step is translation. It reads a domain file and a problem file,
+rewrites the constructs that grounding cannot take directly, computes invariants
+to find finite-domain variables, and grounds the task. The result is a
+SAS<sup>+</sup> task.</p>
 
-<p>It reads a domain and problem pair, normalises away the constructs grounding
-cannot take directly, computes invariants to find finite-domain variables, and
-grounds the result. The fragment it handles correctly is, in terms of
-<code>:requirements</code> flags:</p>
+<p>The second step is search. It searches the SAS<sup>+</sup> task with one of
+four search algorithms and one of about twenty heuristics. You choose the
+combination with the <code>--search</code> option. Everything on the
+<a href="search.html">search options</a> page is reachable from the one
+<code>planforge</code> program.</p>
 
-<p class="fragment"><code>:strips</code> <code>:typing</code>
-<code>:negative-preconditions</code> <code>:action-costs</code>
-<code>:numeric-fluents</code> <code>:derived-predicates</code></p>
+<p>Both steps happen in one process. No SAS<sup>+</sup> file is written on the
+way to the search. A second program, <code>planforge-translator</code>, writes
+the file when the file itself is what you want.</p>
 
-<p>plus two partial levels: <code>:disjunctive-preconditions</code> is compiled
-away in action preconditions but nowhere else, and
-<code>:conditional-effects</code> covers <code>when</code> but not
-<code>forall</code>. That is PDDL 2.1 level 1 — propositional and numeric,
-without time — plus PDDL 2.2 derived predicates.</p>
+<h2 id="status">Version and scope</h2>
 
-<div class="callout">
-  <h3>It is not ADL, and the gap is not loud</h3>
-  <p>Quantified preconditions and universal effects are <em>parsed and then
-    ignored</em>. A <code>forall</code> precondition is treated as true, a
-    <code>forall</code> effect is dropped, an <code>exists</code> precondition
-    silently removes the action, and <code>or</code> outside an action
-    precondition — in a goal, or in a <code>:derived</code> body — is treated as
-    true. So a task using them does not get an error; it gets a wrong answer,
-    which on the first and last of those can be an invalid plan.</p>
-  <p><strong>Do not declare <code>:adl</code> and expect it to hold.</strong>
-    The declared requirement list is never read, so no flag you write is checked
-    against what is implemented.
-    <a href="pddl.html#requirements">Supported PDDL</a> lists every case, with the
-    input that demonstrates it, and separates the constructs that fail loudly from
-    the ones that fail quietly.</p>
-</div>
+<p>The current version is <code>0.1.0</code>.</p>
 
-<p>Translation and grounding happen in process, so the planner never writes
-SAS<sup>+</sup> text on the way to its own search. A separate
-<code>planforge-translator</code> binary emits the text when the text itself is
-what you want; it writes format version 4, which is Fast Downward's SAS<sup>+</sup>
-layout extended with numeric variables, comparison axioms and assignment
-axioms.</p>
+<p>Numeric conditions and numeric effects are supported. Derived predicates are
+supported. Durative actions, preferences and soft goals are not supported at
+all.</p>
 
-<h3 id="planner">2. The planner: SAS<sup>+</sup> to a plan</h3>
+<p>Quantifiers and disjunction outside action preconditions are a real problem.
+The parser accepts them and the translator then mishandles them, in six ways
+that are recorded as
+<a href="https://github.com/mrlab-ai/PlanForge/issues/46">issue 46</a>. Three of
+the six can produce an invalid plan. Read
+<a href="pddl.html#adl">PDDL support</a> before you trust a task that uses
+them.</p>
 
-<p>Three search engines — A*, greedy best-first search, and an A* variant that
-orders the open list with a cheap heuristic and confirms with an expensive one —
-over a heuristic library that includes blind search, numeric LM-cut, numeric
-pattern databases, CEGAR-built domain and Cartesian abstractions with
-maximising, canonical and saturated-cost-partitioning combinations, and an
-FF-style relaxed-plan heuristic. Most of the library is admissible and
-<a href="search.html#heuristics">the table on the search page says which</a>,
-because that is what decides whether a returned plan is optimal. LP-backed
-heuristics require an optional CPLEX build.</p>
+<h2 id="building">Building</h2>
 
-<p>The plan is printed and written to <code>sas_plan</code> in the working
-directory, followed by a statistics block in the same shape Fast Downward prints;
-<a href="search.html#output">Output and exit codes</a> covers what a script
-should test for. <code>--max-time</code> and <code>--max-memory</code> are
-enforced by the planner itself, so a task that runs out of either exits with a
-report instead of being killed from outside.</p>
-
-<p>The current version is <code>0.1.0</code>. The admissible paths (A* with
-blind, numeric LM-cut, pattern databases, and the canonical and
-saturated-cost-partitioning combinations of domain abstractions) are the ones
-the test suite pins instance by instance; preferred-operator support is not
-implemented.</p>
-
-<h2 id="quick-start">Quick start</h2>
-
-<p>You need a stable Rust toolchain. The crates use edition 2024, so 1.85 or
-newer. Nothing else: no nightly features, no system libraries, no Python.</p>
+<p>You need a stable Rust toolchain, version 1.85 or newer. The crates use
+edition 2024, which is why that is the floor. Nothing else is required. The
+build does not use a nightly compiler, a C++ library or Python.</p>
 
 <pre><code>git clone https://github.com/mrlab-ai/PlanForge.git
 cd PlanForge
-cargo build --release --bin planforge</code></pre>
+cargo build --release</code></pre>
 
-<p>That produces <code>target/release/planforge</code>. The repository ships
-small PDDL fixtures under <code>tests/assets/</code>, so you can solve something
-immediately. This one is a numeric delivery task with two robots:</p>
+<p>That produces two programs under <code>target/release</code>.
+<code>planforge</code> is the planner. <code>planforge-translator</code> stops
+after translation and writes the SAS<sup>+</sup> file.</p>
+
+<p>Two optional features are off by default and pull in nothing when they are
+off. They are described under
+<a href="search.html#features">optional build features</a>.</p>
+
+<h2 id="solving">Solving a task</h2>
+
+<p>The repository ships small PDDL tasks under <code>tests/assets</code>, so you
+can solve something straight after the build. The task used below is a delivery
+task with two robots and numeric fluents.</p>
 
 <pre><code>./target/release/planforge \
     --search 'astar(lmcutnumeric())' \
     tests/assets/numeric-pddl-files/delivery/domain.pddl \
     tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code></pre>
 
-<p>It prints the plan, a statistics block and its search time, and leaves the
-plan in <code>sas_plan</code>, one grounded action per line in the usual
-parenthesised form:</p>
+<p>Quote the value of <code>--search</code>. The parentheses mean something to
+the shell.</p>
+
+<p>The run prints the plan, then a block of statistics. It also writes the plan
+to <code>sas_plan</code> in the working directory. Each line of that file is one
+grounded action in parentheses.</p>
 
 <pre><code>(pick item2 rooma right1 bot1)
 (pick item3 rooma left2 bot2)
@@ -152,69 +126,107 @@ parenthesised form:</p>
 (drop item4 roomb right2 bot2)
 (drop item2 roomc right1 bot1)</code></pre>
 
-<h3 id="optimal-configurations">Optimal configurations</h3>
+<p>The statistics block has the same shape as the one Fast Downward prints.
+<a href="search.html#output">Output and exit codes</a> lists its lines and says
+what a script should test for.</p>
 
-<p>Swapping the heuristic changes the work by three orders of magnitude and does
-not change the cost. Every row is a real run of the command above on the same
-fixture, with only <code>--search</code> altered:</p>
+<h2 id="optimal">Searching for a cheapest plan</h2>
+
+<p>A* returns a cheapest plan when its heuristic is admissible. A heuristic is
+admissible if it never estimates the remaining cost as higher than the true
+remaining cost. Every heuristic in the table below is admissible, so every row
+returns a cheapest plan.</p>
+
+<p>What changes from row to row is how much search that takes. The rows are real
+runs of the command above with only <code>--search</code> changed.</p>
 
 <div class="scroll">
 <table>
-  <caption>A* with an admissible heuristic on
-    <code>tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code>, default
-    build, one run per row. The cost is the same in every row because each of
-    these configurations is guaranteed to return an optimal plan, so agreement
-    here is a property of the configurations and not a coincidence of the
-    instance. Expansion counts are deterministic and reproduce exactly.</caption>
+  <caption>A* with four admissible heuristics on
+    <code>tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code>. Default
+    build, one run per row.</caption>
   <thead>
-    <tr><th scope="col"><code>--search</code></th><th scope="col">Plan cost</th><th scope="col">Expanded</th><th scope="col">Evaluated</th></tr>
+    <tr>
+      <th scope="col"><code>--search</code></th>
+      <th scope="col">Plan cost</th>
+      <th scope="col">Expanded</th>
+      <th scope="col">Evaluated</th>
+      <th scope="col">Search time</th>
+    </tr>
   </thead>
   <tbody>
-    <tr><td><code>astar(blind())</code></td><td class="num">22</td><td class="num">35 242</td><td class="num">41 175</td></tr>
-    <tr><td><code>astar(domain_abstraction())</code></td><td class="num">22</td><td class="num">6 657</td><td class="num">16 241</td></tr>
-    <tr><td><code>astar(lmcutnumeric())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td></tr>
-    <tr><td><code>astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td></tr>
+    <tr><td><code>astar(blind())</code></td><td class="num">22</td><td class="num">35 242</td><td class="num">41 175</td><td class="num">0.13 s</td></tr>
+    <tr><td><code>astar(domain_abstraction())</code></td><td class="num">22</td><td class="num">6 657</td><td class="num">16 241</td><td class="num">0.04 s</td></tr>
+    <tr><td><code>astar(lmcutnumeric())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td><td class="num">0.03 s</td></tr>
+    <tr><td><code>astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td><td class="num">0.03 s</td></tr>
   </tbody>
 </table>
 </div>
 
-<h3 id="satisficing-configurations">Satisficing configurations</h3>
+<p>The plan cost is 22 in every row. That is not a coincidence of this instance.
+Each of these configurations is guaranteed to return a cheapest plan, so they
+have to agree on the cost.</p>
 
-<p>These are not comparable to the table above on cost, so they are not in it.
-Greedy best-first search does not order the open list on <code>f = g + h</code>
-and <code>ff</code> is not admissible; either one alone is enough to remove the
-optimality guarantee, and <code>gbfs(ff())</code> has neither. The cost it
-returns is an upper bound on the optimum and nothing more:</p>
+<p>The expansion counts are deterministic. Run a row again and you get the same
+number.</p>
+
+<p>Search time is not deterministic. The numbers above are one measurement on
+one machine, and they are in the table only to show the order of magnitude.</p>
+
+<h2 id="satisficing">Searching for any plan</h2>
+
+<p>Greedy best-first search with the FF heuristic is usually much faster. It
+gives up the guarantee, and it gives it up twice over.</p>
+
+<p>Greedy best-first search orders its open list on <code>h</code> alone. It
+ignores the cost already paid, so it is not optimal even with an admissible
+heuristic. The FF heuristic is not admissible, so it can estimate a remaining
+cost that is higher than the true one. Either of those alone is enough to remove
+the guarantee.</p>
+
+<p>So the cost that <code>gbfs(ff())</code> returns is an upper bound on the
+cheapest cost, and nothing more. Do not read it as a plan cost you can compare
+with the table above.</p>
 
 <div class="scroll">
 <table>
-  <caption><code>gbfs(ff())</code> against the optimum on two fixtures.
-    <strong>The "plan cost" column carries no optimality guarantee</strong>; the
-    optimum beside it is from <code>astar(lmcutnumeric())</code> on the same
-    instance.</caption>
+  <caption>Two fixtures under <code>gbfs(ff())</code>, next to the cheapest cost
+    for the same instance. The cheapest cost was obtained separately with
+    <code>astar(lmcutnumeric())</code>.</caption>
   <thead>
-    <tr><th scope="col">Instance</th><th scope="col">Plan cost<br><span class="note">(not guaranteed optimal)</span></th><th scope="col">Optimal cost</th><th scope="col">Expanded</th></tr>
+    <tr>
+      <th scope="col">Instance</th>
+      <th scope="col"><code>gbfs(ff())</code> cost</th>
+      <th scope="col">Expanded</th>
+      <th scope="col">Cheapest cost</th>
+      <th scope="col">Expanded by A*</th>
+    </tr>
   </thead>
   <tbody>
-    <tr><td><code>delivery/pfile1.pddl</code></td><td class="num">22</td><td class="num">22</td><td class="num">11</td></tr>
-    <tr><td><code>expedition/pfile1.pddl</code></td><td class="num">54</td><td class="num">26</td><td class="num">2 786</td></tr>
+    <tr><td><code>delivery/pfile1.pddl</code></td><td class="num">22</td><td class="num">11</td><td class="num">22</td><td class="num">73</td></tr>
+    <tr><td><code>expedition/pfile1.pddl</code></td><td class="num">54</td><td class="num">2 786</td><td class="num">26</td><td class="num">3 583</td></tr>
   </tbody>
 </table>
 </div>
 
-<p>The two rows are the whole point. On <code>delivery</code> the returned cost
-happens to equal the optimum, after 11 expansions instead of 73 — which is why
-it is tempting to read a satisficing run as if it were an optimal one. On
-<code>expedition</code> the same configuration returns 54 against an optimum of
-26, so the plan is more than twice as expensive as necessary; it also expands
-2 786 states against A*'s 3 583, so it did not even buy much search. Neither
-number is a defect: an inadmissible heuristic under a greedy search is entitled
-to both results, and only the guarantee tells you which you are looking at.</p>
+<p>On <code>delivery</code> the returned cost happens to be the cheapest one,
+after 11 expansions instead of 73. That is the trap. A satisficing run that gets
+lucky looks exactly like an optimal one.</p>
+
+<p>On <code>expedition</code> the same configuration returns 54 where the
+cheapest plan costs 26. The plan is more than twice as expensive as it needs to
+be. It also expanded 2 786 states against A*'s 3 583, so it did not save much
+search either.</p>
+
+<p>Neither result is a defect. An inadmissible heuristic under a greedy search is
+allowed to produce both of them. The guarantee is the only thing that tells you
+which of the two you are holding.</p>
 
 <h2 id="pre-translated">Running a pre-translated task</h2>
 
-<p>When you want to translate once and search many times, translate to SAS+
-first and hand the planner a single file:</p>
+<p>Translation is repeated on every run. When you want to search the same task
+many times, translate it once to a SAS<sup>+</sup> file and give the planner that
+file instead.</p>
 
 <pre><code>./target/release/planforge-translator translate \
     tests/assets/numeric-pddl-files/delivery/domain.pddl \
@@ -223,43 +235,66 @@ first and hand the planner a single file:</p>
 
 ./target/release/planforge --search 'astar(lmcutnumeric())' delivery.sas</code></pre>
 
-<p>Both routes report the same 49 propositional and 12 numeric variables, expand
-the same 73 states and return the same cost-22 plan.</p>
+<p>One positional argument is read as a SAS<sup>+</sup> file. Two are read as a
+domain file and a problem file.</p>
 
-<h2 id="sections">Where to go next</h2>
+<p>Both routes reach the same task. Each reports 49 finite-domain variables and
+12 numeric variables, expands the same 73 states, and returns the same plan of
+cost 22.</p>
 
-<ul class="cards">
-  <li><a href="search.html">Search configurations</a>
-    <p>The <code>--search</code> grammar, the four engines, every heuristic name
-      the planner accepts, and the two optional build features.</p></li>
-  <li><a href="pddl.html">Supported PDDL</a>
-    <p>Which constructs the translator reads, what the numeric fragment covers,
-      and where the honest limits are.</p></li>
-  <li><a href="development.html">Development</a>
-    <p>Workspace layout, the test suite that pins every fixture's optimal cost,
-      the CI jobs and the local verification gate.</p></li>
-  <li><a href="about.html">Credits &amp; licence</a>
-    <p>The Fast Downward lineage, the references the implementation follows,
-      publication status, and the licence terms for code and for this site.</p></li>
+<h2 id="limits">Time and memory limits</h2>
+
+<p><code>--max-time</code> and <code>--max-memory</code> are enforced by the
+planner itself. A run that exceeds one of them stops, prints a report and exits
+with a code that says which limit it hit. It is not killed from outside, so you
+get a result rather than a truncated log.</p>
+
+<pre><code>./target/release/planforge --max-time 30m --max-memory 8G \
+    --search 'astar(lmcutnumeric())' domain.pddl problem.pddl</code></pre>
+
+<p><a href="search.html#command-line">The command line</a> gives the accepted
+size and duration syntax.</p>
+
+<h2 id="next">Where to go next</h2>
+
+<ul>
+  <li><a href="search.html">Search options</a> is the reference page. It covers
+    the <code>--search</code> grammar, every search algorithm and every
+    heuristic with its options and their defaults, the rest of the command line,
+    and the exit codes.</li>
+  <li><a href="pddl.html">PDDL support</a> lists the requirement levels the
+    translator handles, the six ways it currently mishandles ADL, and what the
+    translator writes.</li>
+  <li><a href="development.html">Development</a> covers the workspace crates,
+    the test suite, continuous integration and the local check script.</li>
+  <li><a href="about.html">Credits and licence</a> covers where PlanForge comes
+    from, the published work it follows, and the licence terms for the code and
+    for this site.</li>
 </ul>
+
+<h2 id="contact">Contact</h2>
+
+<p>There is no mailing list. Bug reports, questions about a configuration and
+patches all belong in the
+<a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
+
+<p>A report is easiest to act on when it includes the domain file, the problem
+file, the exact <code>--search</code> string and the output.</p>
 
 </main>
 
-<footer class="site">
-  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
-    source is at
+<footer>
+  <p>Source:
     <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
-    Questions and bug reports belong in the
-    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
-  <p>The planner's library crates are licensed under the
-    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
-    binary crates under the
-    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
-    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
-    detail. The text of this website is available under
+    Developed by <a href="https://mrlab.ai">MRlab</a>, Linköping University.</p>
+  <p>The library crates are under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and the
+    binaries under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>. See
+    <a href="about.html#licence">Credits and licence</a>. The text of this site
+    is under
     <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
 </footer>
 
-</div>
 </body>
 </html>
