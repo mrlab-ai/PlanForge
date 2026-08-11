@@ -156,6 +156,15 @@ pub(crate) struct HelperLinearEffect {
     pub(crate) constant: f64,
 }
 
+/// One assignment effect of an operator in the three forms classification needs
+/// it: its index in the operator, the effect itself, and its linearized form.
+#[derive(Clone, Copy)]
+struct ClassifiedAssignmentEffect<'a> {
+    id: usize,
+    effect: &'a AssignmentEffect,
+    linear: &'a LinearNumericEffect,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct HelperActionModel {
     pub(crate) propositional_preconditions: Vec<ExplicitFact>,
@@ -1153,9 +1162,11 @@ impl NumericTaskHelper {
             self.classify_assignment_effect_into_action(
                 task,
                 operator.preconditions(),
-                assignment_effect_id,
-                assignment_effect,
-                linear_effect,
+                ClassifiedAssignmentEffect {
+                    id: assignment_effect_id,
+                    effect: assignment_effect,
+                    linear: linear_effect,
+                },
                 precision,
                 separate_constant_assignment,
                 &mut action_model,
@@ -1196,18 +1207,20 @@ impl NumericTaskHelper {
         action_model
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn classify_assignment_effect_into_action(
         &mut self,
         task: &dyn AbstractNumericTask,
         base_preconditions: &[ExplicitFact],
-        assignment_effect_id: usize,
-        assignment_effect: &AssignmentEffect,
-        linear_effect: &LinearNumericEffect,
+        classified: ClassifiedAssignmentEffect<'_>,
         precision: f64,
         separate_constant_assignment: bool,
         action_model: &mut HelperActionModel,
     ) {
+        let ClassifiedAssignmentEffect {
+            id: assignment_effect_id,
+            effect: assignment_effect,
+            linear: linear_effect,
+        } = classified;
         let affected_var_id = linear_effect.affected_var_id;
         let Some(local_var_id) = self.local_numeric_var_id(affected_var_id) else {
             return;

@@ -716,7 +716,6 @@ impl AbstractOperatorGenerator {
     /// caller. `DomainAbstractionFactory` uses this so the per-task cost scan
     /// happens once at factory construction and is shared (via `Arc`) across
     /// every per-CEGAR-iteration generator.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_with_cached_costs(
         task: &dyn AbstractNumericTask,
         domain_mapping: DomainMapping,
@@ -937,7 +936,6 @@ fn normalize_preconditions(mut preconditions: Vec<ExplicitFact>) -> Option<Vec<E
     Some(out)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_branch_for_operator(
     task: &dyn AbstractNumericTask,
     op: &Operator,
@@ -982,9 +980,7 @@ fn build_branch_for_operator(
         eff_scratch.resize(num_variables, None);
     }
     let mut touched_eff: Vec<usize> = Vec::with_capacity(effects.len());
-    let mut prev_pairs: Vec<ExplicitFact> = Vec::new();
-    let mut pre_pairs: Vec<ExplicitFact> = Vec::new();
-    let mut eff_pairs: Vec<ExplicitFact> = Vec::new();
+    let mut facts = PropositionalFactScratch::default();
     let mut effects_without_pre: Vec<ExplicitFact> = Vec::new();
 
     for eff in effects {
@@ -1001,7 +997,9 @@ fn build_branch_for_operator(
             if pre_val != abs_val {
                 generator.effect_on_var_scratch[var_id] = Some(abs_val);
                 touched_eff.push(var_id);
-                eff_pairs.push(ExplicitFact::propositional(var_id, abs_val));
+                facts
+                    .eff_pairs
+                    .push(ExplicitFact::propositional(var_id, abs_val));
             }
         } else {
             effects_without_pre.push(ExplicitFact::propositional(var_id, abs_val));
@@ -1015,9 +1013,13 @@ fn build_branch_for_operator(
         }
         let abs_val = generator.abstract_value(var_id, pre.value());
         if generator.effect_on_var_scratch[var_id].is_some() {
-            pre_pairs.push(ExplicitFact::in_namespace(pre.namespace(), var_id, abs_val));
+            facts
+                .pre_pairs
+                .push(ExplicitFact::in_namespace(pre.namespace(), var_id, abs_val));
         } else if !task.numeric_conditions().is_condition_var(var_id) {
-            prev_pairs.push(ExplicitFact::propositional(var_id, abs_val));
+            facts
+                .prev_pairs
+                .push(ExplicitFact::propositional(var_id, abs_val));
         }
     }
 
@@ -1037,8 +1039,12 @@ fn build_branch_for_operator(
         }
         let source_abs = generator.abstract_value(var_id, pre.value());
         let target_abs = generator.abstract_value(var_id, ConditionValue::False.as_usize());
-        pre_pairs.push(ExplicitFact::condition(var_id, source_abs));
-        eff_pairs.push(ExplicitFact::condition(var_id, target_abs));
+        facts
+            .pre_pairs
+            .push(ExplicitFact::condition(var_id, source_abs));
+        facts
+            .eff_pairs
+            .push(ExplicitFact::condition(var_id, target_abs));
     }
 
     // Clear only the slots we touched, so subsequent calls start clean
@@ -1051,16 +1057,15 @@ fn build_branch_for_operator(
     }
 
     multiply_out_propositional(
+        &PropositionalCrossProduct {
+            effects_without_pre: &effects_without_pre,
+            ass_effects,
+            op_preconditions: merged_preconditions,
+            concrete_op_id,
+            cost: abstract_cost,
+        },
         0,
-        abstract_cost,
-        &mut prev_pairs,
-        &mut pre_pairs,
-        &mut eff_pairs,
-        &effects_without_pre,
-        ass_effects,
-        merged_preconditions,
-        concrete_op_id,
-        task,
+        &mut facts,
         generator,
     )
 }
@@ -1069,20 +1074,40 @@ fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> f64 
     metric_operator_cost_from_initial_values(task, op)
 }
 
-#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
-fn multiply_out_propositional(
-    pos: usize,
-    cost: f64,
-    prev_pairs: &mut Vec<ExplicitFact>,
-    pre_pairs: &mut Vec<ExplicitFact>,
-    eff_pairs: &mut Vec<ExplicitFact>,
-    effects_without_pre: &[ExplicitFact],
-    ass_effects: &[AssignmentEffect],
-    op_preconditions: &[ExplicitFact],
+/// One concrete operator's propositional effects that have no matching
+/// precondition, together with everything a finished skeleton copies out. Fixed
+/// for the whole cross-product, so the recursion carries a reference.
+struct PropositionalCrossProduct<'a> {
+    effects_without_pre: &'a [ExplicitFact],
+    ass_effects: &'a [AssignmentEffect],
+    op_preconditions: &'a [ExplicitFact],
     concrete_op_id: usize,
-    task: &dyn AbstractNumericTask,
+    cost: f64,
+}
+
+/// The three fact lists a propositional cross-product shares across recursive
+/// frames: pushed on the way down, popped on the way back up, so one allocation
+/// each serves the whole product.
+#[derive(Default)]
+struct PropositionalFactScratch {
+    prev_pairs: Vec<ExplicitFact>,
+    pre_pairs: Vec<ExplicitFact>,
+    eff_pairs: Vec<ExplicitFact>,
+}
+
+fn multiply_out_propositional(
+    operator: &PropositionalCrossProduct<'_>,
+    pos: usize,
+    facts: &mut PropositionalFactScratch,
     generator: &mut AbstractOperatorGenerator,
 ) -> Result<Vec<AbstractOperatorSkeleton>> {
+    let PropositionalCrossProduct {
+        effects_without_pre,
+        ass_effects,
+        op_preconditions,
+        concrete_op_id,
+        cost,
+    } = *operator;
     fn has_in_list_conflict(facts: &[ExplicitFact]) -> bool {
         facts
             .windows(2)
@@ -1111,13 +1136,13 @@ fn multiply_out_propositional(
     }
 
     if pos == effects_without_pre.len() {
-        if eff_pairs.is_empty() && ass_effects.is_empty() {
+        if facts.eff_pairs.is_empty() && ass_effects.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut normalized_pre_pairs = pre_pairs.clone();
-        let mut normalized_eff_pairs = eff_pairs.clone();
-        let mut normalized_prev_pairs = prev_pairs.clone();
+        let mut normalized_pre_pairs = facts.pre_pairs.clone();
+        let mut normalized_eff_pairs = facts.eff_pairs.clone();
+        let mut normalized_prev_pairs = facts.prev_pairs.clone();
         normalized_pre_pairs.sort();
         normalized_eff_pairs.sort();
         normalized_prev_pairs.sort();
@@ -1153,31 +1178,30 @@ fn multiply_out_propositional(
     let mut out: Vec<AbstractOperatorSkeleton> = Vec::new();
     for i in 0..domain_size {
         if i != eff {
-            pre_pairs.push(ExplicitFact::in_namespace(namespace, var_id, i));
-            eff_pairs.push(ExplicitFact::in_namespace(namespace, var_id, eff));
+            facts
+                .pre_pairs
+                .push(ExplicitFact::in_namespace(namespace, var_id, i));
+            facts
+                .eff_pairs
+                .push(ExplicitFact::in_namespace(namespace, var_id, eff));
         } else {
-            prev_pairs.push(ExplicitFact::in_namespace(namespace, var_id, i));
+            facts
+                .prev_pairs
+                .push(ExplicitFact::in_namespace(namespace, var_id, i));
         }
 
         out.extend(multiply_out_propositional(
+            operator,
             pos + 1,
-            cost,
-            prev_pairs,
-            pre_pairs,
-            eff_pairs,
-            effects_without_pre,
-            ass_effects,
-            op_preconditions,
-            concrete_op_id,
-            task,
+            facts,
             generator,
         )?);
 
         if i != eff {
-            pre_pairs.pop();
-            eff_pairs.pop();
+            facts.pre_pairs.pop();
+            facts.eff_pairs.pop();
         } else {
-            prev_pairs.pop();
+            facts.prev_pairs.pop();
         }
     }
 
@@ -1404,52 +1428,78 @@ fn compute_hash_effects_with_preconditions(
     // only clone into a `TransitionInfo` at the leaf. This avoids the
     // per-combo `Vec<(usize,usize,usize)>` materialization that the older
     // cartesian-product expansion did.
-    let mut out: Vec<TransitionInfo> = Vec::new();
-    let mut source_partition_facts: Vec<ExplicitFact> = Vec::new();
-    let mut target_partition_facts: Vec<ExplicitFact> = Vec::new();
-    let mut changed_numeric_vars: Vec<usize> = changed_numeric_vars_for_semantics;
-    let mut combo_scratch: Vec<(usize, usize, usize)> = Vec::with_capacity(per_var.len());
-    let mut source_intervals_buf: Vec<Interval> = Vec::new();
+    let mut scratch = PartitionComboScratch {
+        source_partition_facts: Vec::new(),
+        target_partition_facts: Vec::new(),
+        changed_numeric_vars: changed_numeric_vars_for_semantics,
+        combo: Vec::with_capacity(per_var.len()),
+        source_intervals: Vec::new(),
+        transitions: Vec::new(),
+    };
 
     enumerate_partition_combos(
-        task,
-        generator,
-        op_preconditions,
-        &per_var,
-        num_props,
-        op_has_comparison_preconditions,
-        any_changed_var_affects_comparison,
+        &PartitionComboEnumeration {
+            task,
+            generator,
+            op_preconditions,
+            per_var: &per_var,
+            num_props,
+            op_has_comparison_preconditions,
+            any_changed_var_affects_comparison,
+            deadline,
+        },
         0,
-        &mut source_partition_facts,
-        &mut target_partition_facts,
-        &mut changed_numeric_vars,
-        &mut combo_scratch,
-        &mut source_intervals_buf,
-        &mut out,
-        deadline,
+        &mut scratch,
     )?;
 
-    Ok(out)
+    Ok(scratch.transitions)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn enumerate_partition_combos(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    op_preconditions: &[ExplicitFact],
-    per_var: &[(usize, Vec<(usize, usize)>)],
+/// One concrete operator's numeric cross-product, fixed for the whole
+/// enumeration: the task and generator that turn partitions into intervals, the
+/// operator's preconditions, the per-variable source-to-target transitions the
+/// recursion walks, where numeric dimensions start in the hash layout, and the
+/// two flags that decide whether a leaf needs comparison filtering at all.
+struct PartitionComboEnumeration<'a> {
+    task: &'a dyn AbstractNumericTask,
+    generator: &'a AbstractOperatorGenerator,
+    op_preconditions: &'a [ExplicitFact],
+    per_var: &'a [(usize, Vec<(usize, usize)>)],
     num_props: usize,
     op_has_comparison_preconditions: bool,
     any_changed_var_affects_comparison: bool,
-    pos: usize,
-    source_partition_facts: &mut Vec<ExplicitFact>,
-    target_partition_facts: &mut Vec<ExplicitFact>,
-    changed_numeric_vars: &mut Vec<usize>,
-    combo_scratch: &mut Vec<(usize, usize, usize)>,
-    source_intervals_buf: &mut Vec<Interval>,
-    out: &mut Vec<TransitionInfo>,
     deadline: Option<Instant>,
+}
+
+/// What one enumeration shares across recursive frames: the partition facts and
+/// combo triples pushed on the way down and popped on the way back up, the set
+/// of changed numeric vars and the interval buffer each leaf reads, and the
+/// transitions collected so far. Following the C++ reference, sharing these is
+/// what keeps a combo from allocating.
+struct PartitionComboScratch {
+    source_partition_facts: Vec<ExplicitFact>,
+    target_partition_facts: Vec<ExplicitFact>,
+    changed_numeric_vars: Vec<usize>,
+    combo: Vec<(usize, usize, usize)>,
+    source_intervals: Vec<Interval>,
+    transitions: Vec<TransitionInfo>,
+}
+
+fn enumerate_partition_combos(
+    enumeration: &PartitionComboEnumeration<'_>,
+    pos: usize,
+    scratch: &mut PartitionComboScratch,
 ) -> Result<()> {
+    let PartitionComboEnumeration {
+        task,
+        generator,
+        op_preconditions,
+        per_var,
+        num_props,
+        op_has_comparison_preconditions,
+        any_changed_var_affects_comparison,
+        deadline,
+    } = *enumeration;
     if pos.is_multiple_of(4) {
         ensure_generation_deadline(deadline)?;
     }
@@ -1468,24 +1518,7 @@ fn enumerate_partition_combos(
         // appears at most once. The classic `sort + dedup` after clone was a
         // safety net for already-sorted unique data — pure overhead.
         if !op_has_comparison_preconditions && !any_changed_var_affects_comparison {
-            debug_assert!(
-                source_partition_facts.windows(2).all(|w| w[0] <= w[1]),
-                "source_partition_facts must be sorted by construction"
-            );
-            debug_assert!(
-                target_partition_facts.windows(2).all(|w| w[0] <= w[1]),
-                "target_partition_facts must be sorted by construction"
-            );
-            debug_assert!(
-                changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
-                "changed_numeric_vars must be strictly ascending by construction"
-            );
-            out.push(TransitionInfo {
-                source_partition_facts: source_partition_facts.clone(),
-                target_partition_facts: target_partition_facts.clone(),
-                prevail_facts: Vec::new(),
-                changed_numeric_vars: changed_numeric_vars.clone(),
-            });
+            scratch.push_transition();
             return Ok(());
         }
 
@@ -1495,33 +1528,17 @@ fn enumerate_partition_combos(
         prepare_comparison_tree_inputs_for_combo_into(
             task,
             generator,
-            combo_scratch,
+            &scratch.combo,
             false,
-            source_intervals_buf,
+            &mut scratch.source_intervals,
         )?;
 
-        if !comparison_preconditions_admit_combo(task, op_preconditions, source_intervals_buf) {
+        if !comparison_preconditions_admit_combo(task, op_preconditions, &scratch.source_intervals)
+        {
             return Ok(());
         }
 
-        debug_assert!(
-            source_partition_facts.windows(2).all(|w| w[0] <= w[1]),
-            "source_partition_facts must be sorted by construction"
-        );
-        debug_assert!(
-            target_partition_facts.windows(2).all(|w| w[0] <= w[1]),
-            "target_partition_facts must be sorted by construction"
-        );
-        debug_assert!(
-            changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
-            "changed_numeric_vars must be strictly ascending by construction"
-        );
-        out.push(TransitionInfo {
-            source_partition_facts: source_partition_facts.clone(),
-            target_partition_facts: target_partition_facts.clone(),
-            prevail_facts: Vec::new(),
-            changed_numeric_vars: changed_numeric_vars.clone(),
-        });
+        scratch.push_transition();
         return Ok(());
     }
 
@@ -1529,38 +1546,53 @@ fn enumerate_partition_combos(
     let var_id = *var_id;
     let abs_var_id = abstraction_numeric_var(num_props, var_id);
     for &(src, tgt) in transitions {
-        source_partition_facts.push(ExplicitFact::numeric_variable(abs_var_id, src));
-        target_partition_facts.push(ExplicitFact::numeric_variable(abs_var_id, tgt));
-        combo_scratch.push((var_id, src, tgt));
+        scratch
+            .source_partition_facts
+            .push(ExplicitFact::numeric_variable(abs_var_id, src));
+        scratch
+            .target_partition_facts
+            .push(ExplicitFact::numeric_variable(abs_var_id, tgt));
+        scratch.combo.push((var_id, src, tgt));
         // `changed_numeric_vars` is seeded with the full set of affected
         // numeric vars at the top of the operator (see
         // `changed_numeric_vars_for_semantics`); re-pushing here would only
         // create duplicates that the legacy code then had to sort+dedup at
         // the leaf. The set is the same for every combo of this operator.
 
-        enumerate_partition_combos(
-            task,
-            generator,
-            op_preconditions,
-            per_var,
-            num_props,
-            op_has_comparison_preconditions,
-            any_changed_var_affects_comparison,
-            pos + 1,
-            source_partition_facts,
-            target_partition_facts,
-            changed_numeric_vars,
-            combo_scratch,
-            source_intervals_buf,
-            out,
-            deadline,
-        )?;
+        enumerate_partition_combos(enumeration, pos + 1, scratch)?;
 
-        source_partition_facts.pop();
-        target_partition_facts.pop();
-        combo_scratch.pop();
+        scratch.source_partition_facts.pop();
+        scratch.target_partition_facts.pop();
+        scratch.combo.pop();
     }
     Ok(())
+}
+
+impl PartitionComboScratch {
+    /// Record the combo the recursion currently holds. The three lists are
+    /// pushed in ascending `var_id` order and each numeric var appears at most
+    /// once, so no sort or dedup is needed here -- only the assertions that say
+    /// so.
+    fn push_transition(&mut self) {
+        debug_assert!(
+            self.source_partition_facts.windows(2).all(|w| w[0] <= w[1]),
+            "source_partition_facts must be sorted by construction"
+        );
+        debug_assert!(
+            self.target_partition_facts.windows(2).all(|w| w[0] <= w[1]),
+            "target_partition_facts must be sorted by construction"
+        );
+        debug_assert!(
+            self.changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
+            "changed_numeric_vars must be strictly ascending by construction"
+        );
+        self.transitions.push(TransitionInfo {
+            source_partition_facts: self.source_partition_facts.clone(),
+            target_partition_facts: self.target_partition_facts.clone(),
+            prevail_facts: Vec::new(),
+            changed_numeric_vars: self.changed_numeric_vars.clone(),
+        });
+    }
 }
 
 #[cfg(test)]

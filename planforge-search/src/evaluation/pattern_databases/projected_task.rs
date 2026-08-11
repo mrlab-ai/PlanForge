@@ -527,10 +527,12 @@ impl<'task> ProjectedTask<'task> {
             base,
             pattern,
             &propositional_axiom_by_affected_var,
-            &mut projected_var_to_original,
-            &mut original_var_to_projected,
-            &mut projected_num_var_to_original,
-            &mut original_num_var_to_projected,
+            VariableProjection {
+                projected_var_to_original: &mut projected_var_to_original,
+                original_var_to_projected: &mut original_var_to_projected,
+                projected_num_var_to_original: &mut projected_num_var_to_original,
+                original_num_var_to_projected: &mut original_num_var_to_projected,
+            },
         )?;
         let mut numeric_effect_sources_by_target = vec![Vec::new(); num_numeric_vars];
         for operator in base.get_operators() {
@@ -1748,18 +1750,47 @@ fn include_restricted_comparison_operands(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// The pattern as membership sets, which is the form the goal walk queries it
+/// in.
+struct PatternMembers {
+    regular: BTreeSet<usize>,
+    numeric: BTreeSet<usize>,
+}
+
+/// The variable index maps between a task and its projection, both kinds and
+/// both directions: `projected_*_to_original` gives every projected id the
+/// original variable it stands for, `original_*_to_projected` the inverse for
+/// the variables the pattern reached. The goal walk extends them as it pulls in
+/// the variables a restricted goal depends on.
+struct VariableProjection<'a> {
+    projected_var_to_original: &'a mut Vec<usize>,
+    original_var_to_projected: &'a mut [Option<usize>],
+    projected_num_var_to_original: &'a mut Vec<usize>,
+    original_num_var_to_projected: &'a mut [Option<usize>],
+}
+
+impl VariableProjection<'_> {
+    /// Shorten the borrows so an inner call can extend the same maps.
+    fn reborrow(&mut self) -> VariableProjection<'_> {
+        VariableProjection {
+            projected_var_to_original: &mut *self.projected_var_to_original,
+            original_var_to_projected: &mut *self.original_var_to_projected,
+            projected_num_var_to_original: &mut *self.projected_num_var_to_original,
+            original_num_var_to_projected: &mut *self.original_num_var_to_projected,
+        }
+    }
+}
+
 fn collect_restricted_projected_goals(
     task: &dyn AbstractNumericTask,
     pattern: &Pattern,
     propositional_axiom_by_affected_var: &[Option<usize>],
-    projected_var_to_original: &mut Vec<usize>,
-    original_var_to_projected: &mut [Option<usize>],
-    projected_num_var_to_original: &mut Vec<usize>,
-    original_num_var_to_projected: &mut [Option<usize>],
+    mut projection: VariableProjection<'_>,
 ) -> Result<Vec<ExplicitFact>, ProjectedTaskBuildError> {
-    let pattern_regular: BTreeSet<usize> = pattern.regular.iter().copied().collect();
-    let pattern_numeric: BTreeSet<usize> = pattern.numeric.iter().copied().collect();
+    let members = PatternMembers {
+        regular: pattern.regular.iter().copied().collect(),
+        numeric: pattern.numeric.iter().copied().collect(),
+    };
     let mut goals = Vec::new();
     let mut visited_vars = HashSet::new();
 
@@ -1767,13 +1798,9 @@ fn collect_restricted_projected_goals(
         collect_restricted_projected_goal_fact(
             task,
             task.get_goal_fact(goal_index),
-            &pattern_regular,
-            &pattern_numeric,
+            &members,
             propositional_axiom_by_affected_var,
-            projected_var_to_original,
-            original_var_to_projected,
-            projected_num_var_to_original,
-            original_num_var_to_projected,
+            projection.reborrow(),
             &mut goals,
             &mut visited_vars,
         )?;
@@ -1784,17 +1811,12 @@ fn collect_restricted_projected_goals(
     Ok(goals)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn collect_restricted_projected_goal_fact(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
-    pattern_regular: &BTreeSet<usize>,
-    pattern_numeric: &BTreeSet<usize>,
+    members: &PatternMembers,
     propositional_axiom_by_affected_var: &[Option<usize>],
-    projected_var_to_original: &mut Vec<usize>,
-    original_var_to_projected: &mut [Option<usize>],
-    projected_num_var_to_original: &mut Vec<usize>,
-    original_num_var_to_projected: &mut [Option<usize>],
+    mut projection: VariableProjection<'_>,
     goals: &mut Vec<ExplicitFact>,
     visited_vars: &mut HashSet<usize>,
 ) -> Result<(), ProjectedTaskBuildError> {
@@ -1808,19 +1830,19 @@ fn collect_restricted_projected_goal_fact(
             comparison_axiom.get_left_var_id(),
             comparison_axiom.get_right_var_id(),
         ];
-        let selected = pattern_regular.contains(&fact.var())
-            || operands.iter().any(|id| pattern_numeric.contains(id));
+        let selected = members.regular.contains(&fact.var())
+            || operands.iter().any(|id| members.numeric.contains(id));
         if selected {
             push_unique_mapping(
                 fact.var(),
-                projected_var_to_original,
-                original_var_to_projected,
+                projection.projected_var_to_original,
+                projection.original_var_to_projected,
             );
             include_restricted_comparison_operands(
                 task,
                 comparison_axiom_id,
-                projected_num_var_to_original,
-                original_num_var_to_projected,
+                projection.projected_num_var_to_original,
+                projection.original_num_var_to_projected,
             );
             goals.push(*fact);
         }
@@ -1832,11 +1854,11 @@ fn collect_restricted_projected_goal_fact(
         .copied()
         .flatten()
     {
-        if pattern_regular.contains(&fact.var()) {
+        if members.regular.contains(&fact.var()) {
             push_unique_mapping(
                 fact.var(),
-                projected_var_to_original,
-                original_var_to_projected,
+                projection.projected_var_to_original,
+                projection.original_var_to_projected,
             );
             goals.push(*fact);
         }
@@ -1844,13 +1866,9 @@ fn collect_restricted_projected_goal_fact(
             collect_restricted_projected_goal_fact(
                 task,
                 condition,
-                pattern_regular,
-                pattern_numeric,
+                members,
                 propositional_axiom_by_affected_var,
-                projected_var_to_original,
-                original_var_to_projected,
-                projected_num_var_to_original,
-                original_num_var_to_projected,
+                projection.reborrow(),
                 goals,
                 visited_vars,
             )?;
@@ -1858,11 +1876,11 @@ fn collect_restricted_projected_goal_fact(
         return Ok(());
     }
 
-    if pattern_regular.contains(&fact.var()) {
+    if members.regular.contains(&fact.var()) {
         push_unique_mapping(
             fact.var(),
-            projected_var_to_original,
-            original_var_to_projected,
+            projection.projected_var_to_original,
+            projection.original_var_to_projected,
         );
         goals.push(*fact);
     }
