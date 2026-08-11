@@ -6,13 +6,19 @@
 <title>PDDL support - PlanForge</title>
 <meta name="description" content="Which PDDL constructs the PlanForge translator reads: the requirement levels, numeric fluents and comparisons, conditional effects, derived predicates, the six ADL constructs it currently mishandles, and what it writes as SAS+.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
 
 <header>
-  <p class="site"><a href="index.html">PlanForge</a></p>
-  <nav aria-label="Site">
+  <a class="logo" href="index.html"><img src="logo.svg" alt="PlanForge" width="987" height="331"></a>
+  <p class="repo"><a href="https://github.com/mrlab-ai/PlanForge">GitHub</a></p>
+</header>
+
+<div class="page">
+
+<nav aria-label="Site">
     <ul>
       <li><a href="index.html">Home</a></li>
       <li><a href="search.html">Search options</a></li>
@@ -20,8 +26,7 @@
       <li><a href="development.html">Development</a></li>
       <li><a href="about.html">Credits and licence</a></li>
     </ul>
-  </nav>
-</header>
+</nav>
 
 <main id="main">
 
@@ -79,7 +84,7 @@ running the planner.</p>
   </thead>
   <tbody>
     <tr>
-      <td>A disjunctive goal, <code>(:goal (or ...))</code></td>
+      <td>A disjunctive goal, <code class="wrap">(:goal (or ...))</code></td>
       <td>The goal is replaced by a reachability predicate before disjunctions are split, so the disjunction is never split and the goal disappears.</td>
       <td>Invalid plan. The empty plan is reported as a solution.</td>
     </tr>
@@ -95,7 +100,7 @@ running the planner.</p>
     </tr>
     <tr>
       <td><code>imply</code> with a compound antecedent</td>
-      <td>The antecedent is not negated. <code>(imply (and (p) (q)) (r))</code> becomes <code>(p) and (q) or (r)</code> instead of <code>not ((p) and (q)) or (r)</code>.</td>
+      <td>The antecedent is not negated. <code class="wrap">(imply (and (p) (q)) (r))</code> becomes <code class="wrap">(p) and (q) or (r)</code> instead of <code class="wrap">not ((p) and (q)) or (r)</code>.</td>
       <td>Invalid plan. With <code>p</code> and <code>q</code> true and <code>r</code> false, the action is treated as applicable.</td>
     </tr>
     <tr>
@@ -173,19 +178,19 @@ same as being rejected.</p>
   </thead>
   <tbody>
     <tr><td><code>:strips</code></td><td>Supported</td><td>The base language.</td></tr>
-    <tr><td><code>:typing</code></td><td>Supported</td><td>Type hierarchies included. Types are compiled into predicates before grounding. <code>(either a b)</code> is not read and fails on the type token.</td></tr>
-    <tr><td><code>:negative-preconditions</code></td><td>Supported</td><td><code>(not (p ?x))</code> in preconditions, goals and effect conditions. Only around a single atom or a comparison. <code>(not (and ...))</code> and <code>(not (or ...))</code> fail.</td></tr>
-    <tr><td><code>:action-costs</code></td><td>Supported</td><td><code>(increase (total-cost) ...)</code> at the top level of an effect. A cost must be a non-negative integer. A fractional cost is rejected.</td></tr>
+    <tr><td><code>:typing</code></td><td>Supported</td><td>Type hierarchies included. Types are compiled into predicates before grounding. <code class="wrap">(either a b)</code> is not read and fails on the type token.</td></tr>
+    <tr><td><code>:negative-preconditions</code></td><td>Supported</td><td><code class="wrap">(not (p ?x))</code> in preconditions, goals and effect conditions. Only around a single atom or a comparison. <code class="wrap">(not (and ...))</code> and <code class="wrap">(not (or ...))</code> fail.</td></tr>
+    <tr><td><code>:action-costs</code></td><td>Supported</td><td><code class="wrap">(increase (total-cost) ...)</code> at the top level of an effect. A cost must be a non-negative integer. A fractional cost is rejected.</td></tr>
     <tr><td><code>:numeric-fluents</code>, <code>:fluents</code></td><td>Supported</td><td>The main extension. See <a href="#conditions">conditions</a> and <a href="#effects">effects</a>.</td></tr>
-    <tr><td><code>:derived-predicates</code></td><td>Supported</td><td><code>(:derived ...)</code>, layered and recursive. <code>exists</code> works inside a body. Several blocks for one head act as a disjunction. Nine fixtures cover this.</td></tr>
-    <tr><td><code>:equality</code></td><td>Partial</td><td><code>(not (= ?x ?y))</code> works, because every object is made equal to itself in the initial state, which makes inequality statically decidable. A positive <code>(= ?x ?y)</code> between two objects is read as a comparison between two zero-argument fluents and removes the action.</td></tr>
+    <tr><td><code>:derived-predicates</code></td><td>Supported</td><td><code class="wrap">(:derived ...)</code>, layered and recursive. <code>exists</code> works inside a body. Several blocks for one head act as a disjunction. Nine fixtures cover this.</td></tr>
+    <tr><td><code>:equality</code></td><td>Partial</td><td><code class="wrap">(not (= ?x ?y))</code> works, because every object is made equal to itself in the initial state, which makes inequality statically decidable. A positive <code class="wrap">(= ?x ?y)</code> between two objects is read as a comparison between two zero-argument fluents and removes the action.</td></tr>
     <tr><td><code>:disjunctive-preconditions</code></td><td>Partial</td><td>An <code>or</code> in an action precondition is compiled away correctly, by splitting the action into one copy per disjunct. An <code>or</code> anywhere else is <a href="#adl">mishandled</a>.</td></tr>
-    <tr><td><code>:conditional-effects</code></td><td>Partial</td><td><code>when</code> guarding a single propositional or numeric effect works. A conjunctive consequent, <code>(when C (and A B))</code>, fails.</td></tr>
+    <tr><td><code>:conditional-effects</code></td><td>Partial</td><td><code>when</code> guarding a single propositional or numeric effect works. A conjunctive consequent, <code class="wrap">(when C (and A B))</code>, fails.</td></tr>
     <tr><td><code>:universal-preconditions</code>, <code>:existential-preconditions</code>, <code>:quantified-preconditions</code></td><td>Mishandled</td><td>Not implemented. See <a href="#adl">the six cases</a>.</td></tr>
     <tr><td><code>:adl</code></td><td>Not supported</td><td>ADL needs quantified preconditions and universal effects. Both are mishandled rather than implemented, so this fragment is not ADL whatever the flag says.</td></tr>
-    <tr><td><code>:object-fluents</code></td><td>Rejected</td><td>A typed function return is parsed and discarded. An object-valued entry in <code>:init</code> is then an explicit error: <code>numeric init fact for PNE loc-of(t1) must assign a numeric constant, got PNE p1()</code>.</td></tr>
-    <tr><td><code>:durative-actions</code>, <code>:duration-inequalities</code>, <code>:continuous-effects</code>, <code>:timed-initial-literals</code></td><td>Not supported</td><td>Nothing temporal. A <code>(:durative-action ...)</code> block is treated as an unknown section and skipped with a warning, which leaves the domain with no actions. Translation then fails on the first unreachable goal atom. A timed initial literal fails on its nested literal.</td></tr>
-    <tr><td><code>:preferences</code>, <code>:constraints</code></td><td>Not supported</td><td>No PDDL 3. A <code>(preference ...)</code> in a goal fails. A problem-level <code>(:constraints ...)</code> block is dropped with no message at all, so the plan ignores it silently.</td></tr>
+    <tr><td><code>:object-fluents</code></td><td>Rejected</td><td>A typed function return is parsed and discarded. An object-valued entry in <code>:init</code> is then an explicit error: <code class="wrap">numeric init fact for PNE loc-of(t1) must assign a numeric constant, got PNE p1()</code>.</td></tr>
+    <tr><td><code>:durative-actions</code>, <code>:duration-inequalities</code>, <code>:continuous-effects</code>, <code>:timed-initial-literals</code></td><td>Not supported</td><td>Nothing temporal. A <code class="wrap">(:durative-action ...)</code> block is treated as an unknown section and skipped with a warning, which leaves the domain with no actions. Translation then fails on the first unreachable goal atom. A timed initial literal fails on its nested literal.</td></tr>
+    <tr><td><code>:preferences</code>, <code>:constraints</code></td><td>Not supported</td><td>No PDDL 3. A <code class="wrap">(preference ...)</code> in a goal fails. A problem-level <code class="wrap">(:constraints ...)</code> block is dropped with no message at all, so the plan ignores it silently.</td></tr>
     <tr><td><code>:goal-utilities</code></td><td>Not supported</td><td>No soft goals and no utilities.</td></tr>
   </tbody>
 </table>
@@ -194,13 +199,13 @@ same as being rejected.</p>
 <h2 id="input">Input and translation</h2>
 
 <p>Two positional arguments are a domain file and a problem file. One positional
-argument is a SAS<sup>+</sup> file that has already been translated.</p>
+argument is a SAS+ file that has already been translated.</p>
 
 <pre><code>planforge --search 'astar(lmcutnumeric())' domain.pddl problem.pddl
 planforge --search 'astar(lmcutnumeric())' task.sas</code></pre>
 
 <p>On the PDDL route, translation and grounding happen in the same process as the
-search. No SAS<sup>+</sup> text is produced along the way.</p>
+search. No SAS+ text is produced along the way.</p>
 
 <p>When you want the text itself, to hand the task to another planner or to
 attach it to a bug report, use the second program. It stops after
@@ -240,7 +245,7 @@ numeric variables, expands the same 73 states, and returns the same plan of cost
     <tr><td><code>:action</code></td><td>Read: <code>:parameters</code>, <code>:precondition</code> and <code>:effect</code>.</td></tr>
     <tr><td><code>:derived</code></td><td>Read. Derived predicates become axioms, arranged into layers.</td></tr>
     <tr><td><code>:global-constraint</code></td><td>Read, as an axiom. A constraint that must hold in every state.</td></tr>
-    <tr><td><code>:axiom</code></td><td>Rejected on purpose. PDDL 2.1's <code>(:axiom :vars ... :context ... :implies ...)</code> is a different block shape, not another spelling of <code>:derived</code>. Parsing it as one would mistake <code>:vars</code> for the head predicate, so the error tells you to write <code>(:derived (NAME ?x - t) CONDITION)</code> instead.</td></tr>
+    <tr><td><code>:axiom</code></td><td>Rejected on purpose. PDDL 2.1's <code class="wrap">(:axiom :vars ... :context ... :implies ...)</code> is a different block shape, not another spelling of <code>:derived</code>. Parsing it as one would mistake <code>:vars</code> for the head predicate, so the error tells you to write <code class="wrap">(:derived (NAME ?x - t) CONDITION)</code> instead.</td></tr>
     <tr><td>anything else</td><td>Skipped, with a warning that names the section.</td></tr>
   </tbody>
 </table>
@@ -272,15 +277,15 @@ conditions.</p>
     <a href="#adl">treated as true</a>. Do not use it.</li>
 </ul>
 
-<p>A comparison becomes a variable of its own in the SAS<sup>+</sup> task. That
+<p>A comparison becomes a variable of its own in the SAS+ task. That
 is what lets the abstraction refinement loop split on the operands of a
 comparison, and it is why numeric heuristics can say anything useful about a
 numeric condition.</p>
 
 <p><code>=</code> is read as a numeric comparison whenever it is not directly
 inside a <code>not</code>. So it works between fluent expressions, and
-<code>(not (= ?x ?y))</code> works as object inequality. A bare positive
-<code>(= ?x ?y)</code> between two objects is read as a comparison between two
+<code class="wrap">(not (= ?x ?y))</code> works as object inequality. A bare positive
+<code class="wrap">(= ?x ?y)</code> between two objects is read as a comparison between two
 zero-argument fluents, and it removes the action.</p>
 
 <h2 id="effects">Effects</h2>
@@ -289,7 +294,7 @@ zero-argument fluents, and it removes the action.</p>
   <li>Conjunctions of effects, and negated atoms as delete effects.</li>
   <li><strong>Conditional effects.</strong> <code>when</code> guarding one
     propositional or numeric effect. The consequent must be a single effect. A
-    conjunctive consequent, <code>(when C (and A B))</code>, is not read and
+    conjunctive consequent, <code class="wrap">(when C (and A B))</code>, is not read and
     fails on the inner list. Write one <code>when</code> per effect
     instead.</li>
   <li><strong>Numeric assignment.</strong> All five PDDL operators:
@@ -313,7 +318,7 @@ for action costs.</p>
 
 <h2 id="sas">What the translator writes</h2>
 
-<p>The output is Fast Downward's SAS<sup>+</sup> text format, declared as version
+<p>The output is Fast Downward's SAS+ text format, declared as version
 4. That is the familiar layout plus the sections the numeric extension needs.</p>
 
 <p>These are all of the sections, and every one of them appears in real output
@@ -355,7 +360,7 @@ not the number.</p>
 test suite pins the cheapest plan cost of each one, so they double as worked
 examples of the constructs above.</p>
 
-<p>Every row below is a run of <code>--search 'astar(lmcutnumeric())'</code> on a
+<p>Every row below is a run of <code class="wrap">--search 'astar(lmcutnumeric())'</code> on a
 default build.</p>
 
 <div class="scroll">
@@ -395,7 +400,7 @@ goal-reachability predicate the translator introduces for a disjunctive,
 quantified or nested goal.</p>
 
 <p>Numeric comparisons are not affected. A comparison variable is derived in the
-SAS<sup>+</sup> sense too, but refining the operands of a comparison is exactly
+SAS+ sense too, but refining the operands of a comparison is exactly
 what the numeric refinement loop does.</p>
 
 <p>Nothing else is restricted this way. The same fixture that the domain
@@ -405,7 +410,7 @@ has already closed.</p>
 
 <h3 id="limit-metric">A plan metric must name a single fluent</h3>
 
-<p><code>(:metric minimize (total-cost))</code> is used as written.</p>
+<p><code class="wrap">(:metric minimize (total-cost))</code> is used as written.</p>
 
 <p>A compound metric expression is not supported, and it is not rejected either.
 It is replaced by <code>total-cost</code> with no error. So if your task
@@ -434,7 +439,7 @@ you wrote.</p>
     reach however easy the search would have been.</li>
   <li><strong>A trivially unsolvable task crashes instead of being
     reported.</strong> If a goal atom is neither reachable nor statically
-    decided, translation stops with <code>condition atom ... has no SAS variable;
+    decided, translation stops with <code class="wrap">condition atom ... has no SAS variable;
     it is neither reachable nor statically decided</code>. No plan exists, so the
     outcome is correct, but it arrives as a panic and exit code 101 rather than
     as a verdict.</li>
@@ -464,6 +469,8 @@ numeric tracks of the
 Competition</a>.</p>
 
 </main>
+
+</div>
 
 <footer>
   <p>Source:

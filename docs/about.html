@@ -6,13 +6,19 @@
 <title>Credits and licence - PlanForge</title>
 <meta name="description" content="Where PlanForge comes from: its origin as a Rust port of Numeric Fast Downward, itself a fork of Fast Downward, the people and publications behind both, and the licence terms for the code and for this website.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
 
 <header>
-  <p class="site"><a href="index.html">PlanForge</a></p>
-  <nav aria-label="Site">
+  <a class="logo" href="index.html"><img src="logo.svg" alt="PlanForge" width="987" height="331"></a>
+  <p class="repo"><a href="https://github.com/mrlab-ai/PlanForge">GitHub</a></p>
+</header>
+
+<div class="page">
+
+<nav aria-label="Site">
     <ul>
       <li><a href="index.html">Home</a></li>
       <li><a href="search.html">Search options</a></li>
@@ -20,8 +26,7 @@
       <li><a href="development.html">Development</a></li>
       <li><a href="about.html" aria-current="page">Credits and licence</a></li>
     </ul>
-  </nav>
-</header>
+</nav>
 
 <main id="main">
 
@@ -43,7 +48,7 @@ and the numeric heuristics that most of this planner is made of come from Numeri
 Fast Downward. Numeric Fast Downward is the direct predecessor, and mainline is
 its ancestor rather than ours.</p>
 
-<p>The port kept more than an idea. The task representation, the SAS<sup>+</sup>
+<p>The port kept more than an idea. The task representation, the SAS+
 translation pipeline, the shape of the statistics block, and several of the
 numeric heuristics follow the predecessor closely.</p>
 
@@ -275,23 +280,33 @@ commercially, provided you credit the PlanForge project and link back to
 the documentation on this site only. It does not cover the planner, which is
 licensed as above.</p>
 
-<p>There is no third-party content on this site to license. Every page loads two
-files: its own HTML and one stylesheet. There is no web font, no stylesheet
-framework, no JavaScript and no icon set, and nothing is requested from another
-host. Visiting the site therefore discloses nothing about you to a third
-party.</p>
+<p>Every page loads four files: its own HTML, one stylesheet, the logo and the
+icon. There is no web font, no stylesheet framework, no JavaScript and no icon
+set, and nothing is requested from another host. Visiting the site therefore
+discloses nothing about you to a third party.</p>
+
+<p>The logo is the project's own artwork. Its wordmark was set in Comfortaa and
+converted to outlines, so the drawing contains curves and not text. Comfortaa is
+licensed under the SIL Open Font License 1.1, which permits that use. The font
+itself is not part of this site and is not served to you.</p>
 
 <h2 id="contact">Contact</h2>
 
-<p>There is no mailing list. Bug reports, questions about a configuration and
-patches all belong in the
+<p>There is no mailing list. Bug reports and patches belong in the
 <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a> on the
-<a href="https://github.com/mrlab-ai/PlanForge">GitHub repository</a>.</p>
+<a href="https://github.com/mrlab-ai/PlanForge">GitHub repository</a>, where they
+stay visible to everyone.</p>
+
+<p>For anything that does not fit an issue, write to Markus Fritzsche at
+<a href="mailto:markus.fritzsche@liu.se">markus.fritzsche@liu.se</a>, or ask
+Mart&iacute;n Pozo. Both are at the Machine Reasoning Lab.</p>
 
 <p>A report is easiest to act on when it includes the domain file, the problem
 file, the exact <code>--search</code> string and the planner's output.</p>
 
 </main>
+
+</div>
 
 <footer>
   <p>Source:

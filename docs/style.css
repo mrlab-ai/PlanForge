@@ -1,9 +1,9 @@
 /* PlanForge website stylesheet.
  *
  * Written for this site. There is no framework, no reset library, no web font
- * and no icon set. Every page loads two files: its own HTML and this file. The
- * pages are ordered so that they still read correctly with no stylesheet at
- * all.
+ * and no icon set. Every page loads four files: its own HTML, this one, the
+ * logo and the icon. The pages are ordered so that they still read correctly
+ * with no stylesheet at all.
  *
  * Colours are picked so that every text and background pair is above the WCAG
  * 2.1 AA contrast ratio of 4.5:1, in the light scheme and in the dark one.
@@ -17,6 +17,7 @@
   --muted: #4a5057;
   --link: #0b4f8f;
   --visited: #6a2a8c;
+  --code: #0d3a63;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +29,7 @@
     --muted: #a9b1b8;
     --link: #7cc0ff;
     --visited: #d4a8f0;
+    --code: #b8d4ea;
   }
 }
 
@@ -42,7 +44,7 @@ html {
 }
 
 body {
-  max-width: 46rem;
+  max-width: 64rem;
   margin: 0 auto;
   padding: 1.5rem 1.25rem 3rem;
   background: var(--bg);
@@ -69,32 +71,87 @@ body {
 
 /* Header and navigation. */
 
+/* Top bar: logo on the left, repository link on the right. */
+
 header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 0.6rem;
-  margin-bottom: 1.5rem;
+  padding-bottom: 0.7rem;
+  margin-bottom: 2rem;
 }
 
-.site {
+.repo {
   margin: 0;
-  font-size: 1.25rem;
-  font-weight: 700;
+  font-size: 0.9rem;
 }
 
-.site a {
-  color: var(--text);
-  text-decoration: none;
+/* The logo carries the site name, so there is no separate text title. Sizing by
+   width only, with height left automatic, keeps the aspect ratio the SVG
+   declares. The intrinsic width and height on the img reserve the box before the
+   file loads, so the nav below it does not jump. */
+
+.logo {
+  display: inline-block;
+}
+
+.logo img {
+  display: block;
+  width: 17rem;
+  height: auto;
+}
+
+/* Two columns: the site menu on the left of the page, the page beside it.
+   min-width: 0 on main is load-bearing. Without it a wide table or a long line
+   inside a pre block sets the flex item's minimum size to its own content
+   width, which pushes the whole layout wider than the page and produces a
+   horizontal scrollbar on the document instead of inside the table. */
+
+.page {
+  display: flex;
+  align-items: flex-start;
+  gap: 2.5rem;
+}
+
+.page nav {
+  flex: 0 0 11rem;
+  position: sticky;
+  top: 1rem;
+}
+
+.page main {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 nav ul {
   list-style: none;
-  margin: 0.5rem 0 0;
+  margin: 0;
   padding: 0;
+  font-size: 0.9rem;
 }
 
 nav li {
-  display: inline;
-  margin-right: 1rem;
+  display: block;
+  margin: 0 0 0.5rem;
+}
+
+nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+nav a:visited {
+  color: var(--muted);
+}
+
+nav a:hover,
+nav a:focus-visible {
+  color: var(--link);
+  text-decoration: underline;
 }
 
 nav a[aria-current="page"] {
@@ -113,7 +170,7 @@ h1 {
 h2 {
   font-size: 1.3rem;
   line-height: 1.25;
-  margin: 2rem 0 0.5rem;
+  margin: 2.4rem 0 0.6rem;
 }
 
 h3 {
@@ -169,10 +226,26 @@ pre {
   font-size: 0.9em;
 }
 
+/* Inline code carries no background. Some pages mention code hundreds of times
+   in running prose, and a shaded box around each one turns the page into a rash
+   of grey rectangles. The monospace face is enough to mark it.
+
+   Identifiers do not wrap. A browser treats a hyphen as a break opportunity, so
+   `--search` in running prose otherwise splits across two lines and reads as `-`
+   then `-search`, and no reader can tell how many hyphens the real option has.
+   That is a correctness problem in documentation, not a cosmetic one.
+
+   Inline code that contains a space is a message or a phrase rather than an
+   identifier, and it is marked .wrap so it can still break. Without that the
+   longest of them, around ninety characters, would run off the column. */
+
 :not(pre) > code {
-  background: var(--shade);
-  padding: 0 0.2em;
-  overflow-wrap: break-word;
+  color: var(--code);
+  white-space: nowrap;
+}
+
+:not(pre) > code.wrap {
+  white-space: normal;
 }
 
 pre {
@@ -183,10 +256,6 @@ pre {
   line-height: 1.45;
 }
 
-pre code {
-  background: none;
-  padding: 0;
-}
 
 /* Tables. A table that is wider than the page scrolls inside this wrapper
    instead of widening the page. */
@@ -236,4 +305,36 @@ footer {
 
 footer p {
   margin: 0 0 0.4rem;
+}
+
+/* Narrow screens: one column, with the menu as a row above the page. */
+
+@media (max-width: 58rem) {
+  .page {
+    display: block;
+  }
+
+  .page nav {
+    position: static;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.7rem;
+    margin-bottom: 1.75rem;
+  }
+
+  nav li {
+    display: inline;
+    margin: 0 1.1rem 0 0;
+  }
+
+  /* The longest identifier on the site is 55 characters, which is wider than a
+     phone column. Since it must not break mid-token, let it scroll inside its
+     own box instead. Without this it widens the document and every page gets a
+     horizontal scrollbar on a phone. */
+
+  :not(pre) > code {
+    display: inline-block;
+    max-width: 100%;
+    overflow-x: auto;
+    vertical-align: bottom;
+  }
 }

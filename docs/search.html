@@ -6,13 +6,19 @@
 <title>Search options - PlanForge</title>
 <meta name="description" content="Reference for the PlanForge --search option: the grammar, the four search algorithms, every heuristic with its options and defaults, the abstraction sources, the rest of the command line, and the exit codes.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
 
 <header>
-  <p class="site"><a href="index.html">PlanForge</a></p>
-  <nav aria-label="Site">
+  <a class="logo" href="index.html"><img src="logo.svg" alt="PlanForge" width="987" height="331"></a>
+  <p class="repo"><a href="https://github.com/mrlab-ai/PlanForge">GitHub</a></p>
+</header>
+
+<div class="page">
+
+<nav aria-label="Site">
     <ul>
       <li><a href="index.html">Home</a></li>
       <li><a href="search.html" aria-current="page">Search options</a></li>
@@ -20,8 +26,7 @@
       <li><a href="development.html">Development</a></li>
       <li><a href="about.html">Credits and licence</a></li>
     </ul>
-  </nav>
-</header>
+</nav>
 
 <main id="main">
 
@@ -141,7 +146,7 @@ exists because some scripts write configurations that way.</p>
 
 <pre><code>astar(heuristic=blind(), mpd=false)</code></pre>
 
-<p>A* search. It orders the open list on <code>f = g + h</code>, where
+<p>A* search. It orders the open list on <code class="wrap">f = g + h</code>, where
 <code>g</code> is the cost paid so far and <code>h</code> is the heuristic
 estimate of the cost remaining.</p>
 
@@ -196,7 +201,7 @@ plan on one fixture and a plan of twice the cheapest cost on another.</p>
 <p>A* with two heuristics, one cheap and one expensive. The cheap one is
 evaluated for every state and orders the open list. The expensive one is
 evaluated only when a state is about to be expanded. The entry is then
-reinserted with <code>f = g + max(h_fast, h_slow)</code>.</p>
+reinserted with <code class="wrap">f = g + max(h_fast, h_slow)</code>.</p>
 
 <p>Both arguments are required and both must be named. Positional arguments are
 rejected.</p>
@@ -247,7 +252,7 @@ run.</p>
     <tr><th scope="col">Option</th><th scope="col">Type</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>horizon</code></td><td>int, <code>dovetail</code>, or <code>dovetail(start, growth, max)</code></td><td><code>dovetail(8, 2.0, 512)</code></td><td>How many action slots the transcription has. An integer fixes the horizon. <code>dovetail</code> starts at <code>start</code> slots and multiplies by <code>growth</code> up to <code>max</code>.</td></tr>
+    <tr><td><code>horizon</code></td><td>int, <code>dovetail</code>, or <code class="wrap">dovetail(start, growth, max)</code></td><td><code class="wrap">dovetail(8, 2.0, 512)</code></td><td>How many action slots the transcription has. An integer fixes the horizon. <code>dovetail</code> starts at <code>start</code> slots and multiplies by <code>growth</code> up to <code>max</code>.</td></tr>
     <tr><td><code>particles</code></td><td>int</td><td><code>8</code></td><td>How many independent candidate plans are optimised at once.</td></tr>
     <tr><td><code>updates</code></td><td>int</td><td><code>20000</code></td><td>Gradient updates per horizon.</td></tr>
     <tr><td><code>learning_rate</code>, alias <code>lr</code></td><td>float</td><td><code>0.04</code></td><td>Step size of the optimiser.</td></tr>
@@ -328,7 +333,7 @@ wins on this fixture can lose badly on a task with a different structure.</p>
     <tr><td><code>fillscp()</code></td><td class="num">361</td></tr>
     <tr><td><code>cartesian_abstraction()</code></td><td class="num">433</td></tr>
     <tr><td><code>canonical(icaps26_cartesian(max_time=20))</code> *</td><td class="num">825</td></tr>
-    <tr><td><code>scp(domain(), online=false)</code></td><td class="num">1 060</td></tr>
+    <tr><td><code class="wrap">scp(domain(), online=false)</code></td><td class="num">1 060</td></tr>
     <tr><td><code>scp_online(online=false)</code></td><td class="num">1 428</td></tr>
     <tr><td><code>canonical_domain_abstractions()</code></td><td class="num">1 526</td></tr>
     <tr><td><code>max(domain())</code></td><td class="num">1 526</td></tr>
@@ -383,7 +388,7 @@ that spends the leftover costs inside a cost partitioning. See
   <tbody>
     <tr><td><code>ceiling_less_than_one</code></td><td>bool</td><td><code>false</code></td><td>Round a repetition count up to 1 when the computed count is below 1.</td></tr>
     <tr><td><code>ignore_numeric</code></td><td>bool</td><td><code>false</code></td><td>Drop the numeric part of the task and compute propositional LM-cut only. Useful for telling apart a propositional and a numeric regression.</td></tr>
-    <tr><td><code>random_pcf</code></td><td>bool</td><td><code>false</code></td><td>Not implemented. Setting it to <code>true</code> is an error: <code>lmcutnumeric random_pcf=true is not implemented yet</code>.</td></tr>
+    <tr><td><code>random_pcf</code></td><td>bool</td><td><code>false</code></td><td>Not implemented. Setting it to <code>true</code> is an error: <code class="wrap">lmcutnumeric random_pcf=true is not implemented yet</code>.</td></tr>
     <tr><td><code>irmax</code></td><td>bool</td><td><code>false</code></td><td>A switch in the landmark cost computation. See the note below.</td></tr>
     <tr><td><code>disable_ma</code></td><td>bool</td><td><code>false</code></td><td>Turn off the multiplier-aware numeric repetition count. See the note below.</td></tr>
     <tr><td><code>use_second_order_simple</code></td><td>bool</td><td><code>false</code></td><td>A switch in the numeric repetition count. See the note below.</td></tr>
@@ -606,7 +611,7 @@ accepts sources and exactly one option.</p>
     <tr><th scope="col">Option</th><th scope="col">Type</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>construction_max_time</code></td><td>float, seconds</td><td>no limit</td><td>One budget covering both the generation of the sources and the building of any lookup table. Must be finite and greater than zero. When it runs out, the run stops with <code>shared abstraction construction deadline exceeded</code> and exit code 7.</td></tr>
+    <tr><td><code>construction_max_time</code></td><td>float, seconds</td><td>no limit</td><td>One budget covering both the generation of the sources and the building of any lookup table. Must be finite and greater than zero. When it runs out, the run stops with <code class="wrap">shared abstraction construction deadline exceeded</code> and exit code 7.</td></tr>
   </tbody>
 </table>
 </div>
@@ -854,7 +859,7 @@ CEGAR options are applied.</p>
     <tr><th scope="col">Option</th><th scope="col">Type</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>record_transition_system</code></td><td>bool</td><td><code>false</code></td><td>Keep the abstract transition system after construction. The linear program needs it, so this must be set to <code>true</code>. Leaving it out is an error: <code>pot_da_ocp requires record_transition_system=true in its abstraction generator</code>.</td></tr>
+    <tr><td><code>record_transition_system</code></td><td>bool</td><td><code>false</code></td><td>Keep the abstract transition system after construction. The linear program needs it, so this must be set to <code>true</code>. Leaving it out is an error: <code class="wrap">pot_da_ocp requires record_transition_system=true in its abstraction generator</code>.</td></tr>
     <tr><td><code>record_transition_system_max_transitions</code></td><td>int</td><td><code>100000</code></td><td>Cap on how many transitions are kept.</td></tr>
   </tbody>
 </table>
@@ -1239,7 +1244,7 @@ automatic differentiation backend it needs.</p>
 
 <h2 id="command-line">The rest of the command line</h2>
 
-<p><code>planforge --help</code> prints the authoritative list. This is what the
+<p><code class="wrap">planforge --help</code> prints the authoritative list. This is what the
 options mean.</p>
 
 <div class="scroll">
@@ -1248,14 +1253,14 @@ options mean.</p>
     <tr><th scope="col">Option</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>--search &lt;SPEC&gt;</code></td><td><code>astar(blind())</code></td><td>The configuration described on this page.</td></tr>
-    <tr><td><code>--max-time &lt;DURATION&gt;</code></td><td>no limit</td><td>Wall-clock budget. See the duration syntax below.</td></tr>
-    <tr><td><code>--max-memory &lt;SIZE&gt;</code></td><td>no limit</td><td>Memory cap. See the size syntax below.</td></tr>
+    <tr><td><code class="wrap">--search &lt;SPEC&gt;</code></td><td><code>astar(blind())</code></td><td>The configuration described on this page.</td></tr>
+    <tr><td><code class="wrap">--max-time &lt;DURATION&gt;</code></td><td>no limit</td><td>Wall-clock budget. See the duration syntax below.</td></tr>
+    <tr><td><code class="wrap">--max-memory &lt;SIZE&gt;</code></td><td>no limit</td><td>Memory cap. See the size syntax below.</td></tr>
     <tr><td><code>--restrict-task</code></td><td>off</td><td>Convert the task to its restricted form. See <a href="#restrict-task">below</a>.</td></tr>
     <tr><td><code>--compact-numeric-states</code></td><td>off</td><td>Store numeric values in the state registry behind checked 32-bit interned identifiers. The values stay exact. States get smaller on a task with many numeric variables.</td></tr>
-    <tr><td><code>--log-level &lt;LEVEL&gt;</code></td><td><code>info</code></td><td>How much the planner prints. One of <code>off</code>, <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>.</td></tr>
+    <tr><td><code class="wrap">--log-level &lt;LEVEL&gt;</code></td><td><code>info</code></td><td>How much the planner prints. One of <code>off</code>, <code>error</code>, <code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>.</td></tr>
     <tr><td><code>--portfolio</code></td><td>off</td><td>Run two searches in sequence instead of one. See <a href="#portfolio">below</a>. Cannot be combined with <code>--search</code>, <code>--max-time</code> or <code>--max-memory</code>.</td></tr>
-    <tr><td><code>&lt;INPUT&gt;...</code></td><td>required</td><td>One argument is a SAS<sup>+</sup> file. Two arguments are a PDDL domain file and a PDDL problem file.</td></tr>
+    <tr><td><code>&lt;INPUT&gt;...</code></td><td>required</td><td>One argument is a SAS+ file. Two arguments are a PDDL domain file and a PDDL problem file.</td></tr>
   </tbody>
 </table>
 </div>
@@ -1361,13 +1366,15 @@ standard error. So redirecting one of the two does not lose the other.</p>
 
 <p>Exit code 0 covers two different outcomes. One is that a plan was found. The
 other is that the search finished, explored everything it could reach, and found
-nothing. The second case prints <code>No solution found</code> and writes no
+nothing. The second case prints <code class="wrap">No solution found</code> and writes no
 <code>sas_plan</code>, and it still exits with 0.</p>
 
 <p>So a script must not read a zero status as success. Test for the plan file, or
-test for <code>Solution found!</code> in the output.</p>
+test for <code class="wrap">Solution found!</code> in the output.</p>
 
 </main>
+
+</div>
 
 <footer>
   <p>Source:

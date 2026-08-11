@@ -6,13 +6,19 @@
 <title>Development - PlanForge</title>
 <meta name="description" content="How PlanForge is built and checked: the workspace crates, the test suite that pins every fixture's cheapest plan cost, the six continuous integration jobs, and the local check script.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
 
 <header>
-  <p class="site"><a href="index.html">PlanForge</a></p>
-  <nav aria-label="Site">
+  <a class="logo" href="index.html"><img src="logo.svg" alt="PlanForge" width="987" height="331"></a>
+  <p class="repo"><a href="https://github.com/mrlab-ai/PlanForge">GitHub</a></p>
+</header>
+
+<div class="page">
+
+<nav aria-label="Site">
     <ul>
       <li><a href="index.html">Home</a></li>
       <li><a href="search.html">Search options</a></li>
@@ -20,8 +26,7 @@
       <li><a href="development.html" aria-current="page">Development</a></li>
       <li><a href="about.html">Credits and licence</a></li>
     </ul>
-  </nav>
-</header>
+</nav>
 
 <main id="main">
 
@@ -66,7 +71,7 @@ after every one-line change.</p>
 
   <dt><code>planforge-translate</code></dt>
   <dd>The PDDL reader, the grounder, the invariant analysis and the
-    SAS<sup>+</sup> writer.</dd>
+    SAS+ writer.</dd>
 
   <dt><code>planforge-sas</code></dt>
   <dd>The task representation and the state registry that everything else is
@@ -140,7 +145,7 @@ request. Warnings are promoted to errors.</p>
     <tr><th scope="col">Job</th><th scope="col">What it enforces</th></tr>
   </thead>
   <tbody>
-    <tr><td>rustfmt</td><td><code>cargo fmt --all --check</code>. Formatting is not a review topic.</td></tr>
+    <tr><td>rustfmt</td><td><code class="wrap">cargo fmt --all --check</code>. Formatting is not a review topic.</td></tr>
     <tr><td>clippy</td><td>The whole workspace, all targets, no warnings. The backlog was cleared to zero without adding suppressions, so this job means "no new lints".</td></tr>
     <tr><td>test</td><td>The suite above, in a debug build.</td></tr>
     <tr><td>release tests</td><td>The cases that only make sense optimised. These are the instances whose search takes minutes unoptimised and seconds optimised.</td></tr>
@@ -205,6 +210,8 @@ data that does not parse, is the pattern most likely to be sent back in
 review.</p>
 
 </main>
+
+</div>
 
 <footer>
   <p>Source:

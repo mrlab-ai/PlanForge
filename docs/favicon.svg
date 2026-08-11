@@ -9,10 +9,26 @@
        the remaining ink (28,320 to 365,617) so browsers can scale it to any
        icon slot without letterboxing. -->
 
+  <style>
+    /* A dark navy anvil is nearly invisible against a dark browser chrome, so
+       the gradient flips to light steel when the reader prefers a dark scheme.
+       The stop colours live here, not only in the presentation attributes, so
+       the media query can override them; the attributes stay as a fallback for
+       renderers that ignore stylesheets, and CSS wins where both apply. The
+       sparks need no variant, because the orange carries on either background. */
+    .g1 { stop-color: #0c2439 }
+    .g2 { stop-color: #061727 }
+
+    @media (prefers-color-scheme: dark) {
+      .g1 { stop-color: #dbe3ea }
+      .g2 { stop-color: #aebbc7 }
+    }
+  </style>
+
   <defs>
     <linearGradient id="pf-navy" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0c2439"/>
-      <stop offset="1" stop-color="#061727"/>
+      <stop class="g1" offset="0" stop-color="#0c2439"/>
+      <stop class="g2" offset="1" stop-color="#061727"/>
     </linearGradient>
   </defs>
 

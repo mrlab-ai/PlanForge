@@ -6,13 +6,19 @@
 <title>PlanForge</title>
 <meta name="description" content="PlanForge is a numeric planner written in Rust. It reads a planning task in PDDL, grounds it, and searches for a sequential plan.">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
 <body>
 <a class="skip" href="#main">Skip to main content</a>
 
 <header>
-  <p class="site"><a href="index.html">PlanForge</a></p>
-  <nav aria-label="Site">
+  <a class="logo" href="index.html"><img src="logo.svg" alt="PlanForge" width="987" height="331"></a>
+  <p class="repo"><a href="https://github.com/mrlab-ai/PlanForge">GitHub</a></p>
+</header>
+
+<div class="page">
+
+<nav aria-label="Site">
     <ul>
       <li><a href="index.html" aria-current="page">Home</a></li>
       <li><a href="search.html">Search options</a></li>
@@ -20,8 +26,7 @@
       <li><a href="development.html">Development</a></li>
       <li><a href="about.html">Credits and licence</a></li>
     </ul>
-  </nav>
-</header>
+</nav>
 
 <main id="main">
 
@@ -51,15 +56,15 @@ Downward uses.</p>
 <p>The first step is translation. It reads a domain file and a problem file,
 rewrites the constructs that grounding cannot take directly, computes invariants
 to find finite-domain variables, and grounds the task. The result is a
-SAS<sup>+</sup> task.</p>
+SAS+ task.</p>
 
-<p>The second step is search. It searches the SAS<sup>+</sup> task with one of
+<p>The second step is search. It searches the SAS+ task with one of
 four search algorithms and one of about twenty heuristics. You choose the
 combination with the <code>--search</code> option. Everything on the
 <a href="search.html">search options</a> page is reachable from the one
 <code>planforge</code> program.</p>
 
-<p>Both steps happen in one process. No SAS<sup>+</sup> file is written on the
+<p>Both steps happen in one process. No SAS+ file is written on the
 way to the search. A second program, <code>planforge-translator</code>, writes
 the file when the file itself is what you want.</p>
 
@@ -91,7 +96,7 @@ cargo build --release</code></pre>
 
 <p>That produces two programs under <code>target/release</code>.
 <code>planforge</code> is the planner. <code>planforge-translator</code> stops
-after translation and writes the SAS<sup>+</sup> file.</p>
+after translation and writes the SAS+ file.</p>
 
 <p>Two optional features are off by default and pull in nothing when they are
 off. They are described under
@@ -158,7 +163,7 @@ runs of the command above with only <code>--search</code> changed.</p>
     <tr><td><code>astar(blind())</code></td><td class="num">22</td><td class="num">35 242</td><td class="num">41 175</td><td class="num">0.13 s</td></tr>
     <tr><td><code>astar(domain_abstraction())</code></td><td class="num">22</td><td class="num">6 657</td><td class="num">16 241</td><td class="num">0.04 s</td></tr>
     <tr><td><code>astar(lmcutnumeric())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td><td class="num">0.03 s</td></tr>
-    <tr><td><code>astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td><td class="num">0.03 s</td></tr>
+    <tr><td><code class="wrap">astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td><td class="num">0.03 s</td></tr>
   </tbody>
 </table>
 </div>
@@ -225,7 +230,7 @@ which of the two you are holding.</p>
 <h2 id="pre-translated">Running a pre-translated task</h2>
 
 <p>Translation is repeated on every run. When you want to search the same task
-many times, translate it once to a SAS<sup>+</sup> file and give the planner that
+many times, translate it once to a SAS+ file and give the planner that
 file instead.</p>
 
 <pre><code>./target/release/planforge-translator translate \
@@ -235,7 +240,7 @@ file instead.</p>
 
 ./target/release/planforge --search 'astar(lmcutnumeric())' delivery.sas</code></pre>
 
-<p>One positional argument is read as a SAS<sup>+</sup> file. Two are read as a
+<p>One positional argument is read as a SAS+ file. Two are read as a
 domain file and a problem file.</p>
 
 <p>Both routes reach the same task. Each reports 49 finite-domain variables and
@@ -282,6 +287,8 @@ patches all belong in the
 file, the exact <code>--search</code> string and the output.</p>
 
 </main>
+
+</div>
 
 <footer>
   <p>Source:
