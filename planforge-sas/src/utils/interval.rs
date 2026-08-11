@@ -179,58 +179,46 @@ impl Interval {
         Interval::new(lower, upper, lower_closed, upper_closed)
     }
 
+    /// True when `self`'s lower endpoint starts strictly before `other`'s.
+    ///
+    /// At equal values the closed endpoint starts first: `[a, ..]` begins
+    /// before `(a, ..]`. A NaN bound compares below nothing, so the answer is
+    /// `false`.
     #[inline]
-    #[allow(clippy::if_same_then_else)]
     pub fn lower_is_lower(&self, other: &Self) -> bool {
-        if self.lower < other.lower {
-            return true;
-        } else if self.lower == other.lower && self.lower_closed && !other.lower_closed {
-            return true;
-        }
-
-        false
+        self.lower < other.lower
+            || (self.lower == other.lower && self.lower_closed && !other.lower_closed)
     }
 
+    /// True when `self`'s lower endpoint starts no later than `other`'s.
+    ///
+    /// At equal values the only way to start later is to exclude an endpoint
+    /// the other includes, so `(a, ..]` is the sole case that fails.
     #[inline]
-    #[allow(clippy::if_same_then_else)]
     pub fn lower_is_lower_or_equal(&self, other: &Self) -> bool {
-        if self.lower < other.lower {
-            return true;
-        } else if self.lower == other.lower
-            && ((self.lower_closed && !other.lower_closed)
-                || self.lower_closed == other.lower_closed)
-        {
-            return true;
-        }
-
-        false
+        self.lower < other.lower
+            || (self.lower == other.lower && (self.lower_closed || !other.lower_closed))
     }
 
+    /// True when `self`'s upper endpoint reaches strictly beyond `other`'s.
+    ///
+    /// At equal values the closed endpoint reaches further: `[.., b]` ends
+    /// after `[.., b)`. A NaN bound compares above nothing, so the answer is
+    /// `false`.
     #[inline]
-    #[allow(clippy::if_same_then_else)]
     pub fn upper_is_higher(&self, other: &Self) -> bool {
-        if self.upper > other.upper {
-            return true;
-        } else if self.upper == other.upper && self.upper_closed && !other.upper_closed {
-            return true;
-        }
-
-        false
+        self.upper > other.upper
+            || (self.upper == other.upper && self.upper_closed && !other.upper_closed)
     }
 
+    /// True when `self`'s upper endpoint reaches at least as far as `other`'s.
+    ///
+    /// At equal values the only way to fall short is to exclude an endpoint the
+    /// other includes, so `[.., b)` against `[.., b]` is the sole failing case.
     #[inline]
-    #[allow(clippy::if_same_then_else)]
     pub fn upper_is_higher_or_equal(&self, other: &Self) -> bool {
-        if self.upper > other.upper {
-            return true;
-        } else if self.upper == other.upper
-            && ((self.upper_closed && !other.upper_closed)
-                || self.upper_closed == other.upper_closed)
-        {
-            return true;
-        }
-
-        false
+        self.upper > other.upper
+            || (self.upper == other.upper && (self.upper_closed || !other.upper_closed))
     }
 
     #[inline]

@@ -274,7 +274,6 @@ struct AxiomEvaluatorData {
     has_propositional_axioms: bool,
 }
 
-#[allow(clippy::needless_range_loop)]
 fn build_compiled_axiom_evaluator_data(
     numeric_task: &dyn AbstractNumericTask,
 ) -> AxiomEvaluatorData {
@@ -316,30 +315,27 @@ fn build_compiled_axiom_evaluator_data(
         axiom_literals.push(vec![AxiomLiteral::default(); var.domain_size()]);
     }
 
-    for axiom in numeric_task.axioms().iter() {
-        let cond_count = axiom.conditions.len();
-        let eff_var = axiom.var_id;
-        let eff_val = axiom.effect_value;
-        rules.push(AxiomRule::new(cond_count, eff_var, eff_val));
-    }
-
-    for i in 0..numeric_task.axioms().len() {
-        let axiom: &PropositionalAxiom = &numeric_task.axioms()[i];
+    // A rule's index is its position in `rules`, which is also the index the
+    // literals it reads have to point back at, so both are built in one pass.
+    for (rule_id, axiom) in numeric_task.axioms().iter().enumerate() {
+        rules.push(AxiomRule::new(
+            axiom.conditions().len(),
+            axiom.var_id,
+            axiom.effect_value,
+        ));
         for condition in axiom.conditions().iter() {
             axiom_literals[condition.var()][condition.value()]
                 .condition_of
-                .push(i);
+                .push(rule_id);
         }
     }
 
-    let mut last_layer = None;
-    for i in 0..numeric_task.get_num_variables() {
-        last_layer = max(
-            last_layer,
-            numeric_task.get_variable_axiom_layer(i).unwrap(),
-        );
-    }
-    nbf_info_by_layer.resize(last_layer.map(|x| x + 1).unwrap_or(0), vec![]);
+    // The deepest propositional layer is already known: a variable without a
+    // layer cannot raise the maximum, so the scan above found it.
+    nbf_info_by_layer.resize(
+        last_propositional_axiom_layer.map(|x| x + 1).unwrap_or(0),
+        vec![],
+    );
 
     let axiom_default_values: Vec<usize> = (0..numeric_task.get_num_variables())
         .map(|var_id| {
@@ -348,7 +344,7 @@ fn build_compiled_axiom_evaluator_data(
                 .expect("variable id below the variable count is in bounds")
         })
         .collect();
-    for var_id in 0..numeric_task.get_num_variables() {
+    for (var_id, &default_value) in axiom_default_values.iter().enumerate() {
         let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
         // A condition variable is computed, not proven: `seed_queue_from_state`
         // already queues the verdict `evaluate_comparison_axioms` wrote for it,
@@ -356,11 +352,10 @@ fn build_compiled_axiom_evaluator_data(
         // one anyway would announce the same literal twice and let a Horn rule
         // fire one condition short.
         if let Some(idx) = axiom_layer
-            && axiom_layer != last_layer
+            && axiom_layer != last_propositional_axiom_layer
             && axiom_layer != comparison_axiom_layer
         {
-            let nbf_info = NegationByFailureInfo::new(var_id, axiom_default_values[var_id]);
-            nbf_info_by_layer[idx].push(nbf_info);
+            nbf_info_by_layer[idx].push(NegationByFailureInfo::new(var_id, default_value));
         }
     }
 

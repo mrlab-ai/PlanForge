@@ -167,3 +167,62 @@ fn canonicalized_interval_preserves_open_transition_boundaries() {
     assert!(!preimage.lower_closed);
     assert!(!preimage.contains(-67.35));
 }
+
+/// The endpoint-ordering predicates are the whole truth table, including the
+/// one asymmetric case each: at an equal bound value, closedness decides.
+#[test]
+fn lower_endpoint_ordering_is_decided_by_closedness_at_equal_bounds() {
+    let closed = Interval::closed(1.0, 5.0);
+    let open = Interval::open(1.0, 5.0);
+    let higher = Interval::closed(2.0, 5.0);
+
+    assert!(closed.lower_is_lower(&higher));
+    assert!(!higher.lower_is_lower(&closed));
+    assert!(closed.lower_is_lower(&open));
+    assert!(!open.lower_is_lower(&closed));
+    assert!(!closed.lower_is_lower(&closed));
+    assert!(!open.lower_is_lower(&open));
+
+    assert!(closed.lower_is_lower_or_equal(&higher));
+    assert!(!higher.lower_is_lower_or_equal(&closed));
+    assert!(closed.lower_is_lower_or_equal(&open));
+    assert!(!open.lower_is_lower_or_equal(&closed));
+    assert!(closed.lower_is_lower_or_equal(&closed));
+    assert!(open.lower_is_lower_or_equal(&open));
+}
+
+#[test]
+fn upper_endpoint_ordering_is_decided_by_closedness_at_equal_bounds() {
+    let closed = Interval::closed(1.0, 5.0);
+    let open = Interval::open(1.0, 5.0);
+    let lower = Interval::closed(1.0, 4.0);
+
+    assert!(closed.upper_is_higher(&lower));
+    assert!(!lower.upper_is_higher(&closed));
+    assert!(closed.upper_is_higher(&open));
+    assert!(!open.upper_is_higher(&closed));
+    assert!(!closed.upper_is_higher(&closed));
+    assert!(!open.upper_is_higher(&open));
+
+    assert!(closed.upper_is_higher_or_equal(&lower));
+    assert!(!lower.upper_is_higher_or_equal(&closed));
+    assert!(closed.upper_is_higher_or_equal(&open));
+    assert!(!open.upper_is_higher_or_equal(&closed));
+    assert!(closed.upper_is_higher_or_equal(&closed));
+    assert!(open.upper_is_higher_or_equal(&open));
+}
+
+#[test]
+fn endpoint_ordering_rejects_nan_bounds() {
+    let nan = Interval::closed(f64::NAN, f64::NAN);
+    let unit = Interval::closed(0.0, 1.0);
+
+    assert!(!nan.lower_is_lower(&unit));
+    assert!(!unit.lower_is_lower(&nan));
+    assert!(!nan.lower_is_lower_or_equal(&unit));
+    assert!(!unit.lower_is_lower_or_equal(&nan));
+    assert!(!nan.upper_is_higher(&unit));
+    assert!(!unit.upper_is_higher(&nan));
+    assert!(!nan.upper_is_higher_or_equal(&unit));
+    assert!(!unit.upper_is_higher_or_equal(&nan));
+}

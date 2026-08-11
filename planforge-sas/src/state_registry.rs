@@ -1885,8 +1885,9 @@ impl<'a> StateRegistry<'a> {
     /// Determine which cost information to keep when states are deduplicated.
     ///
     /// This implements the C++ logic for metric optimization when duplicate states are found.
-    /// Return the cost information that should be kept based on metric optimization.
-    #[allow(clippy::if_same_then_else)]
+    /// The stored information survives exactly when its metric value is the
+    /// better of the two under the task's optimization direction; ties keep the
+    /// new one, matching the C++ strict comparison.
     fn should_keep_old_cost_information(
         &self,
         existing_state: &ConcreteState,
@@ -1899,15 +1900,11 @@ impl<'a> StateRegistry<'a> {
         let old_metric_val = self.metric_value_for_state(existing_state)?;
         let new_metric_val = self.evaluate_metric(successor_numeric_vals)?;
 
-        let metric_minimizes = self.task.metric().is_min();
-
-        if metric_minimizes && old_metric_val < new_metric_val {
-            Ok(true)
-        } else if !metric_minimizes && old_metric_val > new_metric_val {
-            Ok(true)
+        Ok(if self.task.metric().is_min() {
+            old_metric_val < new_metric_val
         } else {
-            Ok(false)
-        }
+            old_metric_val > new_metric_val
+        })
     }
 
     /// Get cost information for a given state.
