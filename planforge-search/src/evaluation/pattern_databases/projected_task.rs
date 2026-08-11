@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -515,8 +515,6 @@ impl<'task> ProjectedTask<'task> {
             }
         }
 
-        let propositional_axiom_by_affected_var =
-            build_propositional_axiom_lookup(base, base.variables().len());
         for original_var_id in projected_var_to_original.clone() {
             let Some(comparison_axiom_id) = base.numeric_conditions().id_for_var(original_var_id)
             else {
@@ -532,14 +530,13 @@ impl<'task> ProjectedTask<'task> {
         let goal_facts = collect_restricted_projected_goals(
             base,
             pattern,
-            &propositional_axiom_by_affected_var,
             VariableProjection {
                 projected_var_to_original: &mut projected_var_to_original,
                 original_var_to_projected: &mut original_var_to_projected,
                 projected_num_var_to_original: &mut projected_num_var_to_original,
                 original_num_var_to_projected: &mut original_num_var_to_projected,
             },
-        )?;
+        );
         let mut numeric_effect_sources_by_target = vec![Vec::new(); num_numeric_vars];
         for operator in base.get_operators() {
             for effect in operator.assignment_effects() {
@@ -1695,31 +1692,6 @@ fn push_unique_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
     }
 }
 
-/// The rule that derives each derived *fact*, for the goal walk to expand a
-/// derived goal into.
-///
-/// Keyed by the fact rather than by its variable. Since issue454 every rule
-/// proves its head, so a goal at a derived variable's *default* value — a
-/// negated derived goal — has no deriving rule and must not be expanded: its
-/// body is the condition under which the *opposite* fact holds, and pulling that
-/// into the projected goal makes the projection ask for the negation of the
-/// goal, which overestimates and is therefore inadmissible. When several rules
-/// derive the same fact the last one wins, which is an arbitrary choice among
-/// the disjuncts.
-fn build_propositional_axiom_lookup(
-    task: &dyn AbstractNumericTask,
-    num_vars: usize,
-) -> HashMap<(usize, usize), usize> {
-    let mut lookup = HashMap::new();
-    for (axiom_id, axiom) in task.axioms().iter().enumerate() {
-        let affected = axiom.var_id();
-        if affected < num_vars {
-            lookup.insert((affected, axiom.effect_value()), axiom_id);
-        }
-    }
-    lookup
-}
-
 fn include_restricted_comparison_operands(
     task: &dyn AbstractNumericTask,
     comparison_axiom_id: usize,
@@ -1763,118 +1735,66 @@ struct VariableProjection<'a> {
     original_num_var_to_projected: &'a mut [Option<usize>],
 }
 
-impl VariableProjection<'_> {
-    /// Shorten the borrows so an inner call can extend the same maps.
-    fn reborrow(&mut self) -> VariableProjection<'_> {
-        VariableProjection {
-            projected_var_to_original: &mut *self.projected_var_to_original,
-            original_var_to_projected: &mut *self.original_var_to_projected,
-            projected_num_var_to_original: &mut *self.projected_num_var_to_original,
-            original_num_var_to_projected: &mut *self.original_num_var_to_projected,
-        }
-    }
-}
-
+/// The goal facts the projection keeps, restricted to the pattern.
+///
+/// A goal the pattern omits is dropped, which relaxes the projected task and keeps
+/// its distances admissible. A goal on a *condition* variable is kept as soon as
+/// the pattern holds either the variable itself or one of the comparison's
+/// operands, and pulls the operands in with it: the projected task has to be able
+/// to compute the comparison it is asked to reach.
+///
+/// A goal on a derived variable does not appear here. This used to walk the rule
+/// deriving it and pull the body variables into the projection;
+/// `validate_abstractable_goal` refuses such a task instead.
 fn collect_restricted_projected_goals(
     task: &dyn AbstractNumericTask,
     pattern: &Pattern,
-    propositional_axiom_by_affected_var: &HashMap<(usize, usize), usize>,
-    mut projection: VariableProjection<'_>,
-) -> Result<Vec<ExplicitFact>, ProjectedTaskBuildError> {
+    projection: VariableProjection<'_>,
+) -> Vec<ExplicitFact> {
     let members = PatternMembers {
         regular: pattern.regular.iter().copied().collect(),
         numeric: pattern.numeric.iter().copied().collect(),
     };
     let mut goals = Vec::new();
-    let mut visited_vars = HashSet::new();
 
     for goal_index in 0..task.get_num_goals() {
-        collect_restricted_projected_goal_fact(
-            task,
-            task.get_goal_fact(goal_index),
-            &members,
-            propositional_axiom_by_affected_var,
-            projection.reborrow(),
-            &mut goals,
-            &mut visited_vars,
-        )?;
-    }
-
-    goals.sort();
-    goals.dedup();
-    Ok(goals)
-}
-
-fn collect_restricted_projected_goal_fact(
-    task: &dyn AbstractNumericTask,
-    fact: &ExplicitFact,
-    members: &PatternMembers,
-    propositional_axiom_by_affected_var: &HashMap<(usize, usize), usize>,
-    mut projection: VariableProjection<'_>,
-    goals: &mut Vec<ExplicitFact>,
-    visited_vars: &mut HashSet<usize>,
-) -> Result<(), ProjectedTaskBuildError> {
-    if !visited_vars.insert(fact.var()) {
-        return Ok(());
-    }
-
-    if let Some(comparison_axiom_id) = task.numeric_conditions().id_for_var(fact.var()) {
-        let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
-        let operands = [
-            comparison_axiom.get_left_var_id(),
-            comparison_axiom.get_right_var_id(),
-        ];
-        let selected = members.regular.contains(&fact.var())
-            || operands.iter().any(|id| members.numeric.contains(id));
-        if selected {
-            push_unique_mapping(
-                fact.var(),
-                projection.projected_var_to_original,
-                projection.original_var_to_projected,
-            );
+        let fact = task.get_goal_fact(goal_index);
+        let comparison_axiom_id = task.numeric_conditions().id_for_var(fact.var());
+        let keep = match comparison_axiom_id {
+            Some(comparison_axiom_id) => {
+                let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
+                members.regular.contains(&fact.var())
+                    || [
+                        comparison_axiom.get_left_var_id(),
+                        comparison_axiom.get_right_var_id(),
+                    ]
+                    .iter()
+                    .any(|id| members.numeric.contains(id))
+            }
+            None => members.regular.contains(&fact.var()),
+        };
+        if !keep {
+            continue;
+        }
+        push_unique_mapping(
+            fact.var(),
+            projection.projected_var_to_original,
+            projection.original_var_to_projected,
+        );
+        if let Some(comparison_axiom_id) = comparison_axiom_id {
             include_restricted_comparison_operands(
                 task,
                 comparison_axiom_id,
                 projection.projected_num_var_to_original,
                 projection.original_num_var_to_projected,
             );
-            goals.push(*fact);
         }
-        return Ok(());
-    }
-
-    if let Some(&axiom_id) = propositional_axiom_by_affected_var.get(&(fact.var(), fact.value())) {
-        if members.regular.contains(&fact.var()) {
-            push_unique_mapping(
-                fact.var(),
-                projection.projected_var_to_original,
-                projection.original_var_to_projected,
-            );
-            goals.push(*fact);
-        }
-        for condition in task.axioms()[axiom_id].conditions() {
-            collect_restricted_projected_goal_fact(
-                task,
-                condition,
-                members,
-                propositional_axiom_by_affected_var,
-                projection.reborrow(),
-                goals,
-                visited_vars,
-            )?;
-        }
-        return Ok(());
-    }
-
-    if members.regular.contains(&fact.var()) {
-        push_unique_mapping(
-            fact.var(),
-            projection.projected_var_to_original,
-            projection.original_var_to_projected,
-        );
         goals.push(*fact);
     }
-    Ok(())
+
+    goals.sort();
+    goals.dedup();
+    goals
 }
 
 /// Projecting renames a variable; it never changes what kind of variable it is,

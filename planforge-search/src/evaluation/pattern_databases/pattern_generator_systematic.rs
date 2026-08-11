@@ -229,15 +229,15 @@ fn collect_seed_variables(
 ) -> Vec<CausalGraphVariable> {
     let mut seed_variables = Vec::new();
     let mut seen = BTreeSet::new();
-    let goal_related_propositional_vars = collect_goal_related_propositional_closure(task);
+    let goal_var_ids: BTreeSet<usize> = (0..task.get_num_goals())
+        .map(|goal_id| task.get_goal_fact(goal_id).var())
+        .collect();
 
     for goal_index in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_index);
-        if task
-            .get_variable_axiom_layer(goal.var())
-            .unwrap_or(None)
-            .is_none()
-        {
+        // A comparison goal enters the pattern through its numeric operands, in
+        // the loop below, rather than as a propositional variable of its own.
+        if !goal.is_condition() {
             push_seed_variable(
                 &mut seed_variables,
                 &mut seen,
@@ -246,9 +246,11 @@ fn collect_seed_variables(
         }
     }
 
+    // The goal used to name the derived atom above a comparison, so reaching the
+    // comparison meant walking the axiom bodies; it now names the comparison
+    // variable itself, which `validate_abstractable_goal` guarantees.
     for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-        let affected_var_id = comparison_axiom.get_affected_var_id();
-        if !goal_related_propositional_vars.contains(&affected_var_id) {
+        if !goal_var_ids.contains(&comparison_axiom.get_affected_var_id()) {
             continue;
         }
 
@@ -288,31 +290,6 @@ fn is_pattern_numeric_candidate(task: &dyn AbstractNumericTask, numeric_var_id: 
         .get(numeric_var_id)
         .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
         .unwrap_or(false)
-}
-
-fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> BTreeSet<usize> {
-    let mut goal_related: BTreeSet<usize> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var())
-        .collect();
-
-    loop {
-        let mut changed = false;
-
-        for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id();
-            if goal_related.contains(&affected_var_id) {
-                for condition in axiom.conditions() {
-                    changed |= goal_related.insert(condition.var());
-                }
-            }
-        }
-
-        if !changed {
-            break;
-        }
-    }
-
-    goal_related
 }
 
 fn pattern_variables(pattern: &Pattern) -> BTreeSet<CausalGraphVariable> {

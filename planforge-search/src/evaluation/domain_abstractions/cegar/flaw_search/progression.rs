@@ -15,7 +15,7 @@ use super::target_centered::{
 };
 use super::{
     Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
-    dependent_numeric_flaws_for_comparison_prop_var, goal_requirements,
+    dependent_numeric_flaws_for_comparison_prop_var, goal_facts,
 };
 use crate::evaluation::domain_abstractions::{
     additive_numeric_views::numeric_dimension_delta_for_operator,
@@ -449,7 +449,7 @@ pub fn get_goal_flaws(
     direction: SplitDirection,
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
-    for requirement in goal_requirements(partitioned.task) {
+    for requirement in goal_facts(partitioned.task) {
         if !fact_is_hold(&requirement, state.packer, state.prop) {
             out.push(build_prop_flaw_for_fact(
                 partitioned,

@@ -8,7 +8,7 @@ use planforge_sas::{
 };
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
-use crate::evaluation::domain_abstractions::cegar::flaw_search::goal_requirements;
+use crate::evaluation::domain_abstractions::cegar::flaw_search::goal_facts;
 use crate::evaluation::domain_abstractions::utils::get_initial_state;
 use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
 
@@ -74,7 +74,7 @@ impl<'a> FlawSearchState<'a> {
             }
         }
 
-        for requirement in goal_requirements(task) {
+        for requirement in goal_facts(task) {
             state.set_prop_value(requirement.var(), requirement.value());
         }
 

@@ -7,7 +7,7 @@ use planforge_sas::{
     numeric_task::{AbstractNumericTask, Operator},
 };
 
-use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_requirements};
+use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_facts};
 use crate::evaluation::domain_abstractions::{
     abstract_operator_generator::DomainMapping,
     additive_numeric_views::numeric_dimension_delta_for_operator,
@@ -402,7 +402,7 @@ pub fn get_goal_sequence_flaws(
     step: usize,
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
-    for requirement in goal_requirements(task) {
+    for requirement in goal_facts(task) {
         if state.fact_is_hold(&requirement) {
             continue;
         }

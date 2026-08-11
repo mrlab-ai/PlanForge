@@ -2732,27 +2732,28 @@ impl DomainAbstractionFactory {
             .collect()
     }
 
-    /// The goals in abstract values, with a derived goal replaced by the facts it
-    /// implies.
+    /// The task's goals in abstract values.
     ///
-    /// A variable the abstraction has collapsed to a single value carries no
-    /// information and is dropped rather than mapped.
+    /// Every goal fact is one the abstraction can reach --
+    /// `validate_abstractable_goal` has already refused a goal on a derived
+    /// variable, which no abstract operator writes. A variable the abstraction has
+    /// collapsed to a single value carries no information and is dropped rather
+    /// than mapped.
     fn compute_abstract_goals(&self, task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
         let mut out: Vec<ExplicitFact> = Vec::new();
         for goal_index in 0..task.get_num_goals() {
-            for fact in implied_goal_facts(task, task.get_goal_fact(goal_index)) {
-                let var = fact.var();
-                if self.domain_sizes.get(var).copied().unwrap_or(1) <= 1 {
-                    continue;
-                }
-                let mapped = self
-                    .domain_mapping
-                    .get(var)
-                    .and_then(|mapping| mapping.get(fact.value()))
-                    .copied()
-                    .unwrap_or(fact.value());
-                out.push(ExplicitFact::propositional(var, mapped));
+            let fact = task.get_goal_fact(goal_index);
+            let var = fact.var();
+            if self.domain_sizes.get(var).copied().unwrap_or(1) <= 1 {
+                continue;
             }
+            let mapped = self
+                .domain_mapping
+                .get(var)
+                .and_then(|mapping| mapping.get(fact.value()))
+                .copied()
+                .unwrap_or(fact.value());
+            out.push(ExplicitFact::propositional(var, mapped));
         }
 
         out
@@ -3731,77 +3732,6 @@ fn get_comparison_preconditions(
         .copied()
         .filter(|f| comparison_var_ids.contains(&f.var()))
         .collect()
-}
-
-/// The facts every state satisfying `goal` also satisfies, as far as the
-/// propositional axioms determine it.
-///
-/// A domain abstraction has no propositional axioms: no abstract operator writes
-/// a derived variable, so a derived variable keeps whatever value the initial
-/// state gave it and a goal on one is either trivially true or unreachable. The
-/// goal therefore has to be restated in terms of the variables the abstraction
-/// does move, and — since the abstraction has to stay a *relaxation* for its
-/// distances to be admissible — only by facts the real goal *implies*:
-///
-///   * a goal on a variable no rule writes is itself the only implied fact;
-///   * a goal at a value some rules prove holds when at least one of their
-///     bodies does, so what it implies is the facts all of those bodies share.
-///     One rule contributes its whole body, which is the case every fixture and
-///     benchmark has; several rules are a disjunction and only agree on their
-///     intersection;
-///   * a goal at the variable's *default* value is negation by failure: it holds
-///     exactly when no rule proving another value fires. A rule with a
-///     single-literal body over a binary variable therefore implies that literal
-///     is false, which is one fact; a longer body only implies a disjunction and
-///     contributes nothing.
-///
-/// Keying by the goal *fact* rather than by its variable is what separates the
-/// last two cases. Since issue454 every rule proves its head, so keying by the
-/// variable alone handed a negated derived goal the body of a rule establishing
-/// the *opposite* fact — the abstraction then measured the distance to the
-/// negation of the goal, which overestimates and is inadmissible.
-fn implied_goal_facts(task: &dyn AbstractNumericTask, goal: &ExplicitFact) -> Vec<ExplicitFact> {
-    let rules_for = |value: usize| {
-        task.axioms()
-            .iter()
-            .filter(move |axiom| axiom.var_id() == goal.var() && axiom.effect_value() == value)
-    };
-
-    let mut proving = rules_for(goal.value()).peekable();
-    if proving.peek().is_some() {
-        let mut shared: Vec<ExplicitFact> = Vec::new();
-        for (rule_index, rule) in proving.enumerate() {
-            if rule_index == 0 {
-                shared.extend_from_slice(rule.conditions());
-            } else {
-                shared.retain(|fact| rule.conditions().contains(fact));
-            }
-        }
-        return shared;
-    }
-
-    let mut refuted: Vec<ExplicitFact> = Vec::new();
-    let mut any_rule = false;
-    for rule in task
-        .axioms()
-        .iter()
-        .filter(|axiom| axiom.var_id() == goal.var())
-    {
-        any_rule = true;
-        // `not head` implies the negation of every rule body, which is a single
-        // fact only when the body is one literal over a binary variable.
-        let [body] = rule.conditions().as_slice() else {
-            continue;
-        };
-        if task.get_variable_domain_size(body.var()) != Ok(2) {
-            continue;
-        }
-        refuted.push(ExplicitFact::propositional(body.var(), 1 - body.value()));
-    }
-    if any_rule {
-        return refuted;
-    }
-    vec![*goal]
 }
 
 fn comparison_preconditions_by_operator(

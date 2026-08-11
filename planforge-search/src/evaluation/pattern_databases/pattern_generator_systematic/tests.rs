@@ -47,16 +47,19 @@ fn propositional_predecessor_task() -> NumericRootTask {
     })
 }
 
+/// The goal is the comparison `x >= threshold`, which is what a numeric goal
+/// compiles to: the pattern generator has to reach the comparison's numeric
+/// operand from it.
 fn numeric_goal_task() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
         version: 1,
         metric: Metric::new(true, None),
-        variables: vec![simple_var("cmp", Some(0)), simple_var("goal", None)],
+        variables: vec![simple_var("cmp", Some(0)), simple_var("reads-cmp", Some(1))],
         numeric_variables: vec![
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        goals: vec![ExplicitFact::propositional(1, 1)],
+        goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
         state: vec![0, 0],
         numeric_state: vec![1.0, 0.0],

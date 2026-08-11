@@ -227,45 +227,20 @@ pub fn get_flaws(
     flaw_kind.get_flaws(task, partitions, domain_mapping, wildcard_plan)
 }
 
-/// The facts a flaw search has to see in the state it reaches, with a derived
-/// goal replaced by the bodies of the rules that prove it.
+/// The goal facts a flaw search has to reach, deduplicated.
 ///
-/// A derived variable is not written by any operator, so a goal at one is not a
-/// fact a flaw search can regress through or split on; what the plan has to
-/// establish are the rule bodies behind it. Keyed by the goal *fact*, not by its
-/// variable: since issue454 every rule proves its head, so a goal at a derived
-/// variable's *default* value — a negated derived goal — has no proving rule and
-/// stays as it is. Keying by the variable alone handed such a goal the body of a
-/// rule establishing the opposite fact, which is the negation of what was asked
-/// for.
-///
-/// Several rules proving the same fact contribute all of their bodies. That
-/// over-constrains a disjunctively supported goal, but it only decides which
-/// flaws a refinement step sees, never what the abstraction admits.
-pub fn goal_requirements(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
-    let mut requirements: Vec<ExplicitFact> = Vec::with_capacity(task.get_num_goals());
+/// This used to substitute the bodies of the rules proving a derived goal, since a
+/// derived variable is written by no operator and a goal on one is nothing a flaw
+/// search can regress through or split on. `validate_abstractable_goal` refuses
+/// such a task instead, so what is left is the task's own goal facts, in the order
+/// the task lists them -- which is the order the flaws come out in, and therefore
+/// the order flaw selection sees.
+pub fn goal_facts(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
     let mut seen: BTreeSet<ExplicitFact> = BTreeSet::new();
-    for goal_id in 0..task.get_num_goals() {
-        let goal_fact = *task.get_goal_fact(goal_id);
-        let proving = task.axioms().iter().filter(|axiom| {
-            axiom.var_id() == goal_fact.var() && axiom.effect_value() == goal_fact.value()
-        });
-        let mut is_derived = false;
-        for axiom in proving {
-            is_derived = true;
-            requirements.extend(
-                axiom
-                    .conditions()
-                    .iter()
-                    .copied()
-                    .filter(|condition| seen.insert(*condition)),
-            );
-        }
-        if !is_derived && seen.insert(goal_fact) {
-            requirements.push(goal_fact);
-        }
-    }
-    requirements
+    (0..task.get_num_goals())
+        .map(|goal_id| *task.get_goal_fact(goal_id))
+        .filter(|fact| seen.insert(*fact))
+        .collect()
 }
 
 #[allow(unused)]

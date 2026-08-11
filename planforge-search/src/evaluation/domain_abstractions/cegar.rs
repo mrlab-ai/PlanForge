@@ -787,9 +787,8 @@ fn is_applicable(buffer: &[u64], packer: &IntDoublePacker, op: &Operator) -> boo
         .all(|pre| fact_is_hold(pre, packer, buffer))
 }
 
-#[allow(dead_code)]
 fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &IntDoublePacker) -> bool {
-    goal_variable_values(task)
+    sorted_goal_facts(task)
         .iter()
         .all(|goal_fact| fact_is_hold(goal_fact, packer, buffer))
 }
@@ -1188,43 +1187,19 @@ fn try_refine_from_flaw(
     }
 }
 
-/// The goals, with a derived goal replaced by the conditions of the rule that
-/// defines it.
+/// The task's goal facts, sorted and deduplicated.
 ///
-/// Keyed by the *fact* rather than by its variable. A rule only defines the goal
-/// it derives, and since issue454 every rule proves its head, so a goal at a
-/// derived variable's default value has no defining rule at all and has to stay
-/// as it is — keying by the variable alone would hand it the body of a rule that
-/// establishes the opposite fact. When several rules derive the same fact the last
-/// one still wins, which is an arbitrary choice among the disjuncts rather than a
-/// wrong one, and is unrelated to which rules the task carries.
-fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
-    let mut goal_axiom_map: HashMap<(usize, usize), usize> = HashMap::new();
-    for (axiom_idx, axiom) in task.axioms().iter().enumerate() {
-        if !axiom.conditions().is_empty() {
-            goal_axiom_map.insert((axiom.var_id(), axiom.effect_value()), axiom_idx);
-        }
-    }
-
-    let num_goals = task.get_num_goals();
-    let mut goals = Vec::with_capacity(num_goals);
-    for goal_idx in 0..num_goals {
-        let goal = task.get_goal_fact(goal_idx);
-        if let Some(&axiom_idx) = goal_axiom_map.get(&(goal.var(), goal.value())) {
-            let axiom = &task.axioms()[axiom_idx];
-            for condition in axiom.conditions() {
-                goals.push(ExplicitFact::propositional(
-                    condition.var(),
-                    condition.value(),
-                ));
-            }
-        } else {
-            goals.push(ExplicitFact::propositional(goal.var(), goal.value()));
-        }
-    }
+/// Every goal fact is one the abstraction reasons about directly:
+/// `validate_abstractable_goal` refuses a goal on a derived variable, which is
+/// what this used to substitute a rule body for. Sorting makes the split-candidate
+/// order below a function of the task rather than of the order the goals were
+/// written in.
+fn sorted_goal_facts(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
+    let mut goals: Vec<ExplicitFact> = (0..task.get_num_goals())
+        .map(|goal_id| *task.get_goal_fact(goal_id))
+        .collect();
     goals.sort_unstable();
     goals.dedup();
-
     goals
 }
 
@@ -1332,7 +1307,7 @@ fn apply_initial_goal_splits(
         blacklisted_prop_var_ids,
         blacklisted_numeric_var_ids,
     } = state;
-    let goal_values: HashMap<usize, usize> = goal_variable_values(task)
+    let goal_values: HashMap<usize, usize> = sorted_goal_facts(task)
         .into_iter()
         .map(|v| (v.var(), v.value()))
         .collect();
@@ -1453,7 +1428,7 @@ fn apply_initial_goal_splits(
     // different comparison axioms, producing pattern diversity (and
     // hence additivity) in the resulting collection.
     let init_split_filter: Option<&HashSet<usize>> = config.init_split_var_ids.as_ref();
-    for fact in goal_variable_values(task) {
+    for fact in sorted_goal_facts(task) {
         if let Some(allowed) = init_split_filter
             && !allowed.contains(&fact.var())
         {

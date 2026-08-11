@@ -1750,40 +1750,24 @@ fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<us
     task.axioms().iter().map(|axiom| axiom.var_id()).collect()
 }
 
-fn collect_goal_related_propositional_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
-    let mut goal_axiom_map: HashMap<usize, Vec<usize>> = HashMap::new();
-    for axiom in task.axioms() {
-        if axiom.conditions().is_empty() {
-            continue;
-        }
-        let affected_var_id = axiom.var_id();
-        let condition_var_ids = axiom
-            .conditions()
-            .iter()
-            .map(|condition| condition.var())
-            .collect::<Vec<_>>();
-        goal_axiom_map.insert(affected_var_id, condition_var_ids);
-    }
-
-    let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
-    let mut goal_related: HashSet<usize> = HashSet::new();
-    for goal_id in 0..task.get_num_goals() {
-        let goal_var_id = task.get_goal_fact(goal_id).var();
-        if let Some(preconditions) = goal_axiom_map.get(&goal_var_id) {
-            goal_related.extend(preconditions.iter().copied());
-        } else if !logic_axiom_effect_vars.contains(&goal_var_id) {
-            goal_related.insert(goal_var_id);
-        }
-    }
-
-    goal_related
+/// The propositional variables the goal names.
+///
+/// This used to be the bodies of the rules deriving a derived goal, keyed by the
+/// goal's variable, and dropped the goal entirely when no rule derived that value.
+/// `validate_abstractable_goal` refuses such a goal, so what is left is the goal
+/// variables themselves -- and for a numeric goal that is the comparison variable
+/// the rule body used to hold.
+fn goal_var_ids(task: &dyn AbstractNumericTask) -> HashSet<usize> {
+    (0..task.get_num_goals())
+        .map(|goal_id| task.get_goal_fact(goal_id).var())
+        .collect()
 }
 
 fn collect_init_split_candidate_var_ids(
     task: &dyn AbstractNumericTask,
     subset: VariableSubset,
 ) -> Vec<usize> {
-    let goal_related = collect_goal_related_propositional_vars(task);
+    let goal_related = goal_var_ids(task);
     let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
 
     let mut candidates: Vec<usize> = match subset {

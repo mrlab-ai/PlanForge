@@ -5,7 +5,6 @@ use crate::evaluation::domain_abstractions::cegar::flaw_search::{
 use super::*;
 use rand::{SeedableRng, rngs::SmallRng};
 
-use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planforge_sas::numeric_task::{
@@ -492,52 +491,6 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
 
     assert_eq!(new_domain_size, 2);
     assert_eq!(mapping, vec![1, 0]);
-}
-
-#[test]
-fn goal_variable_values_expand_goal_axiom_preconditions() {
-    let variables = vec![
-        ExplicitVariable::new(2, "need_a".into(), vec!["f".into(), "t".into()], None, 0),
-        ExplicitVariable::new(2, "need_b".into(), vec!["f".into(), "t".into()], None, 0),
-        ExplicitVariable::new(
-            2,
-            "goal_flag".into(),
-            vec!["off".into(), "on".into()],
-            None,
-            0,
-        ),
-    ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(2, 1)],
-        mutexes: vec![],
-        state: vec![0, 0, 0],
-        numeric_state: vec![],
-        operators: vec![],
-        axioms: vec![PropositionalAxiom::new(
-            vec![
-                ExplicitFact::propositional(0, 1),
-                ExplicitFact::propositional(1, 1),
-            ],
-            2,
-            0,
-            1,
-        )],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-
-    assert_eq!(
-        goal_variable_values(&task),
-        vec![
-            ExplicitFact::propositional(0, 1),
-            ExplicitFact::propositional(1, 1)
-        ]
-    );
 }
 
 #[test]

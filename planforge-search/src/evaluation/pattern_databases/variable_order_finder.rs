@@ -97,10 +97,13 @@ impl VariableOrderFinder {
 
         let num_numeric_variables = task.numeric_variables().len();
         let mut is_numeric_goal_variable = vec![false; num_numeric_variables];
-        let goal_related_propositional_vars = collect_goal_related_propositional_closure(task);
+        // A numeric variable counts as a goal variable when the goal names a
+        // comparison over it. The goal used to name the derived atom above such a
+        // comparison instead, which is why this walked the axiom bodies;
+        // `validate_abstractable_goal` refuses that goal, so the comparison
+        // variable is named directly and `is_goal_variable` already holds it.
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-            let affected_var_id = comparison_axiom.get_affected_var_id();
-            if !goal_related_propositional_vars.contains(&affected_var_id) {
+            if !is_goal_variable[comparison_axiom.get_affected_var_id()] {
                 continue;
             }
             if let Some(numeric_var_id) = causal_graph.comparison_numeric_var(comparison_axiom_id)
@@ -218,36 +221,6 @@ impl VariableOrderFinder {
                 }
             })
     }
-}
-
-fn collect_goal_related_propositional_closure(task: &dyn AbstractNumericTask) -> Vec<usize> {
-    let mut goal_related: Vec<usize> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var())
-        .collect();
-    goal_related.sort_unstable();
-    goal_related.dedup();
-
-    loop {
-        let mut changed = false;
-        for axiom in task.axioms() {
-            let affected_var_id = axiom.var_id();
-            if goal_related.binary_search(&affected_var_id).is_ok() {
-                for condition in axiom.conditions() {
-                    if goal_related.binary_search(&condition.var()).is_err() {
-                        goal_related.push(condition.var());
-                        changed = true;
-                    }
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-        goal_related.sort_unstable();
-        goal_related.dedup();
-    }
-
-    goal_related
 }
 
 fn add_numeric_vars(task: &dyn AbstractNumericTask, remaining_vars: &mut Vec<(usize, bool)>) {

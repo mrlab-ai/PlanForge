@@ -9,7 +9,6 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     build_explicit_label_cost_partitioning_table,
 };
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
-use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
@@ -839,42 +838,43 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
     assert_eq!(props[0][0], ConditionValue::False.as_usize());
 }
 
+/// A goal on a variable the abstraction collapsed to one value is dropped.
+///
+/// Such a variable carries no information: every abstract state agrees on it, so
+/// testing it would either accept everything or nothing. Dropping it is the
+/// relaxation, and the goals that remain are the ones the abstraction can tell
+/// apart.
 #[test]
-fn abstract_goals_skip_trivial_goal_axiom_preconditions() {
+fn abstract_goals_drop_collapsed_variables() {
     let variables = vec![
-        ExplicitVariable::new(1, "trivial".into(), vec!["only".into()], Some(0), 0),
-        ExplicitVariable::new(
-            2,
-            "goal".into(),
-            vec!["off".into(), "on".into()],
-            Some(1),
-            0,
-        ),
+        ExplicitVariable::new(1, "trivial".into(), vec!["only".into()], None, 0),
+        ExplicitVariable::new(2, "target".into(), vec!["off".into(), "on".into()], None, 0),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
         variables,
         numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(1, 1)],
+        goals: vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 1),
+        ],
         mutexes: vec![],
         state: vec![0, 0],
         numeric_state: vec![],
         operators: vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
-        axioms: vec![PropositionalAxiom::new(
-            vec![ExplicitFact::propositional(0, 0)],
-            1,
-            0,
-            1,
-        )],
+        axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let goals = factory.compute_abstract_goals(&task);
-    assert!(goals.is_empty());
+    assert_eq!(
+        factory.compute_abstract_goals(&task),
+        vec![ExplicitFact::propositional(1, 1)],
+        "the goal on the one-valued variable is the one that has to go"
+    );
 }
 
 #[test]
