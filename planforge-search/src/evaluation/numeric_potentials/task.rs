@@ -12,6 +12,7 @@ use super::BoundsProvider;
 use crate::evaluation::numeric_landmarks::numeric_helper::{
     LinearNumericCondition, NumericTaskHelper,
 };
+use crate::evaluation::validate_abstractable_goal;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FeatureBounds {
@@ -91,6 +92,7 @@ impl PotentialTask {
         bounds_provider: BoundsProvider,
         simple_action_bounds: bool,
     ) -> Result<Self, String> {
+        validate_abstractable_goal(task)?;
         for (operator_id, operator) in task.get_operators().iter().enumerate() {
             for effect in operator.effects() {
                 if !effect.conditions().is_empty() {
@@ -123,20 +125,23 @@ impl PotentialTask {
             .map(|var| var.axiom_layer().is_some())
             .collect();
 
+        // A comparison goal becomes the linear conditions materializing it; every
+        // other goal fact is propositional, since `validate_abstractable_goal` has
+        // refused a goal on a derived variable. That case used to be rewritten into
+        // the conditions of its one defining axiom, and rejected when there was not
+        // exactly one -- a rewrite that had to be equivalent to the goal, not merely
+        // implied by it, to keep the LP bound admissible.
         let mut propositional_goals = Vec::new();
         let mut numeric_conditions = Vec::new();
-        let mut expanded_goal_facts = BTreeSet::new();
         for goal_id in 0..task.get_num_goals() {
-            let goal = task.get_goal_fact(goal_id);
-            expand_cpp_goal_fact(
-                task,
-                &helper,
-                *goal,
-                &derived_propositional,
-                &mut expanded_goal_facts,
-                &mut propositional_goals,
-                &mut numeric_conditions,
-            )?;
+            let goal = *task.get_goal_fact(goal_id);
+            let materialized =
+                helper.comparison_fact_materialized_conditions(goal.var(), goal.value());
+            if materialized.is_empty() {
+                propositional_goals.push(goal);
+            } else {
+                numeric_conditions.extend(materialized);
+            }
         }
         propositional_goals.sort_unstable();
         propositional_goals.dedup();
@@ -503,74 +508,6 @@ struct ParsedNumericExpression {
     constant: f64,
     affine: bool,
     is_constant: bool,
-}
-
-fn expand_cpp_goal_fact(
-    task: &dyn AbstractNumericTask,
-    helper: &NumericTaskHelper,
-    fact: ExplicitFact,
-    derived_propositional: &[bool],
-    expanded: &mut BTreeSet<(usize, usize)>,
-    propositional_goals: &mut Vec<ExplicitFact>,
-    numeric_conditions: &mut Vec<LinearNumericCondition>,
-) -> Result<(), String> {
-    if !expanded.insert((fact.var(), fact.value())) {
-        return Ok(());
-    }
-    let direct = helper.comparison_fact_materialized_conditions(fact.var(), fact.value());
-    if !direct.is_empty() {
-        numeric_conditions.extend(direct);
-        return Ok(());
-    }
-    if !derived_propositional
-        .get(fact.var())
-        .copied()
-        .unwrap_or(false)
-    {
-        propositional_goals.push(fact);
-        return Ok(());
-    }
-
-    // The task's own axioms only, deliberately. This rewrites the goal into the
-    // conditions of its definition, so it needs the fact to be *equivalent* to
-    // one conjunction -- hence the count check below. The rules describing a
-    // derived variable's default value cannot serve that: the negation of several
-    // proving bodies is generally several rules, and picking one would rewrite the
-    // goal into something strictly stronger. So since issue454 a derived goal at
-    // its *default* value has no defining axiom here and is reported as the error
-    // below rather than expanded through whichever refuting rule the translator
-    // happened to emit. A goal at a derived variable's nondefault value, which is
-    // what `(:goal (p))` produces, is unaffected: a refuting rule never matched
-    // its value.
-    let achievers = task
-        .axioms()
-        .iter()
-        .filter(|axiom| {
-            axiom.var_id() == fact.var()
-                && axiom.effect_value() == fact.value()
-                && !axiom.conditions().is_empty()
-        })
-        .collect::<Vec<_>>();
-    if achievers.len() != 1 {
-        return Err(format!(
-            "numeric_potential requires a derived goal helper to have exactly one nonempty defining axiom; fact {}={} has {}",
-            fact.var(),
-            fact.value(),
-            achievers.len()
-        ));
-    }
-    for condition in achievers[0].conditions() {
-        expand_cpp_goal_fact(
-            task,
-            helper,
-            *condition,
-            derived_propositional,
-            expanded,
-            propositional_goals,
-            numeric_conditions,
-        )?;
-    }
-    Ok(())
 }
 
 fn build_cpp_numeric_features(
