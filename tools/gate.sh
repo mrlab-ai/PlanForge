@@ -30,6 +30,15 @@
 #   full     -- all 21, for a change that could plausibly affect only a big one.
 #   timing   -- the only tier that needs release + repeated interleaved runs.
 #
+# WARNING about `timing`, found the hard way: it runs the DEFAULT search spec,
+# `astar(blind())`. Blind search touches no heuristic code at all, so if your
+# change is in a heuristic, an abstraction, lm-cut or the numeric bounds, this
+# tier exercises NONE of it and its wobble is pure machine noise. Pass a spec
+# that reaches your change:
+#   scripts/gate.sh timing "astar(lmcutnumeric())"
+#   scripts/gate.sh timing "astar(domain_abstraction())"
+# A heuristic change measured under `blind()` is not evidence of anything.
+#
 # Plan costs and expansion counts are semantics and cannot be changed by an
 # optimisation level, so `semantic` and `full` deliberately ignore the timing
 # columns; only `timing` looks at the clock.
@@ -101,6 +110,11 @@ case "${1:-all}" in
   semantic) build_semantic; compare /tmp/planforge-gate quick ;;
   full)     build_semantic; compare /tmp/planforge-gate all ;;
   timing)
+    SPEC=${2:-astar(blind())}
+    echo "timing with --search '$SPEC'"
+    case "$SPEC" in
+      *blind*) echo "  NOTE: blind search touches no heuristic code -- pass a spec that reaches your change" ;;
+    esac
     cargo build --release --bin planforge >/dev/null 2>&1 || die "release build failed"
     cp target/release/planforge /tmp/planforge-timing
     # ABBA so machine drift cancels; A-then-B exaggerated an 8% delta to 13%.
@@ -110,7 +124,7 @@ case "${1:-all}" in
       echo "$inst:"
       for _ in 1 2 3; do
         for bin in "$BASELINE" /tmp/planforge-timing /tmp/planforge-timing "$BASELINE"; do
-          printf ' %s' "$("$bin" "$local_dir/domain.pddl" "$p" 2>&1 | grep -oP 'Search time: \K[0-9.]+')"
+          printf ' %s' "$("$bin" --search "$SPEC" "$local_dir/domain.pddl" "$p" 2>&1 | grep -oP 'Search time: \K[0-9.]+')"
         done
       done
       echo
