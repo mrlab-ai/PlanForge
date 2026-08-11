@@ -1,6 +1,6 @@
 use planforge_sas::numeric_task::{
-    AssignmentEffect, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
-    NumericVariable, Operator,
+    AssignmentEffect, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 use super::*;
@@ -16,23 +16,23 @@ fn simple_var(name: &str) -> ExplicitVariable {
 }
 
 fn disjoint_effect_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p"), simple_var("q")],
-        vec![NumericVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p"), simple_var("q")],
+        numeric_variables: vec![NumericVariable::new(
             "x".to_string(),
             NumericType::Regular,
             None,
         )],
-        vec![
+        goals: vec![
             ExplicitFact::propositional(0, 1),
             ExplicitFact::propositional(1, 1),
         ],
-        vec![],
-        vec![0, 0],
-        vec![0.0],
-        vec![
+        mutexes: vec![],
+        state: vec![0, 0],
+        numeric_state: vec![0.0],
+        operators: vec![
             Operator::new(
                 "set-p".to_string(),
                 vec![],
@@ -48,28 +48,28 @@ fn disjoint_effect_task() -> NumericRootTask {
                 1,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn shared_effect_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p"), simple_var("q")],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p"), simple_var("q")],
+        numeric_variables: vec![
             NumericVariable::new("c".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
         ],
-        vec![],
-        vec![],
-        vec![0, 0],
-        vec![1.0, 0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0, 0],
+        numeric_state: vec![1.0, 0.0, 0.0],
+        operators: vec![Operator::new(
             "touch-both".to_string(),
             vec![],
             vec![Effect::new(vec![], 0, Some(0), 1)],
@@ -82,27 +82,27 @@ fn shared_effect_task() -> NumericRootTask {
             )],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn zero_additive_effect_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p")],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p")],
+        numeric_variables: vec![
             NumericVariable::new("zero".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![Operator::new(
             "set-p-and-add-zero".to_string(),
             vec![],
             vec![Effect::new(vec![], 0, Some(0), 1)],
@@ -115,11 +115,11 @@ fn zero_additive_effect_task() -> NumericRootTask {
             )],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]

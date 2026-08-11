@@ -2,7 +2,7 @@ use super::*;
 use planforge_sas::{
     numeric_task::{
         AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-        NumericType, NumericVariable, Operator,
+        NumericRootTaskParts, NumericType, NumericVariable, Operator,
     },
     state_registry::StateRegistry,
 };
@@ -53,7 +53,7 @@ fn get_root_task() -> NumericRootTask {
     let comparison_axioms = Vec::new();
     let assignment_axioms = Vec::new();
     let global_constraint = ExplicitFact::propositional(0, 0);
-    NumericRootTask::new(
+    NumericRootTask::new(NumericRootTaskParts {
         version,
         metric,
         variables,
@@ -67,7 +67,7 @@ fn get_root_task() -> NumericRootTask {
         comparison_axioms,
         assignment_axioms,
         global_constraint,
-    )
+    })
 }
 
 /// A task whose emission order no ordering chosen at construction time can make
@@ -91,29 +91,29 @@ fn immediate_list_straddling_task() -> NumericRootTask {
             1,
         )
     };
-    NumericRootTask::new(
-        4,
-        Metric::new(true, Some(0)),
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, Some(0)),
         variables,
-        vec![NumericVariable::new(
+        numeric_variables: vec![NumericVariable::new(
             String::from("total_cost()"),
             NumericType::Cost,
             None,
         )],
-        vec![ExplicitFact::propositional(0, 1)],
-        Vec::new(),
-        vec![0],
-        vec![0f64],
-        vec![
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: Vec::new(),
+        state: vec![0],
+        numeric_state: vec![0f64],
+        operators: vec![
             operator("needs_zero", vec![ExplicitFact::propositional(0, 0)]),
             operator("needs_nothing", Vec::new()),
             operator("needs_one", vec![ExplicitFact::propositional(0, 1)]),
         ],
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: Vec::new(),
+        comparison_axioms: Vec::new(),
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 /// Emission is the walk's order — a branch's shared immediate operators, then

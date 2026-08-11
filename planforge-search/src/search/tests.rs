@@ -2,8 +2,8 @@ use super::*;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
-    Operator, TaskRef,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericVariable, Operator, TaskRef,
 };
 use planforge_sas::state_registry::StateRegistry;
 use std::cell::Cell;
@@ -58,21 +58,21 @@ fn test_compute_effective_operator_costs_plus_constants() {
         1,
     );
 
-    let task = NumericRootTask::new(
+    let task = NumericRootTask::new(NumericRootTaskParts {
         version,
         metric,
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.5, 0.002],
-        vec![op1, op2],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.5, 0.002],
+        operators: vec![op1, op2],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let task: TaskRef = Arc::new(task);
     let mut state_registry = StateRegistry::for_task(task.clone());
@@ -152,27 +152,27 @@ impl Heuristic for FailingHeuristic {
 
 #[test]
 fn initial_evaluation_error_is_not_reported_as_no_solution() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        4,
-        Metric::new(false, None),
-        vec![ExplicitVariable::new(
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(false, None),
+        variables: vec![ExplicitVariable::new(
             1,
             "v".to_string(),
             vec!["value".to_string()],
             None,
             0,
         )],
-        vec![],
-        vec![],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        numeric_variables: vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
     let registry = StateRegistry::for_task(task.clone());
     let mut search = AStarSearch::new(task, registry, Some(Box::new(FailingHeuristic)), None, None);
 
@@ -214,33 +214,33 @@ impl Heuristic for RevisionControlledHeuristic {
 }
 
 fn one_step_task() -> TaskRef<'static> {
-    Arc::new(NumericRootTask::new(
-        4,
-        Metric::new(false, None),
-        vec![ExplicitVariable::new(
+    Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(false, None),
+        variables: vec![ExplicitVariable::new(
             2,
             "location".to_string(),
             vec!["start".to_string(), "goal".to_string()],
             None,
             0,
         )],
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![Operator::new(
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![Operator::new(
             "finish".to_string(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![Effect::new(vec![], 0, Some(0), 1)],
             vec![],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ))
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }))
 }
 
 #[test]

@@ -2,7 +2,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -53,20 +53,20 @@ fn condition_var(name: &str, axiom_layer: usize) -> ExplicitVariable {
 }
 
 fn propositional_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p", None)],
-        vec![NumericVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![NumericVariable::new(
             "x".to_string(),
             NumericType::Regular,
             None,
         )],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0],
+        operators: vec![Operator::new(
             "set-goal".to_string(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -78,27 +78,27 @@ fn propositional_task() -> NumericRootTask {
             vec![],
             3,
         )],
-        vec![],
-        vec![],
-        vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn comparison_guarded_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![condition_var("cmp", 0), simple_var("goal", None)],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![condition_var("cmp", 0), simple_var("goal", None)],
+        numeric_variables: vec![
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![2, 0],
-        vec![0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![2, 0],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![Operator::new(
             "advance".to_string(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -110,35 +110,35 @@ fn comparison_guarded_task() -> NumericRootTask {
             vec![],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             1,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn truncated_chain_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             3,
             "p".to_string(),
             vec!["p=0".to_string(), "p=1".to_string(), "p=2".to_string()],
             None,
             2,
         )],
-        vec![],
-        vec![ExplicitFact::propositional(0, 2)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 2)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![
             Operator::new(
                 "step-1".to_string(),
                 vec![ExplicitFact::propositional(0, 0)],
@@ -164,24 +164,24 @@ fn truncated_chain_task() -> NumericRootTask {
                 5,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn relevance_precision_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p", None)],
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![
             Operator::new(
                 "set-goal".to_string(),
                 vec![ExplicitFact::propositional(0, 0)],
@@ -207,11 +207,11 @@ fn relevance_precision_task() -> NumericRootTask {
                 1,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]
@@ -226,10 +226,10 @@ fn relevant_operators_are_exact_when_complete_and_sound_when_truncated() {
 }
 
 fn truncation_gap_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             4,
             "p".to_string(),
             vec![
@@ -241,12 +241,12 @@ fn truncation_gap_task() -> NumericRootTask {
             None,
             3,
         )],
-        vec![],
-        vec![ExplicitFact::propositional(0, 3)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 3)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![
             Operator::new(
                 "to-1".to_string(),
                 vec![ExplicitFact::propositional(0, 0)],
@@ -284,27 +284,27 @@ fn truncation_gap_task() -> NumericRootTask {
                 1,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn cost_only_hidden_numeric_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, Some(0)),
-        vec![simple_var("p", None)],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, Some(0)),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
             NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![0.0, 1.0],
-        vec![
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 1.0],
+        operators: vec![
             Operator::new(
                 "wait".to_string(),
                 vec![ExplicitFact::propositional(0, 0)],
@@ -337,27 +337,27 @@ fn cost_only_hidden_numeric_task() -> NumericRootTask {
                 1,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, Some(0)),
-        vec![simple_var("p", None)],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, Some(0)),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
             NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
             NumericVariable::new("zero".to_string(), NumericType::Constant, None),
         ],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![Operator::new(
             "finish".to_string(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -375,39 +375,39 @@ fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
             )],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn numeric_pair_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p", None)],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![3.0, 7.0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![3.0, 7.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn failed_lookup_chain_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             5,
             "p".to_string(),
             vec![
@@ -420,12 +420,12 @@ fn failed_lookup_chain_task() -> NumericRootTask {
             None,
             4,
         )],
-        vec![],
-        vec![ExplicitFact::propositional(0, 4)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 4)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![
             Operator::new(
                 "to-1".to_string(),
                 vec![ExplicitFact::propositional(0, 0)],
@@ -475,11 +475,11 @@ fn failed_lookup_chain_task() -> NumericRootTask {
                 1,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]

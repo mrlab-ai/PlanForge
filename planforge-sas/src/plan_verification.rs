@@ -190,7 +190,9 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
 mod tests {
     use super::*;
     use crate::axioms::PropositionalAxiom;
-    use crate::numeric_task::{Effect, ExplicitVariable, Metric, NumericRootTask};
+    use crate::numeric_task::{
+        Effect, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    };
     use std::sync::Arc;
 
     /// A three-position chain task.
@@ -254,23 +256,23 @@ mod tests {
                 1,
             ),
         ];
-        NumericRootTask::new(
-            4,
+        NumericRootTask::new(NumericRootTaskParts {
+            version: 4,
             // No metric variable, so every transition costs 1.0.
-            Metric::new(true, None),
+            metric: Metric::new(true, None),
             variables,
-            Vec::new(),
-            vec![ExplicitFact::propositional(1, 2)],
-            Vec::new(),
-            vec![1, initial_position],
-            Vec::new(),
+            numeric_variables: Vec::new(),
+            goals: vec![ExplicitFact::propositional(1, 2)],
+            mutexes: Vec::new(),
+            state: vec![1, initial_position],
+            numeric_state: Vec::new(),
             operators,
             // Unconditionally derive var0 = 0 ("gc" holds).
-            vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-            Vec::new(),
-            Vec::new(),
+            axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+            comparison_axioms: Vec::new(),
+            assignment_axioms: Vec::new(),
             global_constraint,
-        )
+        })
     }
 
     /// Replay `names` against a fresh registry over `task`.

@@ -371,8 +371,8 @@ fn constant_effect_delta(task: &dyn AbstractNumericTask, effect: &AssignmentEffe
 mod tests {
     use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
     use planforge_sas::numeric_task::{
-        AssignmentEffect, AssignmentOperation, ExplicitFact, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator,
+        AssignmentEffect, AssignmentOperation, ExplicitFact, Metric, NumericRootTask,
+        NumericRootTaskParts, NumericType, NumericVariable, Operator,
     };
 
     use super::*;
@@ -391,21 +391,21 @@ mod tests {
             vec![AssignmentEffect::new(0, operation, 3, false, vec![])],
             1,
         );
-        NumericRootTask::new(
-            4,
-            Metric::new(true, None),
-            vec![],
+        NumericRootTask::new(NumericRootTaskParts {
+            version: 4,
+            metric: Metric::new(true, None),
+            variables: vec![],
             numeric_variables,
-            vec![],
-            vec![],
-            vec![],
-            vec![0.0, 0.0, 0.0, 1.0],
-            vec![operator],
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::propositional(0, 0),
-        )
+            goals: vec![],
+            mutexes: vec![],
+            state: vec![],
+            numeric_state: vec![0.0, 0.0, 0.0, 1.0],
+            operators: vec![operator],
+            axioms: vec![],
+            comparison_axioms: vec![],
+            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        })
     }
 
     #[test]
@@ -432,21 +432,21 @@ mod tests {
             NumericVariable::new("accumulated-cost".into(), NumericType::Cost, None),
             NumericVariable::new("x-plus-cost".into(), NumericType::Derived, None),
         ];
-        let task = NumericRootTask::new(
-            4,
-            Metric::new(true, Some(1)),
-            vec![],
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            version: 4,
+            metric: Metric::new(true, Some(1)),
+            variables: vec![],
             numeric_variables,
-            vec![],
-            vec![],
-            vec![],
-            vec![0.0, 0.0, 0.0],
-            vec![],
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::propositional(0, 0),
-        );
+            goals: vec![],
+            mutexes: vec![],
+            state: vec![],
+            numeric_state: vec![0.0, 0.0, 0.0],
+            operators: vec![],
+            axioms: vec![],
+            comparison_axioms: vec![],
+            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
 
         assert!(analyze_additive_numeric_view(&task, 2).is_none());
     }

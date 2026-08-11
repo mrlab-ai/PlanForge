@@ -1,8 +1,8 @@
 use crate::{
     axioms::PropositionalAxiom,
     numeric_task::{
-        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator, TaskRef,
+        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+        NumericType, NumericVariable, Operator, TaskRef,
     },
     state_registry::StateRegistry,
 };
@@ -20,27 +20,27 @@ fn test_state_registry_initial_state() {
 
 #[test]
 fn initial_state_registration_does_not_mutate_shared_task() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        4,
-        Metric::new(false, None),
-        vec![ExplicitVariable::new(
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(false, None),
+        variables: vec![ExplicitVariable::new(
             2,
             "derived".into(),
             vec!["false".into(), "true".into()],
             Some(0),
             0,
         )],
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![PropositionalAxiom::new(vec![], 0, 0, 1)],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![PropositionalAxiom::new(vec![], 0, 0, 1)],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
     let original_propositions = task.get_initial_propositional_state_values().to_vec();
     let original_numeric = task.get_initial_numeric_state_values().to_vec();
     let mut registry = StateRegistry::for_task(task.clone());
@@ -109,21 +109,21 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         1,
     );
 
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        4,
-        Metric::new(true, Some(0)),
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, Some(0)),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![0.0, 1.0, 5.0],
-        vec![expensive_op, cheap_op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 1.0, 5.0],
+        operators: vec![expensive_op, cheap_op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
 
     let mut state_registry = StateRegistry::for_task(task.clone());
 
@@ -185,21 +185,21 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         )],
         1,
     );
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        4,
-        Metric::new(false, None),
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(false, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.1 + 0.2, 0.3],
-        vec![add_c1, add_c2],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.1 + 0.2, 0.3],
+        operators: vec![add_c1, add_c2],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
 
     for compact in [false, true] {
         let mut state_registry =
@@ -225,30 +225,30 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
 
 #[test]
 fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        2,
-        Metric::new(false, None),
-        vec![ExplicitVariable::new(
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 2,
+        metric: Metric::new(false, None),
+        variables: vec![ExplicitVariable::new(
             2,
             "v0".into(),
             vec!["off".into(), "on".into()],
             None,
             0,
         )],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("y".into(), NumericType::Regular, None),
         ],
-        vec![],
-        vec![],
-        vec![0],
-        vec![1.25, -7.5],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![1.25, -7.5],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
     let mut regular = StateRegistry::for_task(task.clone());
     let mut compact = StateRegistry::for_task_with_compact_numeric(task, true);
     let regular_initial = regular.get_initial_state();
@@ -261,29 +261,29 @@ fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
 
 #[test]
 fn compact_numeric_states_support_more_than_u16_distinct_values() {
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        1,
-        Metric::new(false, None),
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(false, None),
         // The global constraint below names variable 0, so the task has to
         // have one.
-        vec![ExplicitVariable::new(
+        variables: vec![ExplicitVariable::new(
             2,
             "v0".into(),
             vec!["off".into(), "on".into()],
             None,
             0,
         )],
-        vec![NumericVariable::new("x".into(), NumericType::Regular, None)],
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        numeric_variables: vec![NumericVariable::new("x".into(), NumericType::Regular, None)],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
     let registry = StateRegistry::for_task_with_compact_numeric(task, true);
 
     let mut last = 0;

@@ -1,7 +1,7 @@
 use super::*;
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
 };
 use std::sync::Arc;
 
@@ -25,21 +25,21 @@ fn chain_task() -> TaskRef<'static> {
         )
     };
 
-    Arc::new(NumericRootTask::new(
-        3,
-        Metric::new(true, None),
+    Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 3,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 2)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![step("step_0_1", 0, 1), step("step_1_2", 1, 2)],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ))
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 2)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![step("step_0_1", 0, 1), step("step_1_2", 1, 2)],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }))
 }
 
 /// Returns a fixed value for every non-goal state, whatever the task says.

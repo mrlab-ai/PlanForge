@@ -2,7 +2,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 use super::*;
@@ -20,10 +20,10 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 }
 
 fn sample_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
             simple_var("p", None),
             ExplicitVariable::new(
                 3,
@@ -33,15 +33,15 @@ fn sample_task() -> NumericRootTask {
                 2,
             ),
         ],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::propositional(1, 0)],
-        vec![],
-        vec![0, 2],
-        vec![1.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(1, 0)],
+        mutexes: vec![],
+        state: vec![0, 2],
+        numeric_state: vec![1.0, 0.0],
+        operators: vec![Operator::new(
             "inc".to_string(),
             vec![],
             vec![],
@@ -54,38 +54,38 @@ fn sample_task() -> NumericRootTask {
             )],
             1,
         )],
-        vec![PropositionalAxiom::new(
+        axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(1, 0)],
             0,
             1,
             0,
         )],
-        vec![ComparisonAxiom::new(
+        comparison_axioms: vec![ComparisonAxiom::new(
             1,
             1,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn operator_predecessor_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
             simple_var("pre", None),
             simple_var("goal", None),
             simple_var("other", None),
         ],
-        vec![],
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![0, 0, 0],
-        vec![],
-        vec![Operator::new(
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![0, 0, 0],
+        numeric_state: vec![],
+        operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(0, 1)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -97,18 +97,18 @@ fn operator_predecessor_task() -> NumericRootTask {
             vec![],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn operator_comparison_predecessor_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
             simple_var("goal", None),
             ExplicitVariable::new(
                 3,
@@ -118,17 +118,17 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
                 2,
             ),
         ],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c5".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![0, 2],
-        vec![5.0, 0.0, 0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![0, 2],
+        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -140,41 +140,41 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
             vec![],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             1,
             3,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-        ExplicitFact::propositional(0, 0),
-    )
+        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 fn numeric_goal_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("cmp", Some(0))],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("cmp", Some(0))],
+        numeric_variables: vec![
             NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![1.0, 0.0],
-        vec![],
-        vec![],
-        vec![ComparisonAxiom::new(
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![1.0, 0.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             1,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]
@@ -263,37 +263,37 @@ fn greedy_pattern_respects_estimated_numeric_domain_size_budget() {
 
 #[test]
 fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             2,
             "goal".to_string(),
             vec!["off".to_string(), "on".to_string()],
             Some(1),
             0,
         )],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c5".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![0],
-        vec![5.0, 0.0, 0.0, 0.0],
-        vec![],
-        vec![],
-        vec![ComparisonAxiom::new(
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             3,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let restricted = build_restricted_task(&task).unwrap().unwrap();
     let pattern =

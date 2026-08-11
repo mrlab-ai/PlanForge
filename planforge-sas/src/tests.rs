@@ -3,7 +3,7 @@ use crate::{
     numeric_conditions::ConditionValue,
     numeric_task::{
         AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-        NumericRootTask, NumericType, NumericVariable, Operator,
+        NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
     },
 };
 
@@ -101,7 +101,7 @@ pub(crate) fn root_task_with_extra_preconditions(
     // numeric variables, and a self-referential definition has no fixpoint.
     let assignment_axioms = Vec::new();
     let global_constraint = ExplicitFact::propositional(0, 0);
-    NumericRootTask::new(
+    NumericRootTask::new(NumericRootTaskParts {
         version,
         metric,
         variables,
@@ -115,7 +115,7 @@ pub(crate) fn root_task_with_extra_preconditions(
         comparison_axioms,
         assignment_axioms,
         global_constraint,
-    )
+    })
 }
 
 #[cfg(test)]

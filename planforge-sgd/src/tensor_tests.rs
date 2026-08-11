@@ -14,7 +14,7 @@
 use candle_core::{DType, Device, Tensor};
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, Operator,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
 };
 
 use crate::residuals::{Assignment, evaluate};
@@ -411,24 +411,24 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
         Vec::new(),
         1,
     );
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        Vec::new(),
-        vec![
+        numeric_variables: Vec::new(),
+        goals: vec![
             ExplicitFact::propositional(1, 1),
             ExplicitFact::propositional(2, 1),
         ],
-        Vec::new(),
-        vec![1, 0, initial_right],
-        Vec::new(),
-        vec![action],
-        vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-        Vec::new(),
-        Vec::new(),
-        ExplicitFact::propositional(0, 0),
-    )
+        mutexes: Vec::new(),
+        state: vec![1, 0, initial_right],
+        numeric_state: Vec::new(),
+        operators: vec![action],
+        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        comparison_axioms: Vec::new(),
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 /// An action is one stochastic joint event. Giving it mass `p` gives every one
@@ -1158,21 +1158,21 @@ fn causal_chain_task() -> NumericRootTask {
         Vec::new(),
         1,
     );
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        Vec::new(),
-        vec![ExplicitFact::propositional(1, 2)],
-        Vec::new(),
-        vec![1, 0],
-        Vec::new(),
-        vec![move_01, move_12, move_10],
-        vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-        Vec::new(),
-        Vec::new(),
-        ExplicitFact::propositional(0, 0),
-    )
+        numeric_variables: Vec::new(),
+        goals: vec![ExplicitFact::propositional(1, 2)],
+        mutexes: Vec::new(),
+        state: vec![1, 0],
+        numeric_state: Vec::new(),
+        operators: vec![move_01, move_12, move_10],
+        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        comparison_axioms: Vec::new(),
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 /// The selected sequence reaches the first goal, then clobbers it while
@@ -1219,24 +1219,24 @@ fn clobbered_goals_task(initial_first_goal: bool) -> NumericRootTask {
         Vec::new(),
         1,
     );
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        Vec::new(),
-        vec![
+        numeric_variables: Vec::new(),
+        goals: vec![
             ExplicitFact::propositional(1, 1),
             ExplicitFact::propositional(2, 1),
         ],
-        Vec::new(),
-        vec![1, usize::from(initial_first_goal), 0],
-        Vec::new(),
-        vec![set_one, clobber_one_set_two],
-        vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-        Vec::new(),
-        Vec::new(),
-        ExplicitFact::propositional(0, 0),
-    )
+        mutexes: Vec::new(),
+        state: vec![1, usize::from(initial_first_goal), 0],
+        numeric_state: Vec::new(),
+        operators: vec![set_one, clobber_one_set_two],
+        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        comparison_axioms: Vec::new(),
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]

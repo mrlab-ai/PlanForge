@@ -4,7 +4,7 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -136,21 +136,21 @@ fn progression_sequence_flaws_find_numeric_deviation_flaw() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![2, 0],
-        vec![-10.0, 3.0, -5.0],
-        vec![op0, op1],
-        vec![],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![2, 0],
+        numeric_state: vec![-10.0, 3.0, -5.0],
+        operators: vec![op0, op1],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![

@@ -2,32 +2,32 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
 use planforge_sas::numeric_task::{ExplicitVariable, Metric, NumericVariable, Operator};
 use planforge_sas::{
     axioms::ComparisonOperator,
-    numeric_task::{ExplicitFact, NumericRootTask},
+    numeric_task::{ExplicitFact, NumericRootTask, NumericRootTaskParts},
 };
 
 use super::*;
 
 #[test]
 fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             3,
             "cmp".to_string(),
             vec!["t".to_string(), "f".to_string(), "u".to_string()],
             Some(0),
             2,
         )],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![2],
-        vec![1.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![2],
+        numeric_state: vec![1.0, 0.0],
+        operators: vec![Operator::new(
             "inc".to_string(),
             vec![],
             vec![],
@@ -40,16 +40,16 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
             )],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             1,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let estimator = NumericSizeEstimator::new(&task);
 
@@ -59,28 +59,28 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
 #[test]
 #[should_panic(expected = "numeric PDB size estimation requires a restricted task")]
 fn rejects_unrestricted_numeric_conditions() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             3,
             "cmp".to_string(),
             vec!["t".to_string(), "f".to_string(), "u".to_string()],
             Some(1),
             2,
         )],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
             NumericVariable::new("c5".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![2],
-        vec![1.0, 5.0, 0.0, 1.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![2],
+        numeric_state: vec![1.0, 5.0, 0.0, 1.0, 0.0],
+        operators: vec![Operator::new(
             "inc-x".to_string(),
             vec![],
             vec![],
@@ -93,16 +93,16 @@ fn rejects_unrestricted_numeric_conditions() {
             )],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             4,
             1,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(4, CalOperator::Sum, 2, 3)],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![AssignmentAxiom::new(4, CalOperator::Sum, 2, 3)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let _ = NumericSizeEstimator::new(&task);
 }

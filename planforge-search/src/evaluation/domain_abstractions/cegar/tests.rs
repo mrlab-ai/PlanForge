@@ -10,7 +10,7 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 fn one_dimensional_sailing_like_task() -> NumericRootTask {
@@ -56,26 +56,26 @@ fn one_dimensional_sailing_like_task() -> NumericRootTask {
         1,
     );
 
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![2, 0],
-        vec![0.0, 1.0, 9.0],
-        vec![go_east, save],
-        vec![],
-        vec![ComparisonAxiom::new(
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![2, 0],
+        numeric_state: vec![0.0, 1.0, 9.0],
+        operators: vec![go_east, save],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             0,
             2,
             ComparisonOperator::GreaterThan,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]
@@ -113,21 +113,21 @@ fn build_abstraction_produces_singleton_plan_without_wildcards() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op0, op1],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let config = CegarConfig {
         use_wildcard_plans: false,
@@ -152,21 +152,21 @@ fn empty_wildcard_plan_is_real_exactly_when_initial_state_is_goal() {
         None,
         0,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        variables.clone(),
-        vec![],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: variables.clone(),
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let empty_plan = WildcardPlanResult {
         wildcard_plan: vec![],
         abstract_state_hashes: vec![0],
@@ -175,21 +175,21 @@ fn empty_wildcard_plan_is_real_exactly_when_initial_state_is_goal() {
     };
     assert!(wildcard_plan_is_real(&task, &empty_plan).unwrap());
 
-    let non_goal_task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let non_goal_task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 1),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    });
     assert!(!wildcard_plan_is_real(&non_goal_task, &empty_plan).unwrap());
 }
 
@@ -240,21 +240,21 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![2, 0],
-        vec![-10.0, 3.0, -5.0],
-        vec![op0, op1],
-        vec![],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![2, 0],
+        numeric_state: vec![-10.0, 3.0, -5.0],
+        operators: vec![op0, op1],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -326,21 +326,21 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
         None,
         0,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let config = CegarConfig {
         max_abstraction_size: 1,
@@ -391,21 +391,21 @@ fn blacklisted_propositional_vars_are_not_refined() {
         None,
         0,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let mut config = CegarConfig::default();
     config.blacklisted_prop_var_ids.insert(0);
@@ -464,21 +464,21 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         1,
         ComparisonOperator::GreaterThan,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![2],
-        vec![1.0, 0.0],
-        vec![],
-        vec![],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![2],
+        numeric_state: vec![1.0, 0.0],
+        operators: vec![],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let mut config = CegarConfig {
         init_split_method: InitSplitMethod::InitValue,
@@ -507,17 +507,17 @@ fn goal_variable_values_expand_goal_axiom_preconditions() {
             0,
         ),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(2, 1)],
-        vec![],
-        vec![0, 0, 0],
-        vec![],
-        vec![],
-        vec![PropositionalAxiom::new(
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(2, 1)],
+        mutexes: vec![],
+        state: vec![0, 0, 0],
+        numeric_state: vec![],
+        operators: vec![],
+        axioms: vec![PropositionalAxiom::new(
             vec![
                 ExplicitFact::propositional(0, 1),
                 ExplicitFact::propositional(1, 1),
@@ -526,10 +526,10 @@ fn goal_variable_values_expand_goal_axiom_preconditions() {
             0,
             1,
         )],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     assert_eq!(
         goal_variable_values(&task),
@@ -550,21 +550,21 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         0,
     )];
     let numeric_variables = vec![NumericVariable::new("x".into(), NumericType::Regular, None)];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![3.5],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![3.5],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let config = CegarConfig {
         init_split_method: InitSplitMethod::Identity,
@@ -700,21 +700,21 @@ fn max_refined_single_atom_is_sticky() {
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let config = CegarConfig {
         flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
         random_seed: Some(7),

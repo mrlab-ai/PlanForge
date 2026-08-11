@@ -3,7 +3,7 @@ use super::*;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
@@ -26,21 +26,21 @@ fn propositional_effect_without_precondition_preserves_sibling_branches() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![1, 0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![1, 0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let partitions = NumericPartitions::trivial(&task);
     let mut generator =
         AbstractOperatorGenerator::new_with_identity_mapping(&task, partitions, vec![], true)
@@ -101,21 +101,21 @@ fn numeric_partition_transitions_and_comparison_filtering() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 10.0, 7.0],
-        vec![op],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 10.0, 7.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     // Partitions for x0: (-inf,10) and [10,inf)
     let partitions = NumericPartitions::with_partitions(vec![
@@ -181,21 +181,21 @@ fn repeated_numeric_operator_generation_is_deterministic() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 10.0, 7.0],
-        vec![op],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 10.0, 7.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -257,21 +257,21 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 1.0],
-        vec![op.clone()],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0, 1.0],
+        operators: vec![op.clone()],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -337,21 +337,21 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![],
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![],
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![3.0, 1.0, 5.0, 4.0, -1.0],
-        vec![op.clone()],
-        vec![],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![3.0, 1.0, 5.0, 4.0, -1.0],
+        operators: vec![op.clone()],
+        axioms: vec![],
+        comparison_axioms: vec![],
         assignment_axioms,
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::singleton(3.0), Interval::singleton(4.0)],
@@ -431,21 +431,21 @@ fn multiply_out_unconditional_propositional_effects() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        numeric_variables: vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![]);
     let numeric_domain_sizes: Vec<usize> = vec![];
@@ -498,21 +498,21 @@ fn derived_comparison_precondition_clears_the_old_value() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 10.0],
-        vec![op],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 10.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],
@@ -569,21 +569,21 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, Some(0)),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, Some(0)),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 5.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0, 5.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],
@@ -638,21 +638,21 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.5, 0.5, 1.0],
-        vec![op.clone()],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.5, 0.5, 1.0],
+        operators: vec![op.clone()],
+        axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -727,27 +727,27 @@ fn additive_view_filters_false_equality_precondition() {
         NumericVariable::new("x-minus-target".into(), NumericType::Derived, None),
         NumericVariable::new("zero".into(), NumericType::Constant, None),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 10.0, -10.0, 0.0],
-        vec![Operator::new(
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 10.0, -10.0, 0.0],
+        operators: vec![Operator::new(
             "save".into(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::Equal)],
-        vec![AssignmentAxiom::new(2, CalOperator::Difference, 0, 1)],
-        ExplicitFact::propositional(0, 0),
-    );
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(0, 2, 3, ComparisonOperator::Equal)],
+        assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Difference, 0, 1)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],
         vec![Interval::singleton(10.0)],
@@ -785,26 +785,26 @@ fn additive_view_filters_false_equality_precondition() {
 
 #[test]
 fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation() {
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![],
-        vec![
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![],
+        numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("c0".into(), NumericType::Constant, None),
             NumericVariable::new("ghost".into(), NumericType::Derived, None),
             NumericVariable::new("d".into(), NumericType::Derived, None),
         ],
-        vec![],
-        vec![],
-        vec![],
-        vec![5.0, 0.0, 0.0, 0.0],
-        vec![],
-        vec![],
-        vec![],
-        vec![AssignmentAxiom::new(3, CalOperator::Product, 2, 1)],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Product, 2, 1)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::singleton(5.0), Interval::singleton(6.0)],
@@ -851,21 +851,21 @@ fn duplicate_assignment_effects_are_rejected() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 1.0, 2.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0, 1.0, 2.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -916,21 +916,21 @@ fn conditional_propositional_effect_branches() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0, 0, 0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        numeric_variables: vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0, 0, 0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![]);
     let numeric_domain_sizes: Vec<usize> = vec![];
@@ -980,21 +980,21 @@ fn conditional_assignment_effect_branches() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0, 0],
-        vec![0.0, 1.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0, 0],
+        numeric_state: vec![0.0, 1.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
@@ -1041,21 +1041,21 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 0.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],

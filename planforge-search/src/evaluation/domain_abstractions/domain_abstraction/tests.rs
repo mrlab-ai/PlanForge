@@ -3,7 +3,8 @@ use super::*;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
+    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType,
+    NumericVariable,
 };
 
 /// The propositional variable a comparison axiom writes: true or false,
@@ -29,21 +30,21 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
 
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![condition_variable("x0 < c1")],
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![condition_variable("x0 < c1")],
         numeric_variables,
-        vec![],
-        vec![],
-        vec![ConditionValue::False.as_usize()],
-        vec![0.0, 10.0],
-        vec![],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ConditionValue::False.as_usize()],
+        numeric_state: vec![0.0, 10.0],
+        operators: vec![],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let conditions = task.numeric_conditions();
 
@@ -72,25 +73,25 @@ fn reachable_partitions_overlaps_result_interval() {
         Interval::new(9.0, f64::INFINITY, true, false),
     ]];
 
-    let dummy_task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![],
-        vec![NumericVariable::new(
+    let dummy_task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![],
+        numeric_variables: vec![NumericVariable::new(
             "x0".into(),
             NumericType::Regular,
             None,
         )],
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(parts);
 
@@ -153,21 +154,21 @@ fn trivial_partitions_use_singletons_for_constants() {
         NumericVariable::new("c7".into(), NumericType::Constant, None),
     ];
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![],
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![],
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 7.0],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0, 7.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::trivial(&task);
 
@@ -186,21 +187,21 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
         None,
     )];
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![],
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![],
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![9.450000000000001],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![9.450000000000001],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::trivial(&task);
 
@@ -224,21 +225,21 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     // d2 == x0
     let comparison_axioms = vec![ComparisonAxiom::new(0, 2, 0, ComparisonOperator::Equal)];
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![condition_variable("d2 == x0")],
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![condition_variable("d2 == x0")],
         numeric_variables,
-        vec![],
-        vec![],
-        vec![ConditionValue::False.as_usize()],
-        vec![0.0; 3],
-        vec![],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ConditionValue::False.as_usize()],
+        numeric_state: vec![0.0; 3],
+        operators: vec![],
+        axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     // The derived variable is expanded into the condition's DAG instead of
     // being read from the state, so the condition depends on x0 and x1 only.

@@ -1098,23 +1098,51 @@ pub struct NumericRootTask {
     global_constraint: ExplicitFact,
 }
 
+/// Everything a root task is built from, before the invariants [`
+/// NumericRootTask::new`] establishes over it.
+///
+/// This is [`crate::sas_format::SasTaskParts`] after the two conversions the
+/// format needs -- variables carrying their axiom defaults, operators with
+/// their condition lists merged -- and it is what every other producer of a
+/// task, from the abstractions to the tests, fills in directly. The fields are
+/// the task's own, so nothing here is derived: `new` computes the abstract
+/// variable ids, the numeric condition DAG, the fact namespaces and the axiom
+/// closure of the initial state, and none of those can be supplied.
+pub struct NumericRootTaskParts {
+    pub version: u32,
+    pub metric: Metric,
+    pub variables: Vec<ExplicitVariable>,
+    pub numeric_variables: Vec<NumericVariable>,
+    pub goals: Vec<ExplicitFact>,
+    pub mutexes: Vec<Vec<ExplicitFact>>,
+    /// One entry per variable, in variable order. For a derived variable this
+    /// is its axiom default rather than its initial value.
+    pub state: Vec<usize>,
+    pub numeric_state: Vec<f64>,
+    pub operators: Vec<Operator>,
+    pub axioms: Vec<PropositionalAxiom>,
+    pub comparison_axioms: Vec<ComparisonAxiom>,
+    pub assignment_axioms: Vec<AssignmentAxiom>,
+    pub global_constraint: ExplicitFact,
+}
+
 impl NumericRootTask {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        version: u32,
-        metric: Metric,
-        mut variables: Vec<ExplicitVariable>,
-        numeric_variables: Vec<NumericVariable>,
-        goals: Vec<ExplicitFact>,
-        mutexes: Vec<Vec<ExplicitFact>>,
-        mut state: Vec<usize>,
-        numeric_state: Vec<f64>,
-        operators: Vec<Operator>,
-        axioms: Vec<PropositionalAxiom>,
-        comparison_axioms: Vec<ComparisonAxiom>,
-        assignment_axioms: Vec<AssignmentAxiom>,
-        global_constraint: ExplicitFact,
-    ) -> Self {
+    pub fn new(parts: NumericRootTaskParts) -> Self {
+        let NumericRootTaskParts {
+            version,
+            metric,
+            mut variables,
+            numeric_variables,
+            goals,
+            mutexes,
+            mut state,
+            numeric_state,
+            operators,
+            axioms,
+            comparison_axioms,
+            assignment_axioms,
+            global_constraint,
+        } = parts;
         let abstract_propositional_var_ids = (0..state.len()).collect();
         let abstract_numeric_var_ids = (0..numeric_state.len()).collect();
         let numeric_conditions = Arc::new(

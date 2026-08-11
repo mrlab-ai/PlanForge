@@ -9,7 +9,7 @@ use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom
 use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
@@ -708,21 +708,21 @@ impl<'task> ProjectedTask<'task> {
             .map_err(ProjectedTaskBuildError::MalformedNumericConditions)?,
         );
 
-        let compilation_task = NumericRootTask::new(
-            1,
-            Metric::new(base.metric().is_min(), metric_var_id),
-            variables.clone(),
-            numeric_variables.clone(),
-            goals.clone(),
-            vec![],
-            projected_prop_values.clone(),
-            projected_numeric_values.clone(),
-            operators.clone(),
-            axioms.clone(),
-            comparison_axioms.clone(),
-            assignment_axioms.clone(),
-            ExplicitFact::propositional(0, 0),
-        );
+        let compilation_task = NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(base.metric().is_min(), metric_var_id),
+            variables: variables.clone(),
+            numeric_variables: numeric_variables.clone(),
+            goals: goals.clone(),
+            mutexes: vec![],
+            state: projected_prop_values.clone(),
+            numeric_state: projected_numeric_values.clone(),
+            operators: operators.clone(),
+            axioms: axioms.clone(),
+            comparison_axioms: comparison_axioms.clone(),
+            assignment_axioms: assignment_axioms.clone(),
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
         let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
 
         let propositional_packer = projected_propositional_packer_from_variables(&variables);
@@ -762,21 +762,21 @@ impl<'task> ProjectedTask<'task> {
     }
 
     pub fn to_numeric_root_task(&self) -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            self.metric.clone(),
-            self.variables.clone(),
-            self.numeric_variables.clone(),
-            self.goals.clone(),
-            vec![],
-            self.state.clone(),
-            self.numeric_state.clone(),
-            self.operators.clone(),
-            self.axioms.clone(),
-            self.comparison_axioms.clone(),
-            self.assignment_axioms.clone(),
-            ExplicitFact::propositional(0, 0),
-        )
+        NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: self.metric.clone(),
+            variables: self.variables.clone(),
+            numeric_variables: self.numeric_variables.clone(),
+            goals: self.goals.clone(),
+            mutexes: vec![],
+            state: self.state.clone(),
+            numeric_state: self.numeric_state.clone(),
+            operators: self.operators.clone(),
+            axioms: self.axioms.clone(),
+            comparison_axioms: self.comparison_axioms.clone(),
+            assignment_axioms: self.assignment_axioms.clone(),
+            global_constraint: ExplicitFact::propositional(0, 0),
+        })
     }
 
     pub fn project_state_values(

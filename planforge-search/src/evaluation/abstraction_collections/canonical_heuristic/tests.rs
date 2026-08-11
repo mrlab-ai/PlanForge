@@ -1,5 +1,5 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, Operator,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -32,19 +32,19 @@ fn simple_var(name: &str) -> ExplicitVariable {
 }
 
 fn simple_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p"), simple_var("q")],
-        vec![],
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p"), simple_var("q")],
+        numeric_variables: vec![],
+        goals: vec![
             ExplicitFact::propositional(0, 1),
             ExplicitFact::propositional(1, 1),
         ],
-        vec![],
-        vec![0, 0],
-        vec![],
-        vec![
+        mutexes: vec![],
+        state: vec![0, 0],
+        numeric_state: vec![],
+        operators: vec![
             Operator::new(
                 "set-p".to_string(),
                 vec![],
@@ -60,11 +60,11 @@ fn simple_task() -> NumericRootTask {
                 3,
             ),
         ],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstraction {

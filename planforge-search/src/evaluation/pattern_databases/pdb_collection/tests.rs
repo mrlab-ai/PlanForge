@@ -1,6 +1,6 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable,
-    Operator,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericVariable, Operator,
 };
 
 use super::*;
@@ -16,31 +16,31 @@ fn simple_var(name: &str) -> ExplicitVariable {
 }
 
 fn sample_task() -> NumericRootTask {
-    NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p"), simple_var("q")],
-        vec![NumericVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p"), simple_var("q")],
+        numeric_variables: vec![NumericVariable::new(
             "x".to_string(),
             NumericType::Regular,
             None,
         )],
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![0, 0],
-        vec![0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![0, 0],
+        numeric_state: vec![0.0],
+        operators: vec![Operator::new(
             "advance".to_string(),
             vec![ExplicitFact::propositional(0, 1)],
             vec![Effect::new(vec![], 1, Some(0), 1)],
             vec![],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]

@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
-    Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
@@ -416,23 +416,23 @@ pub fn build_icaps26_restricted_task(
             .get(var_id)
             .and_then(|mapped| *mapped)
     });
-    let transformed_task = NumericRootTask::new(
-        1,
-        Metric::new(task.metric().is_min(), metric_var_id),
+    let transformed_task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
-        (0..task.get_num_goals())
+        goals: (0..task.get_num_goals())
             .map(|goal_id| *task.get_goal_fact(goal_id))
             .collect(),
-        vec![],
-        task.get_initial_propositional_state_values().to_vec(),
-        numeric_initial,
+        mutexes: vec![],
+        state: task.get_initial_propositional_state_values().to_vec(),
+        numeric_state: numeric_initial,
         operators,
-        task.axioms().clone(),
+        axioms: task.axioms().clone(),
         comparison_axioms,
-        Vec::new(),
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     validate_restricted_task(&transformed_task).map_err(|reason| {
         anyhow::anyhow!("ICAPS 2026 restricted task construction failed: {reason}")
     })?;
@@ -535,23 +535,23 @@ fn build_task(
             .and_then(|mapped| *mapped)
     });
 
-    let transformed_task = NumericRootTask::new(
-        1,
-        Metric::new(task.metric().is_min(), metric_var_id),
+    let transformed_task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
-        (0..task.get_num_goals())
+        goals: (0..task.get_num_goals())
             .map(|goal_id| *task.get_goal_fact(goal_id))
             .collect(),
-        vec![],
-        task.get_initial_propositional_state_values().to_vec(),
-        numeric_initial,
+        mutexes: vec![],
+        state: task.get_initial_propositional_state_values().to_vec(),
+        numeric_state: numeric_initial,
         operators,
-        task.axioms().clone(),
+        axioms: task.axioms().clone(),
         comparison_axioms,
-        Vec::<AssignmentAxiom>::new(),
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: Vec::<AssignmentAxiom>::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     validate_restricted_task(&transformed_task)
         .map_err(|reason| anyhow::anyhow!("restricted task construction failed: {reason}"))?;
 
@@ -1054,26 +1054,26 @@ mod tests {
             )],
             1,
         );
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, None),
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::propositional(0, 0)],
-            vec![],
-            vec![1],
-            vec![2.0, 3.0, 5.0, 10.0, 1.0],
-            vec![operator],
-            vec![],
-            vec![ComparisonAxiom::new(
+            goals: vec![ExplicitFact::propositional(0, 0)],
+            mutexes: vec![],
+            state: vec![1],
+            numeric_state: vec![2.0, 3.0, 5.0, 10.0, 1.0],
+            operators: vec![operator],
+            axioms: vec![],
+            comparison_axioms: vec![ComparisonAxiom::new(
                 0,
                 2,
                 3,
                 ComparisonOperator::LessThanOrEqual,
             )],
-            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::propositional(0, 0),
-        );
+            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
 
         let restricted = build_restricted_task(&task)
             .unwrap()
@@ -1154,26 +1154,26 @@ mod tests {
             )],
             1,
         );
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, None),
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::propositional(0, 0)],
-            vec![],
-            vec![1],
-            vec![4000.0, 6000.0, 2000.0],
-            vec![operator],
-            vec![],
-            vec![ComparisonAxiom::new(
+            goals: vec![ExplicitFact::propositional(0, 0)],
+            mutexes: vec![],
+            state: vec![1],
+            numeric_state: vec![4000.0, 6000.0, 2000.0],
+            operators: vec![operator],
+            axioms: vec![],
+            comparison_axioms: vec![ComparisonAxiom::new(
                 0,
                 2,
                 1,
                 ComparisonOperator::GreaterThan,
             )],
-            vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
-            ExplicitFact::propositional(0, 0),
-        );
+            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
 
         let restricted = build_restricted_task(&task)
             .unwrap()
@@ -1219,26 +1219,26 @@ mod tests {
             ],
             0,
         );
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, Some(4)),
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, Some(4)),
             variables,
             numeric_variables,
-            vec![ExplicitFact::propositional(0, 0)],
-            vec![],
-            vec![1],
-            vec![4.0, 6.0, 2.0, 1.0, 0.0],
-            vec![operator],
-            vec![],
-            vec![ComparisonAxiom::new(
+            goals: vec![ExplicitFact::propositional(0, 0)],
+            mutexes: vec![],
+            state: vec![1],
+            numeric_state: vec![4.0, 6.0, 2.0, 1.0, 0.0],
+            operators: vec![operator],
+            axioms: vec![],
+            comparison_axioms: vec![ComparisonAxiom::new(
                 0,
                 2,
                 3,
                 ComparisonOperator::GreaterThan,
             )],
-            vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
-            ExplicitFact::propositional(0, 0),
-        );
+            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Difference, 1, 0)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
 
         let restricted = build_restricted_task(&task)
             .unwrap()
@@ -1274,26 +1274,26 @@ mod tests {
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("limit".into(), NumericType::Constant, None),
         ];
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, None),
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::propositional(0, 0)],
-            vec![],
-            vec![1],
-            vec![2.0, 10.0],
-            vec![],
-            vec![],
-            vec![ComparisonAxiom::new(
+            goals: vec![ExplicitFact::propositional(0, 0)],
+            mutexes: vec![],
+            state: vec![1],
+            numeric_state: vec![2.0, 10.0],
+            operators: vec![],
+            axioms: vec![],
+            comparison_axioms: vec![ComparisonAxiom::new(
                 0,
                 0,
                 1,
                 ComparisonOperator::LessThanOrEqual,
             )],
-            vec![],
-            ExplicitFact::propositional(0, 0),
-        );
+            assignment_axioms: vec![],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
 
         assert!(build_restricted_task(&task).unwrap().is_none());
     }
@@ -1326,26 +1326,26 @@ mod tests {
             )],
             1,
         );
-        let task = NumericRootTask::new(
-            1,
-            Metric::new(true, None),
+        let task = NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, None),
             variables,
             numeric_variables,
-            vec![ExplicitFact::propositional(0, 0)],
-            vec![],
-            vec![1],
-            vec![2.0, 3.0, 5.0, 10.0],
-            vec![operator],
-            vec![],
-            vec![ComparisonAxiom::new(
+            goals: vec![ExplicitFact::propositional(0, 0)],
+            mutexes: vec![],
+            state: vec![1],
+            numeric_state: vec![2.0, 3.0, 5.0, 10.0],
+            operators: vec![operator],
+            axioms: vec![],
+            comparison_axioms: vec![ComparisonAxiom::new(
                 0,
                 2,
                 3,
                 ComparisonOperator::LessThanOrEqual,
             )],
-            vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            ExplicitFact::propositional(0, 0),
-        );
+            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        });
 
         let error = build_restricted_task(&task).unwrap_err();
         assert!(

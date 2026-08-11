@@ -14,7 +14,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 /// The propositional variable a comparison axiom writes, on axiom layer 0.
@@ -159,21 +159,21 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 1),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    });
     let factory = factory_identity_cutpoints(&task).unwrap();
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
 
@@ -231,21 +231,21 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
             1,
         ),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![ConditionValue::False.as_usize(), 0],
-        vec![0.0, 10.0, 20.0],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![ConditionValue::False.as_usize(), 0],
+        numeric_state: vec![0.0, 10.0, 20.0],
         operators,
-        vec![],
-        vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
-        vec![],
-        ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
-    );
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
+    });
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory
         .build_abstract_distance_table(&task, false, false)
@@ -284,21 +284,21 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 1),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    });
     let factory = factory_identity_cutpoints(&task).unwrap();
     let mut operator_generator = factory.make_operator_generator(&task, false).unwrap();
     let abstract_operators = operator_generator.build_abstract_operators(&task).unwrap();
@@ -377,21 +377,21 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         1,
     );
 
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 10.0],
-        vec![op],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 10.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     assert_eq!(factory.numeric_domain_sizes(), &[3, 1]);
@@ -424,21 +424,21 @@ fn enumerate_states_branches_on_undecidable_comparison() {
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
     let op = Operator::new("noop".into(), vec![], vec![], vec![], 1);
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![ConditionValue::False.as_usize()],
-        vec![0.0, 0.0],
-        vec![op],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ConditionValue::False.as_usize()],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let generator = factory.make_operator_generator(&task, true).unwrap();
@@ -486,21 +486,21 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
         1,
         ComparisonOperator::GreaterThan,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![ConditionValue::False.as_usize()],
-        vec![1.0, 2.0, 0.0],
-        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ConditionValue::False.as_usize()],
+        numeric_state: vec![1.0, 2.0, 0.0],
+        operators: vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let generator = factory.make_operator_generator(&task, true).unwrap();
@@ -564,21 +564,21 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op0, op1],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let result = factory
@@ -616,21 +616,21 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op0, op1],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let result = factory
@@ -666,21 +666,21 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op0, op1],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let result = factory
@@ -716,21 +716,21 @@ fn singleton_plan_selection_uses_seeded_rng() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op0, op1],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let mut rng = SmallRng::seed_from_u64(7);
@@ -796,22 +796,22 @@ fn initial_state_is_unique_and_comparisons_are_determined() {
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
     let op = Operator::new("noop".into(), vec![], vec![], vec![], 1);
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
         // The concrete initial state used by numeric-fd has comparisons evaluated.
-        vec![ConditionValue::False.as_usize()],
-        vec![0.0, 0.0],
-        vec![op],
-        vec![],
+        state: vec![ConditionValue::False.as_usize()],
+        numeric_state: vec![0.0, 0.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let table = factory
@@ -851,26 +851,26 @@ fn abstract_goals_skip_trivial_goal_axiom_preconditions() {
             0,
         ),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![0, 0],
-        vec![],
-        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
-        vec![PropositionalAxiom::new(
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![0, 0],
+        numeric_state: vec![],
+        operators: vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 0)],
             1,
             0,
             1,
         )],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let goals = factory.compute_abstract_goals(&task);
@@ -889,27 +889,27 @@ fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
         ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan),
         ComparisonAxiom::new(1, 0, 2, ComparisonOperator::LessThan),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![
+        goals: vec![
             ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
             ExplicitFact::propositional(1, ConditionValue::False.as_usize()),
         ],
-        vec![],
-        vec![
+        mutexes: vec![],
+        state: vec![
             ConditionValue::False.as_usize(),
             ConditionValue::False.as_usize(),
         ],
-        vec![0.0, 0.0, 0.0],
-        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
-        vec![],
+        numeric_state: vec![0.0, 0.0, 0.0],
+        operators: vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
     let generator = factory.make_operator_generator(&task, true).unwrap();
@@ -959,21 +959,21 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
         1,
         ComparisonOperator::GreaterThan,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 2.0, 0.0],
-        vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
-        vec![],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 2.0, 0.0],
+        operators: vec![Operator::new("noop".into(), vec![], vec![], vec![], 1)],
+        axioms: vec![],
         comparison_axioms,
         assignment_axioms,
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::singleton(0.0), Interval::singleton(1.0)],
@@ -1039,21 +1039,21 @@ fn additive_numeric_footprint_task() -> (NumericRootTask, DomainAbstractionFacto
         )],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![9.0, 1.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![9.0, 1.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
             Interval::new(9.0, 10.0, true, true),
@@ -1102,21 +1102,21 @@ fn additive_numeric_footprint_task_with_partitions(
         )],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 1.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 1.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let numeric_domain_sizes = vec![x_partitions.len(), 1];
     let partitions =
         NumericPartitions::with_partitions(vec![x_partitions, vec![Interval::singleton(1.0)]]);
@@ -1284,21 +1284,21 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let factory = DomainAbstractionFactory::new(
         &task,
@@ -1349,21 +1349,21 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         ],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.0, 1.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.0, 1.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
             Interval::new(0.0, 1.0, true, true),
@@ -1457,26 +1457,26 @@ fn footprint_one_finite_dim_suffices() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![2, 0],
-        vec![0.0, 0.0, 0.5, 0.0],
-        vec![diagonal, save],
-        vec![],
-        vec![ComparisonAxiom::new(
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![2, 0],
+        numeric_state: vec![0.0, 0.0, 0.5, 0.0],
+        operators: vec![diagonal, save],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             0,
             3,
             ComparisonOperator::GreaterThan,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
             Interval::singleton(0.0),
@@ -1551,21 +1551,21 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
         ],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 0.0, 1.0, 0.0],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 0.0, 1.0, 0.0],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
             Interval::new(0.0, 1.0, true, true),

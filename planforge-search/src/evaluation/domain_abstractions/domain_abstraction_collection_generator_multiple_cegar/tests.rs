@@ -14,38 +14,38 @@ fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericVariable,
+    NumericRootTask, NumericRootTaskParts, NumericVariable,
 };
 
 #[test]
 fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             2,
             "goal".into(),
             vec!["false".into(), "true".into()],
             None,
             1,
         )],
-        vec![],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![],
-        vec![Operator::new(
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![Operator::new(
             "set-goal".into(),
             vec![],
             vec![Effect::new(vec![], 0, Some(0), 1)],
             vec![],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         max_abstraction_size: 10,
         max_collection_size: 100,
@@ -269,25 +269,25 @@ fn affine_root_groups_share_immutable_anchors_without_merging_independent_ones()
             1,
         ),
     ];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![],
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![],
         numeric_variables,
-        vec![],
-        vec![],
-        vec![],
-        vec![0.0, 0.0, 10.0, 20.0, 0.0, 0.0, 0.0, 1.0],
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![],
+        numeric_state: vec![0.0, 0.0, 10.0, 20.0, 0.0, 0.0, 0.0, 1.0],
         operators,
-        vec![],
-        vec![],
-        vec![
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![
             AssignmentAxiom::new(4, CalOperator::Difference, 0, 2),
             AssignmentAxiom::new(5, CalOperator::Difference, 1, 2),
             AssignmentAxiom::new(6, CalOperator::Difference, 0, 3),
         ],
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let first = numeric_root_group_key(&task, &task, 4).unwrap();
     let second = numeric_root_group_key(&task, &task, 5).unwrap();

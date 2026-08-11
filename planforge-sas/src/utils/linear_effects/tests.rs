@@ -1,7 +1,8 @@
 use super::*;
 use crate::axioms::{AssignmentAxiom, ComparisonAxiom};
 use crate::numeric_task::{
-    AssignmentEffect, ExplicitVariable, Metric, NumericRootTask, NumericVariable, Operator,
+    AssignmentEffect, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    NumericVariable, Operator,
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
@@ -20,21 +21,21 @@ fn base_task(
     assignment_axioms: Vec<AssignmentAxiom>,
     numeric_state: Vec<f64>,
 ) -> NumericRootTask {
-    NumericRootTask::new(
-        3,
-        Metric::new(true, None),
-        vec![simple_var("p", &["f", "t"], None)],
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 3,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", &["f", "t"], None)],
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
         numeric_state,
         operators,
-        vec![],
-        Vec::<ComparisonAxiom>::new(),
+        axioms: vec![],
+        comparison_axioms: Vec::<ComparisonAxiom>::new(),
         assignment_axioms,
-        ExplicitFact::propositional(0, 0),
-    )
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]

@@ -106,8 +106,8 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
 mod tests {
     use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
     use planforge_sas::numeric_task::{
-        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
-        NumericVariable, Operator,
+        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+        NumericType, NumericVariable, Operator,
     };
     use planforge_sas::state_registry::StateRegistry;
 
@@ -117,37 +117,37 @@ mod tests {
     use super::GreedyNumericPdbHeuristic;
 
     fn initial_goal_task() -> NumericRootTask {
-        NumericRootTask::new(
-            1,
-            Metric::new(true, None),
-            vec![ExplicitVariable::new(
+        NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, None),
+            variables: vec![ExplicitVariable::new(
                 2,
                 "p".to_string(),
                 vec!["p=0".to_string(), "p=1".to_string()],
                 None,
                 0,
             )],
-            vec![NumericVariable::new(
+            numeric_variables: vec![NumericVariable::new(
                 "x".to_string(),
                 NumericType::Regular,
                 None,
             )],
-            vec![ExplicitFact::propositional(0, 1)],
-            vec![],
-            vec![1],
-            vec![0.0],
-            vec![Operator::new(
+            goals: vec![ExplicitFact::propositional(0, 1)],
+            mutexes: vec![],
+            state: vec![1],
+            numeric_state: vec![0.0],
+            operators: vec![Operator::new(
                 "leave-goal".to_string(),
                 vec![ExplicitFact::propositional(0, 1)],
                 vec![Effect::new(vec![], 0, Some(1), 0)],
                 vec![],
                 1,
             )],
-            vec![],
-            vec![],
-            vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
-            ExplicitFact::propositional(0, 0),
-        )
+            axioms: vec![],
+            comparison_axioms: vec![],
+            assignment_axioms: vec![AssignmentAxiom::new(0, CalOperator::Sum, 0, 0)],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        })
     }
 
     #[test]

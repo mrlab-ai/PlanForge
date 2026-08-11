@@ -17,7 +17,7 @@ use crate::axioms::{
 };
 use crate::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericType, NumericVariable, Operator,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 /// The version of the format this crate reads and the translator writes.
@@ -258,16 +258,16 @@ impl NumericRootTask {
             global_constraint,
         } = parts;
 
-        NumericRootTask::new(
+        NumericRootTask::new(NumericRootTaskParts {
             version,
             metric,
-            build_variables(variables, &state),
+            variables: build_variables(variables, &state),
             numeric_variables,
             goals,
             mutexes,
             state,
             numeric_state,
-            operators
+            operators: operators
                 .into_iter()
                 .map(SasOperator::into_operator)
                 .collect(),
@@ -275,7 +275,7 @@ impl NumericRootTask {
             comparison_axioms,
             assignment_axioms,
             global_constraint,
-        )
+        })
     }
 }
 

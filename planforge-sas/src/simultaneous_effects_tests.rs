@@ -8,7 +8,7 @@
 
 use crate::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
-    Metric, NumericRootTask, NumericType, NumericVariable, Operator, TaskRef,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator, TaskRef,
 };
 use crate::state_registry::StateRegistry;
 use std::sync::Arc;
@@ -22,32 +22,32 @@ const COST: usize = 3;
 /// and a cost variable starting at `0`. One propositional variable `p`, false
 /// in the initial state.
 fn task_with_effects(effects: Vec<AssignmentEffect>, metric_var: Option<usize>) -> NumericRootTask {
-    NumericRootTask::new(
-        4,
-        Metric::new(true, metric_var),
-        vec![ExplicitVariable::new(
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, metric_var),
+        variables: vec![ExplicitVariable::new(
             2,
             "p".into(),
             vec!["p-false".into(), "p-true".into()],
             None,
             0,
         )],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("y".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("total_cost".into(), NumericType::Cost, None),
         ],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![10.0, 3.0, 1.0, 0.0],
-        vec![Operator::new("op".into(), vec![], vec![], effects, 1)],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![10.0, 3.0, 1.0, 0.0],
+        operators: vec![Operator::new("op".into(), vec![], vec![], effects, 1)],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<f64> {
@@ -131,27 +131,27 @@ fn effect_conditions_are_read_from_the_parent_state() {
     // The operator sets `p` to true and, conditionally on `p` being true, adds
     // one to `x`. The condition must be evaluated before the operator's own
     // propositional effect, so `x` stays 10.
-    let task: TaskRef = Arc::new(NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![ExplicitVariable::new(
+    let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
             2,
             "p".into(),
             vec!["p-false".into(), "p-true".into()],
             None,
             0,
         )],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("y".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("total_cost".into(), NumericType::Cost, None),
         ],
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![10.0, 3.0, 1.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![10.0, 3.0, 1.0, 0.0],
+        operators: vec![Operator::new(
             "set-p-and-add".into(),
             vec![],
             vec![crate::numeric_task::Effect::new(vec![], 0, None, 1)],
@@ -164,11 +164,11 @@ fn effect_conditions_are_read_from_the_parent_state() {
             )],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    ));
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    }));
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let successor = registry

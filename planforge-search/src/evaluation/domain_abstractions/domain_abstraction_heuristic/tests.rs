@@ -2,18 +2,18 @@ use super::*;
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType,
-    NumericVariable,
+    AbstractNumericTask, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericType, NumericVariable,
 };
 
 /// Variable 0 carries the comparison `x > one`, variable 1 is an ordinary
 /// propositional variable. Numerically, `x = 2.0` and the constant `one = 1.0`,
 /// so the comparison holds in the initial state.
 fn comparison_task() -> NumericRootTask {
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![
             ExplicitVariable::new(
                 ConditionValue::DOMAIN_SIZE,
                 "cmp".into(),
@@ -23,25 +23,25 @@ fn comparison_task() -> NumericRootTask {
             ),
             ExplicitVariable::new(2, "p".into(), vec!["p".into(), "not-p".into()], None, 0),
         ],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("one".into(), NumericType::Constant, None),
         ],
-        vec![],
-        vec![],
-        vec![ConditionValue::False.as_usize(), 0],
-        vec![2.0, 1.0],
-        vec![],
-        vec![],
-        vec![ComparisonAxiom::new(
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ConditionValue::False.as_usize(), 0],
+        numeric_state: vec![2.0, 1.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             0,
             0,
             1,
             ComparisonOperator::GreaterThan,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }
 
 #[test]

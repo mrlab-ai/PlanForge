@@ -13,7 +13,8 @@ use planforge_sas::numeric_conditions::ConditionValue;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericType, NumericVariable, Operator,
+    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType,
+    NumericVariable, Operator,
 };
 
 #[test]
@@ -39,21 +40,21 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         vec![],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
         goals,
-        vec![],
-        vec![0],
-        vec![],
-        vec![op],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::trivial(&task);
@@ -102,21 +103,21 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         0,
     )];
     let numeric_variables = vec![NumericVariable::new("x".into(), NumericType::Regular, None)];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 1)],
-        vec![],
-        vec![0],
-        vec![3.5],
-        vec![],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![3.5],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let mut config = CegarConfig {
         init_split_method: InitSplitMethod::Identity,
@@ -171,21 +172,21 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         1,
         ComparisonOperator::GreaterThan,
     )];
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![2],
-        vec![1.0, 0.0],
-        vec![],
-        vec![],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![2],
+        numeric_state: vec![1.0, 0.0],
+        operators: vec![],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let config = CegarConfig {
         init_split_method: InitSplitMethod::InitValue,

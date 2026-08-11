@@ -6,7 +6,7 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -116,21 +116,21 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         )],
         1,
     );
-    let task = NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![1],
-        vec![0.0, 3.0, 10.0],
-        vec![op],
-        vec![],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![1],
+        numeric_state: vec![0.0, 3.0, 10.0],
+        operators: vec![op],
+        axioms: vec![],
         comparison_axioms,
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::with_partitions(vec![

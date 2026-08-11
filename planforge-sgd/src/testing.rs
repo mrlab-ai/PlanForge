@@ -9,7 +9,7 @@
 
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, Operator,
+    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
 };
 
 /// Deterministic splitmix64, so failures are reproducible without pulling in an
@@ -126,22 +126,22 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
         state.push(rng.below(size));
     }
 
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
         variables,
         // No numeric variables at all: these tasks carry no costs and no
         // constants, which keeps `register_state` happy (it only accepts
         // regular and cost variables) and matches what the transcription uses.
-        Vec::new(),
+        numeric_variables: Vec::new(),
         goals,
-        Vec::new(),
+        mutexes: Vec::new(),
         state,
-        Vec::new(),
+        numeric_state: Vec::new(),
         operators,
-        vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-        Vec::new(),
-        Vec::new(),
-        ExplicitFact::propositional(0, 0),
-    )
+        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        comparison_axioms: Vec::new(),
+        assignment_axioms: Vec::new(),
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }

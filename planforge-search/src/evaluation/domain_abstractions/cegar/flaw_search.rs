@@ -455,7 +455,7 @@ pub(crate) fn single_switch_task(
     initial: Vec<usize>,
 ) -> planforge_sas::numeric_task::NumericRootTask {
     use planforge_sas::numeric_task::{
-        Effect, ExplicitVariable, Metric, NumericRootTask, Operator,
+        Effect, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
     };
 
     let variable = ExplicitVariable::new(
@@ -472,19 +472,19 @@ pub(crate) fn single_switch_task(
         vec![],
         1,
     );
-    NumericRootTask::new(
-        4,
-        Metric::new(true, None),
-        vec![variable],
-        vec![],
-        vec![ExplicitFact::propositional(0, goal_value)],
-        vec![],
-        initial,
-        vec![],
-        vec![set],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    )
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![variable],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, goal_value)],
+        mutexes: vec![],
+        state: initial,
+        numeric_state: vec![],
+        operators: vec![set],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }

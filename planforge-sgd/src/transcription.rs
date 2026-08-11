@@ -467,7 +467,8 @@ impl Transcription {
 mod tests {
     use planforge_sas::axioms::PropositionalAxiom;
     use planforge_sas::numeric_task::{
-        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, Operator,
+        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+        Operator,
     };
 
     use super::Transcription;
@@ -511,21 +512,21 @@ mod tests {
             Vec::new(),
             1,
         );
-        NumericRootTask::new(
-            4,
-            Metric::new(true, None),
+        NumericRootTask::new(NumericRootTaskParts {
+            version: 4,
+            metric: Metric::new(true, None),
             variables,
-            Vec::new(),
-            vec![ExplicitFact::propositional(1, 1)],
-            Vec::new(),
-            vec![1, 0, 0],
-            Vec::new(),
-            vec![operator],
-            vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-            Vec::new(),
-            Vec::new(),
-            ExplicitFact::propositional(0, 0),
-        )
+            numeric_variables: Vec::new(),
+            goals: vec![ExplicitFact::propositional(1, 1)],
+            mutexes: Vec::new(),
+            state: vec![1, 0, 0],
+            numeric_state: Vec::new(),
+            operators: vec![operator],
+            axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+            comparison_axioms: Vec::new(),
+            assignment_axioms: Vec::new(),
+            global_constraint: ExplicitFact::propositional(0, 0),
+        })
     }
 
     fn integral_residuals(

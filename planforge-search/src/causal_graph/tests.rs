@@ -3,7 +3,7 @@ use planforge_sas::axioms::{
 };
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericType, NumericVariable, Operator,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
 
 use super::*;
@@ -20,10 +20,10 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
 
 #[test]
 fn causal_graph_collects_operator_and_axiom_dependencies() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
             simple_var("pre", None),
             simple_var("goal", None),
             ExplicitVariable::new(
@@ -34,15 +34,15 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
                 2,
             ),
         ],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        vec![ExplicitFact::propositional(1, 1)],
-        vec![],
-        vec![0, 0, 2],
-        vec![1.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![0, 0, 2],
+        numeric_state: vec![1.0, 0.0],
+        operators: vec![Operator::new(
             "advance".to_string(),
             vec![
                 ExplicitFact::propositional(0, 1),
@@ -63,21 +63,21 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
             )],
             1,
         )],
-        vec![PropositionalAxiom::new(
+        axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 1)],
             1,
             0,
             1,
         )],
-        vec![ComparisonAxiom::new(
+        comparison_axioms: vec![ComparisonAxiom::new(
             2,
             1,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let graph = RestrictedCausalGraph::new(&task).unwrap();
 
@@ -105,19 +105,19 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
 
 #[test]
 fn restricted_causal_graph_tracks_numeric_effect_sources() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![simple_var("p", None)],
-        vec![
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
         ],
-        vec![],
-        vec![],
-        vec![0],
-        vec![0.0, 1.0],
-        vec![Operator::new(
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![0.0, 1.0],
+        operators: vec![Operator::new(
             "update-x".to_string(),
             vec![],
             vec![],
@@ -130,11 +130,11 @@ fn restricted_causal_graph_tracks_numeric_effect_sources() {
             )],
             1,
         )],
-        vec![],
-        vec![],
-        vec![],
-        ExplicitFact::propositional(0, 0),
-    );
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let graph = RestrictedCausalGraph::new(&task).unwrap();
     let predecessors = graph
@@ -146,10 +146,10 @@ fn restricted_causal_graph_tracks_numeric_effect_sources() {
 
 #[test]
 fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
             simple_var("goal", None),
             ExplicitVariable::new(
                 3,
@@ -159,17 +159,17 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
                 2,
             ),
         ],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c5".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![0, 2],
-        vec![5.0, 0.0, 0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![0, 2],
+        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -181,16 +181,16 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
             vec![],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             1,
             3,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
-        ExplicitFact::propositional(0, 0),
-    );
+        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let graph = SnpCausalGraph::new(&task).unwrap();
     let helper_var_id = task.numeric_variables().len();
@@ -210,10 +210,10 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
 
 #[test]
 fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
-    let task = NumericRootTask::new(
-        1,
-        Metric::new(true, None),
-        vec![
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
             simple_var("goal", None),
             ExplicitVariable::new(
                 3,
@@ -223,7 +223,7 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
                 2,
             ),
         ],
-        vec![
+        numeric_variables: vec![
             NumericVariable::new("c5".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("y".to_string(), NumericType::Regular, None),
@@ -231,11 +231,11 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
             NumericVariable::new("a".to_string(), NumericType::Derived, Some(0)),
             NumericVariable::new("b".to_string(), NumericType::Derived, Some(0)),
         ],
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![],
-        vec![0, 2],
-        vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        vec![Operator::new(
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![0, 2],
+        numeric_state: vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
@@ -247,19 +247,19 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
             vec![],
             1,
         )],
-        vec![],
-        vec![ComparisonAxiom::new(
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
             1,
             5,
             0,
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![
+        assignment_axioms: vec![
             AssignmentAxiom::new(4, CalOperator::Sum, 1, 2),
             AssignmentAxiom::new(5, CalOperator::Sum, 4, 3),
         ],
-        ExplicitFact::propositional(0, 0),
-    );
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
 
     let graph = SnpCausalGraph::new(&task).unwrap();
     let root_helper_id = task.numeric_variables().len() + 1;
