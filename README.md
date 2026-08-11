@@ -2,7 +2,7 @@
 
 A grounded numeric planner written in Rust. Accepts PDDL or pre-translated SAS+ input and produces a sequential plan when one exists within the configured resource budget.
 
-Website: <https://mrlab-ai.github.io/PlanForge/> (source in [`docs/`](docs/))
+Website: <https://mrlab.ai/PlanForge/> (source in [`docs/`](docs/))
 
 ## Status
 
