@@ -46,9 +46,6 @@ codex-implement.log
 !README.md
 !CONTRIBUTING.md
 !CHANGELOG.md
-# Draft bug report against the fork this project was ported from. Belongs to the
-# project rather than to a session, and `/docs/` is ignored, so it lives here.
-!/UPSTREAM-NUMERIC-FD.md
 !/planforge-py/README.md
 !/tutorials/**/*.md
 !/tests/assets/**/*.md
