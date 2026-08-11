@@ -6343,8 +6343,14 @@ mod tests {
         let device = Device::Cpu;
         let particles = 2;
         let horizon = 3;
-        let actions = Var::zeros((particles, horizon, 4), DTYPE, &device).expect("actions");
-        let states = Var::zeros((particles, horizon, 5), DTYPE, &device).expect("states");
+        let task = crate::testing::random_task(&mut crate::testing::Rng::new(0xD15C_0FFEE));
+        let transcription = Transcription::build(&task).expect("transcription");
+        let plan = TensorPlan::new(&transcription, horizon, particles, device.clone())
+            .expect("tensor plan");
+        let action_shape = (particles, horizon, plan.num_actions);
+        let state_shape = (particles, horizon, plan.num_facts);
+        let actions = Var::zeros(action_shape, DTYPE, &device).expect("actions");
+        let states = Var::zeros(state_shape, DTYPE, &device).expect("states");
         let schedule = Var::zeros((particles, horizon, horizon), DTYPE, &device).expect("schedule");
         let mut optimizer = Adam::new(
             vec![actions, states, schedule],
@@ -6354,17 +6360,18 @@ mod tests {
             },
         )
         .expect("temporal optimizer");
-        let mut config = SgdConfig::default();
-        config.particles = particles;
-        config.temporal_tokens = true;
+        let config = SgdConfig {
+            particles,
+            temporal_tokens: true,
+            ..SgdConfig::default()
+        };
 
         reset_direct_moments_preserving_schedule(
             &mut optimizer,
-            Tensor::ones((particles, horizon, 4), DTYPE, &device).expect("action mask"),
-            Tensor::ones((particles, horizon, 5), DTYPE, &device).expect("state mask"),
+            Tensor::ones(action_shape, DTYPE, &device).expect("action mask"),
+            Tensor::ones(state_shape, DTYPE, &device).expect("state mask"),
             &config,
-            horizon,
-            &device,
+            &plan,
         )
         .expect("all three optimizer parameters receive a mask");
     }
