@@ -52,6 +52,10 @@ codex-implement.log
 *.pdf
 *.html
 
+# Personal dictionary for the Harper grammar LSP -- editor state, not project
+# content, and it differs per contributor.
+/.harper-dictionary.txt
+
 /.codex
 /AGENTS.md
 /CLAUDE.md
