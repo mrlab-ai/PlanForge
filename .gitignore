@@ -62,13 +62,15 @@ codex-implement.log
 /codex-*.md
 # The project website, served by GitHub Pages from `docs/` on `main`. Ignore the
 # directory's contents and re-admit exactly the hand-written site files: the
-# pages, the stylesheet, and the marker that tells Pages to serve them as-is.
-# Written as `/docs/*` plus negations rather than `/docs/` because git cannot
-# re-include a file whose parent directory is itself excluded. Anything else that
-# lands in `docs/` -- rendered papers, notes, generated output -- stays ignored.
+# pages, the stylesheet, the logo assets, and the marker that tells Pages to
+# serve them as-is. Written as `/docs/*` plus negations rather than `/docs/`
+# because git cannot re-include a file whose parent directory is itself
+# excluded. Anything else that lands in `docs/` -- rendered papers, notes,
+# generated output -- stays ignored.
 /docs/*
 !/docs/*.html
 !/docs/*.css
+!/docs/*.svg
 !/docs/.nojekyll
 /dominik/
 /ipc2023

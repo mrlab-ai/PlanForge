@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 280 377 377" width="377" height="377" role="img" aria-labelledby="pf-icon-title">
+  <title id="pf-icon-title">PlanForge</title>
+
+  <!-- Deliberately a reduction of logo-mark.svg, not a copy of it. Rendered at
+       16 pixels the construction marks, the highlight strokes and the search
+       graph all collapse into grey noise across the anvil's waist, so this icon
+       keeps only the two shapes that still read at that size: the anvil and the
+       sparks. Both paths are unmodified. The viewBox is square and centred on
+       the remaining ink (28,320 to 365,617) so browsers can scale it to any
+       icon slot without letterboxing. -->
+
+  <defs>
+    <linearGradient id="pf-navy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0c2439"/>
+      <stop offset="1" stop-color="#061727"/>
+    </linearGradient>
+  </defs>
+
+  <!-- spark -->
+  <g fill="#ff6800">
+    <path d="M221 320 L230 397 L214 421 Z"/>
+    <path d="M181 371 L210 415 L196 421 Z"/>
+    <path d="M258 371 L235 418 L248 412 Z"/>
+    <path d="M172 400 L201 421 L190 425 Z"/>
+    <path d="M274 393 L248 417 L258 419 Z"/>
+    <path d="M181 418 L204 431 L188 429 Z"/>
+    <path d="M261 418 L237 431 L251 430 Z"/>
+  </g>
+
+  <!-- anvil -->
+  <path fill="url(#pf-navy)" d="     M28 449     C55 449 89 450 142 450     L142 437     L365 437     L365 462     C333 467 305 481 290 501     C275 520 277 549 290 573     C297 585 305 593 316 597     L325 597     L325 617     L133 617     L133 597     L147 597     C160 585 171 565 174 546     C177 527 170 513 157 503     C145 494 128 489 108 486     C78 481 49 467 28 449 Z"/>
+</svg>
