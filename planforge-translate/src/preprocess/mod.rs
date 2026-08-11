@@ -12,7 +12,6 @@
 pub mod causal_graph;
 pub mod max_dag;
 pub mod sas_parts;
-pub mod scc;
 
 use std::io::Write;
 

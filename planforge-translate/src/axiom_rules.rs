@@ -281,7 +281,7 @@ fn strongly_connected_components(
         })
         .collect();
 
-    super::preprocess::scc::Scc::new(graph)
+    planforge_sas::utils::scc::Scc::new(graph)
         .get_result()
         .into_iter()
         .map(|component| {

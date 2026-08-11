@@ -11,11 +11,11 @@ use std::collections::BTreeMap;
 use tracing::{debug, info};
 
 use super::max_dag::MaxDag;
-use super::scc::Scc;
 use super::{
     NO_LAYER, NO_LEVEL, NumType, NumericVarState, PreprocessedTask, ReorderedTask, VarState,
 };
 use crate::sas_tasks::{SASAxiom, SASCompareAxiom, SASNumericAxiom, SASOperator, SasFact};
+use planforge_sas::utils::scc::Scc;
 
 /// A node of the causal graph: the task numbers its propositional and its
 /// numeric variables independently, so a node needs both.

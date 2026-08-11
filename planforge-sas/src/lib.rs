@@ -1,4 +1,5 @@
 pub mod axioms;
+pub mod default_value_axioms;
 pub mod numeric_conditions;
 pub mod numeric_parser;
 pub mod numeric_task;
