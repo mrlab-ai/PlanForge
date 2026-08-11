@@ -281,13 +281,13 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
 /// This is the only test that can see whether the refuting rules are right.
 /// Blind A* cannot: the axiom evaluator refutes a derived variable by finding it
 /// unproven at the end of its layer, so it never fires such a rule and a wrong
-/// set of them changes no plan. `lmcutnumeric` builds its relaxation out of them
-/// - since issue454 out of the ones it derives for itself, with
-/// `planforge_sas::default_value_axioms` - and a derived variable it cannot
-/// refute makes the state look like a dead end. That is how negating a cyclic
-/// component literal by literal used to turn `cyclic-negation` into an
-/// unsolvable task with h = infinity in the initial state, and it is why this
-/// fixture is the canary for anything that touches the refuting rules.
+/// set of them changes no plan. `lmcutnumeric` builds its relaxation out of them,
+/// and since issue454 out of the ones it derives for itself with
+/// `planforge_sas::default_value_axioms`. A derived variable it cannot refute
+/// makes the state look like a dead end, which is how negating a cyclic component
+/// literal by literal used to turn `cyclic-negation` into an unsolvable task with
+/// h = infinity in the initial state. That is why this fixture is the canary for
+/// anything touching the rules that refute a derived variable.
 #[test]
 fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
     for &(name, cost, length) in FIXTURE_OPTIMA {

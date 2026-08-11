@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use planforge_sas::axioms::{CalOperator, ComparisonOperator};
+use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
@@ -530,6 +531,17 @@ fn expand_cpp_goal_fact(
         return Ok(());
     }
 
+    // The task's own axioms only, deliberately. This rewrites the goal into the
+    // conditions of its definition, so it needs the fact to be *equivalent* to
+    // one conjunction -- hence the count check below. The rules describing a
+    // derived variable's default value cannot serve that: the negation of several
+    // proving bodies is generally several rules, and picking one would rewrite the
+    // goal into something strictly stronger. So since issue454 a derived goal at
+    // its *default* value has no defining axiom here and is reported as the error
+    // below rather than expanded through whichever refuting rule the translator
+    // happened to emit. A goal at a derived variable's nondefault value, which is
+    // what `(:goal (p))` produces, is unaffected: a refuting rule never matched
+    // its value.
     let achievers = task
         .axioms()
         .iter()
@@ -594,6 +606,13 @@ fn build_cpp_numeric_features(
         };
         // This is the C++ numeric_pdb_helper construction order: operator
         // preconditions first, then the non-dummy propositional goal axioms.
+        //
+        // The task's axioms alone are enough, and issue454 did not change what
+        // this collects. Only the variable of a body fact matters here, and every
+        // variable a rule refuting `v` names comes from a body of a rule proving
+        // `v` -- so the refuting rules the translator used to add never
+        // contributed a variable, nor a position in the order, that the proving
+        // rules had not already contributed.
         for operator in task.get_operators() {
             for precondition in operator.preconditions() {
                 record_fact(precondition);
@@ -839,6 +858,14 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
             upper: value,
         })
         .collect();
+    // This closure has to *over*approximate reachability -- an operator whose
+    // preconditions it declares unreachable loses its LP constraint, and a
+    // propositional goal it declares unreachable makes the heuristic infinite --
+    // so it needs the rules describing how a derived variable takes its default
+    // value, exactly like the other relaxations. Since issue454 the task does not
+    // carry them and it asks for them itself.
+    let default_value_axioms =
+        default_value_axioms(task, DefaultValueAxiomMode::ApproximateNegativeCycles);
 
     loop {
         let previous_facts = reachable_facts.clone();
@@ -864,7 +891,7 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
                 reachable_facts[axiom.get_affected_var_id()][0] = true;
             }
         }
-        for axiom in task.axioms() {
+        for axiom in task.axioms().iter().chain(&default_value_axioms) {
             if axiom
                 .conditions()
                 .iter()

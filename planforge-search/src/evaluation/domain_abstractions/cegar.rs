@@ -1186,11 +1186,21 @@ fn try_refine_from_flaw(
     }
 }
 
+/// The goals, with a derived goal replaced by the conditions of the rule that
+/// defines it.
+///
+/// Keyed by the *fact* rather than by its variable. A rule only defines the goal
+/// it derives, and since issue454 every rule proves its head, so a goal at a
+/// derived variable's default value has no defining rule at all and has to stay
+/// as it is — keying by the variable alone would hand it the body of a rule that
+/// establishes the opposite fact. When several rules derive the same fact the last
+/// one still wins, which is an arbitrary choice among the disjuncts rather than a
+/// wrong one, and is unrelated to which rules the task carries.
 fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
-    let mut goal_axiom_map: HashMap<usize, usize> = HashMap::new();
+    let mut goal_axiom_map: HashMap<(usize, usize), usize> = HashMap::new();
     for (axiom_idx, axiom) in task.axioms().iter().enumerate() {
         if !axiom.conditions().is_empty() {
-            goal_axiom_map.insert(axiom.var_id(), axiom_idx);
+            goal_axiom_map.insert((axiom.var_id(), axiom.effect_value()), axiom_idx);
         }
     }
 
@@ -1198,7 +1208,7 @@ fn goal_variable_values(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
     let mut goals = Vec::with_capacity(num_goals);
     for goal_idx in 0..num_goals {
         let goal = task.get_goal_fact(goal_idx);
-        if let Some(&axiom_idx) = goal_axiom_map.get(&goal.var()) {
+        if let Some(&axiom_idx) = goal_axiom_map.get(&(goal.var(), goal.value())) {
             let axiom = &task.axioms()[axiom_idx];
             for condition in axiom.conditions() {
                 goals.push(ExplicitFact::propositional(
