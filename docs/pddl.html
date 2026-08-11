@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supported PDDL — PlanForge</title>
+<meta name="description" content="Which PDDL constructs PlanForge reads: numeric fluents, comparisons, the five assignment operators, conditional and universal effects, derived predicates and plan metrics, together with the fragment's honest limits.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+
+<header class="site">
+  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
+  <p class="tagline">A grounded numeric planner written in Rust.</p>
+  <nav class="site" aria-label="Sections">
+    <ul>
+      <li><a href="index.html">Overview</a></li>
+      <li><a href="search.html">Search configurations</a></li>
+      <li><a href="pddl.html" aria-current="page">Supported PDDL</a></li>
+      <li><a href="development.html">Development</a></li>
+      <li><a href="about.html">Credits &amp; licence</a></li>
+    </ul>
+  </nav>
+  <p class="source-line"><span class="label">Source:</span>
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
+    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
+</header>
+
+<main id="main">
+
+<h1>Supported PDDL</h1>
+
+<p class="lead">PlanForge reads a grounded fragment of numeric PDDL. This page
+lists what the translator accepts, construct by construct, and then the limits.
+The limits are not hidden at the bottom as a formality: reaching one is normally
+an explicit error naming the construct, not a silent reinterpretation of your
+task.</p>
+
+<h2 id="input">Input</h2>
+
+<p>Two positional arguments are a domain and a problem. One positional argument
+is a pre-translated SAS+ file.</p>
+
+<pre><code>planforge --search 'astar(lmcutnumeric())' domain.pddl problem.pddl
+planforge --search 'astar(lmcutnumeric())' task.sas</code></pre>
+
+<p>On the PDDL route, translation and grounding happen in process: no SAS+ text
+is produced on the way to the planner's own search. When you want the text
+itself — to hand the task to another planner, or to attach it to a bug report —
+use the second binary, which stops after translation:</p>
+
+<pre><code>planforge-translator translate domain.pddl problem.pddl --output task.sas</code></pre>
+
+<p>Without <code>--output</code> it writes <code>output.sas</code>. Its one other
+option is <code>--layer-strategy</code>, which chooses how derived variables are
+spread over axiom layers: <code>min</code>, the default, puts as many as possible
+into one layer, and <code>max</code> gives every variable a layer of its own
+unless it sits in a cycle. A value that is neither is rejected while the command
+line is parsed:</p>
+
+<pre><code>$ planforge-translator translate --layer-strategy nope domain.pddl problem.pddl
+error: invalid value 'nope' for '--layer-strategy &lt;LAYER_STRATEGY&gt;': unknown layer strategy "nope"; use `min` or `max`</code></pre>
+
+<p>Both routes reach the same task. Translating the delivery fixture from the
+<a href="index.html#quick-start">quick start</a> and searching the resulting SAS+
+file reports the same 49 propositional and 12 numeric variables, expands the same
+73 states and returns the same cost-22 plan as the single-call pipeline.</p>
+
+<h2 id="domain">Domain sections</h2>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th scope="col">Section</th><th scope="col">Handling</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>:requirements</code></td><td>Accepted and ignored. The planner does not gate on the declared requirement flags; what it supports is what it parses, and an unsupported construct fails where it appears.</td></tr>
+    <tr><td><code>:types</code></td><td>Read, including type hierarchies. Untyped parameters default to <code>object</code>.</td></tr>
+    <tr><td><code>:constants</code></td><td>Read.</td></tr>
+    <tr><td><code>:predicates</code></td><td>Read.</td></tr>
+    <tr><td><code>:functions</code></td><td>Read. These are the numeric fluents.</td></tr>
+    <tr><td><code>:action</code></td><td>Read: <code>:parameters</code>, <code>:precondition</code>, <code>:effect</code>.</td></tr>
+    <tr><td><code>:derived</code></td><td>Read. Derived predicates become axioms, arranged into layers.</td></tr>
+    <tr><td><code>:global-constraint</code></td><td>Read, as an axiom. A constraint required to hold in every state.</td></tr>
+    <tr><td><code>:axiom</code></td><td>Rejected, deliberately. PDDL 2.1's <code>(:axiom :vars ... :context ... :implies ...)</code> is a different block shape, not another spelling of <code>:derived</code>, and parsing it as one would silently mistake <code>:vars</code> for the head predicate. The error tells you to write <code>(:derived (NAME ?x - t) CONDITION)</code> instead.</td></tr>
+    <tr><td>anything else</td><td>Skipped, with a warning naming the section.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="conditions">Conditions and goals</h2>
+
+<p>In preconditions, goals, axiom bodies and effect conditions:</p>
+
+<ul>
+  <li><code>and</code>, <code>or</code>, <code>not</code>,
+    <code>imply</code>.</li>
+  <li><code>forall</code> and <code>exists</code> over typed parameter
+    lists.</li>
+  <li>Numeric comparisons <code>&lt;</code>, <code>&lt;=</code>,
+    <code>=</code>, <code>&gt;=</code>, <code>&gt;</code>, each over exactly two
+    operands, and each also usable negated inside <code>not</code>. A comparison
+    becomes a condition variable of its own, which is what lets the numeric
+    CEGAR loop refine its operands.</li>
+  <li>Atoms and negated atoms.</li>
+</ul>
+
+<p><code>=</code> is read as a numeric comparison when either side looks numeric,
+so it serves both as equality between fluent expressions and as ordinary
+object equality.</p>
+
+<h2 id="effects">Effects</h2>
+
+<ul>
+  <li>Conjunctions of effects, and negated atoms as delete effects.</li>
+  <li><strong>Conditional effects</strong> — <code>when</code>. Both
+    propositional and numeric effects can be conditional.</li>
+  <li><strong>Universal effects</strong> — <code>forall</code>.</li>
+  <li><strong>Numeric assignment</strong> — all five PDDL operators:
+    <code>assign</code>, <code>increase</code>, <code>decrease</code>,
+    <code>scale-up</code>, <code>scale-down</code>. The target must be a
+    primitive numeric expression, that is a function applied to arguments,
+    rather than a compound expression.</li>
+</ul>
+
+<h3>Numeric expressions</h3>
+
+<p>Inside comparisons and assignments: numeric constants, function applications,
+the binary and n-ary operators <code>+</code>, <code>-</code>, <code>*</code>,
+<code>/</code>, and unary <code>-</code> as additive inverse. The fluent
+<code>total-cost</code> is recognised as the integer cost accumulator.</p>
+
+<h2 id="problem">Problem sections</h2>
+
+<ul>
+  <li><code>:objects</code>, <code>:init</code> — including numeric initial
+    assignments — and <code>:goal</code>.</li>
+  <li><code>:metric</code> with <code>minimize</code> or
+    <code>maximize</code>. See the limit below.</li>
+</ul>
+
+<h2 id="fixtures">Fixtures you can check this against</h2>
+
+<p>The repository ships small PDDL tasks under <code>tests/assets/</code>, and the
+test suite pins the optimal cost of each one. They double as worked examples of
+the constructs above. Every row is a run of
+<code>--search 'astar(lmcutnumeric())'</code> on a default build:</p>
+
+<div class="scroll">
+<table>
+  <caption>Paths are relative to <code>tests/assets/</code>.</caption>
+  <thead>
+    <tr><th scope="col">Fixture</th><th scope="col">What it exercises</th><th scope="col">Optimal cost</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>strips-pddl-files/blocks-4-0</code></td><td>Purely propositional task, no numbers at all</td><td class="num">6</td></tr>
+    <tr><td><code>numeric-pddl-files/delivery</code></td><td>Numeric fluents with two vehicles</td><td class="num">22</td></tr>
+    <tr><td><code>numeric-pddl-files/sailing</code></td><td>Continuous-valued fluents</td><td class="num">23</td></tr>
+    <tr><td><code>numeric-conditions/conditional-numeric-effect</code></td><td><code>when</code> guarding a numeric effect</td><td class="num">3</td></tr>
+    <tr><td><code>numeric-conditions/strict-comparison</code></td><td>A strict inequality as a precondition</td><td class="num">2</td></tr>
+    <tr><td><code>derived-predicates/recursive-closure</code></td><td>A recursive <code>:derived</code> predicate</td><td class="num">3</td></tr>
+    <tr><td><code>derived-predicates/layered-chain</code></td><td>Axioms over several layers</td><td class="num">4</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2 id="limits">Limits</h2>
+
+<div class="callout">
+  <h3>Abstractions require a conjunctive goal</h3>
+  <p>Abstract operators are derived from task operators, and no task operator
+    writes a derived variable — only the axioms do. A goal on a
+    <code>:derived</code> predicate is therefore a goal an abstraction has nothing
+    to reach for. Rather than let each abstraction family invent its own reading
+    of such a goal, all of them refuse the task and name the variable and its
+    axiom layer:</p>
+  <pre><code>Error: Custom { kind: Other, error: "failed to build domain abstraction: CEGAR failed to build abstraction: abstractions support conjunctive goals only: goal fact Fact(var: 4, value: 0) names the derived variable \"var4\" (\"\") in axiom layer 1, which no operator writes" }</code></pre>
+  <p>This covers a <code>:derived</code> predicate placed in the goal, and the
+    goal-reachability predicate the translator introduces for a disjunctive,
+    quantified or nested goal. Numeric comparisons are deliberately unaffected:
+    a comparison variable is derived in the SAS sense too, but refining a
+    comparison's operands is exactly what the numeric CEGAR loop does.</p>
+  <p>Nothing else is restricted this way. The same fixture that the domain
+    abstraction refuses above solves normally under
+    <code>astar(lmcutnumeric())</code>, at cost 5, because non-abstraction
+    heuristics test the goal in a state the axiom evaluator has already
+    closed.</p>
+</div>
+
+<h3>Other limits, plainly</h3>
+
+<ul>
+  <li><strong>Plan metrics must name a single fluent.</strong>
+    <code>(:metric minimize (total-cost))</code> is used as written. A compound
+    metric expression is <em>not</em> supported: it is replaced by
+    <code>total-cost</code>, without an error. If your task minimises an
+    arithmetic combination of fluents, PlanForge is not optimising what you
+    wrote.</li>
+  <li><strong>Pattern databases and Cartesian abstractions need a restricted
+    task.</strong> Pass <code>--restrict-task</code>, or supply a task that is
+    already restricted. Asking for these heuristics without it is an error that
+    names the offending comparison axiom rather than a silent conversion.</li>
+  <li><strong>Comparisons are binary.</strong> A comparison with more or fewer
+    than two operands is rejected.</li>
+  <li><strong>Assignment targets are primitive.</strong> The left-hand side of an
+    assignment effect must be a function application, not an expression.</li>
+  <li><strong>Sequential plans only.</strong> There are no durative actions, no
+    timed initial literals, no concurrency, and no preferences or soft
+    goals.</li>
+  <li><strong>No preferred operators.</strong> The FF heuristic returns an
+    estimate but no preferred-operator set, so greedy search cannot use one.</li>
+  <li><strong>Grounding is eager.</strong> The whole task is grounded before
+    search begins, so an instance whose grounding does not fit in memory is out
+    of reach regardless of how easy the search would have been.</li>
+</ul>
+
+<h2 id="benchmarks">Benchmarks</h2>
+
+<p>The fixtures in the repository are small regression tasks, not a benchmark
+set, and no IPC data is redistributed here. For the numeric benchmark domains
+themselves, go to the source: the
+<a href="https://www.icaps-conference.org/competitions/">International Planning
+Competition</a> pages, and the
+<a href="https://github.com/potassco/pddl-instances">collected PDDL instance
+repositories</a> that mirror the historical suites.</p>
+
+</main>
+
+<footer class="site">
+  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
+    source is at
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
+    Questions and bug reports belong in the
+    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
+  <p>The planner's library crates are licensed under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
+    binary crates under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
+    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
+    detail. The text of this website is available under
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>

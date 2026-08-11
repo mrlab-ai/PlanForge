@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Credits &amp; licence — PlanForge</title>
+<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of a numeric extension of Fast Downward, the people who wrote it, the references the implementation follows, and the licence terms for the code and for this website.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="wrap">
+
+<header class="site">
+  <a class="wordmark" href="index.html"><span class="plan">Plan</span><span class="forge">Forge</span></a>
+  <p class="tagline">A grounded numeric planner written in Rust.</p>
+  <nav class="site" aria-label="Sections">
+    <ul>
+      <li><a href="index.html">Overview</a></li>
+      <li><a href="search.html">Search configurations</a></li>
+      <li><a href="pddl.html">Supported PDDL</a></li>
+      <li><a href="development.html">Development</a></li>
+      <li><a href="about.html" aria-current="page">Credits &amp; licence</a></li>
+    </ul>
+  </nav>
+  <p class="source-line"><span class="label">Source:</span>
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>
+    &middot; <span class="label">Developed by</span> <a href="https://mrlab.ai">MRlab</a></p>
+</header>
+
+<main id="main">
+
+<h1>Credits &amp; licence</h1>
+
+<h2 id="lineage">Where PlanForge comes from</h2>
+
+<p>PlanForge began as a Rust port of a numeric extension of
+<a href="https://www.fast-downward.org/">Fast Downward</a>. That is the plain
+description and it is worth stating before anything else, because the debt is
+direct rather than distant.</p>
+
+<p>What the port kept is more than an idea. The task representation, the SAS+
+translation pipeline, the shape of the statistics block the planner prints, and
+several of the numeric heuristics follow the original closely, and the code says
+so where it matters: numeric LM-cut and its helpers carry explicit parity
+comments marking the places where the Rust behaviour is deliberately identical to
+the reference implementation, quirks included, so that a difference in a plan cost
+can be attributed rather than guessed at. Where the two implementations do
+disagree, the disagreement is treated as a bug in one of them and tracked, not
+quietly normalised away.</p>
+
+<p>What the port changed is the whole of the implementation. There is no C++ and
+no Python in the pipeline: the PDDL reader, the grounder, the invariant analysis,
+the search engines, the abstractions and the state registry are Rust, and several
+capabilities on this site — the Cartesian abstractions, the saturated cost
+partitionings, the gradient engine — have no counterpart upstream. Being a
+derivative work, PlanForge carries the original's copyleft licensing forward, as
+described <a href="#licence">below</a>.</p>
+
+<h2 id="people">People</h2>
+
+<p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a>, the Machine
+Reasoning Lab at Linköping University, Sweden.</p>
+
+<p>As recorded in the repository's commit history, the code has been written by
+Markus Fritzsche and Martín Pozo, with a contribution from Jendrik Seipp. The
+commit history is the authoritative record; this page will fall out of date
+before it does.</p>
+
+<h2 id="publications">Publications</h2>
+
+<div class="callout">
+  <p><strong>Publications to be added.</strong> The repository does not yet
+    contain a citation for a paper describing PlanForge itself, and rather than
+    guess at a title, author list or venue, this section is left as a placeholder
+    until there is one to cite. When papers exist they will be listed here with
+    full bibliographic details and a link to the published version.</p>
+</div>
+
+<h2 id="references">Prior work the implementation follows</h2>
+
+<p>Several components implement published algorithms. These are other people's
+results, and PlanForge claims none of them; the citations below are the ones
+recorded in the source files that implement them, so that a reader can go from a
+module to the paper it came from. No abstracts, figures or text from any of these
+works are reproduced here or in the repository.</p>
+
+<ul>
+  <li><strong>The FF heuristic.</strong> J. Hoffmann and B. Nebel, “The FF
+    Planning System”, <em>Journal of Artificial Intelligence Research</em>, 2001.
+    PlanForge's <code>ff</code> heuristic is this relaxed-plan heuristic.</li>
+  <li><strong>Numeric relaxation for FF.</strong> J. Hoffmann, “The Metric-FF
+    Planning System”, <em>Journal of Artificial Intelligence Research</em>, 2003.
+    The monotonic numeric relaxation that gives each numeric variable a reachable
+    envelope through the relaxed planning graph follows this work.</li>
+  <li><strong>Post-hoc optimisation.</strong> F. Pommerening, G. Röger and
+    M. Helmert, “Getting the Most Out of Pattern Databases for Classical
+    Planning”, <em>IJCAI</em>, 2013. The
+    <code>posthoc_optimization</code> heuristic solves this LP over a
+    CEGAR-built abstraction collection.</li>
+  <li><strong>Split selection for Cartesian abstractions.</strong> Schindler,
+    Speck and Helmert, <em>ICAPS</em>, 2026. The
+    <code>icaps26_cartesian</code> abstraction source implements the
+    full-task, first-flaw and desired-region split policies from this paper.
+    <span class="note">(Title and full author names to be added: the repository
+    records the authors and the venue but not the title, and it is not guessed
+    here.)</span></li>
+</ul>
+
+<p class="note">Digital object identifiers are not yet listed for these entries.
+They will be added rather than approximated.</p>
+
+<h2 id="benchmarks">Benchmarks</h2>
+
+<p>No benchmark set is redistributed with PlanForge or from this site. The small
+PDDL tasks in the repository are regression fixtures with pinned optimal costs,
+not a benchmark suite. For the numeric domains themselves, see the
+<a href="https://www.icaps-conference.org/competitions/">International Planning
+Competition</a> pages and the
+<a href="https://github.com/potassco/pddl-instances">collected PDDL instance
+repositories</a>.</p>
+
+<h2 id="licence">Licence</h2>
+
+<h3>The planner</h3>
+
+<p>PlanForge is free software under version 3 of the GNU copyleft licences,
+split by crate. The <code>license</code> field of each crate manifest is
+authoritative; at the time of writing it is:</p>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th scope="col">Licence</th><th scope="col">Crates</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://www.gnu.org/licenses/lgpl-3.0.html">LGPL-3.0</a></td>
+      <td><code>planforge-sas</code>, <code>planforge-translate</code>,
+        <code>planforge-search</code>, <code>planforge-config-derive</code>,
+        <code>planforge-cplex</code> — the libraries.</td>
+    </tr>
+    <tr>
+      <td><a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0</a></td>
+      <td><code>planforge</code>, <code>planforge-searcher</code>,
+        <code>planforge-sgd</code>, <code>planforge-py</code>,
+        <code>tests</code> — the binaries, the Python bindings and the
+        integration tests.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>In practice: the planner you run is covered by the GPL v3, and the library
+crates you might link into your own project are covered by the LGPL v3, which is
+the GPL v3 plus additional permissions for linking. The repository's
+<code>LICENSE</code> file carries the GNU General Public License v3 text; the
+Lesser GPL is defined on top of it and both are linked above. If you are deciding
+what you may do, read the crate manifest for the crate you actually depend on.</p>
+
+<h3>This website</h3>
+
+<p>The text, HTML and CSS of this website are released under
+<a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons
+Attribution 4.0 International (CC BY 4.0)</a>. You may copy, quote, translate,
+adapt and republish them, including commercially, provided you credit the
+PlanForge project and link back to this site at
+<code>mrlab-ai.github.io/PlanForge</code>. That licence covers the documentation
+on this site only, not the planner, which is licensed as above.</p>
+
+<p>The site has no third-party content to license: no web fonts, no stylesheet
+framework, no JavaScript library, no icon set and no images. Every byte of it was
+written for this site, and it loads nothing from any other host, so visiting it
+discloses nothing about you to a third party.</p>
+
+<h2 id="contact">Contact</h2>
+
+<p>There is no mailing list. Bug reports, questions about a configuration, and
+patches all belong in the
+<a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a> on the
+<a href="https://github.com/mrlab-ai/PlanForge">GitHub repository</a>. A report
+that includes the domain and problem files, the exact <code>--search</code> string
+and the planner's output is one somebody can act on.</p>
+
+</main>
+
+<footer class="site">
+  <p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a> and its
+    source is at
+    <a href="https://github.com/mrlab-ai/PlanForge">github.com/mrlab-ai/PlanForge</a>.
+    Questions and bug reports belong in the
+    <a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a>.</p>
+  <p>The planner's library crates are licensed under the
+    <a href="https://www.gnu.org/licenses/lgpl-3.0.html">GNU LGPL v3</a> and its
+    binary crates under the
+    <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a>; see
+    <a href="about.html#licence">Credits &amp; licence</a> for the per-crate
+    detail. The text of this website is available under
+    <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>

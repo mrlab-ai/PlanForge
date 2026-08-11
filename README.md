@@ -2,6 +2,8 @@
 
 A grounded numeric planner written in Rust. Accepts PDDL or pre-translated SAS+ input and produces a sequential plan when one exists within the configured resource budget.
 
+Website: <https://mrlab-ai.github.io/PlanForge/> (source in [`docs/`](docs/))
+
 ## Status
 
 Production-quality on the admissible search and heuristic paths (A\* with blind, lmcutnumeric, pattern databases, canonical and SCP-based domain abstractions). Greedy best-first search and an FF-style relaxed-plan heuristic with Metric-FF monotonic numeric relaxation are also available. Preferred-operator integration is still planned.

@@ -102,30 +102,30 @@ immediately. This one is a numeric delivery task with two robots:</p>
 <p>Real output from that command, with the grounding log and the intermediate
 search progress lines removed at the points marked <code>[...]</code>:</p>
 
-<pre><code>2026-08-11T12:08:08.616Z  INFO Starting A* search with HeuristicSpec { name: "lmcutnumeric", args: [] }, mpd=false...
-2026-08-11T12:08:08.616Z  INFO Initial heuristic value for lmcutnumeric: 22
+<pre><code>2026-08-11T12:36:13.053Z  INFO Starting A* search with HeuristicSpec { name: "lmcutnumeric", args: [] }, mpd=false...
+2026-08-11T12:36:13.054Z  INFO Initial heuristic value for lmcutnumeric: 22
 [...]
-2026-08-11T12:08:08.652Z  INFO Solution found!
-2026-08-11T12:08:08.652Z  INFO   1: pick item2 rooma right1 bot1
-2026-08-11T12:08:08.652Z  INFO   2: pick item3 rooma left2 bot2
-2026-08-11T12:08:08.652Z  INFO   3: pick item1 rooma left1 bot1
-2026-08-11T12:08:08.652Z  INFO   4: move bot1 rooma roomc
-2026-08-11T12:08:08.652Z  INFO   5: drop item1 roomc left1 bot1
-2026-08-11T12:08:08.652Z  INFO   6: pick item4 rooma right2 bot2
-2026-08-11T12:08:08.652Z  INFO   7: move bot2 rooma roomb
-2026-08-11T12:08:08.652Z  INFO   8: drop item3 roomb left2 bot2
-2026-08-11T12:08:08.652Z  INFO   9: drop item4 roomb right2 bot2
-2026-08-11T12:08:08.652Z  INFO   10: drop item2 roomc right1 bot1
-2026-08-11T12:08:08.652Z  INFO Plan length: 10 step(s).
-2026-08-11T12:08:08.652Z  INFO Plan cost: 22.000000
-2026-08-11T12:08:08.652Z  INFO Expanded 73 state(s).
-2026-08-11T12:08:08.652Z  INFO Reopened 0 state(s).
-2026-08-11T12:08:08.652Z  INFO Evaluated 593 state(s).
-2026-08-11T12:08:08.652Z  INFO Evaluations: 597
-2026-08-11T12:08:08.652Z  INFO Generated 848 state(s).
-2026-08-11T12:08:08.652Z  INFO Dead ends: 0 state(s).
-2026-08-11T12:08:08.652Z  INFO Number of registered states: 593
-2026-08-11T12:08:08.652Z  INFO Search time: 0.035801s</code></pre>
+2026-08-11T12:36:13.079Z  INFO Solution found!
+2026-08-11T12:36:13.079Z  INFO   1: pick item2 rooma right1 bot1
+2026-08-11T12:36:13.079Z  INFO   2: pick item3 rooma left2 bot2
+2026-08-11T12:36:13.079Z  INFO   3: pick item1 rooma left1 bot1
+2026-08-11T12:36:13.079Z  INFO   4: move bot1 rooma roomc
+2026-08-11T12:36:13.079Z  INFO   5: drop item1 roomc left1 bot1
+2026-08-11T12:36:13.079Z  INFO   6: pick item4 rooma right2 bot2
+2026-08-11T12:36:13.079Z  INFO   7: move bot2 rooma roomb
+2026-08-11T12:36:13.079Z  INFO   8: drop item3 roomb left2 bot2
+2026-08-11T12:36:13.079Z  INFO   9: drop item4 roomb right2 bot2
+2026-08-11T12:36:13.079Z  INFO   10: drop item2 roomc right1 bot1
+2026-08-11T12:36:13.079Z  INFO Plan length: 10 step(s).
+2026-08-11T12:36:13.079Z  INFO Plan cost: 22.000000
+2026-08-11T12:36:13.079Z  INFO Expanded 73 state(s).
+2026-08-11T12:36:13.079Z  INFO Reopened 0 state(s).
+2026-08-11T12:36:13.079Z  INFO Evaluated 593 state(s).
+2026-08-11T12:36:13.079Z  INFO Evaluations: 597
+2026-08-11T12:36:13.079Z  INFO Generated 848 state(s).
+2026-08-11T12:36:13.079Z  INFO Dead ends: 0 state(s).
+2026-08-11T12:36:13.079Z  INFO Number of registered states: 593
+2026-08-11T12:36:13.079Z  INFO Search time: 0.025882s</code></pre>
 
 <p>The same plan is left in <code>sas_plan</code>, one grounded action per line
 in the usual parenthesised form:</p>
