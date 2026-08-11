@@ -352,6 +352,52 @@ struct CausalLinkLane {
     streams: Vec<ChaCha8Rng>,
 }
 
+impl CausalLinkLane {
+    fn borrow_mut(&mut self) -> LaneMut<'_> {
+        LaneMut {
+            logits: &self.logits,
+            optimizer: &mut self.optimizer,
+            streams: &mut self.streams,
+        }
+    }
+}
+
+/// A borrowed parameter lane: one logit tensor, the Adam moments that belong to
+/// it, and the per-particle noise streams that reseed it. Any rewrite of the
+/// tensor has to clear the matching moments -- stale second moments would damp
+/// exactly the exploration the rewrite buys -- so the three travel together.
+/// [`CausalLinkLane`] owns this shape; the causal-action tensors are three
+/// separate locals of the solver loop borrowed into it.
+struct LaneMut<'a> {
+    logits: &'a Var,
+    optimizer: &'a mut Adam,
+    streams: &'a mut [ChaCha8Rng],
+}
+
+/// The direct lane. Unlike [`LaneMut`], the action and state logits are two
+/// parameters of a single `Adam` -- plus the temporal schedule as a third -- so
+/// a rewrite of either has to present a mask per parameter, and both draw their
+/// noise from the same per-particle stream.
+struct DirectLane<'a> {
+    action_logits: &'a Var,
+    state_logits: &'a Var,
+    optimizer: &'a mut Adam,
+    streams: &'a mut [ChaCha8Rng],
+}
+
+/// One particle's writable view of the direct lane, as the temporal repairs
+/// need it: the action logits, the schedule logits that order them, the
+/// optimizer whose moments the rewrite clears, and the noise stream belonging
+/// to this particle and no other. Carrying `particle` alongside the stream is
+/// what keeps those two from being paired up wrongly.
+struct TemporalRepairLane<'a> {
+    particle: usize,
+    action_logits: &'a Var,
+    schedule_logits: &'a Var,
+    optimizer: &'a mut Adam,
+    stream: &'a mut ChaCha8Rng,
+}
+
 impl Duals {
     fn zeros(plan: &TensorPlan, device: &Device) -> CandleResult<Self> {
         let (m, h) = (plan.particles, plan.horizon);
@@ -1302,6 +1348,20 @@ fn achievement_requires_fact(
     }))
 }
 
+/// One particle's causal working memory: the fact role each token currently
+/// carries, how hard the objective pushes on that role, the tokens held in
+/// reserve, and the two precedence relations over them. The five are one
+/// consistent state -- dropping an edge can orphan a token, which frees
+/// capacity and relaxes its focus -- so they are repaired together or not at
+/// all.
+struct CausalMemory<'a> {
+    obligations: &'a mut [Option<usize>],
+    obligation_focus: &'a mut [f64],
+    unused: &'a mut Vec<usize>,
+    precedence: &'a mut Vec<(usize, usize)>,
+    causal_precedence: &'a mut Vec<(usize, usize)>,
+}
+
 /// Remove prerequisite memory made stale by a repair token changing achiever.
 ///
 /// Causal edges have action-specific provenance. Once the selected action is a
@@ -1309,19 +1369,21 @@ fn achievement_requires_fact(
 /// obsolete. Removing such edges can orphan upstream working-memory tokens;
 /// those are recursively returned to symmetric unused capacity. Goal roles
 /// and producer-to-scaffold repairs remain live by construction.
-#[allow(clippy::too_many_arguments)]
 fn prune_stale_causal_memory(
+    memory: CausalMemory<'_>,
     transcription: &Transcription,
     action_preconditions: &[Vec<usize>],
     selected_action_by_token: &[usize],
     goal_tokens: &[(usize, usize, usize)],
     repair_order: &[usize],
-    obligations: &mut [Option<usize>],
-    obligation_focus: &mut [f64],
-    unused: &mut Vec<usize>,
-    precedence: &mut Vec<(usize, usize)>,
-    causal_precedence: &mut Vec<(usize, usize)>,
 ) -> Vec<usize> {
+    let CausalMemory {
+        obligations,
+        obligation_focus,
+        unused,
+        precedence,
+        causal_precedence,
+    } = memory;
     assert_eq!(selected_action_by_token.len(), obligations.len());
     assert_eq!(obligation_focus.len(), obligations.len());
     let stale = causal_precedence
@@ -2067,23 +2129,28 @@ fn temporal_obligation_applicability_loss(
 /// zero auxiliary loss still certifies applicability, while incomplete gaps
 /// retain a gradient ordered by how many prerequisites they already satisfy.
 /// Exact replay remains the authority on whether the composed repair works.
-#[allow(clippy::too_many_arguments)]
 fn conditional_gap_applicability_masks(
     obligations: &[Vec<Option<usize>>],
     precedence: &[Vec<(usize, usize)>],
     scaffold_order: &[Vec<usize>],
     scaffold_fact_values: &[f64],
     action_preconditions: &[Vec<usize>],
-    particles: usize,
-    horizon: usize,
     num_facts: usize,
-    num_actions: usize,
     graded: bool,
 ) -> Vec<Vec<Option<Vec<f64>>>> {
-    assert_eq!(obligations.len(), particles);
+    // Shapes come from the data, as in the loss functions below: the particle
+    // count and the horizon are the obligation table's own two dimensions, and
+    // the action count is the precondition table's. `num_facts` stays a
+    // parameter because it is the stride the frozen gap values are read with,
+    // and the length assertion below only has content while it is independent.
+    let particles = obligations.len();
+    let horizon = obligations
+        .first()
+        .expect("a solve optimizes at least one particle")
+        .len();
+    let num_actions = action_preconditions.len();
     assert_eq!(precedence.len(), particles);
     assert_eq!(scaffold_order.len(), particles);
-    assert_eq!(action_preconditions.len(), num_actions);
     assert_eq!(
         scaffold_fact_values.len(),
         particles * (horizon + 1) * num_facts
@@ -3704,10 +3771,7 @@ fn solve_direct_transcription(
                             &temporal_scaffold_order,
                             &temporal_scaffold_gap_fact_values,
                             &action_preconditions,
-                            config.particles,
-                            horizon,
                             plan.num_facts,
-                            plan.num_actions,
                             false,
                         );
                         let graded_gap_applicable = conditional_gap_applicability_masks(
@@ -3716,10 +3780,7 @@ fn solve_direct_transcription(
                             &temporal_scaffold_order,
                             &temporal_scaffold_gap_fact_values,
                             &action_preconditions,
-                            config.particles,
-                            horizon,
                             plan.num_facts,
-                            plan.num_actions,
                             true,
                         );
                         loss = (loss
@@ -4462,18 +4523,20 @@ fn solve_direct_transcription(
                 if config.refresh && checks_since_refresh >= config.refresh_period {
                     checks_since_refresh = 0;
                     let refreshed = refresh_particles(
-                        &action_logits,
-                        &causal_action_logits,
-                        &state_logits,
-                        link_lane.as_mut(),
-                        &mut optimizer,
-                        &mut causal_action_optimizer,
+                        DirectLane {
+                            action_logits: &action_logits,
+                            state_logits: &state_logits,
+                            optimizer: &mut optimizer,
+                            streams: &mut streams,
+                        },
+                        LaneMut {
+                            logits: &causal_action_logits,
+                            optimizer: &mut causal_action_optimizer,
+                            streams: &mut causal_action_streams,
+                        },
+                        link_lane.as_mut().map(CausalLinkLane::borrow_mut),
                         config,
-                        &mut streams,
-                        &mut causal_action_streams,
-                        horizon,
                         &plan,
-                        &device,
                     )?;
                     outcome.refreshes += refreshed;
                     duals.reset_prefix(refreshed, config.particles, &device)?;
@@ -4897,16 +4960,18 @@ fn solve_direct_transcription(
                             selected_action_by_token[token] = action;
                         }
                         let freed = prune_stale_causal_memory(
+                            CausalMemory {
+                                obligations: &mut temporal_obligations[particle],
+                                obligation_focus: &mut temporal_obligation_focus[particle],
+                                unused: &mut temporal_unused_tokens[particle],
+                                precedence: &mut temporal_precedence[particle],
+                                causal_precedence: &mut temporal_causal_precedence[particle],
+                            },
                             &transcription,
                             &action_preconditions,
                             &selected_action_by_token,
                             &temporal_goal_tokens[particle],
                             &temporal_repair_order[particle],
-                            &mut temporal_obligations[particle],
-                            &mut temporal_obligation_focus[particle],
-                            &mut temporal_unused_tokens[particle],
-                            &mut temporal_precedence[particle],
-                            &mut temporal_causal_precedence[particle],
                         );
                         for token in freed {
                             temporal_token_activation_update[particle][token] = None;
@@ -5019,15 +5084,16 @@ fn solve_direct_transcription(
                             // exploration without committing the scaffold.
                             if !temporal_probed[particle] {
                                 probe_temporal_noops(
-                                    particle,
-                                    &action_logits,
-                                    &mut optimizer,
-                                    config,
-                                    &mut streams[particle],
-                                    horizon,
+                                    TemporalRepairLane {
+                                        particle,
+                                        action_logits: &action_logits,
+                                        schedule_logits: &schedule_logits,
+                                        optimizer: &mut optimizer,
+                                        stream: &mut streams[particle],
+                                    },
                                     temporal_repair_start,
+                                    config,
                                     &plan,
-                                    &device,
                                 )?;
                                 temporal_probed[particle] = true;
                             }
@@ -5035,16 +5101,16 @@ fn solve_direct_transcription(
                         }
                         let (reopened, token_anchor, mut reopened_tokens) =
                             unlock_temporal_particle(
-                                particle,
-                                &action_logits,
-                                &schedule_logits,
-                                &mut optimizer,
-                                config,
-                                &mut streams[particle],
-                                horizon,
+                                TemporalRepairLane {
+                                    particle,
+                                    action_logits: &action_logits,
+                                    schedule_logits: &schedule_logits,
+                                    optimizer: &mut optimizer,
+                                    stream: &mut streams[particle],
+                                },
                                 dedicated_repair_start,
+                                config,
                                 &plan,
-                                &device,
                             )?;
                         assert!(
                             reopened > 0,
@@ -5235,15 +5301,16 @@ fn solve_direct_transcription(
                                         Some(selected_action);
                                     outcome.temporal_cycle_interventions += 1;
                                     reset_temporal_token_action(
-                                        particle,
+                                        TemporalRepairLane {
+                                            particle,
+                                            action_logits: &action_logits,
+                                            schedule_logits: &schedule_logits,
+                                            optimizer: &mut optimizer,
+                                            stream: &mut streams[particle],
+                                        },
                                         consumer,
-                                        &action_logits,
-                                        &mut optimizer,
                                         config,
-                                        &mut streams[particle],
-                                        horizon,
                                         &plan,
-                                        &device,
                                     )?;
                                     temporal_token_activation_update[particle][consumer] =
                                         Some(update + 1);
@@ -5284,15 +5351,16 @@ fn solve_direct_transcription(
                                         consumer,
                                     ) {
                                         reset_temporal_token_action(
-                                            particle,
+                                            TemporalRepairLane {
+                                                particle,
+                                                action_logits: &action_logits,
+                                                schedule_logits: &schedule_logits,
+                                                optimizer: &mut optimizer,
+                                                stream: &mut streams[particle],
+                                            },
                                             producer,
-                                            &action_logits,
-                                            &mut optimizer,
                                             config,
-                                            &mut streams[particle],
-                                            horizon,
                                             &plan,
-                                            &device,
                                         )?;
                                         temporal_obligations[particle][producer] = Some(fact);
                                         temporal_token_activation_update[particle][producer] =
@@ -5350,15 +5418,16 @@ fn solve_direct_transcription(
                                             .expect("a fresh scaffold repair token is unused");
                                         temporal_unused_tokens[particle].remove(unused_index);
                                         reset_temporal_token_action(
-                                            particle,
+                                            TemporalRepairLane {
+                                                particle,
+                                                action_logits: &action_logits,
+                                                schedule_logits: &schedule_logits,
+                                                optimizer: &mut optimizer,
+                                                stream: &mut streams[particle],
+                                            },
                                             producer,
-                                            &action_logits,
-                                            &mut optimizer,
                                             config,
-                                            &mut streams[particle],
-                                            horizon,
                                             &plan,
-                                            &device,
                                         )?;
                                         temporal_obligations[particle][producer] = Some(fact);
                                         temporal_token_activation_update[particle][producer] =
@@ -5471,16 +5540,16 @@ fn solve_direct_transcription(
                                 + config.temporal_restart_patience;
                     if temporal_restart_due && progress < config.remelt_stop_progress {
                         restart_temporal_repair_particle(
-                            particle,
-                            &action_logits,
-                            &schedule_logits,
-                            &mut optimizer,
-                            config,
-                            &mut streams[particle],
+                            TemporalRepairLane {
+                                particle,
+                                action_logits: &action_logits,
+                                schedule_logits: &schedule_logits,
+                                optimizer: &mut optimizer,
+                                stream: &mut streams[particle],
+                            },
                             &temporal_repair_order[particle],
-                            horizon,
+                            config,
                             &plan,
-                            &device,
                         )?;
                         for &token in &temporal_repair_order[particle] {
                             remelt_age[particle * horizon + token] = usize::MAX;
@@ -5550,21 +5619,23 @@ fn solve_direct_transcription(
                         }
                     }
                     remelt_direct_windows(
-                        &action_logits,
-                        &causal_action_logits,
-                        &state_logits,
-                        link_lane.as_mut(),
-                        &mut optimizer,
-                        &mut causal_action_optimizer,
+                        DirectLane {
+                            action_logits: &action_logits,
+                            state_logits: &state_logits,
+                            optimizer: &mut optimizer,
+                            streams: &mut streams,
+                        },
+                        LaneMut {
+                            logits: &causal_action_logits,
+                            optimizer: &mut causal_action_optimizer,
+                            streams: &mut causal_action_streams,
+                        },
+                        link_lane.as_mut().map(CausalLinkLane::borrow_mut),
                         &remelt,
                         !matches!(config.causal_copy, CausalCopyMode::Staged)
                             || matches!(stage, CausalStage::Shadow),
                         config,
-                        &mut streams,
-                        &mut causal_action_streams,
-                        horizon,
                         &plan,
-                        &device,
                     )?;
                     outcome.remelts += remelt.len();
                 }
@@ -5576,18 +5647,20 @@ fn solve_direct_transcription(
 
 /// Reopen the no-op rows of an applicable but capacity-inadmissible scaffold
 /// without moving or committing any part of that scaffold.
-#[allow(clippy::too_many_arguments)]
 fn probe_temporal_noops(
-    particle: usize,
-    action_logits: &Var,
-    optimizer: &mut Adam,
-    config: &SgdConfig,
-    stream: &mut ChaCha8Rng,
-    horizon: usize,
+    lane: TemporalRepairLane<'_>,
     repair_start: usize,
+    config: &SgdConfig,
     plan: &TensorPlan,
-    device: &Device,
 ) -> CandleResult<usize> {
+    let TemporalRepairLane {
+        particle,
+        action_logits,
+        optimizer,
+        stream,
+        ..
+    } = lane;
+    let (horizon, device) = (plan.horizon, plan.device());
     assert!(
         config.temporal_tokens,
         "only temporal plans have probe rows"
@@ -5655,19 +5728,20 @@ fn probe_temporal_noops(
 /// No token is moved and no operator is chosen here. Subsequent gradients
 /// jointly specialize the reopened no-op tokens and assign every token to a
 /// unique execution row through the temporal schedule.
-#[allow(clippy::too_many_arguments)]
 fn unlock_temporal_particle(
-    particle: usize,
-    action_logits: &Var,
-    schedule_logits: &Var,
-    optimizer: &mut Adam,
-    config: &SgdConfig,
-    stream: &mut ChaCha8Rng,
-    horizon: usize,
+    lane: TemporalRepairLane<'_>,
     repair_start: usize,
+    config: &SgdConfig,
     plan: &TensorPlan,
-    device: &Device,
 ) -> CandleResult<(usize, Vec<usize>, Vec<usize>)> {
+    let TemporalRepairLane {
+        particle,
+        action_logits,
+        schedule_logits,
+        optimizer,
+        stream,
+    } = lane;
+    let (horizon, device) = (plan.horizon, plan.device());
     assert!(
         config.temporal_tokens,
         "only temporal plans may be unlocked"
@@ -5771,19 +5845,20 @@ fn unlock_temporal_particle(
 /// choice: every repair action and every monotone interleaving gate receives a
 /// continuous random logit, while scaffold logits and all verifier-derived
 /// fact obligations remain untouched.
-#[allow(clippy::too_many_arguments)]
 fn restart_temporal_repair_particle(
-    particle: usize,
-    action_logits: &Var,
-    schedule_logits: &Var,
-    optimizer: &mut Adam,
-    config: &SgdConfig,
-    stream: &mut ChaCha8Rng,
+    lane: TemporalRepairLane<'_>,
     repair_tokens: &[usize],
-    horizon: usize,
+    config: &SgdConfig,
     plan: &TensorPlan,
-    device: &Device,
 ) -> CandleResult<()> {
+    let TemporalRepairLane {
+        particle,
+        action_logits,
+        schedule_logits,
+        optimizer,
+        stream,
+    } = lane;
+    let (horizon, device) = (plan.horizon, plan.device());
     assert!(config.temporal_tokens, "only temporal repair can restart");
     assert!(particle < config.particles);
     assert!(
@@ -5838,23 +5913,27 @@ fn restart_temporal_repair_particle(
 }
 
 /// Reopen only the causal window selected by exact-feedback plateau diagnosis.
-#[allow(clippy::too_many_arguments)]
 fn remelt_direct_windows(
-    action_logits: &Var,
-    causal_action_logits: &Var,
-    state_logits: &Var,
-    mut link_lane: Option<&mut CausalLinkLane>,
-    optimizer: &mut Adam,
-    causal_action_optimizer: &mut Adam,
+    direct: DirectLane<'_>,
+    causal_action: LaneMut<'_>,
+    mut link_lane: Option<LaneMut<'_>>,
     windows: &[RemeltWindow],
     remelt_causal: bool,
     config: &SgdConfig,
-    streams: &mut [ChaCha8Rng],
-    causal_action_streams: &mut [ChaCha8Rng],
-    horizon: usize,
     plan: &TensorPlan,
-    device: &Device,
 ) -> CandleResult<()> {
+    let DirectLane {
+        action_logits,
+        state_logits,
+        optimizer,
+        streams,
+    } = direct;
+    let LaneMut {
+        logits: causal_action_logits,
+        optimizer: causal_action_optimizer,
+        streams: causal_action_streams,
+    } = causal_action;
+    let (horizon, device) = (plan.horizon, plan.device());
     assert_eq!(
         link_lane.is_some(),
         config.causal_links_enabled(),
@@ -5979,8 +6058,7 @@ fn remelt_direct_windows(
             device,
         )?,
         config,
-        horizon,
-        device,
+        plan,
     )?;
     causal_action_optimizer.reset_moments_where(&[Tensor::from_vec(
         keep_causal_action,
@@ -6012,21 +6090,25 @@ fn remelt_direct_windows(
 /// default, because with it on a solved instance cannot be attributed to
 /// gradient descent rather than to random sampling. The dense causal-link
 /// ticket is refreshed only when that optional optimization lane exists.
-#[allow(clippy::too_many_arguments)]
 fn refresh_particles(
-    action_logits: &Var,
-    causal_action_logits: &Var,
-    state_logits: &Var,
-    mut link_lane: Option<&mut CausalLinkLane>,
-    optimizer: &mut Adam,
-    causal_action_optimizer: &mut Adam,
+    direct: DirectLane<'_>,
+    causal_action: LaneMut<'_>,
+    mut link_lane: Option<LaneMut<'_>>,
     config: &SgdConfig,
-    streams: &mut [ChaCha8Rng],
-    causal_action_streams: &mut [ChaCha8Rng],
-    horizon: usize,
     plan: &TensorPlan,
-    device: &Device,
 ) -> CandleResult<usize> {
+    let DirectLane {
+        action_logits,
+        state_logits,
+        optimizer,
+        streams,
+    } = direct;
+    let LaneMut {
+        logits: causal_action_logits,
+        optimizer: causal_action_optimizer,
+        streams: causal_action_streams,
+    } = causal_action;
+    let (horizon, device) = (plan.horizon, plan.device());
     // Validation guarantees this, so a mismatch is a bug rather than something
     // to quietly clamp.
     debug_assert!(config.refresh_particles <= config.particles);
@@ -6138,14 +6220,7 @@ fn refresh_particles(
         (config.particles, horizon, plan.num_facts),
         device,
     )?;
-    reset_direct_moments_preserving_schedule(
-        optimizer,
-        keep_action,
-        keep_state,
-        config,
-        horizon,
-        device,
-    )?;
+    reset_direct_moments_preserving_schedule(optimizer, keep_action, keep_state, config, plan)?;
     let keep_causal_action = particle_mask(
         refreshed,
         config.particles,
@@ -6173,15 +6248,14 @@ fn reset_direct_moments_preserving_schedule(
     keep_action: Tensor,
     keep_state: Tensor,
     config: &SgdConfig,
-    horizon: usize,
-    device: &Device,
+    plan: &TensorPlan,
 ) -> CandleResult<()> {
     let mut masks = vec![keep_action, keep_state];
     if config.temporal_tokens {
         masks.push(Tensor::ones(
-            (config.particles, horizon, horizon),
+            (config.particles, plan.horizon, plan.horizon),
             DTYPE,
-            device,
+            plan.device(),
         )?);
     }
     optimizer.reset_moments_where(&masks)
@@ -6192,18 +6266,20 @@ fn reset_direct_moments_preserving_schedule(
 ///
 /// Every action coordinate is sampled from the same distribution: the host
 /// exposes plastic capacity but does not select or privilege an operator.
-#[allow(clippy::too_many_arguments)]
 fn reset_temporal_token_action(
-    particle: usize,
+    lane: TemporalRepairLane<'_>,
     token: usize,
-    action_logits: &Var,
-    optimizer: &mut Adam,
     config: &SgdConfig,
-    stream: &mut ChaCha8Rng,
-    horizon: usize,
     plan: &TensorPlan,
-    device: &Device,
 ) -> CandleResult<()> {
+    let TemporalRepairLane {
+        particle,
+        action_logits,
+        optimizer,
+        stream,
+        ..
+    } = lane;
+    let (horizon, device) = (plan.horizon, plan.device());
     assert!(
         particle < config.particles,
         "activation particle is in range"
@@ -7022,9 +7098,6 @@ mod tests {
             &scaffold,
             &facts,
             &action_preconditions,
-            1,
-            2,
-            2,
             2,
             true,
         );
