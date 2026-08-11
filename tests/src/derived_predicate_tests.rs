@@ -49,7 +49,9 @@ struct Shape {
     true_defaults: usize,
     /// Derived facts - a variable *and* a value - that more than one axiom
     /// proves: disjunctive support, which no `axioms_by_atom` entry may collapse
-    /// to one rule.
+    /// to one rule. Every axiom proves its head since issue454, so this counts
+    /// genuine disjunctive support rather than also counting the several rules a
+    /// cross-product negation used to produce for one refuted variable.
     proved: usize,
     /// Derived variables that positively support themselves through a cycle -
     /// the same strongly connected component. Recursive axioms are the reason
@@ -87,8 +89,13 @@ const FIXTURE_SHAPES: &[(&str, Shape)] = &[
      Shape { layers: 1, true_defaults: 0, proved: 1, cyclic: 0, comparisons: 0 }),
     ("goal-condition",
      Shape { layers: 1, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
+    // `proved: 0` since issue454: the pair that used to have two rules was
+    // `flawed` at its *default* value. `flawed <- cracked and not dirty` has a
+    // two-literal body, so the cross-product negation produced both
+    // `not flawed <- not cracked` and `not flawed <- dirty`. Nothing here is
+    // disjunctively *proved* - every derived predicate has one `:derived` clause.
     ("layered-chain",
-     Shape { layers: 3, true_defaults: 0, proved: 1, cyclic: 0, comparisons: 0 }),
+     Shape { layers: 3, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
     ("negated-dependency",
      Shape { layers: 2, true_defaults: 0, proved: 0, cyclic: 0, comparisons: 0 }),
     ("numeric-body",
@@ -163,9 +170,9 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
     // default of 0 is a variable the translator only ever refutes.
     let true_defaults = defaults.values().filter(|&&value| value == 0).count();
 
-    // Keyed by the derived *fact*, not its variable: a variable that is both
-    // proved and refuted has one axiom per value and is not disjunctively
-    // supported.
+    // Keyed by the derived *fact*, not its variable. Both halves of the key are
+    // still worth having even though every axiom now proves its head: it is what
+    // makes the assertion below able to say *which* fact a stray rule writes.
     let mut proofs_of: BTreeMap<(usize, usize), usize> = BTreeMap::new();
     // Positive support only: an axiom reading a derived variable at the value
     // its own axioms prove is the monotone case, which one layer's fixpoint
@@ -271,14 +278,16 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
 
 /// The same optima under an admissible heuristic that *reads* the axioms.
 ///
-/// This is the only test that can see whether the negated axioms are right.
+/// This is the only test that can see whether the refuting rules are right.
 /// Blind A* cannot: the axiom evaluator refutes a derived variable by finding it
-/// unproven at the end of its layer, so the negated rules never fire and a wrong
-/// set of them changes no plan. `lmcutnumeric` builds its relaxation out of
-/// them, and a derived variable it cannot refute makes the state look like a
-/// dead end - which is how negating a cyclic component literal by literal used
-/// to turn `cyclic-negation` into an unsolvable task with h = infinity in the
-/// initial state.
+/// unproven at the end of its layer, so it never fires such a rule and a wrong
+/// set of them changes no plan. `lmcutnumeric` builds its relaxation out of them
+/// - since issue454 out of the ones it derives for itself, with
+/// `planforge_sas::default_value_axioms` - and a derived variable it cannot
+/// refute makes the state look like a dead end. That is how negating a cyclic
+/// component literal by literal used to turn `cyclic-negation` into an
+/// unsolvable task with h = infinity in the initial state, and it is why this
+/// fixture is the canary for anything that touches the refuting rules.
 #[test]
 fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
     for &(name, cost, length) in FIXTURE_OPTIMA {

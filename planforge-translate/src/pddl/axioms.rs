@@ -96,20 +96,6 @@ pub struct PropositionalAxiom {
     pub effect: Condition, // Always Atom
 }
 
-impl PropositionalAxiom {
-    pub fn new(name: String, condition: Vec<Condition>, effect: Condition) -> Self {
-        PropositionalAxiom {
-            name,
-            condition,
-            effect,
-        }
-    }
-
-    pub fn clone_axiom(&self) -> Self {
-        self.clone()
-    }
-}
-
 impl fmt::Display for PropositionalAxiom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(

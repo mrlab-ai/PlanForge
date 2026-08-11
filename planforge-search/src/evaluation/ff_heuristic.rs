@@ -62,6 +62,7 @@ use std::collections::{HashSet, VecDeque};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use planforge_sas::axioms::{CalOperator, ComparisonOperator, PropositionalAxiom};
+use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
@@ -630,6 +631,13 @@ fn add_propositional_axiom_operator(
     Ok(())
 }
 
+/// The task's operators, then its axioms, then the rules describing how a derived
+/// variable takes its default value.
+///
+/// The last group is not in the task: the delete relaxation has no negation by
+/// failure, so it has to be told how a derived variable becomes false, and the
+/// rules that say so are exponential in the worst case and wanted by nothing but
+/// a relaxation. See `planforge_sas::default_value_axioms`.
 fn collect_relaxed_operators(
     task: &dyn AbstractNumericTask,
     universe: &FactUniverse,
@@ -639,7 +647,14 @@ fn collect_relaxed_operators(
     for (op_idx, op) in task.get_operators().iter().enumerate() {
         add_task_operator(&mut ops, universe, constant_value, task, op_idx, op)?;
     }
-    for (axiom_idx, axiom) in task.axioms().iter().enumerate() {
+    let default_value_axioms =
+        default_value_axioms(task, DefaultValueAxiomMode::ApproximateNegativeCycles);
+    for (axiom_idx, axiom) in task
+        .axioms()
+        .iter()
+        .chain(&default_value_axioms)
+        .enumerate()
+    {
         add_propositional_axiom_operator(&mut ops, universe, axiom_idx, axiom)?;
     }
     Ok(ops)

@@ -1,4 +1,5 @@
 use super::numeric_helper::NumericTaskHelper;
+use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation};
 use planforge_sas::utils::linear_effects::LinearExpression;
 
@@ -47,19 +48,35 @@ pub struct NumericBound {
 }
 
 impl NumericBound {
-    pub fn new(task: &dyn AbstractNumericTask, precision: f64, epsilon: f64) -> Self {
+    pub fn new(
+        task: &dyn AbstractNumericTask,
+        default_value_axioms: &[PropositionalAxiom],
+        precision: f64,
+        epsilon: f64,
+    ) -> Self {
         let mut bound = Self::default();
-        bound.initialize(task, precision, epsilon);
+        bound.initialize(task, default_value_axioms, precision, epsilon);
         bound
     }
 
-    pub fn initialize(&mut self, task: &dyn AbstractNumericTask, precision: f64, epsilon: f64) {
+    /// `default_value_axioms` only reach the shared task helper, whose axiom
+    /// action models are indexed by the same offsets LM-cut uses. Bounds
+    /// themselves cannot move: a default-value rule is purely propositional, so
+    /// it has no numeric effect to widen an interval with.
+    pub fn initialize(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        default_value_axioms: &[PropositionalAxiom],
+        precision: f64,
+        epsilon: f64,
+    ) {
         assert!(
             precision >= 0.0,
             "numeric bound precision must be non-negative"
         );
         assert!(epsilon >= 0.0, "numeric bound epsilon must be non-negative");
-        self.numeric_helper = NumericTaskHelper::new_lmcut(task, precision, epsilon, false);
+        self.numeric_helper =
+            NumericTaskHelper::new_lmcut(task, default_value_axioms, precision, epsilon, false);
         self.numeric_variable_ids = task.regular_numeric_variable_ids();
         self.num_numeric_variables = self.numeric_variable_ids.len();
         self.num_actions = task.get_operators().len();

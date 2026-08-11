@@ -188,30 +188,21 @@ pub(crate) struct HelperActionModel {
 
 #[allow(unused)]
 impl NumericTaskHelper {
-    pub(crate) fn new(
-        task: &dyn AbstractNumericTask,
-        precision: f64,
-        default_epsilon: f64,
-        separate_constant_assignment: bool,
-    ) -> Self {
-        Self::new_with_options(
-            task,
-            precision,
-            default_epsilon,
-            separate_constant_assignment,
-            true,
-            true,
-        )
-    }
-
+    /// `default_value_axioms` are the rules describing how a derived variable
+    /// takes its default value. They are not part of the task -- the consumer
+    /// that reads the axioms as relaxed operators derives them for itself -- and
+    /// they get an action model each, after the task's own axioms, so that a
+    /// caller can index both by one axiom offset.
     pub(crate) fn new_lmcut(
         task: &dyn AbstractNumericTask,
+        default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         default_epsilon: f64,
         separate_constant_assignment: bool,
     ) -> Self {
         Self::new_with_options(
             task,
+            default_value_axioms,
             precision,
             default_epsilon,
             separate_constant_assignment,
@@ -249,7 +240,7 @@ impl NumericTaskHelper {
         helper.build_numeric_conditions(task);
         if build_bound_metadata {
             helper.build_numeric_goals(task, precision);
-            helper.build_actions(task, precision, false);
+            helper.build_actions(task, &[], precision, false);
             helper.build_propositions(task);
             helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
             helper.calculate_small_m(precision, 9_999_999.0);
@@ -260,6 +251,7 @@ impl NumericTaskHelper {
 
     fn new_with_options(
         task: &dyn AbstractNumericTask,
+        default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         default_epsilon: f64,
         separate_constant_assignment: bool,
@@ -281,8 +273,16 @@ impl NumericTaskHelper {
             }
         }
         helper.build_numeric_conditions(task);
+        // Deliberately the task's own axioms only: this reconstructs the
+        // conditions hidden behind a *derived goal*, and a rule refuting that
+        // goal's variable would contribute the negation of those conditions.
         helper.build_numeric_goals(task, precision);
-        helper.build_actions(task, precision, separate_constant_assignment);
+        helper.build_actions(
+            task,
+            default_value_axioms,
+            precision,
+            separate_constant_assignment,
+        );
         helper.build_propositions(task);
         if build_mutex_and_dominance {
             helper.build_mutex_actions(task);
@@ -982,6 +982,7 @@ impl NumericTaskHelper {
     fn build_actions(
         &mut self,
         task: &dyn AbstractNumericTask,
+        default_value_axioms: &[PropositionalAxiom],
         precision: f64,
         separate_constant_assignment: bool,
     ) {
@@ -996,7 +997,7 @@ impl NumericTaskHelper {
             );
             self.action_models.push(action_model);
         }
-        for axiom in task.axioms() {
+        for axiom in task.axioms().iter().chain(default_value_axioms) {
             let action_model = self.build_axiom_action(axiom, precision);
             self.action_models.push(action_model);
         }

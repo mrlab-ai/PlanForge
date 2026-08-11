@@ -362,6 +362,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
         }
     }
 
+    assert_every_axiom_proves_its_head(name, task);
     assert_negation_by_failure_reads_a_settled_layer(name, task, &comparison_layers);
 
     // Derived variables are the axioms' business alone: no operator may write
@@ -393,6 +394,39 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
                 task.numeric_variables()[affected].name()
             );
         }
+    }
+}
+
+/// Every axiom *proves* its head; nothing in the task refutes a derived variable.
+///
+/// This is the issue454 contract, and it is load-bearing in three places. The
+/// axiom evaluator refutes a derived variable by finding it unproven at the end of
+/// its layer, and a rule writing the default value would announce that same
+/// literal a second time. `planforge_sas::default_value_axioms` computes the
+/// refuting rules and asserts this of its input. And the sites that recover a
+/// derived goal's hidden conditions - the CEGAR flaw searches, the domain
+/// abstraction goal maps, the projected-task goal expansion - keep one axiom per
+/// variable, so a refuting rule could win the slot and hand them the negation of
+/// the conditions they wanted.
+fn assert_every_axiom_proves_its_head(name: &str, task: &dyn AbstractNumericTask) {
+    for (axiom_id, axiom) in task.axioms().iter().enumerate() {
+        let head = axiom.var_id();
+        let default = task
+            .get_variable_default_axiom_value(head)
+            .unwrap_or_else(|e| panic!("{name}: variable {head} out of range: {e}"));
+        assert_ne!(
+            axiom.effect_value(),
+            default,
+            "{name}: axiom {axiom_id} sets derived variable {head} to its default value {default}; \
+             the rules that do that belong to the heuristic that wants them, not to the task"
+        );
+        assert_eq!(
+            axiom.precondition_value(),
+            default,
+            "{name}: axiom {axiom_id} on derived variable {head} claims the variable held \
+             {} before it fired, but a proving rule fires on the default {default}",
+            axiom.precondition_value()
+        );
     }
 }
 

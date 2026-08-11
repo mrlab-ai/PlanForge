@@ -449,15 +449,6 @@ impl Condition {
             _ => None,
         }
     }
-
-    /// Negate a literal condition
-    pub fn negate_literal(&self) -> Option<Condition> {
-        match self {
-            Condition::Atom(a) => Some(Condition::NegatedAtom(a.negate())),
-            Condition::NegatedAtom(a) => Some(Condition::Atom(a.negate())),
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Display for Condition {

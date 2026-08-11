@@ -1,5 +1,5 @@
-//! Axiom simplification, layering and negation, following mainline Fast
-//! Downward's issue453.
+//! Axiom simplification and layering, following mainline Fast Downward's
+//! issue453 and issue454.
 //!
 //! Layers exist for one reason: an axiom that reads a derived variable at the
 //! value it *defaults* to is asking "was this never proven?", and that question
@@ -13,14 +13,18 @@
 //! positive dependency, and its variables have to share a layer; a negative edge
 //! inside such a component means the axioms are not stratifiable at all.
 //!
-//! Every derived variable defaults to false. The previous scheme let a variable
-//! that was only ever read negatively default to *true* and refuted it with
-//! generated axioms, and charged a layer whenever a literal's sign matched its
-//! default. That is the same idea expressed per variable instead of per
-//! component, and it cannot express a cyclic component: negating a cyclic
-//! definition literal by literal yields rules whose bodies depend on each other
-//! in a cycle, which claim a derived variable can never be refuted. See
-//! issue453.
+//! Every derived variable defaults to false, and every rule here *proves* one:
+//! the rules that refute a derived variable are no longer produced. They were
+//! never for the axiom evaluator, which refutes a variable by finding it
+//! unproven at the end of its layer; they were for the heuristics that read the
+//! axioms as relaxed operators, and those now derive them for themselves from
+//! the SAS task — see `planforge_sas::default_value_axioms`. That is issue454,
+//! and it buys three things: a task with axioms no longer pays for a negation
+//! that can blow up exponentially unless a heuristic asks for it, the negation
+//! is exact over SAS values rather than over PDDL literals, and every derived
+//! variable now appears in the heads with one polarity only, which is what makes
+//! [`verify_layering_condition`] able to insist that a negation-by-failure
+//! reading comes from a strictly lower layer.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -67,25 +71,24 @@ impl AxiomDependencies {
         dependencies
     }
 
-    /// Drops every variable neither of whose literals is needed.
+    /// Drops every variable that is not needed.
     ///
     /// Whole entries can go: if a head is needed then so is everything in the
-    /// bodies of its axioms, by the definition of `necessary_literals`.
-    fn remove_unnecessary_variables(&mut self, necessary_literals: &HashSet<Condition>) {
-        let unnecessary: Vec<Atom> = self
-            .derived_variables
-            .iter()
-            .filter(|variable| {
-                !necessary_literals.contains(&Condition::Atom((*variable).clone()))
-                    && !necessary_literals.contains(&Condition::NegatedAtom(variable.negate()))
-            })
-            .cloned()
-            .collect();
-        for variable in unnecessary {
-            self.derived_variables.remove(&variable);
-            self.positive.remove(&variable);
-            self.negative.remove(&variable);
-        }
+    /// bodies of its axioms, by the definition of `necessary_atoms`.
+    fn remove_unnecessary_variables(&mut self, necessary_atoms: &HashSet<Atom>) {
+        let AxiomDependencies {
+            derived_variables,
+            positive,
+            negative,
+        } = self;
+        derived_variables.retain(|variable| {
+            let necessary = necessary_atoms.contains(variable);
+            if !necessary {
+                positive.remove(variable);
+                negative.remove(variable);
+            }
+            necessary
+        });
     }
 
     fn positive_edges(&self, head: &Atom) -> impl Iterator<Item = &Atom> {
@@ -109,8 +112,7 @@ impl AxiomDependencies {
 /// its variables.
 ///
 /// The variables of a cluster share an axiom layer, so a cluster is the unit
-/// everything below works on: layers are assigned to clusters, and a cluster is
-/// negated as a whole.
+/// layers are assigned to.
 struct AxiomCluster {
     variables: Vec<Atom>,
     axioms: HashMap<Atom, Vec<PropositionalAxiom>>,
@@ -119,9 +121,6 @@ struct AxiomCluster {
     /// cluster list; a cluster is never its own positive child.
     positive_children: BTreeSet<usize>,
     negative_children: BTreeSet<usize>,
-    /// Whether some literal outside the cluster needs one of its variables to be
-    /// *false*, which is what makes the negated axioms worth generating.
-    needed_negatively: bool,
     layer: i32,
 }
 
@@ -135,7 +134,6 @@ impl AxiomCluster {
             variables,
             positive_children: BTreeSet::new(),
             negative_children: BTreeSet::new(),
-            needed_negatively: false,
             layer: 0,
         }
     }
@@ -164,7 +162,6 @@ pub fn handle_axioms(
 
     let mut clusters = compute_clusters(&axioms, operators, goal_list, global_constraint)?;
     let axiom_layers = compute_axiom_layers(&mut clusters, layer_strategy);
-    compute_negative_axioms(&mut clusters);
     let processed_axioms = collect_axioms(&clusters);
     verify_layering_condition(&processed_axioms, &axiom_layers);
     Ok((processed_axioms, axiom_layers))
@@ -178,77 +175,59 @@ fn head_of(axiom: &PropositionalAxiom) -> Atom {
         .clone()
 }
 
-/// The literals of derived variables the rest of the task can observe, closed
-/// under the axiom bodies.
+/// The derived variables the rest of the task can observe, closed under the
+/// axiom bodies.
 ///
-/// Signs are tracked because they decide what has to be *computed*: a variable
-/// only ever read positively needs no negated axioms, and one only ever read
-/// negatively needs no positive layer above it.
-fn compute_necessary_literals(
+/// Signs used to be tracked here, because they decided which variables needed
+/// negated axioms generating. Nothing in this module generates those any more, so
+/// what is left is the pruning question — may a variable be dropped from the
+/// dependency graph, and hence lose its axioms and its layer — and that is
+/// sign-free: a variable is kept when either of its literals is observed. Which
+/// is the same set the signed closure reached, since it followed every edge in
+/// both directions too and only differed in the sign it recorded.
+fn compute_necessary_atoms(
     dependencies: &AxiomDependencies,
     operators: &[PropositionalAction],
     goal_list: &[Condition],
     global_constraint: &Condition,
-) -> HashSet<Condition> {
-    let mut necessary: HashSet<Condition> = HashSet::new();
-    let mut queue: Vec<Condition> = vec![];
+) -> HashSet<Atom> {
+    let mut necessary: HashSet<Atom> = HashSet::new();
+    let mut queue: Vec<Atom> = vec![];
 
-    let require =
-        |literal: &Condition, necessary: &mut HashSet<Condition>, queue: &mut Vec<Condition>| {
-            let Some(atom) = literal.literal_positive() else {
-                return;
-            };
-            if dependencies.derived_variables.contains(&atom) && necessary.insert(literal.clone()) {
-                queue.push(literal.clone());
-            }
+    let require = |literal: &Condition, necessary: &mut HashSet<Atom>, queue: &mut Vec<Atom>| {
+        let Some(atom) = literal.literal_positive() else {
+            return;
         };
+        if dependencies.derived_variables.contains(&atom) && necessary.insert(atom.clone()) {
+            queue.push(atom);
+        }
+    };
 
     for literal in goal_list
         .iter()
         .chain(std::iter::once(global_constraint))
         .chain(operators.iter().flat_map(|op| op.precondition.iter()))
+        .chain(
+            operators
+                .iter()
+                .flat_map(|op| op.add_effects.iter().chain(&op.del_effects))
+                .flat_map(|(condition, _)| condition.iter()),
+        )
     {
         require(literal, &mut necessary, &mut queue);
     }
-    // An effect condition is observed in both directions: the effect fires when
-    // it holds and does not when it fails, and the code that evaluates it needs
-    // an answer either way.
-    for operator in operators {
-        for (condition, _) in operator.add_effects.iter().chain(&operator.del_effects) {
-            for literal in condition {
-                require(literal, &mut necessary, &mut queue);
-                require(&negate_axiom_literal(literal), &mut necessary, &mut queue);
-            }
-        }
-    }
 
-    while let Some(literal) = queue.pop() {
-        let atom = literal
-            .literal_positive()
-            .expect("only literals of derived variables are queued");
-        let negated = literal.is_negated();
-        // Proving the head positively needs its positive body literals to be
-        // provable; refuting the head needs them refutable, and vice versa for
-        // the body literals it reads negatively.
-        for body_atom in dependencies.positive_edges(&atom) {
-            let required = signed_literal(body_atom, negated);
-            require(&required, &mut necessary, &mut queue);
-        }
-        for body_atom in dependencies.negative_edges(&atom) {
-            let required = signed_literal(body_atom, !negated);
+    while let Some(atom) = queue.pop() {
+        for body_atom in dependencies
+            .positive_edges(&atom)
+            .chain(dependencies.negative_edges(&atom))
+        {
+            let required = Condition::Atom(body_atom.clone());
             require(&required, &mut necessary, &mut queue);
         }
     }
 
     necessary
-}
-
-fn signed_literal(atom: &Atom, negated: bool) -> Condition {
-    if negated {
-        Condition::NegatedAtom(atom.negate())
-    } else {
-        Condition::Atom(atom.clone())
-    }
 }
 
 /// The strongly connected components of the dependency graph, in an order in
@@ -300,20 +279,18 @@ fn compute_clusters(
     global_constraint: &Condition,
 ) -> Result<Vec<AxiomCluster>, String> {
     let mut dependencies = AxiomDependencies::new(axioms);
-    let necessary_literals =
-        compute_necessary_literals(&dependencies, operators, goal_list, global_constraint);
-    dependencies.remove_unnecessary_variables(&necessary_literals);
+    let necessary_atoms =
+        compute_necessary_atoms(&dependencies, operators, goal_list, global_constraint);
+    dependencies.remove_unnecessary_variables(&necessary_atoms);
 
     let sorted_variables = dependencies.sorted_variables();
     let components = strongly_connected_components(&dependencies, &sorted_variables);
 
     let mut clusters: Vec<AxiomCluster> = components.into_iter().map(AxiomCluster::new).collect();
     let mut cluster_of: HashMap<Atom, usize> = HashMap::new();
-    for (index, cluster) in clusters.iter_mut().enumerate() {
+    for (index, cluster) in clusters.iter().enumerate() {
         for variable in &cluster.variables {
             cluster_of.insert(variable.clone(), index);
-            cluster.needed_negatively |=
-                necessary_literals.contains(&Condition::NegatedAtom(variable.negate()));
         }
     }
 
@@ -417,54 +394,6 @@ fn lowest_allowed_layer(clusters: &[AxiomCluster], index: usize) -> i32 {
         .unwrap_or(0)
 }
 
-/// Adds the axioms that *refute* the variables something reads negatively.
-///
-/// A cluster of one variable is negated exactly. A larger cluster has a cyclic
-/// positive dependency, and negating its definition literal by literal is
-/// semantically wrong — the negated bodies then depend on each other in a cycle
-/// and nothing can ever refute the variable. Mainline overapproximates instead:
-/// the variables of such a cluster may be false unconditionally. That is a
-/// relaxation, which is what the consumers of these axioms — the heuristics —
-/// need; the axiom evaluator itself refutes a derived variable by finding it
-/// unproven at the end of its layer and does not use these rules at all.
-fn compute_negative_axioms(clusters: &mut [AxiomCluster]) {
-    for cluster in clusters
-        .iter_mut()
-        .filter(|cluster| cluster.needed_negatively)
-    {
-        if cluster.variables.len() > 1 {
-            for variable in &cluster.variables {
-                let axioms = cluster
-                    .axioms
-                    .get_mut(variable)
-                    .expect("a cluster holds an entry for each of its variables");
-                let name = axioms
-                    .first()
-                    .expect("a necessary derived variable has at least one axiom")
-                    .name
-                    .clone();
-                axioms.push(PropositionalAxiom::new(
-                    name,
-                    vec![],
-                    Condition::NegatedAtom(variable.negate()),
-                ));
-            }
-        } else {
-            let variable = cluster
-                .variables
-                .first()
-                .expect("a cluster has at least one variable")
-                .clone();
-            let axioms = cluster
-                .axioms
-                .get_mut(&variable)
-                .expect("a cluster holds an entry for each of its variables");
-            let negated = negate(axioms);
-            axioms.extend(negated);
-        }
-    }
-}
-
 fn collect_axioms(clusters: &[AxiomCluster]) -> Vec<PropositionalAxiom> {
     clusters
         .iter()
@@ -546,78 +475,13 @@ fn simplify(mut axioms: Vec<PropositionalAxiom>) -> Vec<PropositionalAxiom> {
         .collect()
 }
 
-/// Negate an axiom literal.
-///
-/// After normalization every axiom condition and effect is an atom or a negated
-/// atom, so `negate_literal` returning `None` is a broken invariant rather than
-/// a case to recover from. Falling back to the literal itself would substitute
-/// `L` for `¬L` and invert the axiom's meaning.
-fn negate_axiom_literal(literal: &Condition) -> Condition {
-    literal
-        .negate_literal()
-        .unwrap_or_else(|| panic!("axiom literal is not negatable: {literal:?}"))
-}
-
-/// The rules refuting the head of `axioms`, which must all have the same head.
-///
-/// The head is false when every one of its axioms fails, and an axiom fails when
-/// one of its body literals does, so the result is the cross product of the
-/// negated bodies. Sound only when the head does not positively depend on
-/// itself, which is why the caller restricts this to single-variable clusters.
-fn negate(axioms: &[PropositionalAxiom]) -> Vec<PropositionalAxiom> {
-    assert!(!axioms.is_empty());
-
-    let initial_effect = negate_axiom_literal(&axioms[0].effect);
-    let mut result = vec![PropositionalAxiom::new(
-        axioms[0].name.clone(),
-        vec![],
-        initial_effect,
-    )];
-
-    for axiom in axioms {
-        let condition = &axiom.condition;
-        if condition.is_empty() {
-            // The head is proven with an empty body, so it holds in every state
-            // and nothing refutes it.
-            return vec![];
-        } else if condition.len() == 1 {
-            let new_literal = negate_axiom_literal(&condition[0]);
-            for result_axiom in &mut result {
-                result_axiom.condition.push(new_literal.clone());
-            }
-        } else {
-            let mut new_result = vec![];
-            for literal in condition {
-                let negated_literal = negate_axiom_literal(literal);
-                for result_axiom in &result {
-                    let mut new_axiom = result_axiom.clone_axiom();
-                    new_axiom.condition.push(negated_literal.clone());
-                    new_result.push(new_axiom);
-                }
-            }
-            result = new_result;
-        }
-    }
-
-    simplify(result)
-}
-
 /// The property the layers were computed for, checked on the result.
 ///
 /// Mainline runs this behind a debug flag; it is a linear pass over the axioms
 /// and the layering is the one thing here that no downstream component
 /// re-checks, so it runs unconditionally.
 fn verify_layering_condition(axioms: &[PropositionalAxiom], layers: &HashMap<Atom, i32>) {
-    let mut heads: HashSet<Condition> = HashSet::new();
-    let mut head_variables: HashSet<Atom> = HashSet::new();
-    for axiom in axioms {
-        let head = axiom
-            .effect
-            .literal_positive()
-            .unwrap_or_else(|| panic!("an axiom head is a literal, got {}", axiom.effect));
-        head_variables.insert(head);
-        heads.insert(axiom.effect.clone());
-    }
+    let head_variables: HashSet<Atom> = axioms.iter().map(head_of).collect();
 
     // 1. A variable has a layer exactly when some rule writes it, and layers
     //    are non-negative; the `-1` of a non-derived variable is set elsewhere.
@@ -631,10 +495,7 @@ fn verify_layering_condition(axioms: &[PropositionalAxiom], layers: &HashMap<Ato
     }
 
     for axiom in axioms {
-        let head = axiom
-            .effect
-            .literal_positive()
-            .expect("checked above that the head is a literal");
+        let head = head_of(axiom);
         let head_layer = layers[&head];
         for condition in &axiom.condition {
             let Some(condition_variable) = condition.literal_positive() else {
@@ -651,16 +512,16 @@ fn verify_layering_condition(axioms: &[PropositionalAxiom], layers: &HashMap<Ato
                 "the rule for {head} at layer {head_layer} reads {condition_variable} at layer \
                  {condition_layer}"
             );
-            // 3. A condition read at the head's own layer must be one some rule
-            //    writes at that sign, i.e. it is proven within the layer rather
-            //    than assumed from the absence of a proof. A derived variable
-            //    can appear in heads with both signs, since the negated axioms
-            //    above are rules too, which is what makes this weaker than it
-            //    would be if negation were left to the search component.
+            // 3. A negation-by-failure reading — the variable at its default
+            //    value, which is what a negated literal is now that every head
+            //    is positive — comes from a strictly lower layer, so the absence
+            //    of a proof has settled before it is read. A positive reading may
+            //    share the layer, because one layer's fixpoint propagates it.
             assert!(
-                condition_layer < head_layer || heads.contains(condition),
+                !condition.is_negated() || condition_layer < head_layer,
                 "the rule for {head} at layer {head_layer} reads {condition} at the same layer, \
-                 but no rule of that layer writes it"
+                 but whether {condition_variable} stayed unproven is not settled until that \
+                 layer is done"
             );
         }
     }

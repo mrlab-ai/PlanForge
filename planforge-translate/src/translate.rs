@@ -916,25 +916,17 @@ fn translate_strips_axiom(
         return vec![];
     }
 
-    let effect = match &axiom.effect {
-        Condition::NegatedAtom(natom) => {
-            let pos_atom = Atom::new(natom.predicate.clone(), natom.args.clone());
-            if let Some(pairs) = translation.dictionary.get(&pos_atom) {
-                let (var, _) = pairs[0];
-                (var, translation.ranges[var] - 1)
-            } else {
-                return vec![];
-            }
-        }
-        Condition::Atom(atom) => {
-            if let Some(pairs) = translation.dictionary.get(atom) {
-                pairs[0]
-            } else {
-                return vec![];
-            }
-        }
-        _ => return vec![],
+    // Since issue454 every axiom *proves* its head: the rules that refute a
+    // derived variable are computed by the consumer that needs them, from the SAS
+    // task. A negated head reaching here would silently become a rule writing the
+    // variable's `<none of those>` value, which is not the same fact.
+    let Condition::Atom(atom) = &axiom.effect else {
+        panic!("an axiom head is a positive atom, got {}", axiom.effect);
     };
+    let Some(pairs) = translation.dictionary.get(atom) else {
+        return vec![];
+    };
+    let effect = pairs[0];
 
     let mut axioms = vec![];
     for condition in conditions.unwrap() {

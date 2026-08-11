@@ -5,12 +5,14 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     LmCutResidualOperatorCostPartition, StateRegion,
 };
 use planforge_sas::axioms::PropositionalAxiom;
+use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, Effect, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 use planforge_sas::utils::linear_effects::LinearNumericEffect;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use tracing::debug;
 
 /// The value a comparison-axiom variable takes when the comparison is false.
@@ -327,6 +329,17 @@ pub struct LandmarkCutLandmarks<'task> {
     multiplier_scratch: Vec<(f64, f64)>,
     second_exploration_queue_scratch: Vec<usize>,
     numeric_bound: NumericBound,
+    /// Every rule the relaxation reads: the task's axioms, which only ever
+    /// *prove* a derived variable, followed by the rules describing how one takes
+    /// its default value.
+    ///
+    /// The delete relaxation has no negation by failure, so without the second
+    /// group a state in which a derived variable is false looks like a dead end.
+    /// The task does not carry them -- they are exponential in the worst case and
+    /// only a relaxation wants them -- so they are derived here, and behind an
+    /// `Arc` because the build loop needs the list while it mutates the rest of
+    /// the heuristic.
+    relaxed_axioms: Arc<[PropositionalAxiom]>,
     use_bounds: bool,
     initialized: bool,
 }
@@ -364,9 +377,23 @@ impl<'task> LandmarkCutLandmarks<'task> {
             "LM-cut random_pcf=true is not implemented yet"
         );
         let use_bounds = config.bound_iterations > 0;
-        let numeric_bound = NumericBound::new(task, config.precision, config.epsilon);
+        let default_value_axioms =
+            default_value_axioms(task, DefaultValueAxiomMode::ApproximateNegativeCycles);
+        let relaxed_axioms: Arc<[PropositionalAxiom]> = task
+            .axioms()
+            .iter()
+            .cloned()
+            .chain(default_value_axioms.iter().cloned())
+            .collect();
+        let numeric_bound = NumericBound::new(
+            task,
+            &default_value_axioms,
+            config.precision,
+            config.epsilon,
+        );
         let numeric_helper = NumericTaskHelper::new_lmcut(
             task,
+            &default_value_axioms,
             config.precision,
             config.epsilon,
             config.use_constant_assignment,
@@ -433,6 +460,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             multiplier_scratch: Vec::new(),
             second_exploration_queue_scratch: Vec::new(),
             numeric_bound,
+            relaxed_axioms,
             use_bounds,
             initialized: false,
         };
@@ -563,7 +591,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 "LMCUT_DEBUG_SUMMARY infinite={} sose={} ops={} prop={} numeric_conditions={}",
                 infinite_operators,
                 second_order_simple_operators,
-                self.task.get_operators().len() + self.task.axioms().len(),
+                self.task.get_operators().len() + self.relaxed_axioms.len(),
                 self.num_propositions,
                 self.conditions.len()
             );
@@ -923,7 +951,8 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .expect("LM-cut numeric operator construction must succeed");
         }
 
-        for (axiom_offset, axiom) in self.task.axioms().iter().enumerate() {
+        let relaxed_axioms = Arc::clone(&self.relaxed_axioms);
+        for (axiom_offset, axiom) in relaxed_axioms.iter().enumerate() {
             let operator_id = operators.len() + axiom_offset;
             self.build_relaxed_operator_for_axiom(operator_id, axiom);
         }
@@ -1154,7 +1183,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn build_original_to_relaxed_index(&mut self) {
-        let operator_count = self.task.get_operators().len() + self.task.axioms().len();
+        let operator_count = self.task.get_operators().len() + self.relaxed_axioms.len();
         self.original_to_relaxed_operators = vec![Vec::new(); operator_count];
         for (relaxed_operator_id, operator) in self.relaxed_operators.iter().enumerate() {
             if let Some(original_id) = operator.original_op_id_1
