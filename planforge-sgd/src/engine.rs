@@ -399,8 +399,9 @@ struct TemporalRepairLane<'a> {
 }
 
 impl Duals {
-    fn zeros(plan: &TensorPlan, device: &Device) -> CandleResult<Self> {
+    fn zeros(plan: &TensorPlan) -> CandleResult<Self> {
         let (m, h) = (plan.particles, plan.horizon);
+        let device = plan.device();
         Ok(Self {
             precondition: Tensor::zeros((m, h, plan.num_preconditions), DTYPE, device)?,
             transition: [
@@ -2778,7 +2779,7 @@ fn solve_direct_transcription(
                 ..AdamParams::default()
             },
         )?;
-        let mut duals = Duals::zeros(&plan, &device)?;
+        let mut duals = Duals::zeros(&plan)?;
         let remelt_patience_checks = config.remelt_patience.div_ceil(config.verify_period).max(1);
         let controller_config = ControllerConfig {
             failure_row_weight: FailureWeightSchedule {
