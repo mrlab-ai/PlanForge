@@ -23,10 +23,15 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::cartesian_abstractions::{
+    CartesianAbstractionConfig, CartesianAbstractionGenerator,
+};
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
+use planforge_search::evaluation::ff_heuristic::FfHeuristic;
+use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planforge_search::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
@@ -316,41 +321,46 @@ fn derived_predicate_fixtures_keep_their_optima_and_shape() {
 fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
     for &(name, cost, length) in FIXTURE_OPTIMA {
         let task = fixture_task(name);
-        let registry = StateRegistry::for_task(Arc::new(&task));
         let heuristic = LandmarkCutNumericHeuristic::from_config(
             &task as &dyn AbstractNumericTask,
             LmCutNumericConfig::default(),
         )
         .expect("the default lmcutnumeric config is supported");
-        let mut search = AStarSearch::new(
-            Arc::new(&task),
-            registry,
-            Some(Box::new(heuristic)),
-            None,
-            None,
-        );
-        let result = search.search().expect("lmcutnumeric A* search failed");
-
-        let plan = match (&result.status, &result.plan) {
-            (SearchStatus::Solved(_), Some(plan)) => plan,
-            (status, _) => panic!(
-                "{name}: lmcutnumeric A* must solve the fixture, got {status:?} after \
-                 {} dead ends",
-                result.dead_ends
-            ),
-        };
-        let found = Solution {
-            cost: result
-                .solution_cost
-                .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
-            length: plan.len() as u64,
-        };
+        let found = astar_solution(&task, Box::new(heuristic), &format!("{name}/lmcutnumeric"));
         let expected = Solution { cost, length };
         assert!(
             found.matches(&expected),
             "{name}: lmcutnumeric A* returned {found:?}, expected the optimum {expected:?}; an \
              inadmissible axiom relaxation would overestimate here"
         );
+    }
+}
+
+/// Cost and length of the plan A* returns for `task` under `heuristic`, insisting
+/// that it returns one.
+fn astar_solution<'task>(
+    task: &'task NumericRootTask,
+    heuristic: Box<dyn Heuristic + 'task>,
+    what: &str,
+) -> Solution {
+    let registry = StateRegistry::for_task(Arc::new(task));
+    let mut search = AStarSearch::new(Arc::new(task), registry, Some(heuristic), None, None);
+    let result = search
+        .search()
+        .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));
+
+    let plan = match (&result.status, &result.plan) {
+        (SearchStatus::Solved(_), Some(plan)) => plan,
+        (status, _) => panic!(
+            "{what}: A* must solve the fixture, got {status:?} after {} dead ends",
+            result.dead_ends
+        ),
+    };
+    Solution {
+        cost: result
+            .solution_cost
+            .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
+        length: plan.len() as u64,
     }
 }
 
@@ -366,13 +376,15 @@ fn an_axiom_reading_heuristic_finds_every_fixture_optimum() {
 ///
 /// Substituting correctly is possible — it was done — but it is a second
 /// definition of what the goal means, maintained in one copy per family. So the
-/// families support conjunctive goals only and say so. This test is what pins that
-/// boundary: the same fixture still solves at its optimum under blind A*
-/// ([`derived_predicate_fixtures_keep_their_optima_and_shape`]) and under
-/// `lmcutnumeric` ([`an_axiom_reading_heuristic_finds_every_fixture_optimum`]),
-/// both of which test the goal fact in a state the axiom evaluator has closed.
+/// families support conjunctive goals only and say so.
+///
+/// Both halves of that boundary are here, because the refusal is only acceptable
+/// while the other half holds: blind A*, `ff` and `lmcutnumeric` all still return
+/// the three-action optimum, since each of them tests the goal fact in a state the
+/// axiom evaluator has closed. A refusal that spread to those would be a capability
+/// loss rather than a simplification, and this test is what would say so.
 #[test]
-fn abstractions_refuse_a_negated_derived_goal() {
+fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_else() {
     let name = "negated-goal";
     let task = fixture_task(name);
     assert_eq!(
@@ -408,6 +420,20 @@ fn abstractions_refuse_a_negated_derived_goal() {
         ),
     );
 
+    let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 10_000,
+        ..Default::default()
+    })
+    .expect("the Cartesian generator constructs")
+    .generate(&task);
+    assert_refusal(
+        "the Cartesian abstraction",
+        format!(
+            "{:#}",
+            cartesian.expect_err("a derived goal is not an abstractable goal")
+        ),
+    );
+
     let pdb = GreedyNumericPdbHeuristic::new(
         &task as &dyn AbstractNumericTask,
         GreedyPatternGeneratorConfig::default(),
@@ -416,6 +442,53 @@ fn abstractions_refuse_a_negated_derived_goal() {
         "the greedy numeric PDB",
         pdb.err()
             .expect("a derived goal is not an abstractable goal"),
+    );
+
+    // The other half: every configuration that evaluates the goal against a closed
+    // state still returns the optimum.
+    let &(_, cost, length) = FIXTURE_OPTIMA
+        .iter()
+        .find(|(pinned, _, _)| *pinned == name)
+        .expect("the negated-goal fixture is pinned");
+    let expected = Solution { cost, length };
+    assert_eq!(
+        expected,
+        Solution {
+            cost: 3.0,
+            length: 3
+        }
+    );
+
+    let blind = blind_astar(&task).unwrap_or_else(|| panic!("{name}: blind A* found no plan"));
+    assert!(
+        blind.matches(&expected),
+        "{name}: blind A* returned {blind:?}, expected {expected:?}"
+    );
+
+    let ff = astar_solution(
+        &task,
+        Box::new(FfHeuristic::new(&task as &dyn AbstractNumericTask).expect("ff constructs")),
+        &format!("{name}/ff"),
+    );
+    assert!(
+        ff.matches(&expected),
+        "{name}: ff A* returned {ff:?}, expected {expected:?}"
+    );
+
+    let lmcut = astar_solution(
+        &task,
+        Box::new(
+            LandmarkCutNumericHeuristic::from_config(
+                &task as &dyn AbstractNumericTask,
+                LmCutNumericConfig::default(),
+            )
+            .expect("the default lmcutnumeric config is supported"),
+        ),
+        &format!("{name}/lmcutnumeric"),
+    );
+    assert!(
+        lmcut.matches(&expected),
+        "{name}: lmcutnumeric A* returned {lmcut:?}, expected {expected:?}"
     );
 }
 
