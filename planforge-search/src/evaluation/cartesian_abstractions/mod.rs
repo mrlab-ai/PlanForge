@@ -32,6 +32,7 @@ use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::validate_abstractable_goal;
 
 use super::abstraction_collections::cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
@@ -877,6 +878,7 @@ impl<'task> CartesianSemantics<'task> {
         task: &'task dyn AbstractNumericTask,
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
+        validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         for (op_id, op) in task.get_operators().iter().enumerate() {
             validate_abstraction_operator(task, op, op_id)?;
         }

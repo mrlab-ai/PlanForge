@@ -28,6 +28,7 @@ use crate::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearc
 use crate::evaluation::domain_abstractions::utils::{
     fact_is_hold, get_initial_state, make_prop_state_packer,
 };
+use crate::evaluation::validate_abstractable_goal;
 
 use super::abstract_operator_generator::DomainMapping;
 use super::additive_numeric_views::{
@@ -296,6 +297,7 @@ impl Cegar {
 
     fn run_cegar(&self, task: &dyn AbstractNumericTask) -> Result<CegarOutcome> {
         let config = &self.config;
+        validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         ensure!(
             config.max_abstraction_size > 0,
             "max_abstraction_size must be > 0"

@@ -428,6 +428,10 @@ impl ExplicitVariable {
         }
     }
 
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     pub fn axiom_layer(&self) -> Option<usize> {
         self.axiom_layer
     }

@@ -16,6 +16,7 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 
+use crate::evaluation::validate_abstractable_goal;
 use crate::task_restriction::validate_restricted_task;
 
 pub type EvaluatedState = (Vec<usize>, Vec<f64>, Vec<u64>);
@@ -103,6 +104,11 @@ pub enum ProjectedTaskBuildError {
     UnrestrictedTask {
         reason: String,
     },
+    /// The base task's goal names a variable only the axioms write; see
+    /// [`validate_abstractable_goal`](crate::evaluation::validate_abstractable_goal).
+    UnabstractableGoal {
+        reason: String,
+    },
     InvalidRegularVarId {
         provided: usize,
         len: usize,
@@ -124,7 +130,9 @@ pub enum ProjectedTaskBuildError {
 impl fmt::Display for ProjectedTaskBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnrestrictedTask { reason } => write!(formatter, "{reason}"),
+            Self::UnrestrictedTask { reason } | Self::UnabstractableGoal { reason } => {
+                write!(formatter, "{reason}")
+            }
             Self::InvalidRegularVarId { provided, len } => write!(
                 formatter,
                 "invalid projected propositional variable {provided}; task has {len} variables"
@@ -451,6 +459,8 @@ impl<'task> ProjectedTask<'task> {
     ) -> Result<Self, ProjectedTaskBuildError> {
         validate_restricted_task(base)
             .map_err(|reason| ProjectedTaskBuildError::UnrestrictedTask { reason })?;
+        validate_abstractable_goal(base)
+            .map_err(|reason| ProjectedTaskBuildError::UnabstractableGoal { reason })?;
         let num_vars = base.variables().len();
         let num_numeric_vars = base.numeric_variables().len();
 

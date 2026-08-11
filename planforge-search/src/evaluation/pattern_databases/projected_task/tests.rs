@@ -38,7 +38,7 @@ fn restricted_sample_task() -> NumericRootTask {
             NumericVariable::new("limit".to_string(), NumericType::Constant, None),
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
         ],
-        goals: vec![ExplicitFact::propositional(2, 0)],
+        goals: vec![ExplicitFact::propositional(1, 0)],
         mutexes: vec![],
         state: vec![0, 2, 1],
         numeric_state: vec![10.0, 0.0],
@@ -350,6 +350,10 @@ fn projection_closes_over_selected_comparison_operands() {
 /// that refutes the derived atom when the comparison fails, and `unproven` needs
 /// a second literal — `blocker=0`, which the initial state does not hold — on top
 /// of the same verdict.
+///
+/// The goal is the comparison itself, which is what a numeric goal compiles to
+/// and what an abstraction accepts; the derived atoms above it are read by the
+/// axiom closure, not by the goal.
 fn task_reading_a_failed_comparison() -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
         version: 1,
@@ -371,7 +375,10 @@ fn task_reading_a_failed_comparison() -> NumericRootTask {
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
             NumericVariable::new("limit".to_string(), NumericType::Constant, None),
         ],
-        goals: vec![ExplicitFact::propositional(3, 0)],
+        goals: vec![ExplicitFact::propositional(
+            1,
+            ConditionValue::True.as_usize(),
+        )],
         mutexes: vec![],
         // `blocker` is 1, so the `blocker=0` condition of `unproven` never holds.
         state: vec![0, ConditionValue::False.as_usize(), 1, 1, 1],
@@ -454,12 +461,13 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
         metric: Metric::new(true, None),
         variables: vec![
             variable("condition", None),
-            variable("derived-goal", Some(0)),
+            variable("derived", Some(0)),
+            variable("target", None),
         ],
         numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(1, 0)],
+        goals: vec![ExplicitFact::propositional(2, 0)],
         mutexes: vec![],
-        state: vec![0, 1],
+        state: vec![0, 1, 1],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![PropositionalAxiom::new(
@@ -482,7 +490,10 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
     )
     .unwrap();
 
+    // Only `derived`: the pattern holds it, and the goal names `target`, which
+    // the pattern omits, so the projected task keeps no goal at all.
     assert_eq!(projected.get_num_variables(), 1);
+    assert_eq!(projected.get_num_goals(), 0);
     assert_eq!(projected.get_num_axioms(), 1);
     assert!(projected.axioms()[0].conditions().is_empty());
 }

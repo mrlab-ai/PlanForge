@@ -1016,24 +1016,21 @@ fn shortest_path_dependency_positions_survive_swap_removal() {
     assert!(shortest_paths.dependents[2].is_empty());
 }
 
+/// A goal on a comparison variable is refined until the comparison holds.
+///
+/// `x-at-limit` is the condition variable of `x >= limit`, which is what the
+/// translator emits for the numeric goal `(>= (x) (limit))`, and reaching it
+/// takes two increments. Nothing about the goal is propositional, so the
+/// refinement has to come from the comparison's operands.
 #[test]
-fn refines_through_propositional_axiom_goal_support() {
-    let variables = vec![
-        ExplicitVariable::new(
-            2,
-            "x-at-limit".into(),
-            vec!["true".into(), "false".into()],
-            Some(0),
-            1,
-        ),
-        ExplicitVariable::new(
-            2,
-            "goal".into(),
-            vec!["true".into(), "false".into()],
-            Some(1),
-            1,
-        ),
-    ];
+fn refines_through_a_comparison_goal() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "x-at-limit".into(),
+        vec!["true".into(), "false".into()],
+        Some(0),
+        1,
+    )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("limit".into(), NumericType::Constant, None),
@@ -1057,17 +1054,12 @@ fn refines_through_propositional_axiom_goal_support() {
         metric: Metric::new(true, None),
         variables,
         numeric_variables,
-        goals: vec![ExplicitFact::propositional(1, 0)],
+        goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![1, 1],
+        state: vec![1],
         numeric_state: vec![0.0, 2.0, 1.0],
         operators: vec![increment],
-        axioms: vec![PropositionalAxiom::new(
-            vec![ExplicitFact::propositional(0, 0)],
-            1,
-            1,
-            0,
-        )],
+        axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
             0,
             0,
@@ -1472,8 +1464,16 @@ fn assignment_outside_target_is_not_a_cartesian_transition() {
     );
 }
 
+/// A goal on a derived variable is refused, by name.
+///
+/// The goal is `derived=default`: the derived variable at the value its axioms
+/// leave it at when none of them fires. No abstract operator writes a derived
+/// variable, so an abstraction has nothing to reach for such a goal -- it used to
+/// substitute the axiom body and get the answer right only for the shapes it had
+/// been taught. `validate_abstractable_goal` refuses the task instead; blind,
+/// `ff` and `lmcutnumeric` still solve it.
 #[test]
-fn refines_failed_default_derived_goal() {
+fn a_derived_goal_is_refused_by_name() {
     let variables = vec![
         ExplicitVariable::new(2, "base".into(), vec!["on".into(), "off".into()], None, 0),
         ExplicitVariable::new(
@@ -1512,7 +1512,19 @@ fn refines_failed_default_derived_goal() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    assert_solved_with_h(&task, 1.0);
+    let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 64,
+        ..Default::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .expect_err("a derived goal is not an abstractable goal");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("abstractions support conjunctive goals only")
+            && message.contains("derived"),
+        "the refusal has to name what it refuses, got: {message}"
+    );
 }
 
 #[test]
