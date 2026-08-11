@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Credits &amp; licence — PlanForge</title>
-<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of a numeric extension of Fast Downward, the people who wrote it, the references the implementation follows, and the licence terms for the code and for this website.">
+<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of Numeric Fast Downward, itself a fork of Fast Downward, the people and publications behind both, the references the implementation follows, and the licence terms for the code and for this website.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -34,28 +34,100 @@
 
 <h2 id="lineage">Where PlanForge comes from</h2>
 
-<p>PlanForge began as a Rust port of a numeric extension of
-<a href="https://www.fast-downward.org/">Fast Downward</a>. That is the plain
-description and it is worth stating before anything else, because the debt is
-direct rather than distant.</p>
+<p>PlanForge began as a Rust port of
+<a href="https://github.com/dgnad/numeric-fast-downward">Numeric Fast
+Downward</a>, which is itself a fork of
+<a href="https://www.fast-downward.org/">Fast Downward</a>. The
+line of descent runs in that order, and naming only the last link would
+misdescribe it:</p>
+
+<p class="fragment"><strong>PlanForge</strong> &larr; <strong>Numeric Fast
+Downward</strong> &larr; <strong>Fast Downward</strong></p>
+
+<p>The middle link is the one that matters most here. Mainline Fast Downward has
+no numeric support at all: numeric fluents, numeric conditions, comparison
+axioms and the numeric heuristics that this planner is mostly made of come from
+Numeric Fast Downward, not from mainline. So Numeric Fast Downward is the direct
+predecessor, and mainline is its ancestor rather than ours.</p>
 
 <p>What the port kept is more than an idea. The task representation, the SAS+
 translation pipeline, the shape of the statistics block the planner prints, and
-several of the numeric heuristics follow the original closely, and the code says
-so where it matters: numeric LM-cut and its helpers carry explicit parity
-comments marking the places where the Rust behaviour is deliberately identical to
-the reference implementation, quirks included, so that a difference in a plan cost
-can be attributed rather than guessed at. Where the two implementations do
-disagree, the disagreement is treated as a bug in one of them and tracked, not
-quietly normalised away.</p>
+several of the numeric heuristics follow the predecessor closely, and the code
+says so where it matters: numeric LM-cut, the numeric bounds, the successor
+generator and the abstraction machinery carry explicit
+<code>PARITY(numeric-fd)</code> comments marking the places where the Rust
+behaviour is deliberately identical to the reference implementation, quirks
+included, so that a difference in a plan cost can be attributed rather than
+guessed at. Where the two implementations do disagree, the disagreement is
+treated as a bug in one of them and tracked, not quietly normalised away.</p>
+
+<h3 id="nfd">Numeric Fast Downward</h3>
+
+<p>Numeric Fast Downward is published at
+<a href="https://github.com/dgnad/numeric-fast-downward">github.com/dgnad/numeric-fast-downward</a>,
+and an earlier public tree of the same project is at
+<a href="https://github.com/Kurorororo/numeric-fast-downward">github.com/Kurorororo/numeric-fast-downward</a>;
+both are under the GNU GPL v3. The particular working tree PlanForge was ported
+from is a private repository, so it is not linked here — at the file the port
+follows most closely, it is identical to the second of those two.</p>
+
+<p>Its history begins with an initial commit by <strong>Chiara Piacentini</strong> in
+September 2020 and continues to the end of 2024; by commit count the bulk of the
+work in that tree is by <strong>Ryo Kuroiwa</strong> and
+<strong>Daniel Gnad</strong>, with further contributions from
+<strong>Eyal Weiss</strong> and <strong>Misha Gruntov</strong>. That history is
+squashed, so it records who worked on the tree but not the full authorship of
+what came before it; the credit above should be read as "these are the people the
+repository names", not as a complete author list for numeric Fast Downward as a
+body of work.</p>
+
+<p>Its numeric heuristics implement published results. These are the references
+carried in Numeric Fast Downward's own plugin documentation — that is, the papers
+the predecessor's code cites for itself, transcribed rather than inferred:</p>
+
+<ul>
+  <li>C. Piacentini, M. P. Castro, A. A. Ciré and J. C. Beck, “Linear and
+    Integer Programming-Based Heuristics for Cost-Optimal Numeric Planning”,
+    <em>AAAI</em>, 2018, pp. 6254–6261.</li>
+  <li>C. Piacentini, M. P. Castro, A. A. Ciré and J. C. Beck, “Compiling Optimal
+    Numeric Planning to Mixed Integer Linear Programming”, <em>ICAPS</em>, 2018,
+    pp. 383–387.</li>
+  <li>E. Scala, P. Haslum, D. Magazzeni and S. Thiébaux, “Landmarks for Numeric
+    Planning Problems”, <em>IJCAI</em>, 2017.</li>
+  <li>E. Scala, P. Haslum, S. Thiébaux and M. Ramirez, “Subgoaling Techniques for
+    Satisficing and Optimal Numeric Planning”, <em>Journal of Artificial
+    Intelligence Research</em> 68, 2020, pp. 691–752.</li>
+</ul>
+
+<p class="note">Not every one of these corresponds to something PlanForge
+implements — the mixed-integer-programming compilations in particular have no
+counterpart here. They are listed because they are the numeric-planning results
+the predecessor is built on, and the port inherits its design from that work.
+Numeric Fast Downward's own source does not name a publication for its numeric
+LM-cut, which is the heuristic PlanForge follows most closely, so no citation is
+offered for it here rather than a guessed one.</p>
+
+<h3 id="mainline">What came from current mainline Fast Downward</h3>
+
+<p>The translator is not a port of the fork's 2015-era translator. Where mainline
+Fast Downward has since changed how translation works, PlanForge follows the
+current design, and the source cites the mainline issues it is matching:
+<code>issue453</code> and <code>issue454</code> for axiom handling — every axiom
+proves its head, and default-value axioms move into the SAS task — and
+<code>issue879</code> for keeping invariant-candidate order deterministic so that
+the SAS variables do not depend on the run. The strongly-connected-component
+analysis is Tarjan's algorithm written iteratively, for the same reason mainline
+made that change: recursion depth on large tasks. This is why the translator
+resembles current Fast Downward more than it resembles the fork it descends
+from.</p>
 
 <p>What the port changed is the whole of the implementation. There is no C++ and
 no Python in the pipeline: the PDDL reader, the grounder, the invariant analysis,
 the search engines, the abstractions and the state registry are Rust, and several
 capabilities on this site — the Cartesian abstractions, the saturated cost
-partitionings, the gradient engine — have no counterpart upstream. Being a
-derivative work, PlanForge carries the original's copyleft licensing forward, as
-described <a href="#licence">below</a>.</p>
+partitionings, the gradient engine — have no counterpart in either predecessor.
+Being a derivative work all the same, PlanForge carries its predecessors'
+copyleft licensing forward, as described <a href="#licence">below</a>.</p>
 
 <h2 id="people">People</h2>
 
@@ -157,6 +229,21 @@ the GPL v3 plus additional permissions for linking. The repository's
 <code>LICENSE</code> file carries the GNU General Public License v3 text; the
 Lesser GPL is defined on top of it and both are linked above. If you are deciding
 what you may do, read the crate manifest for the crate you actually depend on.</p>
+
+<h3 id="upstream-licence">Why it is copyleft</h3>
+
+<p>The obligation is inherited, not chosen. Fast Downward is distributed under the
+GNU General Public License v3, Numeric Fast Downward carries the same licence —
+its public repositories ship the GPL v3 text and are marked GPL-3.0 — and
+PlanForge is a port of that fork. The copyleft flows down the whole chain, which
+is why the licence table above is GPL and LGPL rather than something more
+permissive.</p>
+
+<p class="note">One detail, for completeness: the private working tree PlanForge
+was actually ported from carries no top-level licence file of its own. The
+statement above therefore rests on the licence of the public Numeric Fast Downward
+repositories, which is where that code is published, rather than on a declaration
+inside the tree itself.</p>
 
 <h3>This website</h3>
 

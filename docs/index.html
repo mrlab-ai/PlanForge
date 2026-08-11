@@ -38,42 +38,80 @@ admissible heuristic the plan it returns is cost-optimal. It is one binary, and
 every configuration described on this site is reachable from that binary.</p>
 
 <p>It is developed by <a href="https://mrlab.ai">MRlab</a>, the Machine
-Reasoning Lab at Linköping University, and it began as a Rust port of a numeric
-extension of <a href="https://www.fast-downward.org/">Fast Downward</a>. That
-lineage is described on the <a href="about.html">credits page</a>, together with
-the licence terms it carries with it.</p>
+Reasoning Lab at Linköping University, and it began as a Rust port of
+<a href="https://github.com/dgnad/numeric-fast-downward">Numeric Fast
+Downward</a>, itself a fork of
+<a href="https://www.fast-downward.org/">Fast Downward</a>. That lineage
+is described on the <a href="about.html#lineage">credits page</a>, together with
+the people and publications behind it and the licence terms it carries with
+it.</p>
 
 <h2 id="what-it-does">What it does</h2>
 
-<ul>
-  <li><strong>Input.</strong> A PDDL domain and problem pair, or a single
-    pre-translated SAS+ file. Translation and grounding happen in process: the
-    planner never writes SAS+ text on the way to its own search. A separate
-    <code>planforge-translator</code> binary exists for when the text itself is
-    what you want.</li>
-  <li><strong>Numbers.</strong> Numeric fluents in preconditions, goals and
-    effects; comparisons and their negations; the five PDDL assignment operators;
-    arithmetic expressions over fluents and constants. See
-    <a href="pddl.html">Supported PDDL</a> for the exact list and for the
-    limits.</li>
-  <li><strong>Search.</strong> A* for optimal planning, greedy best-first search
-    when a plan matters more than its cost, and a two-heuristic A* variant that
-    orders the open list with a cheap admissible heuristic and confirms with an
-    expensive one.</li>
-  <li><strong>Heuristics.</strong> Blind, a numeric LM-cut, numeric pattern
-    databases, CEGAR-built domain abstractions and Cartesian abstractions,
-    combined by maximisation, the canonical combination, or saturated cost
-    partitioning; an FF-style relaxed-plan heuristic for the non-admissible
-    case. LP-backed heuristics (numeric potentials, post-hoc optimisation)
-    require an optional CPLEX build.</li>
-  <li><strong>Output.</strong> The plan is printed and written to
-    <code>sas_plan</code> in the working directory, followed by a statistics
-    block in the same shape Fast Downward prints.</li>
-  <li><strong>Budgets.</strong> <code>--max-time</code> and
-    <code>--max-memory</code> are enforced by the planner itself, so a task that
-    runs out of either exits with a plain report instead of being killed from
-    outside.</li>
-</ul>
+<p>PlanForge has the same two-part structure as Fast Downward and its numeric
+extension: a <strong>translator</strong> that turns PDDL into a finite-domain
+SAS<sup>+</sup> task, and a <strong>planner</strong> that searches that task
+under a choice of heuristics.</p>
+
+<h3 id="translator">1. The translator: PDDL to SAS<sup>+</sup></h3>
+
+<p>It reads a domain and problem pair, normalises away the constructs grounding
+cannot take directly, computes invariants to find finite-domain variables, and
+grounds the result. The fragment it handles correctly is, in terms of
+<code>:requirements</code> flags:</p>
+
+<p class="fragment"><code>:strips</code> <code>:typing</code>
+<code>:negative-preconditions</code> <code>:action-costs</code>
+<code>:numeric-fluents</code> <code>:derived-predicates</code></p>
+
+<p>plus two partial levels: <code>:disjunctive-preconditions</code> is compiled
+away in action preconditions but nowhere else, and
+<code>:conditional-effects</code> covers <code>when</code> but not
+<code>forall</code>. That is PDDL 2.1 level 1 — propositional and numeric,
+without time — plus PDDL 2.2 derived predicates.</p>
+
+<div class="callout">
+  <h3>It is not ADL, and the gap is not loud</h3>
+  <p>Quantified preconditions and universal effects are <em>parsed and then
+    ignored</em>. A <code>forall</code> precondition is treated as true, a
+    <code>forall</code> effect is dropped, an <code>exists</code> precondition
+    silently removes the action, and <code>or</code> outside an action
+    precondition — in a goal, or in a <code>:derived</code> body — is treated as
+    true. So a task using them does not get an error; it gets a wrong answer,
+    which on the first and last of those can be an invalid plan.</p>
+  <p><strong>Do not declare <code>:adl</code> and expect it to hold.</strong>
+    The declared requirement list is never read, so no flag you write is checked
+    against what is implemented.
+    <a href="pddl.html#requirements">Supported PDDL</a> lists every case, with the
+    input that demonstrates it, and separates the constructs that fail loudly from
+    the ones that fail quietly.</p>
+</div>
+
+<p>Translation and grounding happen in process, so the planner never writes
+SAS<sup>+</sup> text on the way to its own search. A separate
+<code>planforge-translator</code> binary emits the text when the text itself is
+what you want; it writes format version 4, which is Fast Downward's SAS<sup>+</sup>
+layout extended with numeric variables, comparison axioms and assignment
+axioms.</p>
+
+<h3 id="planner">2. The planner: SAS<sup>+</sup> to a plan</h3>
+
+<p>Three search engines — A*, greedy best-first search, and an A* variant that
+orders the open list with a cheap heuristic and confirms with an expensive one —
+over a heuristic library that includes blind search, numeric LM-cut, numeric
+pattern databases, CEGAR-built domain and Cartesian abstractions with
+maximising, canonical and saturated-cost-partitioning combinations, and an
+FF-style relaxed-plan heuristic. Most of the library is admissible and
+<a href="search.html#heuristics">the table on the search page says which</a>,
+because that is what decides whether a returned plan is optimal. LP-backed
+heuristics require an optional CPLEX build.</p>
+
+<p>The plan is printed and written to <code>sas_plan</code> in the working
+directory, followed by a statistics block in the same shape Fast Downward prints;
+<a href="search.html#output">Output and exit codes</a> covers what a script
+should test for. <code>--max-time</code> and <code>--max-memory</code> are
+enforced by the planner itself, so a task that runs out of either exits with a
+report instead of being killed from outside.</p>
 
 <p>The current version is <code>0.1.0</code>. The admissible paths (A* with
 blind, numeric LM-cut, pattern databases, and the canonical and
@@ -99,36 +137,9 @@ immediately. This one is a numeric delivery task with two robots:</p>
     tests/assets/numeric-pddl-files/delivery/domain.pddl \
     tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code></pre>
 
-<p>Real output from that command, with the grounding log and the intermediate
-search progress lines removed at the points marked <code>[...]</code>:</p>
-
-<pre><code>2026-08-11T12:36:13.053Z  INFO Starting A* search with HeuristicSpec { name: "lmcutnumeric", args: [] }, mpd=false...
-2026-08-11T12:36:13.054Z  INFO Initial heuristic value for lmcutnumeric: 22
-[...]
-2026-08-11T12:36:13.079Z  INFO Solution found!
-2026-08-11T12:36:13.079Z  INFO   1: pick item2 rooma right1 bot1
-2026-08-11T12:36:13.079Z  INFO   2: pick item3 rooma left2 bot2
-2026-08-11T12:36:13.079Z  INFO   3: pick item1 rooma left1 bot1
-2026-08-11T12:36:13.079Z  INFO   4: move bot1 rooma roomc
-2026-08-11T12:36:13.079Z  INFO   5: drop item1 roomc left1 bot1
-2026-08-11T12:36:13.079Z  INFO   6: pick item4 rooma right2 bot2
-2026-08-11T12:36:13.079Z  INFO   7: move bot2 rooma roomb
-2026-08-11T12:36:13.079Z  INFO   8: drop item3 roomb left2 bot2
-2026-08-11T12:36:13.079Z  INFO   9: drop item4 roomb right2 bot2
-2026-08-11T12:36:13.079Z  INFO   10: drop item2 roomc right1 bot1
-2026-08-11T12:36:13.079Z  INFO Plan length: 10 step(s).
-2026-08-11T12:36:13.079Z  INFO Plan cost: 22.000000
-2026-08-11T12:36:13.079Z  INFO Expanded 73 state(s).
-2026-08-11T12:36:13.079Z  INFO Reopened 0 state(s).
-2026-08-11T12:36:13.079Z  INFO Evaluated 593 state(s).
-2026-08-11T12:36:13.079Z  INFO Evaluations: 597
-2026-08-11T12:36:13.079Z  INFO Generated 848 state(s).
-2026-08-11T12:36:13.079Z  INFO Dead ends: 0 state(s).
-2026-08-11T12:36:13.079Z  INFO Number of registered states: 593
-2026-08-11T12:36:13.079Z  INFO Search time: 0.025882s</code></pre>
-
-<p>The same plan is left in <code>sas_plan</code>, one grounded action per line
-in the usual parenthesised form:</p>
+<p>It prints the plan, a statistics block and its search time, and leaves the
+plan in <code>sas_plan</code>, one grounded action per line in the usual
+parenthesised form:</p>
 
 <pre><code>(pick item2 rooma right1 bot1)
 (pick item3 rooma left2 bot2)
@@ -141,15 +152,20 @@ in the usual parenthesised form:</p>
 (drop item4 roomb right2 bot2)
 (drop item2 roomc right1 bot1)</code></pre>
 
-<p>Swap the heuristic and the cost stays at 22 while the work changes by three
-orders of magnitude. Every row below is a real run of the command above on the
-same fixture, with only <code>--search</code> altered:</p>
+<h3 id="optimal-configurations">Optimal configurations</h3>
+
+<p>Swapping the heuristic changes the work by three orders of magnitude and does
+not change the cost. Every row is a real run of the command above on the same
+fixture, with only <code>--search</code> altered:</p>
 
 <div class="scroll">
 <table>
-  <caption>tests/assets/numeric-pddl-files/delivery/pfile1.pddl, default build,
-    one run per row. Expansion counts are deterministic and reproduce exactly;
-    the times are from one machine and are indicative only.</caption>
+  <caption>A* with an admissible heuristic on
+    <code>tests/assets/numeric-pddl-files/delivery/pfile1.pddl</code>, default
+    build, one run per row. The cost is the same in every row because each of
+    these configurations is guaranteed to return an optimal plan, so agreement
+    here is a property of the configurations and not a coincidence of the
+    instance. Expansion counts are deterministic and reproduce exactly.</caption>
   <thead>
     <tr><th scope="col"><code>--search</code></th><th scope="col">Plan cost</th><th scope="col">Expanded</th><th scope="col">Evaluated</th></tr>
   </thead>
@@ -158,14 +174,42 @@ same fixture, with only <code>--search</code> altered:</p>
     <tr><td><code>astar(domain_abstraction())</code></td><td class="num">22</td><td class="num">6 657</td><td class="num">16 241</td></tr>
     <tr><td><code>astar(lmcutnumeric())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td></tr>
     <tr><td><code>astar_fs(fast=lmcutnumeric(), slow=domain_abstraction())</code></td><td class="num">22</td><td class="num">73</td><td class="num">593</td></tr>
-    <tr><td><code>gbfs(ff())</code></td><td class="num">22</td><td class="num">11</td><td class="num">104</td></tr>
   </tbody>
 </table>
 </div>
 
-<p class="note">The last row is greedy best-first search, which offers no
-optimality guarantee. On this instance it happened to return a plan of optimal
-cost; on another instance it may not.</p>
+<h3 id="satisficing-configurations">Satisficing configurations</h3>
+
+<p>These are not comparable to the table above on cost, so they are not in it.
+Greedy best-first search does not order the open list on <code>f = g + h</code>
+and <code>ff</code> is not admissible; either one alone is enough to remove the
+optimality guarantee, and <code>gbfs(ff())</code> has neither. The cost it
+returns is an upper bound on the optimum and nothing more:</p>
+
+<div class="scroll">
+<table>
+  <caption><code>gbfs(ff())</code> against the optimum on two fixtures.
+    <strong>The "plan cost" column carries no optimality guarantee</strong>; the
+    optimum beside it is from <code>astar(lmcutnumeric())</code> on the same
+    instance.</caption>
+  <thead>
+    <tr><th scope="col">Instance</th><th scope="col">Plan cost<br><span class="note">(not guaranteed optimal)</span></th><th scope="col">Optimal cost</th><th scope="col">Expanded</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>delivery/pfile1.pddl</code></td><td class="num">22</td><td class="num">22</td><td class="num">11</td></tr>
+    <tr><td><code>expedition/pfile1.pddl</code></td><td class="num">54</td><td class="num">26</td><td class="num">2 786</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The two rows are the whole point. On <code>delivery</code> the returned cost
+happens to equal the optimum, after 11 expansions instead of 73 — which is why
+it is tempting to read a satisficing run as if it were an optimal one. On
+<code>expedition</code> the same configuration returns 54 against an optimum of
+26, so the plan is more than twice as expensive as necessary; it also expands
+2 786 states against A*'s 3 583, so it did not even buy much search. Neither
+number is a defect: an inadmissible heuristic under a greedy search is entitled
+to both results, and only the guarantee tells you which you are looking at.</p>
 
 <h2 id="pre-translated">Running a pre-translated task</h2>
 

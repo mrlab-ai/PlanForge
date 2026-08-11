@@ -215,6 +215,13 @@ dd {
   font-size: 0.95rem;
 }
 
+/* A run of inline `code` chips, e.g. a list of `:requirements` flags. Each chip
+   is already boxed, so the only thing needed is room to wrap without the boxes
+   touching. Colours are untouched. */
+.fragment {
+  line-height: 2;
+}
+
 a {
   color: var(--link);
   text-decoration-thickness: 1px;
@@ -316,6 +323,15 @@ th {
 td.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* A cell whose content is a negative result. `--accent` is the palette colour
+   already used for the wordmark and the callout rule, so contrast is unchanged.
+   The meaning is carried by the cell's own words ("Ignored", "Not supported"),
+   never by the colour alone. */
+td.bad {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* --- Callout used for limitations and warnings. */

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Supported PDDL — PlanForge</title>
-<meta name="description" content="Which PDDL constructs PlanForge reads: numeric fluents, comparisons, the five assignment operators, conditional and universal effects, derived predicates and plan metrics, together with the fragment's honest limits.">
+<meta name="description" content="Which PDDL constructs PlanForge reads: the accepted :requirements flags, numeric fluents, comparisons, the five assignment operators, conditional effects, derived predicates and plan metrics, the SAS+ sections it emits, and the constructs it accepts and then ignores.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -34,9 +34,88 @@
 
 <p class="lead">PlanForge reads a grounded fragment of numeric PDDL. This page
 lists what the translator accepts, construct by construct, and then the limits.
-The limits are not hidden at the bottom as a formality: reaching one is normally
-an explicit error naming the construct, not a silent reinterpretation of your
-task.</p>
+Some of those limits are reached by an explicit error naming the construct.
+Others are not: a few constructs are parsed and then quietly ignored, and those
+are listed first, because they are the ones that can cost you a correct
+answer.</p>
+
+<h2 id="requirements">Requirement levels</h2>
+
+<p>The accepted fragment is PDDL 2.1 level 1 — propositional and numeric,
+without time — plus PDDL 2.2 derived predicates. Stated as
+<code>:requirements</code> flags, so that it is checkable:</p>
+
+<div class="scroll">
+<table>
+  <caption>Each row was checked by running the translator on a task that uses the
+    construct, except <code>:duration-inequalities</code>,
+    <code>:continuous-effects</code> and <code>:goal-utilities</code>, for which
+    no handling exists anywhere in the code and the row is established by reading
+    it. "Ignored" means the construct parses and then has no effect, which is not
+    the same as being rejected.</caption>
+  <thead>
+    <tr><th scope="col">Flag</th><th scope="col">Status</th><th scope="col">Detail</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>:strips</code></td><td>Supported</td><td>The base language.</td></tr>
+    <tr><td><code>:typing</code></td><td>Supported</td><td>Including type hierarchies. Types are compiled into predicates before grounding. <code>(either a b)</code> is <em>not</em> read and fails on the type token.</td></tr>
+    <tr><td><code>:negative-preconditions</code></td><td>Supported</td><td><code>(not (p ?x))</code> in preconditions, goals and effect conditions. Only around a single atom or a comparison — <code>(not (and …))</code> and <code>(not (or …))</code> fail.</td></tr>
+    <tr><td><code>:action-costs</code></td><td>Supported</td><td><code>(increase (total-cost) …)</code> at the top level of an effect. Costs must be non-negative integers; a non-integer cost is rejected.</td></tr>
+    <tr><td><code>:numeric-fluents</code> / <code>:fluents</code></td><td>Supported</td><td>The main extension. See <a href="#effects">Effects</a> and <a href="#conditions">Conditions</a>.</td></tr>
+    <tr><td><code>:derived-predicates</code></td><td>Supported</td><td><code>(:derived …)</code>, layered and recursive, and <code>exists</code> works inside a derived body. Several <code>:derived</code> blocks for the same head act as a disjunction, which is the working way to write one — an <code>or</code> inside a single body is not. 18 fixtures cover this.</td></tr>
+    <tr><td><code>:equality</code></td><td>Partial</td><td><code>(not (= ?x ?y))</code> works: every object is made equal to itself in the initial state, so inequality is statically decided. A <em>positive</em> <code>(= ?x ?y)</code> between objects is misread as a numeric comparison and removes the action.</td></tr>
+    <tr><td><code>:disjunctive-preconditions</code></td><td>Partial</td><td>An <code>or</code> in an <strong>action precondition</strong> is compiled away correctly, by splitting the action into one copy per disjunct. An <code>or</code> anywhere else is ignored — see below.</td></tr>
+    <tr><td><code>:conditional-effects</code></td><td>Partial</td><td><code>when</code> guarding a single propositional or numeric effect works. A conjunctive consequent, <code>(when C (and A B))</code>, fails.</td></tr>
+    <tr><td><code>:universal-preconditions</code>, <code>:existential-preconditions</code>, <code>:quantified-preconditions</code></td><td class="bad">Ignored</td><td>Not implemented. See the warning below.</td></tr>
+    <tr><td><code>:adl</code></td><td class="bad">Not supported</td><td>ADL requires quantified preconditions and universal effects. Both are ignored rather than implemented, so this fragment is not ADL whatever the flag says — and since the flag is not read, declaring it changes nothing.</td></tr>
+    <tr><td><code>:object-fluents</code></td><td>Rejected</td><td>A typed function return is parsed and discarded, and an object-valued entry in <code>:init</code> is then an explicit error: <code>numeric init fact for PNE loc-of(t1) must assign a numeric constant, got PNE p1()</code>.</td></tr>
+    <tr><td><code>:durative-actions</code>, <code>:duration-inequalities</code>, <code>:continuous-effects</code>, <code>:timed-initial-literals</code></td><td>Not supported</td><td>Nothing temporal. A <code>(:durative-action …)</code> block is an unknown section: it is skipped with a warning, leaving the domain with no actions, and translation then fails on the first unreachable goal atom. A timed initial literal, <code>(at 5 (p))</code> in <code>:init</code>, fails on its nested literal.</td></tr>
+    <tr><td><code>:preferences</code>, <code>:constraints</code></td><td>Not supported</td><td>No PDDL 3. A <code>(preference …)</code> in a goal fails. A problem-level <code>(:constraints …)</code> is dropped with no message at all, so the plan silently ignores it.</td></tr>
+    <tr><td><code>:goal-utilities</code></td><td>Not supported</td><td>No soft goals and no utilities.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <h3>The declared requirement list is never checked</h3>
+  <p><code>:requirements</code> is parsed for its shape and dropped; nothing
+    downstream consults it. So the flags above are a description of the
+    implementation, not something the planner enforces, and declaring
+    <code>:adl</code> or <code>:durative-actions</code> produces no complaint by
+    itself. What is supported is decided construct by construct, where the
+    construct is used.</p>
+</div>
+
+<h2 id="quiet-failures">Constructs that fail quietly</h2>
+
+<div class="callout">
+  <h3>Four constructs are parsed and then ignored</h3>
+  <p>These are bugs, not design decisions, and they are the reason this page
+    leads with them. In each case the input is accepted, no warning is printed,
+    and the task that gets grounded is not the task you wrote. Each row was
+    confirmed by running the planner:</p>
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th scope="col">Construct</th><th scope="col">What happens</th><th scope="col">Consequence</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>forall</code> in a precondition, goal or axiom body</td><td>Treated as <em>true</em>. The quantifier-removal pass rebuilds the quantifier instead of expanding it, and nothing downstream reads it.</td><td class="bad">An invalid plan. An action whose <code>forall</code> precondition is false is applied anyway.</td></tr>
+      <tr><td><code>or</code> outside an action precondition — in a goal, a <code>:derived</code> body or an effect condition</td><td>Treated as <em>true</em>. Only action preconditions are split into disjuncts, and a disjunctive goal is replaced by a goal-reachability axiom before that split would see it. For an axiom, write one <code>:derived</code> block per disjunct instead; that works.</td><td class="bad">An invalid plan. A disjunctive goal is reported solved by the empty plan.</td></tr>
+      <tr><td><code>forall</code> in an effect</td><td>Dropped. The effect's quantified parameters are never bound to objects, so the effect atom keeps its variable and matches nothing.</td><td>A missed plan: the search reports no solution where one exists.</td></tr>
+      <tr><td><code>exists</code> in an <em>action</em> precondition</td><td>Removes the action. The bound variables are appended to the action's parameters without updating its external-parameter count, so no instance of it survives grounding. (Inside a <code>:derived</code> body, <code>exists</code> is fine.)</td><td>A missed plan.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>A fifth, narrower case: <code>imply</code> is correct when its antecedent is
+    a single literal, which is the usual way it is written, but with a compound
+    antecedent the antecedent is not negated — <code>(imply (and (p) (q)) (r))</code>
+    is compiled as <code>(p) ∧ (q) ∨ (r)</code> rather than
+    <code>¬((p) ∧ (q)) ∨ (r)</code>.</p>
+  <p>Until these are fixed, the safe reading is the flag list above: the
+    translator is a STRIPS-plus-numbers-plus-axioms translator, and quantifiers
+    belong only inside <code>:derived</code> bodies.</p>
+</div>
 
 <h2 id="input">Input</h2>
 
@@ -76,7 +155,7 @@ file reports the same 49 propositional and 12 numeric variables, expands the sam
     <tr><th scope="col">Section</th><th scope="col">Handling</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>:requirements</code></td><td>Accepted and ignored. The planner does not gate on the declared requirement flags; what it supports is what it parses, and an unsupported construct fails where it appears.</td></tr>
+    <tr><td><code>:requirements</code></td><td>Accepted and ignored; see <a href="#requirements">Requirement levels</a>. The planner does not gate on the declared flags, so what it supports is decided construct by construct — usually where the construct appears, but for the four cases under <a href="#quiet-failures">quiet failures</a>, not at all.</td></tr>
     <tr><td><code>:types</code></td><td>Read, including type hierarchies. Untyped parameters default to <code>object</code>.</td></tr>
     <tr><td><code>:constants</code></td><td>Read.</td></tr>
     <tr><td><code>:predicates</code></td><td>Read.</td></tr>
@@ -95,34 +174,52 @@ file reports the same 49 propositional and 12 numeric variables, expands the sam
 <p>In preconditions, goals, axiom bodies and effect conditions:</p>
 
 <ul>
-  <li><code>and</code>, <code>or</code>, <code>not</code>,
-    <code>imply</code>.</li>
-  <li><code>forall</code> and <code>exists</code> over typed parameter
-    lists.</li>
-  <li>Numeric comparisons <code>&lt;</code>, <code>&lt;=</code>,
+  <li><strong>Atoms and negated atoms.</strong> <code>not</code> around a single
+    atom or a comparison. <code>not</code> around a compound —
+    <code>(not (and …))</code>, <code>(not (or …))</code>,
+    <code>(not (exists …))</code> — is not read and fails on the inner list.</li>
+  <li><strong><code>and</code></strong>, everywhere.</li>
+  <li><strong><code>or</code></strong>, in an action precondition only, where it
+    is compiled away by splitting the action into one copy per disjunct.
+    Elsewhere it is <a href="#quiet-failures">ignored</a>.</li>
+  <li><strong><code>exists</code></strong>, in a <code>:derived</code> body only,
+    where the bound variables become axiom parameters. In an action precondition
+    it <a href="#quiet-failures">removes the action</a>.</li>
+  <li><strong>Numeric comparisons</strong> <code>&lt;</code>, <code>&lt;=</code>,
     <code>=</code>, <code>&gt;=</code>, <code>&gt;</code>, each over exactly two
     operands, and each also usable negated inside <code>not</code>. A comparison
     becomes a condition variable of its own, which is what lets the numeric
     CEGAR loop refine its operands.</li>
-  <li>Atoms and negated atoms.</li>
+  <li><strong><code>imply</code></strong>, with a single-literal antecedent.
+    A compound antecedent is <a href="#quiet-failures">mis-negated</a>.</li>
+  <li><strong><code>forall</code></strong> is parsed and then
+    <a href="#quiet-failures">treated as true</a>. Do not use it.</li>
 </ul>
 
-<p><code>=</code> is read as a numeric comparison when either side looks numeric,
-so it serves both as equality between fluent expressions and as ordinary
-object equality.</p>
+<p><code>=</code> is read as a numeric comparison whenever it is not directly
+inside a <code>not</code>, so it works between fluent expressions, and
+<code>(not (= ?x ?y))</code> works as object inequality — the initial state
+asserts <code>(= o o)</code> for every object, which is what makes that
+decidable. A bare positive <code>(= ?x ?y)</code> between two objects, however,
+is read as a comparison between two zero-ary fluents and removes the action.</p>
 
 <h2 id="effects">Effects</h2>
 
 <ul>
   <li>Conjunctions of effects, and negated atoms as delete effects.</li>
-  <li><strong>Conditional effects</strong> — <code>when</code>. Both
-    propositional and numeric effects can be conditional.</li>
-  <li><strong>Universal effects</strong> — <code>forall</code>.</li>
+  <li><strong>Conditional effects</strong> — <code>when</code>, guarding one
+    propositional or numeric effect. The consequent must be a single effect: a
+    conjunctive consequent, <code>(when C (and A B))</code>, is not read and
+    fails on the inner list. Write one <code>when</code> per effect instead.</li>
   <li><strong>Numeric assignment</strong> — all five PDDL operators:
     <code>assign</code>, <code>increase</code>, <code>decrease</code>,
     <code>scale-up</code>, <code>scale-down</code>. The target must be a
     primitive numeric expression, that is a function applied to arguments,
     rather than a compound expression.</li>
+  <li><strong>Universal effects</strong> — <code>forall</code> — are
+    <em>not</em> supported. The block is parsed and then
+    <a href="#quiet-failures">dropped</a>, so the effect never happens and the
+    search reports no solution rather than an error.</li>
 </ul>
 
 <h3>Numeric expressions</h3>
@@ -140,6 +237,44 @@ the binary and n-ary operators <code>+</code>, <code>-</code>, <code>*</code>,
   <li><code>:metric</code> with <code>minimize</code> or
     <code>maximize</code>. See the limit below.</li>
 </ul>
+
+<h2 id="sas">What the translator emits</h2>
+
+<p>The output is Fast Downward's SAS<sup>+</sup> text format, declared as
+<strong>version 4</strong>: the familiar layout, plus the sections the numeric
+extension needs. These are all of them, and every one appears in real output from
+the fixtures in this repository:</p>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th scope="col">Section</th><th scope="col">Carries</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>version</code></td><td>The format version, <code>4</code>.</td></tr>
+    <tr><td><code>metric</code></td><td>The direction, and the numeric variable being optimised.</td></tr>
+    <tr><td><code>variable</code></td><td>One per finite-domain variable: its name, its axiom layer (<code>-1</code> when no axiom derives it), its domain size and one name per value.</td></tr>
+    <tr><td><code>mutex_group</code></td><td>Invariant-derived mutex groups, when the invariant analysis finds any. The <code>blocks-4-0</code> fixture yields five.</td></tr>
+    <tr><td><code>state</code></td><td>The initial value of every finite-domain variable.</td></tr>
+    <tr><td><code>goal</code></td><td>The goal as variable/value pairs.</td></tr>
+    <tr><td><code>operator</code></td><td>One per grounded action: name, prevail conditions, effects with their own preconditions and conditions, and the cost.</td></tr>
+    <tr><td><code>rule</code></td><td>One per grounded propositional axiom, which is how <code>:derived</code> predicates arrive.</td></tr>
+    <tr><td><code>numeric_variables</code></td><td>The numeric variables and their kind: regular, constant, cost or derived.</td></tr>
+    <tr><td><code>numeric_state</code></td><td>Their initial values.</td></tr>
+    <tr><td><code>comparison_axioms</code></td><td>One per numeric comparison, giving the comparison its own derived variable — the thing the numeric CEGAR loop refines.</td></tr>
+    <tr><td><code>numeric_axioms</code></td><td>Assignment axioms: the flattened arithmetic, one operator per node.</td></tr>
+    <tr><td><code>global_constraint</code></td><td>The constraint required to hold in every state.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>So the delivery fixture from the <a href="index.html#quick-start">quick
+start</a> comes out as 49 finite-domain variables, 12 numeric variables, 136
+operators and one axiom rule.</p>
+
+<p class="note">The reader parses the declared version but does not gate on it —
+a file declaring version 3 is read without complaint — so what actually has to
+match is the section layout, not the number.</p>
 
 <h2 id="fixtures">Fixtures you can check this against</h2>
 
@@ -214,6 +349,18 @@ the constructs above. Every row is a run of
   <li><strong>Grounding is eager.</strong> The whole task is grounded before
     search begins, so an instance whose grounding does not fit in memory is out
     of reach regardless of how easy the search would have been.</li>
+  <li><strong>A trivially unsolvable task is a crash, not a verdict.</strong> If a
+    goal atom is neither reachable nor statically decided, translation stops with
+    <code>condition atom … has no SAS variable; it is neither reachable nor
+    statically decided</code> rather than reporting the task unsolvable. The
+    result is correct in the sense that no plan exists, but it arrives as a panic
+    and a non-zero exit status instead of a proof.</li>
+  <li><strong>Most rejections are panics rather than errors.</strong> Only the
+    S-expression reader and a handful of translation checks return a typed error;
+    a construct outside the fragment usually aborts with a Rust panic message. It
+    names what it choked on, but it is not a tidy diagnostic, and a construct that
+    fails this way is easy to mistake for a bug in your PDDL when it is a
+    limit of the translator.</li>
 </ul>
 
 <h2 id="benchmarks">Benchmarks</h2>

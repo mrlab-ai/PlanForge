@@ -72,14 +72,27 @@ Error: Custom { kind: Other, error: "unknown heuristic `nope`" }</code></pre>
     continues.</dd>
 
   <dt><code>gbfs(&lt;h&gt;)</code></dt>
-  <dd>Greedy best-first search, ordering on <code>h</code> alone. Usually much
-    faster than A* with the same heuristic, and with no optimality guarantee at
-    all. This is the configuration to use with <code>ff()</code>.</dd>
+  <dd>Greedy best-first search, ordering on <code>h</code> alone. Often much
+    faster than A* with the same heuristic, and with <strong>no optimality
+    guarantee at all</strong> — the cost it returns is an upper bound on the
+    optimum, whether or not the heuristic is admissible. This is the
+    configuration to use with <code>ff()</code>, and the
+    <a href="index.html#satisficing-configurations">satisficing table</a> shows
+    it returning both an optimal and a two-times-optimal plan depending on the
+    instance.</dd>
 
   <dt><code>astar_fs(fast=&lt;h&gt;, slow=&lt;h&gt;)</code></dt>
-  <dd>A* with two admissible heuristics. The cheap one orders the open list; the
-    expensive one is evaluated lazily, when a state is about to be expanded. Both
-    arguments are required and both must be named.</dd>
+  <dd>A* with two heuristics. The cheap one orders the open list; the expensive
+    one is evaluated lazily, when a state is about to be expanded, and the entry
+    is reinserted with <code>f = g + max(h_fast, h_slow)</code>. Both arguments
+    are required and both must be named.
+    <p class="note">Because the key is a maximum, the search is optimal exactly
+      when <strong>both</strong> heuristics are admissible — the maximum of two
+      admissible estimates is admissible, but the maximum of an admissible and an
+      inadmissible one is not. Nothing checks this: passing <code>ff()</code> in
+      either slot is accepted and silently costs you the guarantee. Use the
+      <a href="#heuristics">admissibility column</a> below, or wrap the heuristic
+      in <a href="#check-admissible"><code>check_admissible</code></a>.</p></dd>
 
   <dt><code>sgd(...)</code></dt>
   <dd>Not a search engine. It synthesises a plan by gradient descent over a
@@ -102,13 +115,21 @@ and its <code>abstraction_config</code> module.</p>
 
 <div class="scroll">
 <table>
+  <caption>The admissibility column is the one that decides whether a plan is
+    optimal: <code>astar</code> returns a cost-optimal plan with an admissible
+    heuristic and merely a plan without one, and <code>astar_fs</code> needs both
+    of its heuristics to be admissible. "Yes" here means admissible by
+    construction, which the test suite pins instance by instance for the
+    configurations it covers; if you want it verified for a state rather than
+    asserted, wrap the heuristic in
+    <a href="#check-admissible"><code>check_admissible</code></a>.</caption>
   <thead>
     <tr><th scope="col">Name</th><th scope="col">Admissible</th><th scope="col">What it is</th></tr>
   </thead>
   <tbody>
     <tr><td><code>blind</code></td><td>yes</td><td>Zero on goal states and the task's minimum action cost elsewhere. The baseline, and the default.</td></tr>
     <tr><td><code>lmcutnumeric</code></td><td>yes</td><td>Numeric landmark-cut. Usable on its own or as the residual-cost component inside a cost partitioning.</td></tr>
-    <tr><td><code>ff</code></td><td>no</td><td>Relaxed-plan heuristic with a monotonic numeric relaxation: each numeric variable carries a reachable <code>(min, max)</code> envelope through the relaxed planning graph, and a comparison becomes available once its envelope admits it.</td></tr>
+    <tr><td><code>ff</code></td><td class="bad">no</td><td>Relaxed-plan heuristic with a monotonic numeric relaxation: each numeric variable carries a reachable <code>(min, max)</code> envelope through the relaxed planning graph, and a comparison becomes available once its envelope admits it. <strong>It can overestimate</strong>, so any plan cost obtained with it is an upper bound and not an optimum — under <code>astar</code> as much as under <code>gbfs</code>. It also refuses tasks with <code>scale-up</code> or <code>scale-down</code> effects, which a direction-agnostic monotonic relaxation cannot soundly bound, rather than returning an unsound estimate.</td></tr>
     <tr><td><code>domain_abstraction</code></td><td>yes</td><td>A single domain abstraction built by CEGAR, refining on comparison axioms as well as on facts.</td></tr>
     <tr><td><code>cartesian_abstraction</code></td><td>yes</td><td>A single numeric Cartesian CEGAR abstraction.</td></tr>
     <tr><td><code>canonical_domain_abstractions</code></td><td>yes</td><td>A generated collection of domain abstractions, combined canonically: the maximum over the additive subsets.</td></tr>
@@ -288,6 +309,37 @@ that, by inspecting the dependency graph rather than trusting the manifest.</p>
 
 <p>Input is one positional argument for a SAS+ file, or two for a PDDL domain and
 problem. <code>planforge --help</code> prints the authoritative list.</p>
+
+<h2 id="output">Output and exit codes</h2>
+
+<p>A solved run prints the plan, then a statistics block in the same shape Fast
+Downward prints — plan length and cost, states expanded, reopened, evaluated and
+generated, dead ends, registered states and search time — and writes the plan to
+<code>sas_plan</code> in the working directory, one parenthesised grounded action
+per line. Informational output goes to standard output and warnings and errors to
+standard error, so redirecting one does not lose the other.</p>
+
+<div class="scroll">
+<table>
+  <caption>Exit status. The three named codes are the planner's own; a run killed
+    by a signal exits with 128 plus the signal number, and a panic exits with
+    Rust's 101.</caption>
+  <thead>
+    <tr><th scope="col">Code</th><th scope="col">Meaning</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="num">0</td><td>The planner ran to completion. <strong>This does not mean a plan was found</strong> — see below.</td></tr>
+    <tr><td class="num">6</td><td>The memory limit was reached.</td></tr>
+    <tr><td class="num">7</td><td>The time limit was reached.</td></tr>
+    <tr><td class="num">101</td><td>A panic: a construct outside the supported <a href="pddl.html">PDDL fragment</a>, or a bug.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p class="note">Exit 0 covers both "solved" and "searched exhaustively and found
+nothing"; the latter prints <code>No solution found</code> and writes no
+<code>sas_plan</code>. So a script must not read a zero status as success. Test
+for the plan file, or for <code>Solution found!</code> in the output.</p>
 
 </main>
 
