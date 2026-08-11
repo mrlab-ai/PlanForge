@@ -1,11 +1,18 @@
 ;; The minimal negative dependency between two derived predicates: `passable`
 ;; reads `(not (blocked ?r))`, and `blocked` is itself derived.
 ;;
-;; This is the shape the translator handles by negation-by-failure. Because
-;; `blocked` is only ever read negatively it is made to default to true, its
-;; axiom is negated into `(not (blocked ?r)) <- (not (obstacle ?r))`, and it is
-;; put on a lower layer than `passable` so that the layer below has settled
-;; before `passable` reads it.
+;; This is the shape the translator handles by negation-by-failure. `blocked`
+;; defaults to false like every derived variable, and it is put on a strictly
+;; lower layer than `passable`, so that "nothing proved `blocked`" has an answer
+;; by the time `passable` asks. Because something reads it negatively, the
+;; translator also emits the rule refuting it,
+;; `(not (blocked ?r)) <- (not (obstacle ?r))`, which the evaluator ignores and
+;; the axiom-reading heuristics relax over.
+;;
+;; The pre-issue453 scheme instead made a variable that was only ever read
+;; negatively default to *true* and refuted it with generated axioms. Nothing
+;; does that any more: `derived_predicate_tests` pins zero true defaults across
+;; this whole corpus.
 ;;
 ;; `layered-chain` stacks three of these; this fixture keeps a single one so a
 ;; failure says which mechanism broke.

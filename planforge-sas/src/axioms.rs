@@ -473,6 +473,19 @@ impl<'a> AxiomEvaluator<'a> {
     /// through the axiom layers: each layer runs the Horn rules to fixpoint,
     /// then admits negation-by-failure for the variables that stayed at their
     /// default, which lets the next layer use "not proven" as a condition.
+    ///
+    /// The rules the translator emits to *refute* a derived variable -- head at
+    /// the variable's default value, for the heuristics that read axioms as
+    /// relaxed operators -- are inert here, and only just. Three things make
+    /// them so: [`Self::derive_literal`] returns early when the buffer already
+    /// holds the value, [`Self::fire_trivial_rules`] runs before anything has
+    /// been proven so an unconditional refutation only ever confirms the
+    /// default, and an exact negation picks one negated literal out of every
+    /// positive body, so it cannot hold once one of the rules it negates does.
+    /// Nothing here therefore rewrites a proven literal back to its default.
+    /// Mainline forbids such rules outright since issue454 and asserts it in
+    /// this constructor; while they still arrive in the task, the property is
+    /// argued rather than checked.
     pub fn evaluate_propositional_axioms(&self, buffer: &mut [u64]) -> Result<(), AxiomEvalError> {
         if self.numeric_task.axioms().is_empty() {
             return Ok(());
