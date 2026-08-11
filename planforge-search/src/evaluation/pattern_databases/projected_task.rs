@@ -5,20 +5,17 @@ use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use planforge_sas::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
 use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator, TaskRef,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 
-use crate::evaluation::pattern_databases::compiled_axiom_evaluator::{
-    CompiledAxiomEvaluator, CompiledAxiomEvaluatorData, CompiledAxiomEvaluatorScratch,
-};
 use crate::task_restriction::validate_restricted_task;
 
 pub type EvaluatedState = (Vec<usize>, Vec<f64>, Vec<u64>);
@@ -174,9 +171,8 @@ pub struct ProjectedTask<'task> {
     operators: Vec<Operator>,
     operator_costs: Vec<f64>,
     base_operator_ids: Vec<usize>,
-    propositional_packer: IntDoublePacker,
+    propositional_packer: Arc<IntDoublePacker>,
     initial_packed_propositional: Vec<u64>,
-    compiled_axiom_evaluator_data: CompiledAxiomEvaluatorData,
     operator_effect_facts: Vec<Vec<ExplicitFact>>,
     goals: Vec<ExplicitFact>,
     axiom_effect_facts: Vec<ExplicitFact>,
@@ -708,24 +704,8 @@ impl<'task> ProjectedTask<'task> {
             .map_err(ProjectedTaskBuildError::MalformedNumericConditions)?,
         );
 
-        let compilation_task = NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
-            metric: Metric::new(base.metric().is_min(), metric_var_id),
-            variables: variables.clone(),
-            numeric_variables: numeric_variables.clone(),
-            goals: goals.clone(),
-            mutexes: vec![],
-            state: projected_prop_values.clone(),
-            numeric_state: projected_numeric_values.clone(),
-            operators: operators.clone(),
-            axioms: axioms.clone(),
-            comparison_axioms: comparison_axioms.clone(),
-            assignment_axioms: assignment_axioms.clone(),
-            global_constraint: ExplicitFact::propositional(0, 0),
-        });
-        let compiled_axiom_evaluator_data = CompiledAxiomEvaluatorData::new(&compilation_task);
-
-        let propositional_packer = projected_propositional_packer_from_variables(&variables);
+        let propositional_packer =
+            Arc::new(projected_propositional_packer_from_variables(&variables));
         let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins()];
         for (var_id, value) in projected_prop_values.iter().enumerate() {
             propositional_packer.set(&mut initial_packed_propositional, var_id, *value as u64);
@@ -744,7 +724,6 @@ impl<'task> ProjectedTask<'task> {
             base_operator_ids,
             propositional_packer,
             initial_packed_propositional,
-            compiled_axiom_evaluator_data,
             operator_effect_facts,
             goals,
             axiom_effect_facts,
@@ -1410,14 +1389,10 @@ impl<'task> ProjectedTask<'task> {
         numeric: &mut [f64],
         buffer: &mut [u64],
     ) -> Result<(), ProjectedTaskBuildError> {
-        let axiom_evaluator = CompiledAxiomEvaluator::new(
-            self,
-            &self.propositional_packer,
-            &self.compiled_axiom_evaluator_data,
-        );
-        // The closure runs once per projected task, not per state, so a
-        // fresh scratch buffer here costs nothing worth caching.
-        let mut scratch = CompiledAxiomEvaluatorScratch::new(&self.compiled_axiom_evaluator_data);
+        // Only the initial state is closed, once per projected task, so compiling
+        // the evaluator here costs nothing worth caching in the task.
+        let task: TaskRef<'_> = Arc::new(self);
+        let axiom_evaluator = AxiomEvaluator::new(task, Arc::clone(&self.propositional_packer));
 
         axiom_evaluator
             .evaluate_arithmetic_axioms(numeric)
@@ -1426,13 +1401,11 @@ impl<'task> ProjectedTask<'task> {
                     reason: format!("arithmetic axioms: {err:?}"),
                 },
             )?;
-        axiom_evaluator
-            .evaluate(buffer, numeric, &mut scratch)
-            .map_err(
-                |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
-                    reason: format!("propositional axioms: {err:?}"),
-                },
-            )?;
+        axiom_evaluator.evaluate(buffer, numeric).map_err(|err| {
+            ProjectedTaskBuildError::InitialStateEvaluationFailed {
+                reason: format!("propositional axioms: {err:?}"),
+            }
+        })?;
 
         for (var_id, slot) in propositional.iter_mut().enumerate() {
             *slot = self.propositional_packer.get(buffer, var_id) as usize;

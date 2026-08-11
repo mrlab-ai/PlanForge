@@ -1,5 +1,4 @@
 pub mod canonical_pdb_heuristic;
-pub(crate) mod compiled_axiom_evaluator;
 pub mod max_additive_subsets;
 pub mod numeric_size_estimator;
 pub use crate::task_restriction::validate_restricted_task;

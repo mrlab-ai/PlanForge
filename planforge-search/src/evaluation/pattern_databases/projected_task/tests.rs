@@ -342,6 +342,111 @@ fn projection_closes_over_selected_comparison_operands() {
     assert_eq!(projected.get_num_goals(), 1);
 }
 
+/// A task whose comparison verdict is *false* in the initial state, read at that
+/// value by the propositional axioms one layer above it.
+///
+/// This is the shape the translator emits for a derived predicate with a numeric
+/// body: `cmp` is the two-valued condition variable, `refuted` carries the rule
+/// that refutes the derived atom when the comparison fails, and `unproven` needs
+/// a second literal — `blocker=0`, which the initial state does not hold — on top
+/// of the same verdict.
+fn task_reading_a_failed_comparison() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
+            variable("global-constraint", None),
+            ExplicitVariable::new(
+                ConditionValue::DOMAIN_SIZE,
+                "cmp".to_string(),
+                vec!["cmp-true".to_string(), "cmp-false".to_string()],
+                Some(0),
+                ConditionValue::False.as_usize(),
+            ),
+            variable("blocker", None),
+            variable("refuted", Some(1)),
+            variable("unproven", Some(1)),
+        ],
+        numeric_variables: vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+            NumericVariable::new("limit".to_string(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(3, 0)],
+        mutexes: vec![],
+        // `blocker` is 1, so the `blocker=0` condition of `unproven` never holds.
+        state: vec![0, ConditionValue::False.as_usize(), 1, 1, 1],
+        numeric_state: vec![1.0, 5.0],
+        operators: vec![],
+        axioms: vec![
+            PropositionalAxiom::new(vec![ExplicitFact::propositional(1, 1)], 3, 1, 0),
+            PropositionalAxiom::new(
+                vec![
+                    ExplicitFact::propositional(1, 1),
+                    ExplicitFact::propositional(2, 0),
+                ],
+                4,
+                1,
+                0,
+            ),
+        ],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            1,
+            0,
+            1,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+/// A failed comparison is announced to the Horn rules exactly once.
+///
+/// The condition variable is *computed*, not proven: the comparison pass writes
+/// its verdict and the closure seeds the queue with it. Admitting it to negation
+/// by failure as well — as this crate's own copy of the evaluator used to do,
+/// excluding only the deepest layer and not the comparison layer — announces the
+/// same literal twice. Each announcement decrements one condition counter, so a
+/// two-condition rule fires one condition short, and a rule that already fired
+/// on the first announcement decrements a counter that is already zero.
+#[test]
+fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
+    let task = task_reading_a_failed_comparison();
+    let projected = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![0, 1, 2, 3, 4],
+            numeric: vec![0],
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        projected
+            .variables()
+            .iter()
+            .map(ExplicitVariable::axiom_layer)
+            .collect::<Vec<Option<usize>>>(),
+        vec![None, Some(0), None, Some(1), Some(1)],
+        "the comparison layer has to sit strictly below the propositional one, or \
+         excluding the deepest layer would already exclude the comparison"
+    );
+
+    let (values, _numeric) = projected.evaluated_initial_state_values().unwrap();
+    assert_eq!(
+        values[1],
+        ConditionValue::False.as_usize(),
+        "1 >= 5 is false"
+    );
+    assert_eq!(
+        values[3], 0,
+        "the refuting rule reads the verdict and fires"
+    );
+    assert_eq!(
+        values[4], 1,
+        "`blocker=0` is not satisfied, so the two-condition rule must not fire"
+    );
+}
+
 #[test]
 fn projected_axioms_drop_omitted_conditions_admissibly() {
     let task = NumericRootTask::new(NumericRootTaskParts {
