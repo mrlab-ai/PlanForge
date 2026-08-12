@@ -29,7 +29,32 @@ pub fn parse_typed_list(
         if item == "-" {
             // Next item is the type
             i += 1;
-            let type_name = alist[i].as_atom();
+            // PDDL allows a disjunctive type, `(either t1 t2)`. `storage` uses one
+            // in a predicate declaration, where the argument types do not drive
+            // grounding here: reachability decides which atoms exist, so the
+            // declaration is a declaration only. Recording it under a joined name
+            // keeps the arity and the reading of the file honest.
+            //
+            // On an *action* parameter a disjunctive type would need a
+            // disjunction of type atoms in the precondition, which is not
+            // implemented: the joined name is a type no object belongs to, so
+            // grounding would yield no instances of that action. No domain in the
+            // benchmark sets does that, and `parse_typed_list` cannot tell a
+            // parameter list from a declaration, so this is recorded here rather
+            // than guarded here. Issue 50 tracks it.
+            let type_name: String = match &alist[i] {
+                SExpr::Atom(name) => name.clone(),
+                SExpr::List(parts) => {
+                    let words: Vec<&str> = parts.iter().map(SExpr::as_atom).collect();
+                    assert_eq!(
+                        words.first().copied(),
+                        Some("either"),
+                        "a type is a single word or (either WORD...), got {parts:?}"
+                    );
+                    format!("either-{}", words[1..].join("-"))
+                }
+            };
+            let type_name = type_name.as_str();
             for name in &untyped_items {
                 if only_variables && !name.starts_with('?') {
                     panic!("Expected variable, got: {}", name);
