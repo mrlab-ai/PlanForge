@@ -76,6 +76,19 @@ impl Action {
             new_assign_effects.push((new_params, new_cond, new_assign));
         }
         self.assign_effects = new_assign_effects;
+
+        // The cost is renamed too. It was the one part of an action this pass
+        // forgot, so after uniquifying, `parameters` held the new names while
+        // `cost` still referred to the old ones. Grounding then bound the new
+        // names, substituting the cost changed nothing, and a cost that is a
+        // function of the action's parameters, `(increase (total-cost)
+        // (travel-slow ?f1 ?f2))`, reached the SAS translation with its
+        // variables intact and no numeric variable to look up. That is the
+        // standard IPC action-cost idiom, so it took out `elevators`,
+        // `agricola`, `data-network` and `cavediving` among others.
+        if let Some(cost) = &self.cost {
+            self.cost = Some(cost.rename_variables(&renamings));
+        }
     }
 
     /// Returns a PropositionalAction or None if the precondition is statically false.

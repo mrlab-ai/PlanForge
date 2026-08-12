@@ -736,8 +736,29 @@ pub fn build_exploration_rules(task: &Task) -> Vec<ExplorationRule> {
 
     // Action applicability rules.
     for action in &task.actions {
+        // An action whose cost is a static function of its parameters is only
+        // reachable where that function has a value. Fast Downward does the same,
+        // by handing the cost's expression to `condition_to_rule_body` so the rule
+        // body carries its `defined!` guard.
+        //
+        // Without the guard, grounding produced instances whose cost is undefined:
+        // `elevators` declares `(travel-slow ?f1 ?f2)` and gives it a value only
+        // for the floor pairs that can actually be travelled, so `(move-up-slow
+        // ?lift ?f ?f)` was generated with no cost to look up. Refusing the task
+        // was the visible symptom; the quiet version of the same bug would be an
+        // operator whose cost is whatever the lookup happened to return.
+        let mut conditions = condition_to_rule_body(&action.parameters, &action.precondition);
+        if let Some(cost) = &action.cost
+            && let FunctionalExpression::PrimitiveNumericExpression(pne) = &cost.expression
+            && !pne.args.is_empty()
+        {
+            conditions.push(Condition::Atom(Atom::new(
+                get_function_predicate(&pne.symbol),
+                pne.args.clone(),
+            )));
+        }
         rules.push(ExplorationRule {
-            conditions: condition_to_rule_body(&action.parameters, &action.precondition),
+            conditions,
             effect: Condition::Atom(Atom::new(
                 get_action_predicate(&action.name),
                 action.parameters.iter().map(|p| p.name.clone()).collect(),
