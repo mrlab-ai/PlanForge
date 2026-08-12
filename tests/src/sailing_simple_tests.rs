@@ -421,6 +421,51 @@ fn scp_online_initial_h_for_collection(
         .expect("scp_online initial evaluation should succeed")
 }
 
+/// Runs A* to completion with the online SCP heuristic and returns the cost.
+///
+/// The initial state is not enough to test this heuristic. It always rebuilds a
+/// cost partitioning, which computes an abstract state id for *every*
+/// abstraction. Only later states take the other branch, where ids are computed
+/// for the abstractions in `required_lookup_ids` and left absent for the rest,
+/// and that is the branch a missing id used to be read as a dead end on.
+fn scp_online_search_cost(instance: &str) -> Option<f64> {
+    let (task, _scratch) = sailing_task(instance);
+    let task = build_restricted_task(&task)
+        .expect("sailing-simple restricted task construction must not fail")
+        .expect("sailing-simple instances have promotable derived roots")
+        .into_task();
+    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+        standard_round7_collection_config(1),
+    );
+    let abstractions = generator
+        .generate_collection(&task)
+        .expect("scp_online domain abstractions should build");
+    let config = ScpOnlineConfig {
+        max_time: 100.0,
+        max_size: 10_000_000,
+        interval: 100_000_000_000,
+        table_construction_max_time: 100.0,
+        order_optimization_max_time: ORDER_OPTIMIZATION_MAX_TIME,
+        collection_config: standard_round7_collection_config(1),
+        use_numeric_pdbs: false,
+        partitioning: CostPartitioningMethod::Region,
+        ..Default::default()
+    };
+    let heuristic =
+        SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, vec![], config, &task)
+            .expect("scp_online heuristic should construct");
+    let state_registry = StateRegistry::for_task(Arc::new(&task));
+    let mut search = AStarSearch::new(
+        Arc::new(&task),
+        state_registry,
+        Some(Box::new(heuristic)),
+        None,
+        None,
+    );
+    let result = search.search().expect("scp_online A* search failed");
+    result.solution_cost
+}
+
 fn scp_online_initial_h(instance: &str) -> f64 {
     scp_online_initial_h_with_config(instance, standard_round7_collection_config(1))
 }
@@ -543,6 +588,27 @@ fn sailing_simple_scp_online_admissible() {
             "{instance}: h={h} must be admissible against h*={optimum}"
         );
         assert!(h > 1.0, "{instance}: h={h} should beat blind guidance");
+    }
+}
+
+/// The online heuristic must not turn a solvable state into a dead end.
+///
+/// `sailing_simple_scp_online_admissible` above checks the initial state, and
+/// that is not enough: the initial state always rebuilds a cost partitioning, so
+/// it never reaches the branch that reads a state's abstract ids from a subset
+/// of the abstractions. Reading an absent id there as "unreachable" made the
+/// search record solvable successors as dead ends, and it reported no solution
+/// for a task that has one. Running the search to completion is what covers it.
+#[test]
+fn sailing_simple_scp_online_solves_rather_than_reporting_dead_ends() {
+    for instance in ["prob_1b1p_x", "prob_1b2p_x"] {
+        let optimum = optimum_of(instance);
+        let found = scp_online_search_cost(instance);
+        assert_eq!(
+            found,
+            Some(optimum),
+            "{instance}: scp_online must find the optimum, not report the task unsolvable"
+        );
     }
 }
 

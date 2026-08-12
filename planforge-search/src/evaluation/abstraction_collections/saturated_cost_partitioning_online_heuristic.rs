@@ -431,7 +431,11 @@ impl CostPartitioningHeuristic {
             self.lookup_tables.push(LookupTable {
                 abstraction_id,
                 distances,
-                unknown_value: f64::INFINITY,
+                // As in standalone_envelope_value: an entry this table does not
+                // have is an unknown lower bound, which is zero, not a proof
+                // that the state is a dead end. add_pdb_h_values below already
+                // said 0.0 for the same situation.
+                unknown_value: 0.0,
             });
         }
     }
@@ -1642,7 +1646,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             state.standalone_lookup_tables.is_empty(),
             "standalone envelope must be retained exactly once"
         );
-        let pdb_offset = state.pdb_offset;
         state.standalone_lookup_tables = std::mem::take(&mut state.h_values_by_abstraction)
             .into_iter()
             .enumerate()
@@ -1653,11 +1656,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     .then_some(LookupTable {
                         abstraction_id,
                         distances,
-                        unknown_value: if abstraction_id < pdb_offset {
-                            f64::INFINITY
-                        } else {
-                            0.0
-                        },
+                        // See standalone_envelope_value: a miss is unknown,
+                        // not unreachable, so it contributes nothing.
+                        unknown_value: 0.0,
                     })
             })
             .collect();
@@ -4609,12 +4610,21 @@ fn standalone_envelope_value(state: &ScpOnlineState, abstract_state_ids: &[Optio
         .iter()
         .enumerate()
         .map(|(abstraction_id, distances)| {
-            let unknown_value = if abstraction_id < state.pdb_offset {
-                f64::INFINITY
-            } else {
-                0.0
-            };
-            lookup_distance(abstraction_id, distances, unknown_value, abstract_state_ids)
+            // A miss contributes nothing, for every kind of abstraction.
+            //
+            // This used to be infinity for everything below `pdb_offset`, on the
+            // reading that a domain abstraction covers every concrete state, so a
+            // state it has no entry for cannot reach the goal. That reading is
+            // wrong here: when the online path is not rebuilding a partitioning
+            // it computes abstract state ids only for the abstractions in
+            // `required_lookup_ids`, so every other one is legitimately absent.
+            // Absent then meant infinite, the maximum swallowed every finite
+            // estimate, and the search recorded a solvable state as a dead end.
+            //
+            // A distance that is present and infinite still means unreachable,
+            // and still propagates, because that one was computed rather than
+            // assumed.
+            lookup_distance(abstraction_id, distances, 0.0, abstract_state_ids)
         })
         .fold(0.0, f64::max)
 }

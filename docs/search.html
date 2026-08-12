@@ -669,7 +669,7 @@ option list. Give no positional source and the full option table below applies.<
     <tr><th scope="col">Option</th><th scope="col">Type</th><th scope="col">Default</th><th scope="col">Meaning</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>online</code></td><td>bool</td><td><code>true</code></td><td>Compute the partitioning per state during the search, instead of from a table built up front. <strong>Set this to <code>false</code>.</strong> With the default the heuristic returns an infinite estimate for states that can reach the goal, so the search records them as dead ends and can report a solvable task unsolvable. It does so on <code>delivery/pfile1</code>, which <code>online=false</code> solves at cost 22. Tracked as <a href="https://github.com/mrlab-ai/PlanForge/issues/48">issue 48</a>.</td></tr>
+    <tr><td><code>online</code></td><td>bool</td><td><code>true</code></td><td>Compute the partitioning per state during the search, instead of from a table built up front.</td></tr>
     <tr><td><code>max_time</code></td><td>float, seconds</td><td><code>200.0</code></td><td>Total budget for building the abstractions and the orders.</td></tr>
     <tr><td><code>table_construction_max_time</code></td><td>float, seconds</td><td><code>30.0</code></td><td>Budget for the lookup table alone.</td></tr>
     <tr><td><code>max_size</code></td><td>int</td><td>unbounded</td><td>Largest lookup table, counted in entries.</td></tr>
