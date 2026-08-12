@@ -175,22 +175,15 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
             assert_eq!(alist.len(), 3, "imply takes exactly two arguments");
             let left = parse_condition(&alist[1], type_dict);
             let right = parse_condition(&alist[2], type_dict);
-            // imply(a, b) = or(not(a), b)
-            // We need to negate left
-            let neg_left = match left {
-                Condition::Atom(a) => Condition::NegatedAtom(a.negate()),
-                Condition::NegatedAtom(a) => Condition::Atom(a.negate()),
-                other => Condition::Disjunction(Disjunction::new(vec![
-                    // Can't simply negate arbitrary conditions; use DeMorgan etc.
-                    // For simplicity in PDDL, imply usually has literals
-                    other,
-                    right.clone(),
-                ])),
-            };
-            match neg_left {
-                Condition::Disjunction(d) => Condition::Disjunction(d),
-                neg => Condition::Disjunction(Disjunction::new(vec![neg, right])),
-            }
+            // `(imply a b)` is `(or (not a) b)`, for any antecedent.
+            //
+            // This used to special-case a literal antecedent and fall through to
+            // putting a compound one in *unnegated*, so `(imply (and p q) r)`
+            // became `(or (and p q) r)`. That is not a weaker reading of the
+            // implication, it is a different condition: it holds exactly when the
+            // implication is violated. `Condition::negate` puts any antecedent
+            // into negation normal form, so there is no case left to special-case.
+            Condition::Disjunction(Disjunction::new(vec![left.negate(), right]))
         }
         "forall" => {
             let params_list = alist[1].as_list();

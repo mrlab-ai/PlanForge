@@ -45,6 +45,7 @@ const PASSES: &[Pass] = &[
     ("convert types to predicates", convert_types_to_predicates),
     ("remove universal quantifiers", remove_universal_quantifiers),
     ("substitute complicated goal", substitute_complicated_goal),
+    ("build dnf", build_dnf),
     ("split disjunctions", split_disjunctions),
     ("move existential quantifiers", move_existential_quantifiers),
     (
@@ -111,47 +112,216 @@ fn convert_types_to_predicates(task: &mut Task) {
     task.init.extend(extra_init);
 }
 
-/// Converts universal quantifiers in preconditions to negated existentials.
-fn remove_universal_quantifiers(task: &mut Task) {
-    // Remove universals from action preconditions
-    for action in &mut task.actions {
-        action.precondition = remove_universal(&action.precondition);
-    }
-    // Remove universals from axiom conditions
-    for axiom in &mut task.axioms {
-        axiom.condition = remove_universal(&axiom.condition);
-    }
-    // Remove universals from goal
-    task.goal = remove_universal(&task.goal);
+/// Every place a task keeps a condition.
+///
+/// Fast Downward funnels each normalization pass through one generator of these,
+/// and that is why its passes cannot miss a site. Here they were written one
+/// traversal per pass, each over whichever subset its author had in mind, so a
+/// `forall` was expanded in preconditions and a disjunction was split only in
+/// actions. Naming the four sites once makes coverage a property of the
+/// abstraction instead of a thing to remember.
+#[derive(Debug, Clone, Copy)]
+enum Site {
+    Precondition(usize),
+    EffectCondition(usize, usize),
+    AxiomBody(usize),
+    Goal,
+}
 
-    // Remove universals from effects (conditional effects can have universal quantifiers)
-    for action in &mut task.actions {
-        let mut new_effects = vec![];
-        for eff in &action.effects {
-            let new_cond = remove_universal(&eff.condition);
-            new_effects.push(Effect::new(
-                eff.parameters.clone(),
-                new_cond,
-                eff.peffect.clone(),
-            ));
+/// Every site in the task, as a snapshot.
+///
+/// A snapshot, not a live iterator, because the passes below append axioms while
+/// they run. Fast Downward takes the same snapshot for the same reason: a new
+/// axiom's body has already been normalized before it is added, so revisiting it
+/// would be wasted work at best and non-terminating at worst.
+fn sites(task: &Task) -> Vec<Site> {
+    let mut sites = vec![Site::Goal];
+    for (a, action) in task.actions.iter().enumerate() {
+        sites.push(Site::Precondition(a));
+        for e in 0..action.effects.len() {
+            sites.push(Site::EffectCondition(a, e));
         }
-        action.effects = new_effects;
+    }
+    sites.extend((0..task.axioms.len()).map(Site::AxiomBody));
+    sites
+}
+
+fn condition_at(task: &Task, site: Site) -> &Condition {
+    match site {
+        Site::Precondition(a) => &task.actions[a].precondition,
+        Site::EffectCondition(a, e) => &task.actions[a].effects[e].condition,
+        Site::AxiomBody(x) => &task.axioms[x].condition,
+        Site::Goal => &task.goal,
     }
 }
 
-fn remove_universal(condition: &Condition) -> Condition {
+fn set_condition_at(task: &mut Task, site: Site, condition: Condition) {
+    match site {
+        Site::Precondition(a) => task.actions[a].precondition = condition,
+        Site::EffectCondition(a, e) => task.actions[a].effects[e].condition = condition,
+        Site::AxiomBody(x) => task.axioms[x].condition = condition,
+        Site::Goal => task.goal = condition,
+    }
+}
+
+/// The parameters in scope at a site, which are what an inner condition's free
+/// variables can refer to besides the quantifiers enclosing them.
+fn scope_parameters(task: &Task, site: Site) -> Vec<TypedObject> {
+    match site {
+        Site::Precondition(a) => task.actions[a].parameters.clone(),
+        Site::EffectCondition(a, e) => {
+            let mut scope = task.actions[a].parameters.clone();
+            scope.extend(task.actions[a].effects[e].parameters.clone());
+            scope
+        }
+        Site::AxiomBody(x) => task.axioms[x].parameters.clone(),
+        Site::Goal => Vec::new(),
+    }
+}
+
+/// Rewrites the condition at every site, one for one.
+///
+/// The rewrite gets the task so it can add axioms, which is what removing a
+/// universal needs, and it gets the site's scope so it can type the parameters of
+/// the axiom it adds.
+fn rewrite_each_site(
+    task: &mut Task,
+    mut rewrite: impl FnMut(&mut Task, &Condition, &[TypedObject]) -> Condition,
+) {
+    for site in sites(task) {
+        let condition = condition_at(task, site).clone();
+        let scope = scope_parameters(task, site);
+        let rewritten = rewrite(task, &condition, &scope);
+        set_condition_at(task, site, rewritten);
+    }
+}
+
+/// A variable's declared type, for every variable a site can mention.
+///
+/// A free variable of a nested condition is bound either by a quantifier above it
+/// or by the site's own parameter list, so those two sources together type all of
+/// them.
+fn type_map(scope: &[TypedObject], condition: &Condition) -> HashMap<String, String> {
+    fn collect(condition: &Condition, map: &mut HashMap<String, String>) {
+        let bound = match condition {
+            Condition::UniversalCondition(UniversalCondition { parameters, .. })
+            | Condition::ExistentialCondition(ExistentialCondition { parameters, .. }) => {
+                parameters.as_slice()
+            }
+            _ => &[],
+        };
+        for parameter in bound {
+            map.insert(parameter.name.clone(), parameter.type_name.clone());
+        }
+        for part in condition.parts() {
+            collect(part, map);
+        }
+    }
+
+    let mut map: HashMap<String, String> = scope
+        .iter()
+        .map(|parameter| (parameter.name.clone(), parameter.type_name.clone()))
+        .collect();
+    collect(condition, &mut map);
+    map
+}
+
+/// Replaces `forall(vars, phi)` by `not new-axiom(free vars)`, where the new
+/// axiom derives the negation of the quantified condition.
+///
+/// This is the one rewrite that cannot be done in place. Grounding enumerates
+/// objects for an existential, because it only has to find one witness, and has
+/// no way to check a property of every object at once. So a universal is
+/// expressed through its dual: `forall(vars, phi)` fails exactly when
+/// `exists(vars, not phi)` holds, and that existential is what the new axiom
+/// derives. The site then asks for the axiom's atom to be *false*.
+///
+/// The previous implementation was a no-op that read like the real thing. It
+/// matched on the universal, normalized its body, and rebuilt it with
+/// `with_parts`, which preserves the variant. Nothing downstream reads a
+/// universal, so every `forall` precondition was silently true.
+fn remove_universal_quantifiers(task: &mut Task) {
+    // One axiom per distinct (condition, parameters) pair, so a condition
+    // appearing at several sites shares the axiom it needs rather than adding a
+    // copy per site.
+    let mut axioms_by_condition: HashMap<(Condition, Vec<TypedObject>), String> = HashMap::new();
+    let mut next_axiom = 0usize;
+
+    rewrite_each_site(task, |task, condition, scope| {
+        if !condition.has_universal_part() {
+            return condition.clone();
+        }
+        let types = type_map(scope, condition);
+        recurse_universal(
+            task,
+            condition,
+            &types,
+            &mut axioms_by_condition,
+            &mut next_axiom,
+        )
+    });
+}
+
+fn recurse_universal(
+    task: &mut Task,
+    condition: &Condition,
+    types: &HashMap<String, String>,
+    axioms_by_condition: &mut HashMap<(Condition, Vec<TypedObject>), String>,
+    next_axiom: &mut usize,
+) -> Condition {
     let Condition::UniversalCondition(_) = condition else {
-        return condition.map_parts(remove_universal);
+        let parts = condition
+            .parts()
+            .iter()
+            .map(|part| recurse_universal(task, part, types, axioms_by_condition, next_axiom))
+            .collect();
+        return condition.with_parts(parts);
     };
-    // A quantifier's body is one condition, so a body of several parts is
-    // conjoined before the quantifier is rebuilt over it.
-    let body = match condition.parts() {
-        [part] => remove_universal(part),
-        parts => Condition::Conjunction(Conjunction::new(
-            parts.iter().map(remove_universal).collect(),
-        )),
+
+    // `not forall(vars, phi)` is `exists(vars, not phi)` in negation normal
+    // form, which is what the axiom will derive.
+    let axiom_condition = condition.negate();
+    let parameters: Vec<TypedObject> = axiom_condition
+        .free_variables()
+        .into_iter()
+        .map(|variable| {
+            let type_name = types.get(&variable).unwrap_or_else(|| {
+                panic!("variable {variable} is free in {axiom_condition} but has no declared type")
+            });
+            TypedObject::new(&variable, type_name)
+        })
+        .collect();
+
+    let key = (axiom_condition.clone(), parameters.clone());
+    let name = match axioms_by_condition.get(&key) {
+        Some(name) => name.clone(),
+        None => {
+            // Recurse into the negated body first: it can hold universals of
+            // its own, and the axiom has to be added with those already gone.
+            let body = recurse_universal(
+                task,
+                &axiom_condition,
+                types,
+                axioms_by_condition,
+                next_axiom,
+            );
+            let name = format!("new-axiom@{next_axiom}");
+            *next_axiom += 1;
+            task.axioms.push(Axiom::new(
+                name.clone(),
+                parameters.clone(),
+                parameters.len(),
+                body,
+            ));
+            axioms_by_condition.insert(key, name.clone());
+            name
+        }
     };
-    condition.with_parts(vec![remove_universal(&body)])
+
+    Condition::NegatedAtom(NegatedAtom::new(
+        name,
+        parameters.into_iter().map(|p| p.name).collect(),
+    ))
 }
 
 /// Hides a goal the SAS+ encoding cannot express behind a derived predicate.
@@ -160,13 +330,14 @@ fn remove_universal(condition: &Condition) -> Condition {
 /// [`Condition::is_single_fact`] is emitted as it stands. A numeric comparison is
 /// one of those: it gets a condition variable of its own, exactly as it does in a
 /// precondition, and the goal names that variable directly. Only a genuinely
-/// non-conjunctive goal — disjunctive, quantified, nested — becomes an axiom, and
-/// then the goal is the derived atom the axiom proves.
+/// non-conjunctive goal, disjunctive or quantified or nested, becomes an axiom,
+/// and then the goal is the derived atom the axiom proves.
 ///
-/// That last case is the expensive one for the search: no operator writes a
-/// derived variable, so a heuristic that reasons about how the goal is reached
-/// has to look through the axiom to its body. Keeping numeric comparisons out of
-/// it is therefore not just cosmetic — a numeric goal is the common case here.
+/// This runs *before* the disjunctions are split, which is deliberate and is what
+/// Fast Downward does. The axiom this creates is itself a site, so the split that
+/// follows turns a disjunctive goal into several axioms with one head, which is
+/// how the axiom layer spells a disjunction. Splitting first instead would leave
+/// the goal a disjunction with nowhere to put it.
 fn substitute_complicated_goal(task: &mut Task) {
     let goal = &task.goal;
     let needs_substitution = match goal {
@@ -183,66 +354,165 @@ fn substitute_complicated_goal(task: &mut Task) {
     }
 }
 
-fn split_disjunctions(task: &mut Task) {
-    // Split actions with disjunctive preconditions into multiple actions
-    let mut new_actions = vec![];
-    for action in &task.actions {
-        if action.precondition.has_disjunction() {
-            let dnf = to_dnf(&action.precondition);
-            for (i, conj) in dnf.iter().enumerate() {
-                let mut new_action = action.clone();
-                new_action.name = format!("{}@split{}", action.name, i);
-                new_action.precondition = conj.clone();
-                new_actions.push(new_action);
-            }
-        } else {
-            new_actions.push(action.clone());
+/// Pulls every disjunction to the root of the condition it appears in.
+///
+/// Once universals are gone, three rewrites suffice, and they are the three Fast
+/// Downward names:
+///
+/// 1. `or(phi, or(psi, chi))` is `or(phi, psi, chi)`.
+/// 2. `exists(vars, or(phi, psi))` is `or(exists(vars, phi), exists(vars, psi))`.
+/// 3. `and(phi, or(psi, chi))` is `or(and(phi, psi), and(phi, chi))`.
+///
+/// Rule 2 is the one the previous code was missing entirely, along with running
+/// over anything but action preconditions. Without it an `or` nested inside an
+/// `exists` never reaches the root and so is never split.
+fn build_dnf(task: &mut Task) {
+    rewrite_each_site(task, |_task, condition, _scope| {
+        if !condition.has_disjunction() {
+            return condition.clone();
         }
-    }
-    task.actions = new_actions;
+        to_dnf(condition).simplified()
+    });
 }
 
-/// Convert a condition to DNF (list of conjunctions)
-fn to_dnf(cond: &Condition) -> Vec<Condition> {
-    match cond {
-        Condition::Disjunction(disj) => {
-            let mut result = vec![];
-            for part in &disj.parts {
-                result.extend(to_dnf(part));
-            }
-            result
+fn to_dnf(condition: &Condition) -> Condition {
+    let mut disjunctions: Vec<Disjunction> = Vec::new();
+    let mut others: Vec<Condition> = Vec::new();
+    for part in condition.parts() {
+        match to_dnf(part) {
+            Condition::Disjunction(disjunction) => disjunctions.push(disjunction),
+            other => others.push(other),
         }
-        Condition::Conjunction(conj) => {
-            // Distribute conjunction over disjunctions
-            let mut dnf_parts: Vec<Vec<Condition>> = vec![vec![]];
-            for part in &conj.parts {
-                let part_dnf = to_dnf(part);
-                let mut new_dnf_parts = vec![];
-                for existing in &dnf_parts {
-                    for new_part in &part_dnf {
-                        let mut combined = existing.clone();
-                        match new_part {
-                            Condition::Conjunction(c) => combined.extend(c.parts.clone()),
-                            other => combined.push(other.clone()),
-                        }
-                        new_dnf_parts.push(combined);
+    }
+    if disjunctions.is_empty() {
+        return condition.with_parts(others);
+    }
+
+    match condition {
+        // Rule 1: associativity of disjunction.
+        Condition::Disjunction(_) => {
+            let mut parts = others;
+            for disjunction in disjunctions {
+                parts.extend(disjunction.parts);
+            }
+            Condition::Disjunction(Disjunction::new(parts))
+        }
+        // Rule 2: an existential distributes over a disjunction. After the
+        // recursion above a quantifier holds exactly one part, so there is
+        // exactly one disjunction to distribute over.
+        Condition::ExistentialCondition(existential) => {
+            let inner = disjunctions
+                .into_iter()
+                .next()
+                .expect("checked non-empty above");
+            Condition::Disjunction(Disjunction::new(
+                inner
+                    .parts
+                    .into_iter()
+                    .map(|part| {
+                        Condition::ExistentialCondition(ExistentialCondition::new(
+                            existential.parameters.clone(),
+                            vec![part],
+                        ))
+                    })
+                    .collect(),
+            ))
+        }
+        // Rule 3: a conjunction distributes over its disjunctions.
+        Condition::Conjunction(_) => {
+            let mut products = vec![Condition::Conjunction(Conjunction::new(others))];
+            for disjunction in disjunctions {
+                let mut next = Vec::with_capacity(products.len() * disjunction.parts.len());
+                for left in &products {
+                    for right in &disjunction.parts {
+                        next.push(Condition::Conjunction(Conjunction::new(vec![
+                            left.clone(),
+                            right.clone(),
+                        ])));
                     }
                 }
-                dnf_parts = new_dnf_parts;
+                products = next;
             }
-            dnf_parts
-                .into_iter()
-                .map(|parts| {
-                    if parts.len() == 1 {
-                        parts.into_iter().next().unwrap()
-                    } else {
-                        Condition::Conjunction(Conjunction::new(parts))
-                    }
-                })
-                .collect()
+            Condition::Disjunction(Disjunction::new(products))
         }
-        other => vec![other.clone()],
+        // A universal is gone by now, and a leaf has no parts to have produced a
+        // disjunction, so nothing else can hold one.
+        other => unreachable!("{other} cannot contain a disjunction at this point"),
     }
+}
+
+/// Splits every site whose condition is a disjunction into one copy per disjunct.
+///
+/// What a copy means differs per site, which is the whole reason the sites are
+/// named. An action becomes several actions. A conditional effect becomes several
+/// effects on the same action. An axiom becomes several axioms *with the same
+/// head*, and that is what makes a disjunctive `:derived` body work at all:
+/// several bodies proving one head already act as a disjunction, so the axiom
+/// layer needs no notion of `or`.
+///
+/// The previous implementation split actions only, which is why an `or` in a
+/// `:derived` body, and the axiom that a disjunctive goal is compiled into, both
+/// survived to grounding and were read as unconditionally true.
+fn split_disjunctions(task: &mut Task) {
+    // Every axiom, including the one substitute_complicated_goal just added for
+    // a disjunctive goal.
+    let mut axioms = Vec::with_capacity(task.axioms.len());
+    for axiom in std::mem::take(&mut task.axioms) {
+        match &axiom.condition {
+            Condition::Disjunction(disjunction) => {
+                for part in disjunction.parts.clone() {
+                    let mut copy = axiom.clone();
+                    copy.condition = part;
+                    axioms.push(copy);
+                }
+            }
+            _ => axioms.push(axiom),
+        }
+    }
+    task.axioms = axioms;
+
+    let mut actions = Vec::with_capacity(task.actions.len());
+    for mut action in std::mem::take(&mut task.actions) {
+        let mut effects = Vec::with_capacity(action.effects.len());
+        for effect in &action.effects {
+            match &effect.condition {
+                Condition::Disjunction(disjunction) => {
+                    for part in &disjunction.parts {
+                        effects.push(Effect::new(
+                            effect.parameters.clone(),
+                            part.clone(),
+                            effect.peffect.clone(),
+                        ));
+                    }
+                }
+                _ => effects.push(effect.clone()),
+            }
+        }
+        action.effects = effects;
+
+        match &action.precondition {
+            Condition::Disjunction(disjunction) => {
+                // The copies need distinct names: an action's name identifies it
+                // downstream, in the exploration rules and in the plan file.
+                for (index, part) in disjunction.parts.iter().enumerate() {
+                    let mut copy = action.clone();
+                    copy.name = format!("{}@split{index}", action.name);
+                    copy.precondition = part.clone();
+                    actions.push(copy);
+                }
+            }
+            _ => actions.push(action),
+        }
+    }
+    task.actions = actions;
+
+    // The goal is not a site that can be duplicated: there is one goal. A
+    // disjunctive one is hidden behind an axiom by the previous pass, so a
+    // disjunction surviving here means that pass failed to fire.
+    assert!(
+        !matches!(task.goal, Condition::Disjunction(_)),
+        "a disjunctive goal must be compiled into an axiom before disjunctions are split"
+    );
 }
 
 fn move_existential_quantifiers(task: &mut Task) {

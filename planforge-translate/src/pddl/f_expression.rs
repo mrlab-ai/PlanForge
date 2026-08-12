@@ -202,6 +202,21 @@ impl fmt::Display for FunctionAssignment {
 // ============== Helper methods on FunctionalExpression ==============
 
 impl FunctionalExpression {
+    /// Adds every variable this expression mentions to `out`.
+    ///
+    /// A numeric comparison is a leaf of the condition tree but a root of two
+    /// expression trees, so a condition cannot find its own free variables
+    /// without descending into them: `(> (fuel ?truck) 0)` mentions `?truck`
+    /// nowhere else.
+    pub fn collect_variables(&self, out: &mut std::collections::BTreeSet<String>) {
+        if let FunctionalExpression::PrimitiveNumericExpression(pne) = self {
+            out.extend(pne.args.iter().filter(|arg| arg.starts_with('?')).cloned());
+        }
+        for part in self.parts() {
+            part.collect_variables(out);
+        }
+    }
+
     /// The operands a compound expression combines, in order; empty for a term,
     /// which is a constant or a primitive numeric expression.
     pub fn parts(&self) -> &[FunctionalExpression] {

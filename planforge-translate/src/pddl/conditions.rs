@@ -1,5 +1,5 @@
 /// Full condition hierarchy for PDDL conditions.
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 use super::f_expression::FunctionalExpression;
@@ -194,6 +194,13 @@ impl Comparison {
 // =========================================================================
 // Methods on Condition enum
 // =========================================================================
+
+/// The variables among a literal's arguments. PDDL spells a variable with a
+/// leading question mark and an object without one, which is the only thing that
+/// distinguishes them once a condition is built.
+fn variables_among(args: &[String]) -> impl Iterator<Item = String> + '_ {
+    args.iter().filter(|arg| arg.starts_with('?')).cloned()
+}
 
 impl Condition {
     /// The subconditions of a compound condition, in order.
@@ -409,6 +416,101 @@ impl Condition {
     pub fn has_existential_part(&self) -> bool {
         matches!(self, Condition::ExistentialCondition(_))
             || self.parts().iter().any(Condition::has_existential_part)
+    }
+
+    pub fn has_universal_part(&self) -> bool {
+        matches!(self, Condition::UniversalCondition(_))
+            || self.parts().iter().any(Condition::has_universal_part)
+    }
+
+    /// This condition's negation, in negation normal form.
+    ///
+    /// The negation is pushed all the way down to the literals rather than
+    /// wrapped around the tree, because every pass after this one matches on the
+    /// variant it is looking at. A `Not` node would make each of them handle a
+    /// case that says "whatever is below me means the opposite", which is how a
+    /// negation gets read as its own affirmation.
+    ///
+    /// The quantifier duality is what makes removing universals possible at all:
+    /// `not forall(vars, phi)` is `exists(vars, not phi)`, so a universal can be
+    /// expressed as the negation of an existential, and an existential is
+    /// something the grounder can handle.
+    pub fn negate(&self) -> Condition {
+        match self {
+            Condition::Truth => Condition::Falsity,
+            Condition::Falsity => Condition::Truth,
+            Condition::Atom(atom) => Condition::NegatedAtom(atom.negate()),
+            Condition::NegatedAtom(negated) => Condition::Atom(negated.negate()),
+            Condition::FunctionComparison(comparison) => {
+                Condition::NegatedFunctionComparison(comparison.clone())
+            }
+            Condition::NegatedFunctionComparison(comparison) => {
+                Condition::FunctionComparison(comparison.clone())
+            }
+            // De Morgan, and the quantifier duality. Each keeps its parameters
+            // and swaps its connective, so `with_parts` cannot be used here: it
+            // preserves the variant, which is exactly what has to change.
+            Condition::Conjunction(conjunction) => Condition::Disjunction(Disjunction::new(
+                conjunction.parts.iter().map(Condition::negate).collect(),
+            )),
+            Condition::Disjunction(disjunction) => Condition::Conjunction(Conjunction::new(
+                disjunction.parts.iter().map(Condition::negate).collect(),
+            )),
+            Condition::UniversalCondition(universal) => {
+                Condition::ExistentialCondition(ExistentialCondition::new(
+                    universal.parameters.clone(),
+                    universal.parts.iter().map(Condition::negate).collect(),
+                ))
+            }
+            Condition::ExistentialCondition(existential) => {
+                Condition::UniversalCondition(UniversalCondition::new(
+                    existential.parameters.clone(),
+                    existential.parts.iter().map(Condition::negate).collect(),
+                ))
+            }
+        }
+    }
+
+    /// The variables this condition mentions but does not itself bind, sorted.
+    ///
+    /// Sorted because these become a new axiom's parameter list, and two
+    /// occurrences of the same condition have to produce the same list or the
+    /// axiom cannot be shared between them.
+    pub fn free_variables(&self) -> Vec<String> {
+        let mut free = BTreeSet::new();
+        self.collect_free_variables(&mut free);
+        free.into_iter().collect()
+    }
+
+    fn collect_free_variables(&self, free: &mut BTreeSet<String>) {
+        match self {
+            Condition::Atom(atom) => free.extend(variables_among(&atom.args)),
+            Condition::NegatedAtom(negated) => free.extend(variables_among(&negated.args)),
+            Condition::FunctionComparison(comparison)
+            | Condition::NegatedFunctionComparison(comparison) => {
+                for operand in &comparison.operands {
+                    operand.collect_variables(free);
+                }
+            }
+            Condition::UniversalCondition(UniversalCondition { parameters, parts })
+            | Condition::ExistentialCondition(ExistentialCondition { parameters, parts }) => {
+                // A quantifier's own parameters are bound here, so they are not
+                // free in it however deeply its body mentions them.
+                let mut inner = BTreeSet::new();
+                for part in parts {
+                    part.collect_free_variables(&mut inner);
+                }
+                for parameter in parameters {
+                    inner.remove(&parameter.name);
+                }
+                free.extend(inner);
+            }
+            other => {
+                for part in other.parts() {
+                    part.collect_free_variables(free);
+                }
+            }
+        }
     }
 
     /// Check if this is a Literal (Atom or NegatedAtom)

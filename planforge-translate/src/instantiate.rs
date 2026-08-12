@@ -245,11 +245,25 @@ pub fn explore(task: &Task) -> ExploreResult {
             continue;
         };
         for params in param_lists {
-            // A tuple of the wrong length instantiates the action's internal
-            // parameters, which are grounded by the effect they belong to.
-            if params.len() != action.num_external_parameters {
-                continue;
-            }
+            // The exploration rule for an action has `action.parameters` as its
+            // head arguments, so a reachable tuple has exactly that length. It is
+            // longer than `num_external_parameters` whenever an existential
+            // precondition contributed variables: eliminating the quantifier moves
+            // them into the parameter list and deliberately leaves the external
+            // count alone, because the external ones are what name the action.
+            //
+            // This used to skip every tuple longer than the external count, which
+            // silently deleted every action with an `exists` precondition. Any
+            // other length is an inconsistency between rule generation and
+            // grounding, so it fails here rather than dropping an action.
+            assert_eq!(
+                params.len(),
+                action.parameters.len(),
+                "action {} was explored with {} arguments but declares {} parameters",
+                action.name,
+                params.len(),
+                action.parameters.len()
+            );
             var_mapping.clear();
             for (parameter, &object) in action.parameters.iter().zip(params.iter()) {
                 var_mapping.bind(&parameter.name, model.symbols.object_name(object));
