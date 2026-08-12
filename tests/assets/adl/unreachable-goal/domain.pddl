@@ -1,0 +1,8 @@
+(define (domain adl-unreachable-goal)
+  (:requirements :strips :action-costs)
+  (:predicates (p) (q) (never))
+  (:functions (cost))
+  (:action make-p :parameters ()
+    :precondition () :effect (and (p) (increase (cost) 1)))
+  (:action make-q :parameters ()
+    :precondition (never) :effect (and (q) (increase (cost) 1))))

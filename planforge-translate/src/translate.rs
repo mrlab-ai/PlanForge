@@ -1111,6 +1111,27 @@ fn translate_task(
         }
     }
 
+    // A goal fact with no SAS variable is one the relaxation cannot reach, so the
+    // task has no plan. This is checked here rather than inside
+    // `translate_strips_conditions`, because that function's invariant holds for
+    // an operator or an axiom and not for the goal: instantiation removes the
+    // statically true and false atoms from a *condition*, and the goal is never
+    // instantiated, so the goal is the one site that can carry an unreachable
+    // atom this far.
+    //
+    // Fast Downward answers the same way. On `citycar-opt14-adl/p2-2-2-1-2` its
+    // translator reports 2 facts and 0 operators, having found the same goal out
+    // of reach; this used to panic on it instead.
+    if let Some(unreachable) = task.goal_list.iter().find_map(|condition| match condition {
+        Condition::Atom(atom) if !translation.dictionary.contains_key(atom) => Some(atom),
+        _ => None,
+    }) {
+        return Ok(trivial_task(
+            false,
+            &format!("Goal fact {unreachable:?} is unreachable"),
+        ));
+    }
+
     // Translate goal
     let goal_dict_list = translate_strips_conditions(translation, task.goal_list);
 
