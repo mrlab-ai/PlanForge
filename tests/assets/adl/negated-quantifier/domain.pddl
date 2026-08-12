@@ -1,0 +1,11 @@
+(define (domain adl-negated-quantifier)
+  (:requirements :adl :typing :action-costs)
+  (:types item)
+  (:predicates (dirty ?i - item) (done))
+  (:functions (cost))
+  ; `not` around a quantifier, not around a literal.
+  (:action finish :parameters ()
+    :precondition (not (exists (?i - item) (dirty ?i)))
+    :effect (and (done) (increase (cost) 1)))
+  (:action clean :parameters (?i - item)
+    :precondition () :effect (and (not (dirty ?i)) (increase (cost) 1))))

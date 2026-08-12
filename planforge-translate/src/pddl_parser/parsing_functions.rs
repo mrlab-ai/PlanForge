@@ -206,6 +206,18 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
                     }
                     other => panic!("expected a comparison inside not, got {other}"),
                 }
+            } else if matches!(
+                inner_list.first().map(SExpr::as_atom),
+                Some("and" | "or" | "not" | "imply" | "forall" | "exists")
+            ) {
+                // `not` around a compound condition, which ADL domains use
+                // freely: `(not (exists (?a - airplane) ...))`. This used to fall
+                // through to the negated-literal case below, which read `exists`
+                // as a predicate name and then crashed on its typed parameter
+                // list. Negating properly is now a call, because
+                // `Condition::negate` puts any condition into negation normal
+                // form.
+                parse_condition(&alist[1], type_dict).negate()
             } else {
                 // It's a negated literal
                 let pred = inner_list[0].as_atom().to_string();
@@ -380,22 +392,25 @@ pub fn parse_effects(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) ->
     if items.is_empty() {
         return EffectType::Conjunctive(ConjunctiveEffect::new(vec![]));
     }
-    let tag = items[0].as_atom();
-    if tag == "and" {
-        let effects: Vec<EffectType> = items[1..]
-            .iter()
-            .map(|item| parse_effect(item, type_dict))
-            .collect();
-        EffectType::Conjunctive(ConjunctiveEffect::new(effects))
-    } else {
-        parse_effect(alist, type_dict)
-    }
+    parse_effect(alist, type_dict)
 }
 
 fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> EffectType {
     let items = alist.as_list();
     let tag = items[0].as_atom();
     match tag {
+        // `and` is handled here rather than only at the top level. It used to
+        // live in `parse_effects`, which meant a conjunction nested inside a
+        // `when` or a `forall` fell through to the literal case below, was read
+        // as a predicate named "and", and crashed on the first of its parts that
+        // was not an atom. That shape is the norm in ADL domains:
+        // `(forall (?p) (when <cond> (and (not (boarded ?p)) (served ?p))))`.
+        "and" => EffectType::Conjunctive(ConjunctiveEffect::new(
+            items[1..]
+                .iter()
+                .map(|item| parse_effect(item, type_dict))
+                .collect(),
+        )),
         "not" => {
             let inner = items[1].as_list();
             let pred = inner[0].as_atom().to_string();
@@ -420,9 +435,19 @@ fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Effe
             EffectType::Numeric(NumericEffect::new(assignment))
         }
         _ => {
-            // Simple add effect (atom)
+            // Anything else is an add effect, whose arguments are terms.
             let pred = tag.to_string();
-            let args: Vec<String> = items[1..].iter().map(|a| a.as_atom().to_string()).collect();
+            let args: Vec<String> = items[1..]
+                .iter()
+                .map(|arg| match arg {
+                    SExpr::Atom(name) => name.clone(),
+                    SExpr::List(_) => panic!(
+                        "effect ({pred} ...) has a compound argument; an effect is a \
+                         literal, a conjunction, a `when`, a `forall` or a numeric \
+                         assignment"
+                    ),
+                })
+                .collect();
             EffectType::Simple(SimpleEffect::new(Condition::Atom(Atom::new(pred, args))))
         }
     }
