@@ -956,6 +956,14 @@ pub fn condition_to_rule_body(parameters: &[TypedObject], condition: &Condition)
             // Truth contributes nothing and Falsity cannot be reached, since
             // instantiation drops a rule whose body is unsatisfiable.
             Condition::Truth | Condition::Falsity => {}
+            // A conjunction nested inside a conjunction is flattened rather than
+            // rejected. `simplified` removes most of them, but not every path
+            // into here has been simplified, and nesting changes nothing about
+            // what the rule body means. Panicking on it, as this arm first did,
+            // refused tasks that were perfectly well formed.
+            Condition::Conjunction(_) => {
+                result.extend(condition_to_rule_body(&[], &part));
+            }
             // Everything else is gone by the time rules are built: universals
             // became axioms, disjunctions were split, and existentials were
             // moved into the parameter list above. Dropping one silently would
