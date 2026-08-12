@@ -41,16 +41,14 @@ language without time, plus the derived predicates of PDDL 2.2.</p>
 <p>This page says what the translator accepts, construct by construct. It then
 says where the limits are.</p>
 
-<p>Read <a href="#adl">the section on ADL</a> before anything else. Six
-constructs are accepted by the parser and then mishandled. Three of the six can
-make the planner return an invalid plan, and none of the six produces a warning.
-That is the one thing on this page that can cost you a correct answer without
-telling you.</p>
+<p>The accepted fragment is ADL plus numeric fluents plus axioms. A domain
+declaring a requirement the translator does not implement is refused by name
+rather than translated as though the construct were absent.</p>
 
 <h2 id="contents">Contents</h2>
 
 <ul>
-  <li><a href="#adl">The six ADL constructs that are mishandled</a></li>
+  <li><a href="#adl">ADL</a></li>
   <li><a href="#requirements">Requirement levels</a></li>
   <li><a href="#input">Input and translation</a></li>
   <li><a href="#domain">Domain sections</a></li>
@@ -155,10 +153,10 @@ something the planner enforces rather than only a property of the code.</p>
     <tr><td><code>:numeric-fluents</code>, <code>:fluents</code></td><td>Supported</td><td>The main extension. See <a href="#conditions">conditions</a> and <a href="#effects">effects</a>.</td></tr>
     <tr><td><code>:derived-predicates</code></td><td>Supported</td><td><code class="wrap">(:derived ...)</code>, layered and recursive. <code>exists</code> works inside a body. Several blocks for one head act as a disjunction. Nine fixtures cover this.</td></tr>
     <tr><td><code>:equality</code></td><td>Partial</td><td><code class="wrap">(not (= ?x ?y))</code> works, because every object is made equal to itself in the initial state, which makes inequality statically decidable. A positive <code class="wrap">(= ?x ?y)</code> between two objects is read as a comparison between two zero-argument fluents and removes the action.</td></tr>
-    <tr><td><code>:disjunctive-preconditions</code></td><td>Partial</td><td>An <code>or</code> in an action precondition is compiled away correctly, by splitting the action into one copy per disjunct. An <code>or</code> anywhere else is <a href="#adl">mishandled</a>.</td></tr>
+    <tr><td><code>:disjunctive-preconditions</code></td><td>Supported</td><td>An <code>or</code> is pulled to the root of the condition and then split: an action becomes one action per disjunct, an axiom becomes several axioms with the same head. See <a href="#adl">ADL</a>.</td></tr>
     <tr><td><code>:conditional-effects</code></td><td>Partial</td><td><code>when</code> guarding a single propositional or numeric effect works. A conjunctive consequent, <code class="wrap">(when C (and A B))</code>, fails.</td></tr>
     <tr><td><code>:universal-preconditions</code>, <code>:existential-preconditions</code>, <code>:quantified-preconditions</code></td><td>Mishandled</td><td>Not implemented. See <a href="#adl">the six cases</a>.</td></tr>
-    <tr><td><code>:adl</code></td><td>Not supported</td><td>ADL needs quantified preconditions and universal effects. Both are mishandled rather than implemented, so this fragment is not ADL whatever the flag says.</td></tr>
+    <tr><td><code>:adl</code></td><td>Supported</td><td>Quantified preconditions, universal effects, disjunction and <code>imply</code> are all handled, wherever they appear. See <a href="#adl">ADL</a>.</td></tr>
     <tr><td><code>:object-fluents</code></td><td>Rejected</td><td>A typed function return is parsed and discarded. An object-valued entry in <code>:init</code> is then an explicit error: <code class="wrap">numeric init fact for PNE loc-of(t1) must assign a numeric constant, got PNE p1()</code>.</td></tr>
     <tr><td><code>:durative-actions</code>, <code>:duration-inequalities</code>, <code>:continuous-effects</code>, <code>:timed-initial-literals</code></td><td>Not supported</td><td>Nothing temporal. A <code class="wrap">(:durative-action ...)</code> block is treated as an unknown section and skipped with a warning, which leaves the domain with no actions. Translation then fails on the first unreachable goal atom. A timed initial literal fails on its nested literal.</td></tr>
     <tr><td><code>:preferences</code>, <code>:constraints</code></td><td>Not supported</td><td>No PDDL 3. A <code class="wrap">(preference ...)</code> in a goal fails. A problem-level <code class="wrap">(:constraints ...)</code> block is dropped with no message at all, so the plan ignores it silently.</td></tr>

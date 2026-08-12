@@ -100,13 +100,10 @@ the file when the file itself is what you want.</p>
 supported. Durative actions, preferences and soft goals are not supported at
 all.</p>
 
-<p>Quantifiers and disjunction outside action preconditions are a real problem.
-The parser accepts them and the translator then mishandles them, in six ways
-that are recorded as
-<a href="https://github.com/mrlab-ai/PlanForge/issues/46">issue 46</a>. Three of
-the six can produce an invalid plan. Read
-<a href="pddl.html#adl">PDDL support</a> before you trust a task that uses
-them.</p>
+<p>Quantifiers and disjunction are supported wherever they appear, which
+together with conditional effects makes the accepted fragment ADL plus numeric
+fluents plus axioms. A domain declaring a requirement the translator does not
+implement is refused by name. See <a href="pddl.html#adl">PDDL support</a>.</p>
 
 <h2 id="building">Building</h2>
 
