@@ -1,0 +1,8 @@
+(define (domain action-costs-total-cost-name)
+  (:requirements :strips :action-costs)
+  (:predicates (mid) (goal))
+  (:functions (total-cost))
+  (:action step-a :parameters ()
+    :precondition () :effect (and (mid) (increase (total-cost) 5)))
+  (:action step-b :parameters ()
+    :precondition (mid) :effect (and (goal) (increase (total-cost) 3))))

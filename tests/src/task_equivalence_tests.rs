@@ -31,6 +31,7 @@ use crate::corpus::{self, assert_fixture_set_is_pinned, problem_file_names, subd
 /// to. `numeric_sas` is deliberately absent: it holds SAS files, so there is no
 /// translation to compare two ways of reading.
 const PDDL_CORPORA: &[&str] = &[
+    "action-costs",
     "adl",
     "derived-predicates",
     "numeric-conditions",

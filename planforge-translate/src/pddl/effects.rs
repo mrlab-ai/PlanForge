@@ -159,9 +159,16 @@ impl EffectType {
                 let mut cost_effect = None;
                 for eff in &ce.effects {
                     match eff {
+                        // Extracted, so *not* kept among the remaining effects.
+                        // It used to be both, which double counted it: the
+                        // increase became the operator's cost and stayed a
+                        // numeric effect on the same fluent, so a domain using
+                        // the standard `(increase (total-cost) n)` idiom reported
+                        // every plan at twice its cost. A domain naming its
+                        // function anything else was unaffected, and since every
+                        // fixture here minimises `(cost)`, nothing caught it.
                         EffectType::Numeric(ne) if ne.effect.is_cost_assignment() => {
                             cost_effect = Some(ne.effect.clone());
-                            new_effects.push(eff.clone());
                         }
                         _ => {
                             new_effects.push(eff.clone());

@@ -1,0 +1,8 @@
+(define (domain action-costs-cost-name)
+  (:requirements :strips :action-costs)
+  (:predicates (mid) (goal))
+  (:functions (cost))
+  (:action step-a :parameters ()
+    :precondition () :effect (and (mid) (increase (cost) 5)))
+  (:action step-b :parameters ()
+    :precondition (mid) :effect (and (goal) (increase (cost) 3))))
