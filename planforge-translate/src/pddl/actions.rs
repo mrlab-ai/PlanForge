@@ -335,10 +335,11 @@ impl Condition {
                     )
                 })])
             }
-            _ => {
-                // For other condition types, just return them as-is
-                Some(vec![self.clone()])
-            }
+            // Only a conjunction of literals and comparisons reaches grounding.
+            // Returning anything else "as-is" put a disjunction or a quantifier
+            // into a grounded condition list, where it is not a condition any
+            // consumer can test, and the SAS translation later dropped it.
+            other => panic!("condition {other} reached grounding un-normalized"),
         }
     }
 }

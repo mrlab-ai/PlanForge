@@ -958,25 +958,42 @@ fn translate_numeric_axiom(
     _prop_dictionary: &HashMap<Atom, Vec<(usize, usize)>>,
     num_dictionary: &HashMap<PrimitiveNumericExpression, usize>,
 ) -> Option<SASNumericAxiom> {
+    // The one legitimate reason to drop an axiom: its effect has no SAS numeric
+    // variable, because relevance analysis found nothing that reads it. Dropping
+    // the definition of a variable that does not exist loses nothing. Every other
+    // way out of this function is a panic, since a missing *operand*, a
+    // surviving constant or a compound expression would each leave a variable
+    // that does exist with no definition.
     let effect = num_dictionary.get(&axiom.effect)?;
     let op = &axiom.op;
     let mut parts = vec![];
     for part in &axiom.parts {
         match part {
             FunctionalExpression::PrimitiveNumericExpression(pne) => {
-                if let Some(&idx) = num_dictionary.get(pne) {
-                    parts.push(idx);
-                } else {
-                    return None;
-                }
+                let Some(&idx) = num_dictionary.get(pne) else {
+                    panic!(
+                        "numeric axiom for {} reads {pne}, which has no SAS numeric \
+                         variable; dropping the axiom would leave its effect variable \
+                         undefined",
+                        axiom.effect
+                    )
+                };
+                parts.push(idx);
             }
-            FunctionalExpression::NumericConstant(_) => {
-                // Constants should have been resolved
-                return None;
-            }
-            _ => {
-                return None;
-            }
+            // Both of these were `return None`, which dropped the axiom and left
+            // the variable it defines with no definition at all. The comment on
+            // the first already said the case was impossible, so saying so out
+            // loud costs nothing and stops it being a silent wrong answer.
+            FunctionalExpression::NumericConstant(constant) => panic!(
+                "numeric axiom for {} still reads the constant {constant}; constants \
+                 are folded before translation",
+                axiom.effect
+            ),
+            other => panic!(
+                "numeric axiom for {} reads the compound expression {other}; \
+                 arithmetic is flattened into binary axioms before translation",
+                axiom.effect
+            ),
         }
     }
     Some(SASNumericAxiom::new(op.clone(), parts, *effect))
