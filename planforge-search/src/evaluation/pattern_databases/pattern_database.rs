@@ -966,7 +966,19 @@ impl<'task> PatternDatabase<'task> {
 
     fn evaluate_failed_lookup(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
         if self.exhausted_abstract_state_space {
-            // TODO: Supposed to be an error. Can never happen.
+            // Infinity is sound *here*, and the reason is worth stating, because
+            // the same expression is unsound one line of reasoning away.
+            //
+            // The abstract state space was enumerated in full. A state with no
+            // entry therefore has no abstract counterpart that reaches the goal,
+            // so infinity is a valid lower bound: it was proved, not assumed.
+            //
+            // Where the space was *not* exhausted, a missing entry only means
+            // "not computed", an unknown lower bound is zero, and returning
+            // infinity would record a solvable state as a dead end. That is
+            // exactly the bug the online saturated cost partitioning carried, and
+            // it made the planner report a solvable task unsolvable. The branches
+            // below are what keep this side of that line.
             return f64::INFINITY;
         }
         if self.is_goal_state(propositional) {
