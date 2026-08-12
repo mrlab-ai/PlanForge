@@ -1,0 +1,8 @@
+(define (domain adl-disjunctive-goal)
+  (:requirements :strips :action-costs)
+  (:predicates (p) (q))
+  (:functions (cost))
+  (:action make-p :parameters ()
+    :precondition () :effect (and (p) (increase (cost) 5)))
+  (:action make-q :parameters ()
+    :precondition () :effect (and (q) (increase (cost) 2))))
