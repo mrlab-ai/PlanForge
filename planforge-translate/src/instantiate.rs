@@ -62,9 +62,18 @@ fn get_fluent_predicates(task: &Task) -> HashSet<String> {
     let mut fluent_preds: HashSet<String> = HashSet::new();
     for action in &task.actions {
         for eff in &action.effects {
-            if let Some(pred) = eff.peffect.literal_predicate() {
-                fluent_preds.insert(pred.to_string());
-            }
+            // Not `if let`: normalization leaves every effect a literal, and an
+            // effect that is not one would drop out of this set silently. A
+            // predicate missing here is treated as static, so its atoms never
+            // become SAS variables and conditions on them are read as constants.
+            // `invariant_finder::get_fluents` had the same hole.
+            let pred = eff.peffect.literal_predicate().unwrap_or_else(|| {
+                panic!(
+                    "effect {} of action {} is not a literal after normalization",
+                    eff.peffect, action.name
+                )
+            });
+            fluent_preds.insert(pred.to_string());
         }
     }
     for axiom in &task.axioms {

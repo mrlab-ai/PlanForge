@@ -1233,6 +1233,8 @@ fn translate_task(
 
     for (atom, &layer) in &axiom_layer_dict {
         assert!(layer >= 0);
+        // An atom with no SAS variable was pruned as static or unreachable.
+        // There is no variable to carry a layer, so there is nothing to record.
         if let Some(pairs) = translation.dictionary.get(atom) {
             let (var, _val) = pairs[0];
             axiom_layers[var] = layer + num_axiom_layer + 1;

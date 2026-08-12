@@ -472,6 +472,9 @@ pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -
 
     // Re-do effect normalization properly
     let mut literal_effects = vec![];
+    // An action may declare no `:effect` at all, which parses to no effects
+    // rather than to an error. That is a no-op action, which is legal if
+    // pointless, so it is not rejected here.
     if let Some(ref eff) = effect_type {
         let normalized = eff.normalize();
         for (params, condition, kind) in normalized {
