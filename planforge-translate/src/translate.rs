@@ -369,7 +369,14 @@ fn translate_strips_conditions_aux(
                 // Handle negative conditions later
                 continue;
             }
-            _ => continue,
+            // Comparisons are handled by their own arm above; they get a
+            // condition variable of their own rather than a propositional one.
+            Condition::Truth => continue,
+            // Normalization leaves a condition a conjunction of literals and
+            // comparisons, so anything compound here escaped a pass. Skipping it
+            // drops a restriction and makes the operator or axiom hold in states
+            // where it must not.
+            other => panic!("condition {other} reached SAS translation un-normalized"),
         }
     }
 
@@ -415,7 +422,14 @@ fn translate_strips_conditions_aux(
                     condition.set(var, values);
                 }
             }
-            _ => continue,
+            // This is the second pass over the same condition list, and it exists
+            // only to handle the negative literals the first pass deferred. A
+            // positive one is already in `condition`.
+            Condition::Atom(_) => continue,
+            // As above: comparisons have their own arm, Truth restricts nothing,
+            // and nothing compound should have survived normalization.
+            Condition::Truth => continue,
+            other => panic!("condition {other} reached SAS translation un-normalized"),
         }
     }
 

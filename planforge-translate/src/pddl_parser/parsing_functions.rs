@@ -106,6 +106,47 @@ pub fn set_supertypes(type_list: &[Type]) -> HashMap<String, Vec<String>> {
     supertypes
 }
 
+/// The `:requirements` a task may declare.
+///
+/// The list used to be parsed and thrown away, so a domain declaring
+/// `:durative-actions` was accepted and then translated as if the durations were
+/// not there. Refusing the input is the only honest answer: a planner that
+/// silently ignores a requirement answers a question nobody asked.
+const SUPPORTED_REQUIREMENTS: &[&str] = &[
+    // Everything the Fast Downward translator accepts.
+    ":strips",
+    ":typing",
+    ":negative-preconditions",
+    ":disjunctive-preconditions",
+    ":equality",
+    ":existential-preconditions",
+    ":universal-preconditions",
+    ":quantified-preconditions",
+    ":conditional-effects",
+    ":adl",
+    ":derived-predicates",
+    ":action-costs",
+    // Plus the numeric fragment, which is what this planner is for.
+    ":numeric-fluents",
+    ":fluents",
+];
+
+/// Rejects a task declaring a requirement this translator does not implement.
+///
+/// A declared requirement it *does* implement needs no action: support is a
+/// property of the code, not of the list, and every construct is handled
+/// wherever it appears whether or not the domain announced it.
+fn check_requirements(requirements: &[SExpr]) {
+    for requirement in requirements {
+        let name = requirement.as_atom();
+        assert!(
+            SUPPORTED_REQUIREMENTS.contains(&name),
+            "unsupported requirement {name}; this translator implements {}",
+            SUPPORTED_REQUIREMENTS.join(" ")
+        );
+    }
+}
+
 pub fn parse_predicate(alist: &[SExpr]) -> Predicate {
     let name = alist[0].as_atom().to_string();
     let arguments = parse_typed_list(&alist[1..], true, "object");
@@ -122,10 +163,14 @@ pub fn parse_condition(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) 
     match alist {
         SExpr::List(items) if items.is_empty() => Condition::Truth,
         SExpr::List(items) => parse_condition_aux(items, type_dict),
-        SExpr::Atom(_) => {
-            // single atom, treat as Truth or parse as literal
-            Condition::Truth
-        }
+        // A condition is a parenthesised form in PDDL, so a bare atom here is
+        // malformed input. This used to return `Truth`, which turned a
+        // misspelled condition into no condition at all and made the operator
+        // holding it unconditionally applicable.
+        SExpr::Atom(atom) => panic!(
+            "expected a parenthesised condition, got the bare atom {atom}; \
+             a nullary predicate is written ({atom})"
+        ),
     }
 }
 
@@ -463,7 +508,12 @@ pub fn parse_global_constraint(alist: &[SExpr], type_dict: &HashMap<String, Vec<
                 i += 1;
                 condition = parse_condition(&alist[i], type_dict);
             }
-            _ => {}
+            // Not skipped: a key this parser does not know is either a typo in
+            // the domain or a construct it does not implement, and silently
+            // ignoring it translates a task the author did not write.
+            unknown => panic!(
+                "global constraint {name}: unknown key {unknown}, expected :parameters or :condition"
+            ),
         }
         i += 1;
     }
@@ -531,7 +581,7 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
             // cannot handle when it meets the construct itself, so the declared
             // requirement list adds nothing. It still has to be matched here,
             // or it would be reported as an unknown section.
-            ":requirements" => {}
+            ":requirements" => check_requirements(&section[1..]),
             ":types" => {
                 types = parse_type_list(&section[1..]);
                 type_dict = set_supertypes(&types);

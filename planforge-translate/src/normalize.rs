@@ -948,7 +948,23 @@ pub fn condition_to_rule_body(parameters: &[TypedObject], condition: &Condition)
                     )));
                 }
             }
-            _ => {}
+            // A Horn rule body has no negation, and it does not need one: these
+            // rules compute an over-approximation of what is reachable, and
+            // dropping a negative literal only ever makes that set larger, which
+            // is the safe direction. This is the one deliberate omission here.
+            Condition::NegatedAtom(_) => {}
+            // Truth contributes nothing and Falsity cannot be reached, since
+            // instantiation drops a rule whose body is unsatisfiable.
+            Condition::Truth | Condition::Falsity => {}
+            // Everything else is gone by the time rules are built: universals
+            // became axioms, disjunctions were split, and existentials were
+            // moved into the parameter list above. Dropping one silently would
+            // widen the rule to fire without its condition, which is how a
+            // derived predicate becomes unconditionally true.
+            other => panic!(
+                "condition {other} should have been normalized away before \
+                 exploration rules are built"
+            ),
         }
     }
 

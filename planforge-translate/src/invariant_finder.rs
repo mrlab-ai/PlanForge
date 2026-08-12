@@ -132,7 +132,12 @@ fn get_fluents(task: &Task) -> HashSet<String> {
                 Condition::NegatedAtom(na) => {
                     fluent_names.insert(na.predicate.clone());
                 }
-                _ => {}
+                // Normalization leaves every effect a literal, so anything else
+                // here means a pass upstream stopped doing that. Skipping it
+                // would quietly shrink the fluent set, and a predicate missing
+                // from it is treated as static: its atoms never become
+                // variables, and conditions on them are read as constants.
+                other => panic!("an effect is a literal after normalization, got {other}"),
             }
         }
     }
