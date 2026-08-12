@@ -351,11 +351,22 @@ fn translate_strips_conditions_aux(
                 // dropping the condition would make the operator or axiom hold
                 // in states where it must not.
                 let Some(pairs) = dictionary.get(atom) else {
-                    assert!(
-                        mutex_check,
-                        "condition atom {atom:?} has no SAS variable; it is neither reachable \
-                         nor statically decided"
-                    );
+                    if !mutex_check {
+                        let same_predicate: Vec<&Atom> = dictionary
+                            .keys()
+                            .filter(|other| other.predicate == atom.predicate)
+                            .take(4)
+                            .collect();
+                        panic!(
+                            "condition atom {atom:?} has no SAS variable; it is neither \
+                             reachable nor statically decided. {} other atoms of that \
+                             predicate do have one, for example {same_predicate:?}",
+                            dictionary
+                                .keys()
+                                .filter(|other| other.predicate == atom.predicate)
+                                .count()
+                        );
+                    }
                     continue;
                 };
                 for &(var, val) in pairs {
