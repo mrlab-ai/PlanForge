@@ -62,112 +62,80 @@ telling you.</p>
   <li><a href="#benchmarks">Benchmarks</a></li>
 </ul>
 
-<h2 id="adl">The six ADL constructs that are mishandled</h2>
+<h2 id="adl">ADL</h2>
 
-<p>ADL needs quantified preconditions, universal effects and disjunction. Those
-constructs parse in PlanForge. They are then either dropped or read wrongly.</p>
+<p>ADL is supported. Quantified preconditions, universal effects, disjunction
+and <code>imply</code> are all handled, wherever they appear: in an action
+precondition, in the condition of a conditional effect, in a
+<code>:derived</code> body, and in the goal.</p>
 
-<p>These are bugs, not design decisions. They are tracked as
-<a href="https://github.com/mrlab-ai/PlanForge/issues/46">issue 46</a>.</p>
-
-<p>Four of the six make the planner return a plan for a task that has none. Two
-make it report no plan for a task that has one. Every row below was confirmed by
-running the planner.</p>
+<p>Six of these constructs used to be accepted by the parser and then dropped or
+read wrongly, four of them returning a plan for a task whose real optimum was
+higher. That was <a href="https://github.com/mrlab-ai/PlanForge/issues/46">issue
+46</a> and it is fixed. Each of the six now has a fixture under
+<code>tests/assets/adl</code>, and each fixture is built so that losing the
+behaviour changes the optimal cost rather than only making the task unsolvable.</p>
 
 <div class="scroll">
 <table>
-  <caption>The six cases. "Invalid plan" is the worse failure, because the
-    planner reports success.</caption>
+  <caption>What each construct compiles to. Every row has a fixture that fails if
+    the behaviour is lost.</caption>
   <thead>
-    <tr>
-      <th scope="col">Construct</th>
-      <th scope="col">What the translator does with it</th>
-      <th scope="col">Result</th>
-    </tr>
+    <tr><th>Construct</th><th>How it is handled</th></tr>
   </thead>
   <tbody>
     <tr>
-      <td>A disjunctive goal, <code class="wrap">(:goal (or ...))</code></td>
-      <td>The goal is replaced by a reachability predicate before disjunctions are split, so the disjunction is never split and the goal disappears.</td>
-      <td>Invalid plan. The empty plan is reported as a solution.</td>
-    </tr>
-    <tr>
-      <td><code>forall</code> in an action precondition</td>
-      <td>Treated as true. The pass that should expand the quantifier rebuilds it instead, and nothing downstream reads it.</td>
-      <td>Invalid plan. The action is applied even when one instance of the precondition is false.</td>
-    </tr>
-    <tr>
-      <td><code>or</code> in a <code>:derived</code> body</td>
-      <td>Treated as true. Only action preconditions are split into disjuncts.</td>
-      <td>Invalid plan. The derived predicate is always true.</td>
-    </tr>
-    <tr>
-      <td><code>imply</code> with a compound antecedent</td>
-      <td>The antecedent is not negated. <code class="wrap">(imply (and (p) (q)) (r))</code> becomes <code class="wrap">(p) and (q) or (r)</code> instead of <code class="wrap">not ((p) and (q)) or (r)</code>.</td>
-      <td>Invalid plan. With <code>p</code> and <code>q</code> true and <code>r</code> false, the action is treated as applicable.</td>
+      <td><code>forall</code> in a precondition, a goal or an effect condition</td>
+      <td>Replaced by the negation of a new derived predicate, which derives the
+        dual existential. Grounding can look for one witness but cannot check a
+        property of every object at once, so the quantifier is expressed through
+        its dual.</td>
     </tr>
     <tr>
       <td><code>forall</code> in an effect</td>
-      <td>Dropped. The quantified parameters are never bound to objects, so the effect atom keeps its variable and matches nothing.</td>
-      <td>No plan is reported where one exists.</td>
+      <td>Grounded into one effect per object of the quantified type.</td>
     </tr>
     <tr>
-      <td><code>exists</code> in an action precondition</td>
-      <td>The action is removed. The bound variables are added to the action's parameter list without updating its count of external parameters, so no instance survives grounding.</td>
-      <td>No plan is reported where one exists.</td>
+      <td><code>exists</code> anywhere</td>
+      <td>Its variables move into the parameter list of the action or axiom that
+        holds it. They do not become part of its name.</td>
+    </tr>
+    <tr>
+      <td><code>or</code> in a precondition</td>
+      <td>Pulled to the root, then the action is split into one action per
+        disjunct.</td>
+    </tr>
+    <tr>
+      <td><code>or</code> in a <code>:derived</code> body</td>
+      <td>Split into several axioms with the same head. Several bodies proving one
+        head already act as a disjunction, so the axiom layer needs no notion of
+        <code>or</code>.</td>
+    </tr>
+    <tr>
+      <td>A disjunctive or otherwise complicated goal</td>
+      <td>Compiled into an axiom, whose body is then split like any other. The
+        goal becomes the single derived atom that axiom proves.</td>
+    </tr>
+    <tr>
+      <td><code>imply</code></td>
+      <td><code>(imply a b)</code> becomes <code>(or (not a) b)</code>, with the
+        antecedent negated into negation normal form however compound it is.</td>
     </tr>
   </tbody>
 </table>
 </div>
 
-<p>An <code>exists</code> inside a <code>:derived</code> body is fine. That is
-the one place a quantifier works.</p>
-
-<h3 id="adl-repro">One of the six, in full</h3>
-
-<p>This is the disjunctive goal case. The domain has one action, and that action
-needs <code>(done)</code>, which is never true. So <code>(p)</code> is
-unreachable, <code>(q)</code> is never made true by anything, and the task has no
-plan.</p>
-
-<pre><code>(define (domain orbug) (:requirements :strips)
- (:predicates (p) (q) (done))
- (:action make-p :parameters () :precondition (done) :effect (p)))
-
-(define (problem orbug1) (:domain orbug)
- (:init) (:goal (or (p) (q))))</code></pre>
-
-<p>The planner reports a solution.</p>
-
-<pre><code>Solution found!
-Plan length: 0 step(s).
-Plan cost: 0.000000</code></pre>
-
-<p>It exits with code 0 and writes an empty <code>sas_plan</code>.</p>
-
-<h3 id="adl-safe">What to do until this is fixed</h3>
-
-<p>Treat the language as STRIPS, plus numbers, plus axioms. Put quantifiers only
-inside <code>:derived</code> bodies. Use <code>or</code> only in an action
-precondition, where it is compiled away correctly.</p>
-
-<p>Write a disjunctive axiom as several <code>:derived</code> blocks with the same
-head. Several blocks for one head act as a disjunction, and that route works.
-A single body containing <code>or</code> does not.</p>
-
-<p>Do not rely on <code>:requirements</code> to protect you. The declared list is
-parsed for its shape and then dropped. Nothing downstream consults it, so
-declaring <code>:adl</code> produces no complaint and changes nothing.</p>
+<p><code>:requirements</code> is read. A domain declaring a requirement the
+translator does not implement, <code>:durative-actions</code> for instance, is
+refused with a message naming it, rather than accepted and then translated as
+though the construct were absent.</p>
 
 <h2 id="requirements">Requirement levels</h2>
 
 <p>The table states the accepted fragment as <code>:requirements</code> flags, so
-that you can check it against your own domain. Remember that the planner does not
-read these flags. The table describes the implementation, not something the
-planner enforces.</p>
-
-<p>"Ignored" means the construct parses and then has no effect. That is not the
-same as being rejected.</p>
+that you can check it against your own domain. The planner reads these flags and
+refuses a domain declaring one it does not implement, so the table now describes
+something the planner enforces rather than only a property of the code.</p>
 
 <div class="scroll">
 <table>
