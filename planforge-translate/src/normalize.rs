@@ -245,20 +245,13 @@ fn remove_universal_quantifiers(task: &mut Task) {
     // appearing at several sites shares the axiom it needs rather than adding a
     // copy per site.
     let mut axioms_by_condition: HashMap<(Condition, Vec<TypedObject>), String> = HashMap::new();
-    let mut next_axiom = 0usize;
 
     rewrite_each_site(task, |task, condition, scope| {
         if !condition.has_universal_part() {
             return condition.clone();
         }
         let types = type_map(scope, condition);
-        recurse_universal(
-            task,
-            condition,
-            &types,
-            &mut axioms_by_condition,
-            &mut next_axiom,
-        )
+        recurse_universal(task, condition, &types, &mut axioms_by_condition)
     });
 }
 
@@ -267,13 +260,12 @@ fn recurse_universal(
     condition: &Condition,
     types: &HashMap<String, String>,
     axioms_by_condition: &mut HashMap<(Condition, Vec<TypedObject>), String>,
-    next_axiom: &mut usize,
 ) -> Condition {
     let Condition::UniversalCondition(_) = condition else {
         let parts = condition
             .parts()
             .iter()
-            .map(|part| recurse_universal(task, part, types, axioms_by_condition, next_axiom))
+            .map(|part| recurse_universal(task, part, types, axioms_by_condition))
             .collect();
         return condition.with_parts(parts);
     };
@@ -298,15 +290,11 @@ fn recurse_universal(
         None => {
             // Recurse into the negated body first: it can hold universals of
             // its own, and the axiom has to be added with those already gone.
-            let body = recurse_universal(
-                task,
-                &axiom_condition,
-                types,
-                axioms_by_condition,
-                next_axiom,
-            );
-            let name = format!("new-axiom@{next_axiom}");
-            *next_axiom += 1;
+            let body = recurse_universal(task, &axiom_condition, types, axioms_by_condition);
+            // Ask the task for the name rather than counting here: the global
+            // constraint invents axioms from the same namespace, and a
+            // collision would merge the two bodies into one head.
+            let name = task.fresh_axiom_name();
             task.axioms.push(Axiom::new(
                 name.clone(),
                 parameters.clone(),

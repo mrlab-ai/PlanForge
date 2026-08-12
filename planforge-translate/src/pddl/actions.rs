@@ -116,33 +116,64 @@ impl Action {
         let mut assign_effects = vec![];
 
         for eff in &self.effects {
-            // Check effect condition
-            let eff_condition = match eff.condition.instantiate_action(
-                var_mapping,
-                tables,
-                task_function_admin,
-                new_constant_axioms,
-            ) {
-                Some(conds) => conds,
-                None => continue, // Effect condition statically false
+            // A universally quantified effect, `forall(?i - item) ...`, stands for
+            // one effect per object of the quantified type, and this is where they
+            // are enumerated. Reachability cannot do it: it derives which atoms
+            // are reachable, not which bindings an effect has.
+            //
+            // Without this the quantified variable was never bound at all, so the
+            // effect atom kept its `?i` and matched no ground fact. The effect was
+            // still emitted, which is why the action looked applicable and simply
+            // achieved nothing.
+            //
+            // An effect with no parameters is the common case and takes the same
+            // path, because a product over an empty parameter list is one empty
+            // tuple.
+            let mut instantiate_binding = |bound: &super::tasks::VarMapping| {
+                let eff_condition = match eff.condition.instantiate_action(
+                    bound,
+                    tables,
+                    task_function_admin,
+                    new_constant_axioms,
+                ) {
+                    Some(conds) => conds,
+                    None => return, // Effect condition statically false
+                };
+
+                match &eff.peffect {
+                    Condition::Atom(atom) => {
+                        add_effects.push((eff_condition, atom.substituted(bound)));
+                    }
+                    // A delete effect is recorded by the atom it removes, so the
+                    // substitution goes straight into that atom: negating the
+                    // literal first would copy the arguments a second time, once
+                    // per delete effect of every reachable instance of every
+                    // action.
+                    Condition::NegatedAtom(natom) => del_effects.push((
+                        eff_condition,
+                        Atom::new(
+                            natom.predicate.clone(),
+                            crate::pddl::substitute(&natom.args, bound),
+                        ),
+                    )),
+                    other => panic!("an effect is a literal, got {other}"),
+                }
             };
 
-            match &eff.peffect {
-                Condition::Atom(atom) => {
-                    add_effects.push((eff_condition, atom.substituted(var_mapping)));
-                }
-                // A delete effect is recorded by the atom it removes, so the
-                // substitution goes straight into that atom: negating the
-                // literal first would copy the arguments a second time, once per
-                // delete effect of every reachable instance of every action.
-                Condition::NegatedAtom(natom) => del_effects.push((
-                    eff_condition,
-                    Atom::new(
-                        natom.predicate.clone(),
-                        crate::pddl::substitute(&natom.args, var_mapping),
-                    ),
-                )),
-                _ => panic!("Unexpected effect type in action instantiation"),
+            if eff.parameters.is_empty() {
+                instantiate_binding(var_mapping);
+            } else {
+                crate::instantiate::for_each_parameter_tuple(
+                    &eff.parameters,
+                    tables.objects_by_type,
+                    &mut |objects| {
+                        let mut bound = var_mapping.clone();
+                        for (parameter, object) in eff.parameters.iter().zip(objects) {
+                            bound.bind(&parameter.name, object);
+                        }
+                        instantiate_binding(&bound);
+                    },
+                );
             }
         }
 
@@ -242,6 +273,7 @@ impl Condition {
             fluent_facts,
             fluent_functions,
             init_function_vals,
+            objects_by_type: _,
         } = *tables;
         let mut result = vec![];
         match self {

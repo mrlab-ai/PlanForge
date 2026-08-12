@@ -119,6 +119,13 @@ pub struct GroundingTables<'a> {
     pub fluent_facts: &'a HashSet<Atom>,
     pub fluent_functions: &'a HashSet<PrimitiveNumericExpression>,
     pub init_function_vals: &'a HashMap<PrimitiveNumericExpression, f64>,
+    /// The objects of each type, including by every supertype they inherit.
+    ///
+    /// Needed because a universally quantified effect is grounded here rather
+    /// than by reachability: `forall(?i - item) (marked ?i)` stands for one
+    /// effect per object of type `item`, and only the object universe says which
+    /// those are.
+    pub objects_by_type: &'a HashMap<String, Vec<String>>,
 }
 
 /// What the `(define (domain ...))` form declares.
@@ -214,13 +221,32 @@ impl Task {
         } else {
             Condition::Conjunction(Conjunction::new(universal_constraints))
         };
-        let axiom = self.add_axiom(
-            format!("new-axiom@{}", self.axioms.len()),
-            vec![],
-            0,
-            condition,
-        );
+        let axiom = self.add_axiom(self.fresh_axiom_name(), vec![], 0, condition);
         self.global_constraint = Condition::Atom(Atom::new(axiom.predicate, vec![]));
+    }
+
+    /// An axiom name no axiom in the task uses yet.
+    ///
+    /// Two places invent axioms: the global constraint, and the pass that
+    /// replaces a universal condition by the negation of a new derived
+    /// predicate. Both used to spell the name themselves, and the global
+    /// constraint used `axioms.len()` as if that were a counter. It is not: with
+    /// one existing axiom the next index is 1, but so is `new-axiom@1` if the
+    /// other generator already took it, and in a task with no axioms both
+    /// generators produce `new-axiom@0`.
+    ///
+    /// Colliding is not a cosmetic problem. Two axioms with one head are read as
+    /// two ways of proving it, so a collision with the global constraint, whose
+    /// body is `Truth` when there are no global constraints, makes the other
+    /// axiom's head unconditionally true. That is silent: the task still
+    /// translates, and a `forall` precondition guarded by such a head simply
+    /// never holds.
+    pub fn fresh_axiom_name(&self) -> String {
+        let taken: HashSet<&str> = self.axioms.iter().map(|a| a.name.as_str()).collect();
+        (0..)
+            .map(|index| format!("new-axiom@{index}"))
+            .find(|name| !taken.contains(name.as_str()))
+            .expect("the integers are not exhausted")
     }
 
     pub fn add_axiom(

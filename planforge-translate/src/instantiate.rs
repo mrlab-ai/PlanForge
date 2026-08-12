@@ -230,6 +230,7 @@ pub fn explore(task: &Task) -> ExploreResult {
         fluent_facts: &fluent_facts,
         fluent_functions: &fluent_functions,
         init_function_vals: &init_func_vals,
+        objects_by_type: &objects_by_type,
     };
 
     // Step 6: Instantiate actions
@@ -396,7 +397,7 @@ pub fn explore(task: &Task) -> ExploreResult {
 /// parameter varying fastest. The tuples are visited rather than collected:
 /// there is one per object combination, and an axiom with three parameters
 /// over a few hundred objects has more of them than fit in memory comfortably.
-fn for_each_parameter_tuple(
+pub(crate) fn for_each_parameter_tuple(
     parameters: &[TypedObject],
     objects_by_type: &HashMap<String, Vec<String>>,
     visit: &mut impl FnMut(&[String]),
