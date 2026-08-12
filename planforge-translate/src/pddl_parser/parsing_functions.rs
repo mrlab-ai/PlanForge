@@ -279,7 +279,35 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
             let body = parse_condition(&alist[2], type_dict);
             Condition::ExistentialCondition(ExistentialCondition::new(parameters, vec![body]))
         }
-        "<" | "<=" | "=" | ">=" | ">" => parse_function_comparison(alist, type_dict),
+        // `=` is two different operators in PDDL. Between numeric expressions it
+        // is a comparison; between terms it is object equality, which this
+        // translator encodes as the predicate `=` and supports by adding
+        // `(= o o)` to the initial state for every object.
+        //
+        // The tag alone cannot tell them apart, and dispatching on it sent
+        // `(= ?sold spl1)` down the numeric path, where the two objects became
+        // nullary numeric functions named `?sold` and `spl1` and the comparison
+        // became a derived difference of them. `settlers` has no arithmetic at
+        // all, so the numeric variable that difference needed never existed.
+        // `is_function_comparison` already made this distinction for the `not`
+        // arm below; it is asked here too now.
+        "=" if !is_function_comparison(alist) => {
+            assert_eq!(alist.len(), 3, "object equality takes exactly two terms");
+            Condition::Atom(Atom::new(
+                "=".to_string(),
+                vec![
+                    alist[1].as_atom().to_string(),
+                    alist[2].as_atom().to_string(),
+                ],
+            ))
+        }
+        "<" | "<=" | "=" | ">=" | ">" => {
+            assert!(
+                is_function_comparison(alist),
+                "{tag} compares numeric expressions, got {alist:?}"
+            );
+            parse_function_comparison(alist, type_dict)
+        }
         _ => {
             // It's a literal (atom)
             let pred = tag.to_string();
