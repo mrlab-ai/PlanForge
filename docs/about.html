@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Credits and licence - PlanForge</title>
-<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of Numeric Fast Downward, itself a fork of Fast Downward, the people and publications behind both, and the licence terms for the code and for this website.">
+<meta name="description" content="Where PlanForge comes from: its origin as a Rust port of Numeric Fast Downward, itself a fork of Fast Downward, and the licence terms for the code and for this website.">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 </head>
@@ -146,88 +146,6 @@ are new here. PlanForge is a derivative work all the same, so it carries its
 predecessors' copyleft licensing forward, as described
 <a href="#licence">below</a>.</p>
 
-<h2 id="people">People</h2>
-
-<p>PlanForge is developed by <a href="https://mrlab.ai">MRlab</a>, the Machine
-Reasoning Lab at Linköping University, Sweden.</p>
-
-<p>As recorded in the repository's commit history, the code has been written by
-Markus Fritzsche and Martín Pozo, with a contribution from Jendrik Seipp. The
-commit history is the authoritative record. This page will fall out of date
-before it does.</p>
-
-<h2 id="publications">Publications</h2>
-
-<p>The reference for PlanForge itself is its planner abstract for the
-International Planning Competition 2026, Numeric Tracks.</p>
-
-<ul>
-  <li>M. Fritzsche, M. Pozo, M. Gruntov, A. Shleyfman and D. Gnad, "PlanForge: A
-    Rust Planning Framework for Numeric Planning", planner abstract,
-    <em>International Planning Competition 2026, Numeric Tracks</em>.
-    <a href="https://ipc2026-numeric.github.io/abstracts/team-8.pdf">Abstract</a>,
-    <a href="https://github.com/ipc2026-numeric/team-8">frozen source</a>.</li>
-</ul>
-
-<p>The frozen source is the exact tree the competition ran. It is not this
-repository, and it does not move. Use it to reproduce a competition result, and
-use this repository for everything else.</p>
-
-<p>PlanForge entered the simple numeric planning tracks only. The competition and
-its other entrants are listed on the
-<a href="https://ipc2026-numeric.github.io/">competition site</a>, and the results
-were presented at the 36th International Conference on Automated Planning and
-Scheduling in Dublin.</p>
-
-<h2 id="references">Prior work the implementation follows</h2>
-
-<p>Several components implement published algorithms. Those are other people's
-results and PlanForge claims none of them.</p>
-
-<p>The citations below are the ones recorded in the source files that implement
-them, so that a reader can go from a module to the paper it came from. No
-abstract, figure or passage from any of these works is reproduced here or in the
-repository.</p>
-
-<ul>
-  <li><strong>The FF heuristic.</strong> J. Hoffmann and B. Nebel, "The FF
-    Planning System", <em>Journal of Artificial Intelligence Research</em>, 2001.
-    PlanForge's <a href="search.html#ff"><code>ff</code></a> heuristic is this
-    relaxed-plan heuristic.</li>
-  <li><strong>Numeric relaxation for FF.</strong> J. Hoffmann, "The Metric-FF
-    Planning System", <em>Journal of Artificial Intelligence Research</em>, 2003.
-    The monotonic numeric relaxation follows this work.</li>
-  <li><strong>Post-hoc optimisation.</strong> F. Pommerening, G. Röger and
-    M. Helmert, "Getting the Most Out of Pattern Databases for Classical
-    Planning", <em>IJCAI</em>, 2013. The
-    <a href="search.html#pho"><code>posthoc_optimization</code></a> heuristic
-    solves this linear program over a collection of abstractions built by
-    refinement.</li>
-  <li><strong>Split selection for Cartesian abstractions.</strong> Schindler,
-    Speck and Helmert, <em>ICAPS</em>, 2026. The
-    <a href="search.html#source-icaps26"><code>icaps26_cartesian</code></a>
-    abstraction source implements the full-task, first-flaw and desired-region
-    split policies from this paper. The title and the full author names are still
-    to be added. The repository records the authors and the venue but not the
-    title, and it is not guessed here.</li>
-</ul>
-
-<p>Digital object identifiers are not listed for these entries yet. They will be
-added rather than approximated.</p>
-
-<h2 id="benchmarks">Benchmarks</h2>
-
-<p>No benchmark set is shipped with PlanForge or from this site. The PDDL tasks in
-the repository are regression fixtures with pinned costs, not a benchmark
-suite.</p>
-
-<p>For classical benchmarks, use Fast Downward's own collection at
-<a href="https://github.com/aibasel/downward-benchmarks">github.com/aibasel/downward-benchmarks</a>.
-For numeric domains, go to the numeric tracks of the
-<a href="https://www.icaps-conference.org/competitions/">International Planning
-Competition</a>. See <a href="pddl.html#benchmarks">PDDL support</a> for which of
-those PlanForge can read.</p>
-
 <h2 id="licence">Licence</h2>
 
 <h3 id="licence-planner">The planner</h3>
@@ -310,21 +228,10 @@ you.</p>
 from GitHub's Octicons set, under the MIT licence. It is written into the page
 rather than fetched, so it costs no request and contacts no other host.</p>
 
-<h2 id="contact">Contact</h2>
+<h2 id="to-be-filled">To be filled</h2>
 
-<p>There is no mailing list. Bug reports and patches belong in the
-<a href="https://github.com/mrlab-ai/PlanForge/issues">issue tracker</a> on the
-<a href="https://github.com/mrlab-ai/PlanForge">GitHub repository</a>, where they
-stay visible to everyone.</p>
-
-<p>For anything that does not fit an issue, write to Markus Fritzsche at
-<a href="mailto:markus.fritzsche@liu.se">markus.fritzsche@liu.se</a>, at the
-Machine Reasoning Lab, or to Mart&iacute;n Pozo at
-<a href="mailto:marcosmartin.pozo@uc3m.es">marcosmartin.pozo@uc3m.es</a>, at
-Universidad Carlos III de Madrid.</p>
-
-<p>A report is easiest to act on when it includes the domain file, the problem
-file, the exact <code>--search</code> string and the planner's output.</p>
+<p>The people, the publications, the prior work behind each heuristic and the
+benchmark provenance are not written up yet.</p>
 
 </main>
 
