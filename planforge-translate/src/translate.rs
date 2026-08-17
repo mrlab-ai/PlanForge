@@ -17,6 +17,7 @@ use super::pddl::conditions::*;
 use super::pddl::f_expression::*;
 use super::sas_tasks::*;
 use super::simplify;
+use super::tools;
 
 /// A partial assignment of values to SAS variables.
 ///
@@ -537,39 +538,23 @@ fn negate_and_translate_condition(
 
     let mut negation = vec![];
 
-    // Cartesian product of all condition lists
-    let combinations = cartesian_product_conditions(add_conds);
-    for combination in &combinations {
-        let cond: Vec<Condition> = combination.iter().map(negate_condition).collect();
+    tools::for_each_product(add_conds, &mut |combination| {
+        let cond: Vec<Condition> = combination
+            .iter()
+            .map(|condition| negate_condition(condition))
+            .collect();
         let translated = translate_strips_conditions(translation, &cond);
         if let Some(t) = translated {
             negation.extend(t);
         }
-    }
+        true
+    });
 
     if negation.is_empty() {
         None
     } else {
         Some(negation)
     }
-}
-
-/// Cartesian product of condition lists
-fn cartesian_product_conditions(lists: &[Vec<Condition>]) -> Vec<Vec<Condition>> {
-    if lists.is_empty() {
-        return vec![vec![]];
-    }
-    let first = &lists[0];
-    let rest = cartesian_product_conditions(&lists[1..]);
-    let mut result = vec![];
-    for item in first {
-        for r in &rest {
-            let mut combo = vec![item.clone()];
-            combo.extend(r.clone());
-            result.push(combo);
-        }
-    }
-    result
 }
 
 // ============================================================

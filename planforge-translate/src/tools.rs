@@ -112,21 +112,61 @@ pub fn cmp_quoted_slice(left: &[String], right: &[String]) -> Ordering {
     right.len().cmp(&left.len())
 }
 
-/// This isn't actually a proper cartesian product because we
-/// concatenate lists, rather than forming sequences of atomic elements.
-pub fn cartesian_product<T: Clone>(sequences: &[Vec<Vec<T>>]) -> Vec<Vec<T>> {
-    if sequences.is_empty() {
-        return vec![vec![]];
+/// Visits the Cartesian product of `lists` without materializing it.
+///
+/// The empty product is visited once with an empty selection. Returning
+/// `false` from `visit` stops enumeration immediately; the return value says
+/// whether every combination was visited.
+pub fn for_each_product<'a, T>(
+    lists: &'a [Vec<T>],
+    visit: &mut impl FnMut(&[&'a T]) -> bool,
+) -> bool {
+    fn recurse<'a, T>(
+        lists: &'a [Vec<T>],
+        depth: usize,
+        selection: &mut Vec<&'a T>,
+        visit: &mut impl FnMut(&[&'a T]) -> bool,
+    ) -> bool {
+        if depth == lists.len() {
+            return visit(selection);
+        }
+        for item in &lists[depth] {
+            selection.push(item);
+            let keep_going = recurse(lists, depth + 1, selection, visit);
+            selection.pop();
+            if !keep_going {
+                return false;
+            }
+        }
+        true
     }
 
-    let rest = cartesian_product(&sequences[1..]);
-    let mut result = vec![];
-    for item in &sequences[0] {
-        for sequence in &rest {
-            let mut combined = item.clone();
-            combined.extend(sequence.iter().cloned());
-            result.push(combined);
-        }
+    recurse(lists, 0, &mut Vec::with_capacity(lists.len()), visit)
+}
+
+#[cfg(test)]
+mod product_tests {
+    use super::for_each_product;
+
+    #[test]
+    fn empty_product_has_one_empty_combination() {
+        let lists: Vec<Vec<usize>> = vec![];
+        let mut combinations = Vec::new();
+        assert!(for_each_product(&lists, &mut |selection| {
+            combinations.push(selection.iter().map(|&&value| value).collect::<Vec<_>>());
+            true
+        }));
+        assert_eq!(combinations, [Vec::<usize>::new()]);
     }
-    result
+
+    #[test]
+    fn product_visitor_stops_without_enumerating_the_tail() {
+        let lists = vec![vec![1, 2, 3], vec![10, 20, 30]];
+        let mut combinations = Vec::new();
+        assert!(!for_each_product(&lists, &mut |selection| {
+            combinations.push((selection[0], selection[1]));
+            combinations.len() < 2
+        }));
+        assert_eq!(combinations, [(&1, &10), (&1, &20)]);
+    }
 }

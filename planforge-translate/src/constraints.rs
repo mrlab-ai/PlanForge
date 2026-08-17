@@ -1,6 +1,8 @@
 /// Constraint system for invariant checking.
 use std::collections::HashMap;
 
+use super::tools;
+
 /// The representative of `term`'s equivalence class under an assignment. A term
 /// that none of the equalities mentions forms its own class, so a missing entry
 /// stands for the term itself.
@@ -34,19 +36,21 @@ impl NegativeClause {
 ///
 /// `None` if some class holds two objects, in which case no substitution can
 /// satisfy the conjunction.
-fn compute_representatives(equalities: &[(String, String)]) -> Option<HashMap<String, String>> {
+fn compute_representatives<'a>(
+    equalities: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Option<HashMap<String, String>> {
     // Union-find over the mentioned terms: `class` maps a term to the index of
     // its class in `classes`, and merging empties the class that is given up.
     let mut class: HashMap<&str, usize> = HashMap::new();
     let mut classes: Vec<Vec<&str>> = Vec::new();
     for (v1, v2) in equalities {
-        for term in [v1.as_str(), v2.as_str()] {
+        for term in [v1, v2] {
             class.entry(term).or_insert_with(|| {
                 classes.push(vec![term]);
                 classes.len() - 1
             });
         }
-        let (mut keep, mut given_up) = (class[v1.as_str()], class[v2.as_str()]);
+        let (mut keep, mut given_up) = (class[v1], class[v2]);
         if keep == given_up {
             continue;
         }
@@ -100,7 +104,11 @@ impl Assignment {
 
     pub fn representative(&mut self) -> Option<&HashMap<String, String>> {
         if self.representative.is_none() {
-            self.representative = Some(compute_representatives(&self.equalities));
+            self.representative = Some(compute_representatives(
+                self.equalities
+                    .iter()
+                    .map(|(left, right)| (left.as_str(), right.as_str())),
+            ));
         }
         self.representative
             .as_ref()
@@ -126,30 +134,6 @@ pub struct ConstraintSystem {
 impl ConstraintSystem {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Whether the equivalence relation `assignment` induces is a solution. An
-    /// inconsistent conjunction induces none, so it is not one.
-    fn is_satisfied_by(&self, assignment: &mut Assignment) -> bool {
-        let Some(representative) = assignment.representative() else {
-            return false;
-        };
-        self.not_constant
-            .iter()
-            .all(|term| class_of(representative, term).starts_with('?'))
-            && self
-                .neg_clauses
-                .iter()
-                .all(|clause| clause.is_satisfied_by(representative))
-    }
-
-    fn combine_assignments(assignments: &[&Assignment]) -> Assignment {
-        Assignment::new(
-            assignments
-                .iter()
-                .flat_map(|assignment| assignment.equalities.iter().cloned())
-                .collect(),
-        )
     }
 
     pub fn add_assignment(&mut self, assignment: Assignment) {
@@ -178,26 +162,29 @@ impl ConstraintSystem {
     }
 
     pub fn is_solvable(&self) -> bool {
-        cartesian_product_refs(&self.combinatorial_assignments)
-            .into_iter()
-            .any(|combo| self.is_satisfied_by(&mut Self::combine_assignments(&combo)))
+        let mut equalities = Vec::new();
+        let completed =
+            tools::for_each_product(&self.combinatorial_assignments, &mut |assignments| {
+                equalities.clear();
+                equalities.extend(assignments.iter().flat_map(|assignment| {
+                    assignment
+                        .equalities
+                        .iter()
+                        .map(|(left, right)| (left.as_str(), right.as_str()))
+                }));
+                let Some(representative) = compute_representatives(equalities.iter().copied())
+                else {
+                    return true;
+                };
+                !(self
+                    .not_constant
+                    .iter()
+                    .all(|term| class_of(&representative, term).starts_with('?'))
+                    && self
+                        .neg_clauses
+                        .iter()
+                        .all(|clause| clause.is_satisfied_by(&representative)))
+            });
+        !completed
     }
-}
-
-/// Cartesian product of assignment reference lists
-fn cartesian_product_refs(lists: &[Vec<Assignment>]) -> Vec<Vec<&Assignment>> {
-    if lists.is_empty() {
-        return vec![vec![]];
-    }
-
-    let rest = cartesian_product_refs(&lists[1..]);
-    let mut result = vec![];
-    for item in &lists[0] {
-        for seq in &rest {
-            let mut combined = vec![item];
-            combined.extend(seq.iter());
-            result.push(combined);
-        }
-    }
-    result
 }

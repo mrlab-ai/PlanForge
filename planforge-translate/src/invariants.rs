@@ -30,7 +30,12 @@ fn instantiate_factored_mapping(pairs: &[(Vec<usize>, Vec<i32>)]) -> Vec<Vec<(us
                 .collect()
         })
         .collect();
-    tools::cartesian_product(&part_mappings)
+    let mut mappings = Vec::new();
+    tools::for_each_product(&part_mappings, &mut |parts| {
+        mappings.push(parts.iter().flat_map(|part| part.iter().copied()).collect());
+        true
+    });
+    mappings
 }
 
 /// One name per invariant parameter, none of them clashing with a variable the
