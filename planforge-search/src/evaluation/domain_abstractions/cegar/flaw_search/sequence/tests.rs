@@ -40,7 +40,7 @@ fn progression_sequence_flaws_find_precondition_violation() {
     get_sequence_progression_flaws(
         &flawed_task,
         factory.partitions(),
-        &factory.domain_mapping,
+        factory.domain_mapping(),
         &plan,
         &mut flaws,
     )
@@ -80,7 +80,7 @@ fn progression_sequence_flaws_find_goal_violation() {
     get_sequence_progression_flaws(
         &task,
         factory.partitions(),
-        &factory.domain_mapping,
+        factory.domain_mapping(),
         &plan,
         &mut flaws,
     )
@@ -210,8 +210,8 @@ fn regression_sequence_flaws_find_precondition_violation() {
     let mut flaws = Vec::new();
     get_sequence_regression_flaws(
         &task,
-        &factory.partitions,
-        &factory.domain_mapping,
+        factory.partitions(),
+        factory.domain_mapping(),
         &plan,
         &mut flaws,
     )
@@ -249,8 +249,8 @@ fn regression_sequence_flaws_find_initial_state_violation() {
     let mut flaws = Vec::new();
     get_sequence_regression_flaws(
         &flawed_task,
-        &factory.partitions,
-        &factory.domain_mapping,
+        factory.partitions(),
+        factory.domain_mapping(),
         &plan,
         &mut flaws,
     )

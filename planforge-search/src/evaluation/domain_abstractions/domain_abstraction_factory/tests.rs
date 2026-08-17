@@ -344,9 +344,9 @@ fn early_goal_distance_matches_exhaustive_walk_when_comparisons_are_cleared() {
     let goal_facts = factory.compute_abstract_goals(&task);
     let comparison_var_ids = factory.comparison_var_ids();
     let numeric_domain_sizes = generator.numeric_domain_sizes();
-    let num_states = compute_num_states(&factory.domain_sizes, numeric_domain_sizes).unwrap();
+    let num_states = compute_num_states(factory.domain_sizes(), numeric_domain_sizes).unwrap();
     let match_tree = MatchTree::build(
-        &factory.domain_sizes,
+        factory.domain_sizes(),
         numeric_domain_sizes,
         hash_multipliers,
         &operators,

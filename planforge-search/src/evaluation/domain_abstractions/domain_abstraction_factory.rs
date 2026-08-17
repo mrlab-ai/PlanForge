@@ -61,10 +61,10 @@ fn ensure_online_scp_deadline(deadline: Option<Instant>) -> Result<()> {
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {
-    pub domain_mapping: DomainMapping,
-    pub domain_sizes: Vec<usize>,
-    pub partitions: NumericPartitions,
-    pub numeric_domain_sizes: Vec<usize>,
+    domain_mapping: DomainMapping,
+    domain_sizes: Vec<usize>,
+    partitions: NumericPartitions,
+    numeric_domain_sizes: Vec<usize>,
     /// Shared with the task the factory was built from: the conditions are
     /// task data, not abstraction data, but the factory outlives the borrow.
     numeric_conditions: Arc<NumericConditions>,
@@ -162,6 +162,27 @@ impl DomainAbstractionFactory {
 
     pub fn numeric_domain_sizes(&self) -> &[usize] {
         &self.numeric_domain_sizes
+    }
+
+    /// The coordinated representation pieces changed by one CEGAR refinement.
+    ///
+    /// Keeping this crate-private and returning all four at once makes the
+    /// factory the only mutation boundary. Read-only consumers use the named
+    /// accessors above.
+    pub(super) fn refinement_parts(
+        &mut self,
+    ) -> (
+        &mut DomainMapping,
+        &mut [usize],
+        &mut NumericPartitions,
+        &mut [usize],
+    ) {
+        (
+            &mut self.domain_mapping,
+            &mut self.domain_sizes,
+            &mut self.partitions,
+            &mut self.numeric_domain_sizes,
+        )
     }
 
     pub fn numeric_conditions(&self) -> &NumericConditions {

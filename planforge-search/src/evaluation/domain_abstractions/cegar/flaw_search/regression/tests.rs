@@ -38,7 +38,7 @@ fn regression_flaws_find_precondition_violation() {
     // The abstraction cannot tell `v=1` from `v=2`, so regressing the goal
     // `v=2` through `set` leaves the unachievable precondition `v=1`.
     let flaws =
-        get_regression_flaws(&task, &factory.partitions, &factory.domain_mapping, &plan).unwrap();
+        get_regression_flaws(&task, factory.partitions(), factory.domain_mapping(), &plan).unwrap();
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
@@ -71,8 +71,8 @@ fn regression_flaws_find_initial_state_violation() {
     let flawed_task = single_switch_task(3, 1, vec![1]);
     let flaws = get_regression_flaws(
         &flawed_task,
-        &factory.partitions,
-        &factory.domain_mapping,
+        factory.partitions(),
+        factory.domain_mapping(),
         &plan,
     )
     .unwrap();
@@ -155,7 +155,7 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
     };
 
     let flaws =
-        get_regression_flaws(&task, &factory.partitions, &factory.domain_mapping, &plan).unwrap();
+        get_regression_flaws(&task, factory.partitions(), factory.domain_mapping(), &plan).unwrap();
     assert!(
         flaws.iter().any(|flaw| matches!(
             flaw,

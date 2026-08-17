@@ -75,7 +75,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
     let mut flaws = get_flaws(
         &task,
         factory.partitions(),
-        &factory.domain_mapping,
+        factory.domain_mapping(),
         &plan,
         FlawKind::Progression,
     )
@@ -85,7 +85,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
     flaws = get_flaws(
         &task,
         factory.partitions(),
-        &factory.domain_mapping,
+        factory.domain_mapping(),
         &plan,
         FlawKind::Regression,
     )

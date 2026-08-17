@@ -372,8 +372,8 @@ impl Cegar {
             if config.debug {
                 super::utils::debug_print_abstraction_stats(
                     iteration,
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes(),
                 );
             }
 
@@ -408,9 +408,9 @@ impl Cegar {
                     Some(plan) => super::utils::debug_print_wildcard_plan(
                         task,
                         plan,
-                        &factory.domain_sizes,
-                        &factory.numeric_domain_sizes,
-                        &factory.partitions,
+                        factory.domain_sizes(),
+                        factory.numeric_domain_sizes(),
+                        factory.partitions(),
                     )?,
                     None => debug!("[Abstract Plan] <none>"),
                 }
@@ -418,14 +418,14 @@ impl Cegar {
 
             let Some(plan) = wildcard_plan.as_ref() else {
                 let abstraction_size = compute_abstraction_size_u128(
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes(),
                 )
                 .unwrap_or(u128::MAX);
                 bail!(
                     "CEGAR produced an abstract dead end for the concrete initial state at iteration {iteration}; abstraction_size={abstraction_size}, prop_domains={:?}, numeric_domains={:?}",
-                    factory.domain_sizes,
-                    factory.numeric_domain_sizes
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes()
                 );
             };
             let real_check_time = Duration::ZERO;
@@ -440,8 +440,8 @@ impl Cegar {
                 .flaw_kind
                 .get_flaws_with_direction(
                     task,
-                    &factory.partitions,
-                    &factory.domain_mapping,
+                    factory.partitions(),
+                    factory.domain_mapping(),
                     plan,
                     direction,
                 )
@@ -455,7 +455,7 @@ impl Cegar {
                 return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
             }
             let eligible_flaws =
-                filter_eligible_flaws(task, &factory.partitions, &factory.domain_sizes, &flaws);
+                filter_eligible_flaws(task, factory.partitions(), factory.domain_sizes(), &flaws);
             if eligible_flaws.filtered_stale > 0 {
                 debug!(
                     "filtered {} stale flaws (already-split values / fully refined vars)",
@@ -474,7 +474,10 @@ impl Cegar {
             }
 
             let before_size = if config.debug {
-                compute_abstraction_size_u128(&factory.domain_sizes, &factory.numeric_domain_sizes)
+                compute_abstraction_size_u128(
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes(),
+                )
             } else {
                 None
             };
@@ -483,18 +486,20 @@ impl Cegar {
             // so the sum strictly increases iff any refinement landed. The
             // u128 size product cannot serve here: it saturates to `None` on
             // overflow, which would make progress undetectable.
-            let before_partition_count = factory.domain_sizes.iter().sum::<usize>()
-                + factory.numeric_domain_sizes.iter().sum::<usize>();
+            let before_partition_count = factory.domain_sizes().iter().sum::<usize>()
+                + factory.numeric_domain_sizes().iter().sum::<usize>();
             let refine_start = Instant::now();
+            let (domain_mapping, domain_sizes, partitions, numeric_domain_sizes) =
+                factory.refinement_parts();
             let refined = fix_flaws(
                 &self.config,
                 task,
                 &eligible_flaws.flaws,
                 RefinementState {
-                    domain_mapping: &mut factory.domain_mapping,
-                    domain_sizes: &mut factory.domain_sizes,
-                    partitions: &mut factory.partitions,
-                    numeric_domain_sizes: &mut factory.numeric_domain_sizes,
+                    domain_mapping,
+                    domain_sizes,
+                    partitions,
+                    numeric_domain_sizes,
                     blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
                     blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
                 },
@@ -503,18 +508,18 @@ impl Cegar {
             )
             .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             let refine_time = refine_start.elapsed();
-            let after_partition_count = factory.domain_sizes.iter().sum::<usize>()
-                + factory.numeric_domain_sizes.iter().sum::<usize>();
+            let after_partition_count = factory.domain_sizes().iter().sum::<usize>()
+                + factory.numeric_domain_sizes().iter().sum::<usize>();
             if config.debug {
                 let after_size = compute_abstraction_size_u128(
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes(),
                 );
                 debug_print_refinement_summary(
                     before_size,
                     after_size,
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes(),
                     !refined.is_empty(),
                 );
             }
@@ -544,8 +549,8 @@ impl Cegar {
             );
             if config.debug {
                 let abstraction_size = compute_abstraction_size_u128(
-                    &factory.domain_sizes,
-                    &factory.numeric_domain_sizes,
+                    factory.domain_sizes(),
+                    factory.numeric_domain_sizes(),
                 )
                 .unwrap_or(u128::MAX);
                 info!(
