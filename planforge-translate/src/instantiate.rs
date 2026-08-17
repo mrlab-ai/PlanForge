@@ -99,6 +99,8 @@ enum Bookkeeping<'a> {
     Function(&'a str),
     /// A reachable parameter tuple of the named action.
     ActionParameters(&'a str),
+    /// A reachable parameter tuple of the named propositional axiom.
+    AxiomParameters(&'a str),
     /// A reachable instance of the named numeric axiom.
     FunctionAxiom(&'a str),
     /// The goal is reachable in the delete relaxation.
@@ -111,6 +113,8 @@ impl<'a> Role<'a> {
             Bookkeeping::Function(symbol)
         } else if let Some(name) = predicate.strip_prefix("@action-") {
             Bookkeeping::ActionParameters(name)
+        } else if let Some(name) = predicate.strip_prefix("@axiom-") {
+            Bookkeeping::AxiomParameters(name)
         } else if let Some(name) = predicate.strip_prefix("@function-axiom-") {
             Bookkeeping::FunctionAxiom(name)
         } else if predicate == "@goal-reachable" {
@@ -195,6 +199,7 @@ pub fn explore(task: &Task) -> ExploreResult {
     let mut fluent_functions: HashSet<PrimitiveNumericExpression> = HashSet::new();
     let mut reachable_atoms: Vec<Atom> = vec![];
     let mut reachable_action_params: HashMap<String, Vec<Rc<[ObjectId]>>> = HashMap::new();
+    let mut reachable_axiom_params: HashMap<(String, usize), Vec<Rc<[ObjectId]>>> = HashMap::new();
     let mut axiom_instances: Vec<(&str, Vec<String>)> = vec![];
     for atom in &model.atoms {
         let args = || -> Vec<String> {
@@ -221,6 +226,10 @@ pub fn explore(task: &Task) -> ExploreResult {
             }
             Bookkeeping::ActionParameters(name) => reachable_action_params
                 .entry(name.to_owned())
+                .or_default()
+                .push(Rc::clone(&atom.args)),
+            Bookkeeping::AxiomParameters(name) => reachable_axiom_params
+                .entry((name.to_owned(), atom.args.len()))
                 .or_default()
                 .push(Rc::clone(&atom.args)),
             Bookkeeping::FunctionAxiom(name) => axiom_instances.push((name, args())),
@@ -291,13 +300,25 @@ pub fn explore(task: &Task) -> ExploreResult {
 
     // Step 7: Instantiate axioms
     let mut grounded_axioms: Vec<PropositionalAxiom> = vec![];
+    let mut var_mapping = VarMapping::default();
     for axiom in &task.axioms {
-        for_each_parameter_tuple(&axiom.parameters, &objects_by_type, &mut |params| {
-            // The tuple is rewritten in place between visits, so this mapping
-            // cannot outlive the visit and cannot be hoisted out of it.
-            let mut var_mapping = VarMapping::default();
-            for (parameter, value) in axiom.parameters.iter().zip(params) {
-                var_mapping.bind(&parameter.name, value);
+        let Some(param_lists) =
+            reachable_axiom_params.get(&(axiom.name.clone(), axiom.parameters.len()))
+        else {
+            continue;
+        };
+        for params in param_lists {
+            assert_eq!(
+                params.len(),
+                axiom.parameters.len(),
+                "axiom {} was explored with {} arguments but declares {} parameters",
+                axiom.name,
+                params.len(),
+                axiom.parameters.len()
+            );
+            var_mapping.clear();
+            for (parameter, &object) in axiom.parameters.iter().zip(params.iter()) {
+                var_mapping.bind(&parameter.name, model.symbols.object_name(object));
             }
             if let Some(prop_axiom) = axiom.instantiate(
                 &var_mapping,
@@ -307,7 +328,7 @@ pub fn explore(task: &Task) -> ExploreResult {
             ) {
                 grounded_axioms.push(prop_axiom);
             }
-        });
+        }
     }
 
     let mut numeric_axioms: OrderedSet<InstantiatedNumericAxiom> = OrderedSet::default();
