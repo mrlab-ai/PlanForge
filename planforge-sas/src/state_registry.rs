@@ -877,6 +877,7 @@ impl<'a> StateRegistry<'a> {
         // Process numeric variables and get cost variables.
         let _cost_variables =
             self.process_numeric_variables(&mut init_buffer, &initial_numeric_values);
+        self.assert_cost_layout(&_cost_variables);
 
         // Evaluate axioms.
         let mut numeric_state_copy = initial_numeric_values;
@@ -1404,6 +1405,32 @@ impl<'a> StateRegistry<'a> {
         self.cost_variable_count
     }
 
+    fn cost_index(&self, numeric_var_id: usize) -> usize {
+        self.numeric_indices[numeric_var_id]
+            .unwrap_or_else(|| panic!("cost numeric variable {numeric_var_id} has no cost slot"))
+    }
+
+    /// Validate the cost-variable-to-row mapping when the initial state fixes
+    /// the registry's numeric layout. Every later row has the same length,
+    /// enforced by [`DenseCostInformation::set`].
+    fn assert_cost_layout(&self, cost_variables: &[f64]) {
+        assert_eq!(
+            cost_variables.len(),
+            self.cost_variable_count,
+            "initial state must define every cost variable"
+        );
+        for (numeric_var_id, ty) in self.numeric_var_types.iter().enumerate() {
+            if *ty == NumericType::Cost {
+                let cost_index = self.cost_index(numeric_var_id);
+                assert!(
+                    cost_index < cost_variables.len(),
+                    "cost numeric variable {numeric_var_id} points at slot {cost_index}, but the cost row has {} entries",
+                    cost_variables.len()
+                );
+            }
+        }
+    }
+
     fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<f64>) {
         let cost_info_borrow = self.cost_info.borrow();
         let cost_info_data = cost_info_borrow.get(state.get_id());
@@ -1462,20 +1489,12 @@ impl<'a> StateRegistry<'a> {
 
         for (i, numeric_var) in self.task.numeric_variables().iter().enumerate() {
             numeric_output[i] = match numeric_var.get_type() {
-                NumericType::Cost => {
-                    let cost_index = self.numeric_indices[i];
-                    if let Some(cost) = cost_index
-                        && cost < cost_variables.len()
-                    {
-                        cost_variables[cost]
-                    } else {
-                        0.0
-                    }
-                }
+                NumericType::Cost => cost_variables[self.cost_index(i)],
                 NumericType::Constant => self.numeric_constants[self.numeric_indices[i].unwrap()],
                 NumericType::Regular => self.unpack_regular_numeric(
                     state_packer.get(buffer, self.numeric_indices[i].unwrap()),
                 ),
+                // Axioms fill derived values after this input-state pass.
                 NumericType::Derived => 0.0,
             };
         }
@@ -1513,16 +1532,7 @@ impl<'a> StateRegistry<'a> {
         let cost_variables = cost_info_borrow.get(state.get_id());
 
         let value = match numeric_var.get_type() {
-            NumericType::Cost => {
-                let cost_index = self.numeric_indices[numeric_var_id];
-                if let Some(cost) = cost_index
-                    && cost < cost_variables.len()
-                {
-                    cost_variables[cost]
-                } else {
-                    0.0
-                }
-            }
+            NumericType::Cost => cost_variables[self.cost_index(numeric_var_id)],
             NumericType::Constant => {
                 self.numeric_constants[self.numeric_indices[numeric_var_id].unwrap()]
             }
@@ -1530,6 +1540,7 @@ impl<'a> StateRegistry<'a> {
                 self.global_state_packer
                     .get(buffer, self.numeric_indices[numeric_var_id].unwrap()),
             ),
+            // Axioms fill derived values after this input-state pass.
             NumericType::Derived => 0.0,
         };
 
@@ -1553,17 +1564,7 @@ impl<'a> StateRegistry<'a> {
         // a vtable dispatch through `task.numeric_variables()` per element.
         for (i, ty) in self.numeric_var_types.iter().enumerate() {
             output[i] = match ty {
-                NumericType::Cost => {
-                    // Retrieve cost variable from per-state storage.
-                    if let Some(cost_index) = self.numeric_indices[i]
-                        && cost_index < cost_variables.len()
-                    {
-                        cost_variables[cost_index]
-                    } else {
-                        // Default if not found.
-                        0.0
-                    }
-                }
+                NumericType::Cost => cost_variables[self.cost_index(i)],
                 NumericType::Constant => self.numeric_constants[self.numeric_indices[i].unwrap()],
                 NumericType::Regular => self.unpack_regular_numeric(
                     self.global_state_packer
@@ -1841,16 +1842,10 @@ impl<'a> StateRegistry<'a> {
                 ))
             }
             NumericType::Cost => {
-                let cost_index = self.numeric_indices[metric_fluent_id];
+                let cost_index = self.cost_index(metric_fluent_id);
                 let cost_info_borrow = self.cost_info.borrow();
                 let cost_values = cost_info_borrow.get(state.get_id());
-                if let Some(cost) = cost_index
-                    && cost < cost_values.len()
-                {
-                    Ok(cost_values[cost])
-                } else {
-                    Ok(0.0)
-                }
+                Ok(cost_values[cost_index])
             }
             NumericType::Constant => {
                 Ok(self.numeric_constants[self.numeric_indices[metric_fluent_id].unwrap()])
