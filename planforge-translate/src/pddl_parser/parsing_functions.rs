@@ -1,8 +1,6 @@
 /// Main PDDL parsing functions that convert S-expressions into PDDL AST.
 use std::collections::HashMap;
 
-use tracing::warn;
-
 use super::lisp_parser::SExpr;
 use crate::pddl::actions::Action;
 use crate::pddl::axioms::Axiom;
@@ -537,9 +535,9 @@ pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -
                 effect_type = Some(remaining);
                 cost = c;
             }
-            _ => {
-                // Skip unknown keys
-            }
+            unknown => panic!(
+                "action {name}: unknown key {unknown}, expected :parameters, :precondition, or :effect"
+            ),
         }
         i += 1;
     }
@@ -696,10 +694,7 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
             ":global-constraint" => {
                 axioms.push(parse_global_constraint(&section[1..], &type_dict));
             }
-            _ => {
-                // Unknown section, skip
-                warn!("Warning: Unknown domain section: {}", tag);
-            }
+            unknown => panic!("unknown domain section {unknown}"),
         }
     }
 
@@ -827,9 +822,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
                 };
                 metric = Some((dir_symbol.to_string(), metric_pne));
             }
-            _ => {
-                // Skip unknown sections
-            }
+            unknown => panic!("unknown problem section {unknown}"),
         }
     }
 
@@ -844,7 +837,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::parse_task_pddl;
+    use super::{parse_action, parse_domain_pddl, parse_task_pddl};
     use crate::pddl_parser::lisp_parser::parse_nested_list_string;
     use std::collections::HashMap;
 
@@ -852,6 +845,48 @@ mod tests {
         let form = parse_nested_list_string(problem).expect("test problem is valid S-expression");
         let type_dict = HashMap::from([("object".to_string(), vec!["object".to_string()])]);
         parse_task_pddl(form.as_list(), &type_dict)
+    }
+
+    fn object_type_dict() -> HashMap<String, Vec<String>> {
+        HashMap::from([("object".to_string(), vec!["object".to_string()])])
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown problem section :goals")]
+    fn rejects_unknown_problem_section() {
+        parse_problem(
+            "(define (problem misspelled-goal)
+                (:domain typo-test)
+                (:init)
+                (:goals (and)))",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "action move: unknown key :preconditions")]
+    fn rejects_unknown_action_key() {
+        let form = parse_nested_list_string(
+            "(:action move
+                :parameters ()
+                :preconditions (and)
+                :effect (and))",
+        )
+        .expect("test action is valid S-expression");
+
+        parse_action(&form.as_list()[1..], &object_type_dict());
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown domain section :predicate")]
+    fn rejects_unknown_domain_section() {
+        let form = parse_nested_list_string(
+            "(define (domain typo-test)
+                (:requirements :strips)
+                (:predicate (p)))",
+        )
+        .expect("test domain is valid S-expression");
+
+        parse_domain_pddl(form.as_list());
     }
 
     #[test]
