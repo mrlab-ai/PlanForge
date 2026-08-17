@@ -1026,7 +1026,16 @@ pub struct Operator {
     preconditions: Vec<ExplicitFact>,
     effects: Vec<Effect>,
     assignment_effects: Vec<AssignmentEffect>,
+    repeated_assignment_targets: Box<[RepeatedTarget]>,
     cost: u64,
+}
+
+/// Whether an assignment effect is the first write to its target within its
+/// operator or a further additive write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RepeatedTarget {
+    First,
+    Additive,
 }
 
 impl Operator {
@@ -1037,6 +1046,31 @@ impl Operator {
         assignment_effects: Vec<AssignmentEffect>,
         cost: u64,
     ) -> Self {
+        let mut repeated_assignment_targets = Vec::with_capacity(assignment_effects.len());
+        let mut target_is_additive = std::collections::HashMap::new();
+        for effect in &assignment_effects {
+            let affected_var_id = effect.affected_var_id();
+            let is_additive = matches!(
+                effect.operation(),
+                AssignmentOperation::Plus | AssignmentOperation::Minus
+            );
+            match target_is_additive.get_mut(&affected_var_id) {
+                None => {
+                    target_is_additive.insert(affected_var_id, is_additive);
+                    repeated_assignment_targets.push(RepeatedTarget::First);
+                }
+                Some(previous_are_additive) if *previous_are_additive && is_additive => {
+                    repeated_assignment_targets.push(RepeatedTarget::Additive);
+                }
+                Some(_) => {
+                    panic!(
+                        "operator {name} writes numeric variable {affected_var_id} more than once \
+                         with a non-additive assignment, which has no order-independent result"
+                    );
+                }
+            }
+        }
+
         // `Box<str>` is two words (ptr + len) vs `String`'s three words
         // (ptr + len + cap) and drops spare capacity from any growth steps
         // during parsing. For tasks with 10^6 operators this trims the
@@ -1047,6 +1081,7 @@ impl Operator {
             preconditions,
             effects,
             assignment_effects,
+            repeated_assignment_targets: repeated_assignment_targets.into_boxed_slice(),
             cost,
         }
     }
@@ -1061,6 +1096,10 @@ impl Operator {
 
     pub fn assignment_effects(&self) -> &Vec<AssignmentEffect> {
         &self.assignment_effects
+    }
+
+    pub(crate) fn repeated_assignment_targets(&self) -> &[RepeatedTarget] {
+        &self.repeated_assignment_targets
     }
 
     pub fn preconditions(&self) -> &Vec<ExplicitFact> {

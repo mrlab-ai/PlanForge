@@ -20,7 +20,7 @@
 mod tests;
 
 use crate::axioms::AxiomEvaluator;
-use crate::numeric_task::{AssignmentEffect, AssignmentOperation, ExplicitFact, Operator, TaskRef};
+use crate::numeric_task::{AssignmentOperation, ExplicitFact, Operator, RepeatedTarget, TaskRef};
 use crate::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::utils::float_tolerance;
 use crate::utils::segmented_vector::SegmentedArrayVector;
@@ -394,57 +394,6 @@ pub struct StateRegistry<'a> {
     /// IDs use 32 bits in the state packer; the default representation keeps
     /// raw 64-bit values and avoids the lookup on numeric effects.
     compact_numeric_values: Option<RefCell<CompactNumericValues>>,
-}
-
-/// Whether an assignment effect is the first write to its target within its
-/// operator, a further additive write, or an unresolvable repeat.
-enum RepeatedTarget {
-    First,
-    Additive,
-    Conflicting,
-}
-
-/// Classify `effect` against the effects stored before it in the same operator.
-///
-/// Repeated writes are only well defined when every effect on the variable adds
-/// to it, because addition commutes and the deltas can therefore be summed onto
-/// the parent value in any order. `Assign`, `Times` and `Divide` do not commute
-/// with each other or with addition, so a repeat involving one of them has no
-/// order-independent result and must be rejected.
-fn repeated_assignment_target(
-    effects: &[AssignmentEffect],
-    effect: &AssignmentEffect,
-) -> RepeatedTarget {
-    let is_additive = |operation: &AssignmentOperation| {
-        matches!(
-            operation,
-            AssignmentOperation::Plus | AssignmentOperation::Minus
-        )
-    };
-
-    let mut seen_earlier_write = false;
-    for earlier in effects {
-        // `effects` is the operator's own slice, so identity by address marks
-        // where the current effect sits without needing an index.
-        if std::ptr::eq(earlier, effect) {
-            break;
-        }
-        if earlier.affected_var_id() != effect.affected_var_id() {
-            continue;
-        }
-        if !is_additive(earlier.operation()) {
-            return RepeatedTarget::Conflicting;
-        }
-        seen_earlier_write = true;
-    }
-
-    if !seen_earlier_write {
-        RepeatedTarget::First
-    } else if is_additive(effect.operation()) {
-        RepeatedTarget::Additive
-    } else {
-        RepeatedTarget::Conflicting
-    }
 }
 
 #[derive(Debug, Default)]
@@ -1533,7 +1482,13 @@ impl<'a> StateRegistry<'a> {
         // rejected rather than resolved by whichever effect happens to be
         // stored last.
         let effects = operator.assignment_effects();
-        for effect in effects {
+        let repeated_targets = operator.repeated_assignment_targets();
+        assert_eq!(
+            effects.len(),
+            repeated_targets.len(),
+            "operator assignment-effect classification must be complete"
+        );
+        for (effect, repeated_target) in effects.iter().zip(repeated_targets) {
             let assignment_var_id = effect.var_id();
             let affected_var_id = effect.affected_var_id();
 
@@ -1566,22 +1521,11 @@ impl<'a> StateRegistry<'a> {
                 };
 
             // Accumulate additive deltas; every other operand reads the parent.
-            // `effects` is at most a handful of entries, so the scan for an
-            // earlier write to the same variable costs nothing measurable and
-            // stays allocation-free.
-            let left_value = match repeated_assignment_target(effects, effect) {
+            // The target classification is immutable operator data computed
+            // once at construction.
+            let left_value = match repeated_target {
                 RepeatedTarget::First => parent_values[affected_var_id],
                 RepeatedTarget::Additive => current_values[affected_var_id],
-                RepeatedTarget::Conflicting => {
-                    return Err(StateInsertError {
-                        message: format!(
-                            "operator {} writes numeric variable {} more than once with a \
-                             non-additive assignment, which has no order-independent result",
-                            operator.name(),
-                            affected_var_id,
-                        ),
-                    });
-                }
             };
 
             let result = float_tolerance::canonicalize(AssignmentOperation::apply(

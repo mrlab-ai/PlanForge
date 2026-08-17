@@ -223,22 +223,14 @@ fn additive_effects_on_one_variable_sum() {
 /// A repeat that mixes an assignment with an addition has no order-independent
 /// reading, so it must be rejected rather than resolved by effect order.
 #[test]
-fn conflicting_repeated_assignment_target_is_rejected() {
+#[should_panic(
+    expected = "operator op writes numeric variable 0 more than once with a non-additive assignment"
+)]
+fn conflicting_repeated_assignment_target_is_rejected_at_construction() {
     let effects = vec![
         AssignmentEffect::new(X, AssignmentOperation::Assign, ONE, false, vec![]),
         plus(X, ONE),
     ];
-    let task: TaskRef = Arc::new(task_with_effects(effects, None));
-    let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
 
-    let error = registry
-        .get_successor_state(&initial, &task.get_operators()[0])
-        .expect_err("a conflicting repeated target must be rejected");
-
-    assert!(
-        error.message.contains("non-additive"),
-        "unexpected message: {}",
-        error.message
-    );
+    let _task = task_with_effects(effects, None);
 }
