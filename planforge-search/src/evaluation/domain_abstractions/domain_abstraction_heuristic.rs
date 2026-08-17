@@ -369,7 +369,7 @@ impl DomainAbstractionHeuristic {
         )
     }
 
-    fn compute_abstract_hash_from_projected_state_values_inner(
+    pub(crate) fn compute_abstract_hash_from_projected_state_values_inner(
         &self,
         prop_values: &[usize],
         numeric_values: &[f64],

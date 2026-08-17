@@ -34,6 +34,35 @@ pub enum AbstractionComponent<'task> {
     PatternDatabase(Box<PatternDatabase<'task>>),
 }
 
+#[derive(Debug, Default)]
+pub(super) struct ComponentStateValues {
+    pub(super) propositional: Vec<usize>,
+    pub(super) numeric: Vec<f64>,
+}
+
+impl ComponentStateValues {
+    pub(super) fn fill(
+        &mut self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<(), EvaluationError> {
+        let registry = eval_state.state_registry().ok_or_else(|| {
+            EvaluationError::InvalidState(
+                "abstraction component lookup requires state registry".to_string(),
+            )
+        })?;
+        eval_state
+            .state()
+            .fill_state(registry, &mut self.propositional);
+        registry
+            .fill_numeric_vars(eval_state.state(), &mut self.numeric)
+            .map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to read numeric state for abstraction component: {error:?}"
+                ))
+            })
+    }
+}
+
 impl<'task> AbstractionComponent<'task> {
     pub fn domain(name: Option<String>, abstraction: DomainAbstraction) -> Self {
         Self::Domain(Box::new(DomainAbstractionHeuristic::new(name, abstraction)))
@@ -86,16 +115,36 @@ impl<'task> AbstractionComponent<'task> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
+        let mut values = ComponentStateValues::default();
+        values.fill(eval_state)?;
+        self.standalone_value_from_state_values(&values.propositional, &values.numeric)
+    }
+
+    pub fn standalone_value_from_state_values(
+        &self,
+        propositional: &[usize],
+        numeric: &[f64],
+    ) -> Result<f64, EvaluationError> {
         match self {
-            Self::Domain(heuristic) => heuristic.compute_heuristic(eval_state),
-            Self::Cartesian(heuristic) => heuristic.compute_heuristic(eval_state),
-            Self::PatternDatabase(pdb) => {
-                let registry = eval_state.state_registry().ok_or_else(|| {
-                    EvaluationError::InvalidState("PDB lookup requires state registry".to_string())
-                })?;
-                pdb.lookup_or_fallback_from_concrete_state(eval_state.state(), registry)
-                    .map_err(EvaluationError::ComputationFailed)
+            Self::Domain(heuristic) => {
+                let state_id = heuristic.compute_abstract_hash_from_projected_state_values_inner(
+                    propositional,
+                    numeric,
+                    None,
+                )?;
+                self.distance_for_state_id(state_id)
             }
+            Self::Cartesian(heuristic) => {
+                let state_id = heuristic
+                    .abstraction()
+                    .hierarchy
+                    .map_state(propositional, numeric)
+                    .map_err(|error| EvaluationError::ComputationFailed(error.to_string()))?;
+                self.distance_for_state_id(state_id)
+            }
+            Self::PatternDatabase(pdb) => pdb
+                .lookup_projected_or_fallback_from_source_state_values(propositional, numeric)
+                .map_err(EvaluationError::ComputationFailed),
         }
     }
 

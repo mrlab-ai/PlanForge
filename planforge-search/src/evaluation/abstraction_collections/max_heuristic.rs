@@ -1,11 +1,14 @@
+use std::cell::RefCell;
+
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
-use super::component::AbstractionComponent;
+use super::component::{AbstractionComponent, ComponentStateValues};
 
 pub struct MaxAbstractionHeuristic<'task> {
     name: String,
     components: Vec<AbstractionComponent<'task>>,
+    state_values: RefCell<ComponentStateValues>,
 }
 
 impl<'task> MaxAbstractionHeuristic<'task> {
@@ -22,6 +25,7 @@ impl<'task> MaxAbstractionHeuristic<'task> {
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
             components,
+            state_values: RefCell::new(ComponentStateValues::default()),
         })
     }
 
@@ -35,14 +39,21 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
+        let mut state_values = self.state_values.borrow_mut();
+        state_values.fill(eval_state)?;
         let mut best = 0.0_f64;
         for (component_id, component) in self.components.iter().enumerate() {
-            let value = component.standalone_value(eval_state).map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to evaluate {} component {component_id}: {error}",
-                    component.kind()
-                ))
-            })?;
+            let value = component
+                .standalone_value_from_state_values(
+                    &state_values.propositional,
+                    &state_values.numeric,
+                )
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to evaluate {} component {component_id}: {error}",
+                        component.kind()
+                    ))
+                })?;
             if value.is_nan() || value < 0.0 {
                 return Err(EvaluationError::ComputationFailed(format!(
                     "{} component {component_id} returned invalid heuristic value {value}",
