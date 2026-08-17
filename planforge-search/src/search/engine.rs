@@ -58,7 +58,7 @@ struct ParentExpansion {
     g_value: f64,
     /// Operators the heuristic called helpful in the parent, or `None` when
     /// the heuristic does not report preferred operators.
-    preferred_operator_ids: Option<Box<[u32]>>,
+    preferred_operator_range: Option<(u32, u32)>,
     trace: ExpansionTrace,
 }
 
@@ -742,8 +742,10 @@ impl<'a> AStarSearch<'a> {
             // initial state's own preferred IDs so its successors can be
             // classified.
             let initial_id = initial_state.get_id();
-            let initial_preferred = self.heuristic.get_preferred_operator_ids();
-            self.space.store_preferred(initial_id, initial_preferred);
+            self.heuristic
+                .copy_preferred_operator_ids(&mut self.scratch.preferred_ids);
+            self.space
+                .store_preferred(initial_id, &self.scratch.preferred_ids);
             self.open_list.insert(
                 initial_id,
                 0.0,
@@ -884,7 +886,7 @@ impl<'a> AStarSearch<'a> {
             // `state` we won't need the preferred operators again unless the
             // node is reopened, in which case `evaluate_state` resnapshots.
             // It also reclaims the boxed slice's memory eagerly.
-            preferred_operator_ids: self.space.take_preferred(state_id),
+            preferred_operator_range: self.space.take_preferred(state_id),
             trace: ExpansionTrace {
                 initial_successors: self.stats.nodes_expanded == 1
                     && self.config.trace.initial_successors,
@@ -995,9 +997,8 @@ impl<'a> AStarSearch<'a> {
         // helpful-action lists from FF are typically tiny (single digits), so
         // this is cheap compared to evaluating the successor.
         let is_preferred = parent
-            .preferred_operator_ids
-            .as_deref()
-            .is_some_and(|ids| ids.contains(&op_id));
+            .preferred_operator_range
+            .is_some_and(|range| self.space.preferred_contains(range, op_id));
 
         let evaluation = self
             .evaluate_state(succ_state, new_g_value)
@@ -1017,8 +1018,10 @@ impl<'a> AStarSearch<'a> {
         // *now*, before any other state's evaluation overwrites the
         // heuristic's internal scratch. Stored on the search space and read
         // back when this successor is later expanded.
-        let preferred_ids = self.heuristic.get_preferred_operator_ids();
-        self.space.store_preferred(succ_state_id, preferred_ids);
+        self.heuristic
+            .copy_preferred_operator_ids(&mut self.scratch.preferred_ids);
+        self.space
+            .store_preferred(succ_state_id, &self.scratch.preferred_ids);
 
         parent.trace_evaluated_successor(succ_state_id, operator, new_g_value, &evaluation);
         if improved_duplicate {

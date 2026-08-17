@@ -16,6 +16,7 @@ pub(crate) struct ExpansionScratch {
     pub(crate) applicable_operators: Vec<u32>,
     pub(crate) successor_numeric: Vec<f64>,
     pub(crate) successor_cost: Vec<f64>,
+    pub(crate) preferred_ids: Vec<u32>,
     pub(crate) expansion_context: ExpansionContext,
 }
 
@@ -26,6 +27,7 @@ impl ExpansionScratch {
             applicable_operators: Vec::new(),
             successor_numeric: Vec::with_capacity(num_numeric_variables),
             successor_cost: Vec::new(),
+            preferred_ids: Vec::new(),
             expansion_context: ExpansionContext::default(),
         }
     }

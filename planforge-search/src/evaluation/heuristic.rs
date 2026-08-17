@@ -85,10 +85,10 @@ pub trait Heuristic {
     /// check "was operator `O` preferred by my parent?" with a constant-time
     /// integer comparison and avoids cloning per-state precondition vectors.
     ///
-    /// The default returns an empty vector for heuristics that do not
-    /// implement preferred operators.
-    fn get_preferred_operator_ids(&self) -> Vec<usize> {
-        vec![]
+    /// The default leaves `out` empty for heuristics that do not implement
+    /// preferred operators.
+    fn copy_preferred_operator_ids(&self, out: &mut Vec<u32>) {
+        out.clear();
     }
 
     /// Return the cost type used by this heuristic.

@@ -16,6 +16,7 @@ const NO_COMPACT_ID: u32 = u32::MAX;
 const NODE_PRESENT: u8 = 1 << 0;
 const NODE_DEAD_END: u8 = 1 << 1;
 const NODE_CLOSED: u8 = 1 << 2;
+const NO_PREFERRED_RANGE: (u32, u32) = (u32::MAX, 0);
 
 /// Per-state search bookkeeping: the node table (parents, g-values,
 /// dead-end/closed flags) and the per-state preferred-operator snapshots.
@@ -35,7 +36,8 @@ pub(crate) struct SearchSpace {
     /// state's evaluation). Read back when the state is *expanded* — we
     /// then mark each successor's open-list entry as preferred iff the
     /// operator that generated it is in this set.
-    preferred_op_ids: Vec<Option<Box<[u32]>>>,
+    preferred_pool: Vec<u32>,
+    preferred_ranges: Vec<(u32, u32)>,
 }
 
 impl SearchSpace {
@@ -106,28 +108,42 @@ impl SearchSpace {
             | if info.is_closed { NODE_CLOSED } else { 0 };
     }
 
-    pub(crate) fn store_preferred(&mut self, state_id: StateID, ids: Vec<usize>) {
+    pub(crate) fn store_preferred(&mut self, state_id: StateID, ids: &[u32]) {
         if ids.is_empty() {
-            if let Some(snapshot) = self.preferred_op_ids.get_mut(state_id) {
-                *snapshot = None;
+            if let Some(snapshot) = self.preferred_ranges.get_mut(state_id) {
+                *snapshot = NO_PREFERRED_RANGE;
             }
             return;
         }
-        if state_id >= self.preferred_op_ids.len() {
-            self.preferred_op_ids.resize_with(state_id + 1, || None);
+        if state_id >= self.preferred_ranges.len() {
+            self.preferred_ranges
+                .resize(state_id + 1, NO_PREFERRED_RANGE);
         }
-        let packed: Box<[u32]> = ids.into_iter().map(|x| x as u32).collect();
-        self.preferred_op_ids[state_id] = Some(packed);
+        let start = u32::try_from(self.preferred_pool.len())
+            .expect("preferred operator arena offset must fit in u32");
+        let len = u32::try_from(ids.len()).expect("preferred operator list length must fit in u32");
+        self.preferred_pool.extend_from_slice(ids);
+        self.preferred_ranges[state_id] = (start, len);
     }
 
-    /// Remove and return the cached preferred-op IDs for `state_id`, if any.
-    /// We `take` rather than borrow because the only consumer is the
-    /// expansion step, after which the IDs aren't needed again unless the
-    /// state is reopened — in which case `evaluate_state` will resnapshot.
-    pub(crate) fn take_preferred(&mut self, state_id: StateID) -> Option<Box<[u32]>> {
-        self.preferred_op_ids
-            .get_mut(state_id)
-            .and_then(Option::take)
+    /// Remove and return the cached preferred-op range for `state_id`, if any.
+    pub(crate) fn take_preferred(&mut self, state_id: StateID) -> Option<(u32, u32)> {
+        let range = self.preferred_ranges.get_mut(state_id)?;
+        let result = *range;
+        *range = NO_PREFERRED_RANGE;
+        (result != NO_PREFERRED_RANGE).then_some(result)
+    }
+
+    pub(crate) fn preferred_contains(&self, range: (u32, u32), operator_id: u32) -> bool {
+        let (start, len) = range;
+        let start = start as usize;
+        let end = start
+            .checked_add(len as usize)
+            .expect("preferred operator range overflow");
+        self.preferred_pool
+            .get(start..end)
+            .expect("preferred operator range must lie in the arena")
+            .contains(&operator_id)
     }
 
     /// Trace back the path from goal state to initial state.
@@ -203,11 +219,14 @@ mod tests {
     #[test]
     fn empty_preferred_snapshots_do_not_allocate_per_state_storage() {
         let mut space = SearchSpace::new();
-        space.store_preferred(1_000_000, Vec::new());
-        assert!(space.preferred_op_ids.is_empty());
+        space.store_preferred(1_000_000, &[]);
+        assert!(space.preferred_ranges.is_empty());
 
-        space.store_preferred(3, vec![2, 5]);
-        assert_eq!(space.preferred_op_ids.len(), 4);
-        assert_eq!(space.take_preferred(3).as_deref(), Some([2, 5].as_slice()));
+        space.store_preferred(3, &[2, 5]);
+        assert_eq!(space.preferred_ranges.len(), 4);
+        let range = space.take_preferred(3).expect("preferred range must exist");
+        assert!(space.preferred_contains(range, 2));
+        assert!(space.preferred_contains(range, 5));
+        assert!(!space.preferred_contains(range, 7));
     }
 }

@@ -886,12 +886,12 @@ pub struct FfHeuristic<'task> {
     /// Cache of the task-operator indices of helpful actions for the most
     /// recently evaluated state. Populated at the end of every
     /// `compute_heuristic`. The search engine reads it once per state via
-    /// `get_preferred_operator_ids` and stores the IDs on the search node;
+    /// `copy_preferred_operator_ids` and stores the IDs on the search node;
     /// from there on it does integer-membership tests, not `Operator`
     /// clones. `get_preferred_operators` (the `Operator`-returning trait
     /// method) is still implemented by cloning from the task on demand,
     /// for callers that want full operator objects.
-    last_helpful_action_ids: RefCell<Vec<usize>>,
+    last_helpful_action_ids: RefCell<Vec<u32>>,
 }
 
 impl<'task> FfHeuristic<'task> {
@@ -1350,7 +1350,11 @@ impl<'task> FfHeuristic<'task> {
             .unwrap_or(0)
     }
 
-    fn extract_relaxed_plan(&self, scratch: &mut ScratchBuffers) -> f64 {
+    fn extract_relaxed_plan(
+        &self,
+        scratch: &mut ScratchBuffers,
+        helpful_action_ids: &mut Vec<u32>,
+    ) -> f64 {
         let max_layer = self.goal_max_layer(scratch);
         if max_layer < 0 {
             return 0.0;
@@ -1423,12 +1427,25 @@ impl<'task> FfHeuristic<'task> {
                     continue;
                 }
                 scratch.in_plan[op_id] = true;
+                if (0..=1).contains(&scratch.op_first_layer[op_id])
+                    && let Some(task_idx) = self.op_task_idx[op_id]
+                {
+                    helpful_action_ids
+                        .push(u32::try_from(task_idx).expect("task operator id must fit in u32"));
+                }
                 plan_cost += self.op_cost[op_id];
                 // Synthetic ops pull their parent in for cost accounting.
                 if let Some(parent) = self.op_parent[op_id]
                     && !scratch.in_plan[parent]
                 {
                     scratch.in_plan[parent] = true;
+                    if (0..=1).contains(&scratch.op_first_layer[parent])
+                        && let Some(task_idx) = self.op_task_idx[parent]
+                    {
+                        helpful_action_ids.push(
+                            u32::try_from(task_idx).expect("task operator id must fit in u32"),
+                        );
+                    }
                     plan_cost += self.op_cost[parent];
                 }
                 for &pre_fid in &self.op_preconditions[op_id] {
@@ -1448,39 +1465,6 @@ impl<'task> FfHeuristic<'task> {
             }
         }
         plan_cost
-    }
-
-    /// Task-operator indices of "helpful actions" — operators in the
-    /// extracted relaxed plan that are *applicable in the current
-    /// concrete state*. These are the operators the search engine
-    /// should preferentially try next.
-    ///
-    /// In this layer convention an op is applicable-now iff all its
-    /// preconditions are at fact layer 0 (the initial-fact layer), which
-    /// means the op fires at layer 1. Zero-precondition ops fire at
-    /// layer 0 — also applicable. So we accept `op_first_layer ∈ {0, 1}`.
-    ///
-    /// We restrict to operators with a `task_idx` so callers see real
-    /// task operators, not the synthetic conditional-effect or
-    /// propositional-axiom pseudo-ops. Synthetics that appear in the
-    /// plan implicitly pull their parent into the plan (via the
-    /// in-extraction `op_parent` accounting), so the parent's
-    /// `op_task_idx` is what surfaces here.
-    fn collect_helpful_action_ids(&self, scratch: &ScratchBuffers) -> Vec<usize> {
-        let mut out = Vec::new();
-        for op_id in 0..self.op_preconditions.len() {
-            if !scratch.in_plan[op_id] {
-                continue;
-            }
-            let op_layer = scratch.op_first_layer[op_id];
-            if !(0..=1).contains(&op_layer) {
-                continue;
-            }
-            if let Some(task_idx) = self.op_task_idx[op_id] {
-                out.push(task_idx);
-            }
-        }
-        out
     }
 }
 
@@ -1589,10 +1573,9 @@ impl<'task> Heuristic for FfHeuristic<'task> {
             self.last_helpful_action_ids.borrow_mut().clear();
             return Ok(0.0);
         }
-        let cost = self.extract_relaxed_plan(&mut scratch);
-        // Snapshot helpful-action IDs for the get_preferred_operator_ids
-        // call the search engine will issue immediately after this returns.
-        *self.last_helpful_action_ids.borrow_mut() = self.collect_helpful_action_ids(&scratch);
+        let mut helpful_action_ids = self.last_helpful_action_ids.borrow_mut();
+        helpful_action_ids.clear();
+        let cost = self.extract_relaxed_plan(&mut scratch, &mut helpful_action_ids);
         Ok(cost)
     }
 
@@ -1608,12 +1591,13 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         let ids = self.last_helpful_action_ids.borrow();
         let task_ops = self.task.get_operators();
         ids.iter()
-            .filter_map(|&task_idx| task_ops.get(task_idx).cloned())
+            .filter_map(|&task_idx| task_ops.get(task_idx as usize).cloned())
             .collect()
     }
 
-    fn get_preferred_operator_ids(&self) -> Vec<usize> {
-        self.last_helpful_action_ids.borrow().clone()
+    fn copy_preferred_operator_ids(&self, out: &mut Vec<u32>) {
+        out.clear();
+        out.extend_from_slice(&self.last_helpful_action_ids.borrow());
     }
 
     fn heuristic_name(&self) -> &str {

@@ -151,8 +151,8 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
         self.inner.get_preferred_operators(state)
     }
 
-    fn get_preferred_operator_ids(&self) -> Vec<usize> {
-        self.inner.get_preferred_operator_ids()
+    fn copy_preferred_operator_ids(&self, out: &mut Vec<u32>) {
+        self.inner.copy_preferred_operator_ids(out)
     }
 
     fn get_cost_type(&self) -> CostType {
