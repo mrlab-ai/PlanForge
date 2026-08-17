@@ -208,30 +208,27 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
 
-    for compact in [false, true] {
-        let mut state_registry =
-            StateRegistry::for_task_with_compact_numeric(task.clone(), compact);
+    let mut state_registry = StateRegistry::for_task(task.clone());
 
-        let initial = state_registry.get_initial_state();
-        let first = state_registry
-            .get_successor_state(&initial, &task.get_operators()[0])
-            .unwrap();
-        let second = state_registry
-            .get_successor_state(&initial, &task.get_operators()[1])
-            .unwrap();
+    let initial = state_registry.get_initial_state();
+    let first = state_registry
+        .get_successor_state(&initial, &task.get_operators()[0])
+        .unwrap();
+    let second = state_registry
+        .get_successor_state(&initial, &task.get_operators()[1])
+        .unwrap();
 
-        assert_eq!(first.get_id(), second.get_id());
-        assert_eq!(
-            state_registry
-                .get_numeric_var_value_unevaluated(&first, 0)
-                .unwrap(),
-            0.3
-        );
-    }
+    assert_eq!(first.get_id(), second.get_id());
+    assert_eq!(
+        state_registry
+            .get_numeric_var_value_unevaluated(&first, 0)
+            .unwrap(),
+        0.3
+    );
 }
 
 #[test]
-fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
+fn numeric_states_pack_exact_value_ids_with_propositions() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 2,
         metric: Metric::new(false, None),
@@ -256,18 +253,15 @@ fn compact_numeric_states_pack_exact_value_ids_with_propositions() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
-    let mut regular = StateRegistry::for_task(task.clone());
-    let mut compact = StateRegistry::for_task_with_compact_numeric(task, true);
-    let regular_initial = regular.get_initial_state();
-    let compact_initial = compact.get_initial_state();
+    let mut registry = StateRegistry::for_task(task);
+    let initial = registry.get_initial_state();
 
-    assert_eq!(regular_initial.buffer(&regular).len(), 3);
-    assert_eq!(compact_initial.buffer(&compact).len(), 2);
-    assert_eq!(compact_initial.get_numeric_state(&compact), [1.25, -7.5]);
+    assert_eq!(initial.buffer(&registry).len(), 2);
+    assert_eq!(initial.get_numeric_state(&registry), [1.25, -7.5]);
 }
 
 #[test]
-fn compact_numeric_states_support_more_than_u16_distinct_values() {
+fn numeric_states_support_more_than_u16_distinct_values() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 1,
         metric: Metric::new(false, None),
@@ -291,7 +285,7 @@ fn compact_numeric_states_support_more_than_u16_distinct_values() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
-    let registry = StateRegistry::for_task_with_compact_numeric(task, true);
+    let registry = StateRegistry::for_task(task);
 
     let mut last = 0;
     for value in 0..=u16::MAX as u32 + 1 {

@@ -114,8 +114,6 @@ Common options:
 - `--max-memory SIZE` — address-space cap (`8G`, `4096M`).
 - `--restrict-task` — convert an SNP task to its restricted representation;
   already restricted tasks are retained unchanged.
-- `--compact-numeric-states` — intern exact canonical `f64` values behind
-  compact integer IDs in the search state registry.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
   under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
   `astar(canonical_domain_abstractions(...))` (`--canonical-construction-time`,

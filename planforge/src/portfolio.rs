@@ -162,9 +162,6 @@ fn run_stage(
     if cli.restrict_task {
         args.push(OsString::from("--restrict-task"));
     }
-    if cli.compact_numeric_states {
-        args.push(OsString::from("--compact-numeric-states"));
-    }
     args.extend(cli.inputs.iter().cloned().map(OsString::from));
 
     let mut command = Command::new(executable);

@@ -392,10 +392,9 @@ pub struct StateRegistry<'a> {
     /// successor flow defers comparison/propositional axiom evaluation until
     /// after dedup so we can skip it entirely on duplicate states.
     has_axiom_derived_bits: bool,
-    /// Exact canonical-f64 interning for optional compact state storage.
-    /// IDs use 32 bits in the state packer; the default representation keeps
-    /// raw 64-bit values and avoids the lookup on numeric effects.
-    compact_numeric_values: Option<RefCell<CompactNumericValues>>,
+    /// Exact canonical-f64 interning for compact state storage. Regular
+    /// numeric values are represented by checked 32-bit IDs in the packer.
+    compact_numeric_values: RefCell<CompactNumericValues>,
 }
 
 #[derive(Debug, Default)]
@@ -409,17 +408,12 @@ impl<'a> StateRegistry<'a> {
     /// one step. This is the common construction path; use [`Self::new`]
     /// when a custom packer or axiom evaluator is needed.
     pub fn for_task(task: TaskRef<'a>) -> Self {
-        Self::for_task_with_compact_numeric(task, false)
-    }
-
-    pub fn for_task_with_compact_numeric(task: TaskRef<'a>, compact_numeric: bool) -> Self {
-        let packer = Arc::new(if compact_numeric {
-            StatePacker::from_abstract_task_with_numeric_range(&*task, u32::MAX as u64)
-        } else {
-            StatePacker::from_abstract_task(&*task)
-        });
+        let packer = Arc::new(StatePacker::from_abstract_task_with_numeric_range(
+            &*task,
+            u32::MAX as u64,
+        ));
         let axiom_evaluator = Arc::new(AxiomEvaluator::new(task.clone(), packer.clone()));
-        Self::new_with_compact_numeric(task, packer, axiom_evaluator, compact_numeric)
+        Self::new(task, packer, axiom_evaluator)
     }
 
     /// Create a new state registry for the given planning task.
@@ -427,15 +421,6 @@ impl<'a> StateRegistry<'a> {
         task: TaskRef<'a>,
         global_state_packer: Arc<StatePacker>,
         axiom_evaluator: Arc<AxiomEvaluator<'a>>,
-    ) -> Self {
-        Self::new_with_compact_numeric(task, global_state_packer, axiom_evaluator, false)
-    }
-
-    fn new_with_compact_numeric(
-        task: TaskRef<'a>,
-        global_state_packer: Arc<StatePacker>,
-        axiom_evaluator: Arc<AxiomEvaluator<'a>>,
-        compact_numeric: bool,
     ) -> Self {
         let numeric_vars = task.numeric_variables();
         let number_numeric_vars = numeric_vars.len();
@@ -541,18 +526,14 @@ impl<'a> StateRegistry<'a> {
             metric_is_min,
             non_derived_bits_mask,
             has_axiom_derived_bits,
-            compact_numeric_values: compact_numeric
-                .then(|| RefCell::new(CompactNumericValues::default())),
+            compact_numeric_values: RefCell::new(CompactNumericValues::default()),
         }
     }
 
     fn pack_regular_numeric(&self, value: f64) -> u64 {
         let canonical = float_tolerance::canonicalize(value);
-        let Some(interner) = &self.compact_numeric_values else {
-            return self.global_state_packer.pack_double(canonical);
-        };
         let bits = canonical.to_bits();
-        let mut interner = interner.borrow_mut();
+        let mut interner = self.compact_numeric_values.borrow_mut();
         if let Some(&id) = interner.ids_by_bits.get(&bits) {
             return id as u64;
         }
@@ -568,11 +549,9 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn unpack_regular_numeric(&self, packed: u64) -> f64 {
-        let Some(interner) = &self.compact_numeric_values else {
-            return self.global_state_packer.unpack_double(packed);
-        };
         let id = usize::try_from(packed).expect("compact numeric value ID exceeds usize");
-        *interner
+        *self
+            .compact_numeric_values
             .borrow()
             .values
             .get(id)
@@ -582,10 +561,6 @@ impl<'a> StateRegistry<'a> {
     /// Return the unique ID of this registry.
     pub const fn id(&self) -> usize {
         self.id
-    }
-
-    pub fn uses_compact_numeric_values(&self) -> bool {
-        self.compact_numeric_values.is_some()
     }
 
     /// Return the total number of distinct states registered in this registry.

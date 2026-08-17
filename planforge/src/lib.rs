@@ -95,10 +95,6 @@ pub struct PlannersCli {
     #[arg(long = "restrict-task")]
     pub restrict_task: bool,
 
-    /// Store exact canonical numeric values through checked 32-bit interned IDs.
-    #[arg(long = "compact-numeric-states")]
-    pub compact_numeric_states: bool,
-
     /// Recursive search configuration.
     /// Examples: `astar(blind())`, `astar(domain_abstraction())`,
     /// `astar(check_admissible(domain_abstraction()))`.
@@ -139,9 +135,6 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     }
     if cli.restrict_task {
         child_args.push(OsString::from("--restrict-task"));
-    }
-    if cli.compact_numeric_states {
-        child_args.push(OsString::from("--compact-numeric-states"));
     }
     child_args.push(OsString::from("--search"));
     child_args.push(OsString::from(cli.search.to_string()));
@@ -192,18 +185,7 @@ pub fn solve_task(
     time_limit: Option<Duration>,
     memory_limit: Option<u64>,
 ) -> std::io::Result<SearchResult> {
-    solve_task_with_state_storage(task, spec, time_limit, memory_limit, false)
-}
-
-pub fn solve_task_with_state_storage(
-    task: TaskRef<'_>,
-    spec: &SearchSpec,
-    time_limit: Option<Duration>,
-    memory_limit: Option<u64>,
-    compact_numeric_states: bool,
-) -> std::io::Result<SearchResult> {
-    let state_registry =
-        StateRegistry::for_task_with_compact_numeric(task.clone(), compact_numeric_states);
+    let state_registry = StateRegistry::for_task(task.clone());
     match spec {
         SearchSpec::Astar(heuristic, mpd) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
@@ -354,13 +336,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     let memory_limit = cli.max_memory;
     let result = match &cli.search {
         SearchSpec::Astar(_, _) | SearchSpec::Gbfs(_) | SearchSpec::AstarFs(_, _) => {
-            solve_task_with_state_storage(
-                task.clone(),
-                &cli.search,
-                time_limit,
-                memory_limit,
-                cli.compact_numeric_states,
-            )?
+            solve_task(task.clone(), &cli.search, time_limit, memory_limit)?
         }
         #[cfg(feature = "sgd")]
         SearchSpec::Sgd(args) => {

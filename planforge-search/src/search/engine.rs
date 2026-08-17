@@ -332,9 +332,8 @@ impl<'a> AStarSearch<'a> {
         let num_variables = task.variables().len();
         let num_numeric_variables = task.numeric_variables().len();
         info!(
-            "State representation: bins={}, compact_numeric={}",
-            state_registry.global_state_packer().num_bins(),
-            state_registry.uses_compact_numeric_values()
+            "State representation: bins={}",
+            state_registry.global_state_packer().num_bins()
         );
         Self {
             task,

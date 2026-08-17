@@ -29,6 +29,14 @@ fn parses_time_limit_suffixes() {
 }
 
 #[test]
+fn rejects_removed_compact_numeric_states_flag() {
+    assert!(
+        PlannersCli::try_parse_from(["planforge", "--compact-numeric-states", "domain.pddl",])
+            .is_err()
+    );
+}
+
+#[test]
 fn maps_search_statuses_to_exit_codes() {
     assert_eq!(
         exit_code_for_search_status(&SearchStatus::Solved(0)),

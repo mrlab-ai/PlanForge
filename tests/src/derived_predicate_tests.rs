@@ -80,9 +80,10 @@ struct Shape {
     default_value_goals: usize,
 }
 
-/// Optimum of every fixture, measured with `planforge --search 'astar(blind())'`
-/// and derived by hand in each problem file's header. Blind A* is optimal, so
-/// the cost is the true optimum and the length pins the plan realising it.
+/// Optimum of every fixture, measured with the compact numeric state
+/// representation using `planforge --search 'astar(blind())'` and derived by
+/// hand in each problem file's header. Blind A* is optimal, so the cost is the
+/// true optimum and the length pins the plan realising it.
 const FIXTURE_OPTIMA: &[(&str, f64, u64)] = &[
     ("conjunctive-chain", 4.0, 4),
     ("cyclic-negation", 3.0, 3),

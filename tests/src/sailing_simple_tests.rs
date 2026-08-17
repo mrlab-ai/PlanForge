@@ -81,8 +81,9 @@ use crate::corpus::{
 
 /// What blind A* costs on an instance, and therefore which build verifies it.
 ///
-/// Measured with `target/release/planforge --search 'astar(blind())'`, expanded
-/// states per instance:
+/// Measured with the compact numeric state representation using
+/// `target/release/planforge --search 'astar(blind())'`, expanded states per
+/// instance:
 ///
 /// | instance | expanded | class |
 /// |---|---|---|
