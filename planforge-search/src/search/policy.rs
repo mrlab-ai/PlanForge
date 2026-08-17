@@ -20,7 +20,7 @@ impl<'a> SearchPolicy<'a> {
     pub(crate) fn priority_value(&self, g_value: f64, h_value: f64) -> f64 {
         match self {
             SearchPolicy::Gbfs => h_value,
-            _ => g_value + h_value,
+            SearchPolicy::AStar | SearchPolicy::FastSlow { .. } => g_value + h_value,
         }
     }
 
@@ -29,7 +29,7 @@ impl<'a> SearchPolicy<'a> {
     pub(crate) fn priority_label(&self) -> &'static str {
         match self {
             SearchPolicy::Gbfs => "h",
-            _ => "f",
+            SearchPolicy::AStar | SearchPolicy::FastSlow { .. } => "f",
         }
     }
 
@@ -37,7 +37,10 @@ impl<'a> SearchPolicy<'a> {
     /// does not apply; only A*/fast-slow report f-layers.
     #[inline]
     pub(crate) fn reports_f_layers(&self) -> bool {
-        !matches!(self, SearchPolicy::Gbfs)
+        match self {
+            SearchPolicy::AStar | SearchPolicy::FastSlow { .. } => true,
+            SearchPolicy::Gbfs => false,
+        }
     }
 
     #[inline]
