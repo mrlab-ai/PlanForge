@@ -251,6 +251,21 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         .unwrap();
     let mut generator = factory.make_operator_generator(&task, false).unwrap();
     let abstract_operators = generator.build_abstract_operators(&task).unwrap();
+    for target_state_hash in 0..implicit.distances.len() {
+        let early_distance = factory
+            .compute_distance_to_goal_state_with_operators(
+                &task,
+                &generator,
+                &abstract_operators,
+                target_state_hash,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            early_distance, implicit.distances[target_state_hash],
+            "early-out and exhaustive Dijkstra disagree at abstract state {target_state_hash}"
+        );
+    }
     let transition_system = factory
         .build_abstract_transition_system_from_operators_without_regions_with_deadline(
             &task,
@@ -265,6 +280,108 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
 
     assert_eq!(explicit, implicit.distances);
     assert_eq!(explicit[implicit.initial_state_hash], 2.0);
+}
+
+#[test]
+fn early_goal_distance_matches_exhaustive_walk_when_comparisons_are_cleared() {
+    let variables = vec![
+        condition_variable("x-lt-ten"),
+        ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            0,
+        ),
+    ];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("ten".into(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![ConditionValue::True.as_usize(), 0],
+        numeric_state: vec![0.0, 10.0],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+    });
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, false).unwrap();
+    let hash_multipliers = generator.hash_multipliers();
+    let x_abs_var = task.variables().len();
+    let source_hash = 0;
+    let operators = vec![
+        super::super::abstract_operator_generator::AbstractOperator {
+            concrete_op_ids: vec![],
+            cost: 1.0,
+            hash_effect: -((hash_multipliers[0] + hash_multipliers[1]) as i32),
+            regression_preconditions: vec![
+                ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
+                ExplicitFact::propositional(1, 1),
+                ExplicitFact::numeric_variable(x_abs_var, 0),
+            ],
+            preconditions: vec![
+                ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+                ExplicitFact::propositional(1, 0),
+                ExplicitFact::numeric_variable(x_abs_var, 0),
+            ],
+            changed_numeric_vars: vec![],
+        },
+    ];
+    let goal_facts = factory.compute_abstract_goals(&task);
+    let comparison_var_ids = factory.comparison_var_ids();
+    let numeric_domain_sizes = generator.numeric_domain_sizes();
+    let num_states = compute_num_states(&factory.domain_sizes, numeric_domain_sizes).unwrap();
+    let match_tree = MatchTree::build(
+        &factory.domain_sizes,
+        numeric_domain_sizes,
+        hash_multipliers,
+        &operators,
+        &comparison_var_ids,
+    );
+    let target_hash = ConditionValue::True.as_usize() * hash_multipliers[0] + hash_multipliers[1];
+    assert!(factory.is_goal_state(
+        target_hash,
+        &goal_facts,
+        numeric_domain_sizes,
+        hash_multipliers
+    ));
+    let target_base = factory
+        .clear_comparison_vars_except(target_hash, hash_multipliers, &comparison_var_ids, &[])
+        .unwrap();
+    let mut applicable = Vec::new();
+    match_tree.get_applicable_operator_ids(target_base, &mut applicable);
+    assert_eq!(applicable, [0]);
+    assert_eq!(target_base as i64 + operators[0].hash_effect as i64, 0);
+    let space = AbstractGoalDistanceSpace {
+        task: &task,
+        operators: &operators,
+        match_tree: &match_tree,
+        goal_facts: &goal_facts,
+        layout: ComparisonBranchingLayout {
+            numeric_domain_sizes,
+            hash_multipliers,
+            comparison_var_ids: &comparison_var_ids,
+        },
+        num_states,
+    };
+
+    let (distances, _) = factory
+        .compute_distances_and_generating_ops(space, None)
+        .unwrap();
+    let early_distance = factory
+        .compute_distance_to_goal_state(space, source_hash, None)
+        .unwrap();
+
+    assert_eq!(distances[source_hash], 1.0);
+    assert_eq!(early_distance, distances[source_hash]);
 }
 
 #[test]

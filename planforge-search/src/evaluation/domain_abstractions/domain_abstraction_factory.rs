@@ -85,6 +85,17 @@ struct AbstractGoalDistanceSpace<'a> {
     num_states: usize,
 }
 
+#[derive(Clone, Copy)]
+enum GoalDistanceStop {
+    Exhaust,
+    FirstReaching(usize),
+}
+
+enum GoalDistanceResult {
+    Exhausted(Vec<f64>),
+    Reached(f64),
+}
+
 /// One abstraction's turn in a saturated cost partitioning: the costs earlier
 /// abstractions in the order have left unspent, which abstraction of the
 /// collection this is, and the two states that can cut the build short -- the
@@ -3324,6 +3335,27 @@ impl DomainAbstractionFactory {
         space: AbstractGoalDistanceSpace<'_>,
         deadline: Option<Instant>,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
+        let mut generating_op_ids = vec![None; space.num_states];
+        match self.compute_goal_distances(
+            space,
+            GoalDistanceStop::Exhaust,
+            Some(&mut generating_op_ids),
+            deadline,
+        )? {
+            GoalDistanceResult::Exhausted(distances) => Ok((distances, generating_op_ids)),
+            GoalDistanceResult::Reached(_) => {
+                unreachable!("exhaustive goal-distance search returned an early distance")
+            }
+        }
+    }
+
+    fn compute_goal_distances(
+        &self,
+        space: AbstractGoalDistanceSpace<'_>,
+        stop: GoalDistanceStop,
+        mut generating_op_ids: Option<&mut [Option<usize>]>,
+        deadline: Option<Instant>,
+    ) -> Result<GoalDistanceResult> {
         let AbstractGoalDistanceSpace {
             task,
             operators,
@@ -3339,7 +3371,13 @@ impl DomainAbstractionFactory {
         } = layout;
         ensure_online_scp_deadline(deadline)?;
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
-        let mut generating_op_ids: Vec<Option<usize>> = vec![None; num_states];
+        if let Some(generating) = &generating_op_ids {
+            ensure!(
+                generating.len() == num_states,
+                "generating-operator output has {} entries for {num_states} abstract states",
+                generating.len()
+            );
+        }
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
         let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
         let comparison_branching = !comparison_var_ids.is_empty();
@@ -3385,6 +3423,9 @@ impl DomainAbstractionFactory {
             let d = d.into_inner();
             if d > distances[state_hash] + 1e-12 {
                 continue;
+            }
+            if matches!(stop, GoalDistanceStop::FirstReaching(target) if state_hash == target) {
+                return Ok(GoalDistanceResult::Reached(d));
             }
 
             let base_state = if comparison_branching {
@@ -3420,7 +3461,9 @@ impl DomainAbstractionFactory {
                         debug_assert!(pred < num_states, "predecessor hash does not fit usize");
                         if alternative_cost + 1e-12 < distances[pred] {
                             distances[pred] = alternative_cost;
-                            generating_op_ids[pred] = Some(op_id);
+                            if let Some(generating) = generating_op_ids.as_deref_mut() {
+                                generating[pred] = Some(op_id);
+                            }
                             heap.push((
                                 Reverse(
                                     NotNan::new(alternative_cost)
@@ -3435,7 +3478,9 @@ impl DomainAbstractionFactory {
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
                     if alternative_cost + 1e-12 < distances[pred] {
                         distances[pred] = alternative_cost;
-                        generating_op_ids[pred] = Some(op_id);
+                        if let Some(generating) = generating_op_ids.as_deref_mut() {
+                            generating[pred] = Some(op_id);
+                        }
                         heap.push((
                             Reverse(
                                 NotNan::new(alternative_cost).context("alternative cost is NaN")?,
@@ -3447,7 +3492,10 @@ impl DomainAbstractionFactory {
             }
         }
 
-        Ok((distances, generating_op_ids))
+        match stop {
+            GoalDistanceStop::Exhaust => Ok(GoalDistanceResult::Exhausted(distances)),
+            GoalDistanceStop::FirstReaching(_) => Ok(GoalDistanceResult::Reached(f64::INFINITY)),
+        }
     }
 
     fn compute_distance_to_goal_state(
@@ -3456,127 +3504,22 @@ impl DomainAbstractionFactory {
         target_state_hash: usize,
         deadline: Option<Instant>,
     ) -> Result<f64> {
-        let AbstractGoalDistanceSpace {
-            task,
-            operators,
-            match_tree,
-            goal_facts,
-            layout,
-            num_states,
-        } = space;
-        let ComparisonBranchingLayout {
-            numeric_domain_sizes,
-            hash_multipliers,
-            comparison_var_ids,
-        } = layout;
-        let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
-        let comparison_branching = !comparison_var_ids.is_empty();
-
-        for (state_hash, distance) in distances.iter_mut().enumerate() {
-            if state_hash % 4096 == 0 {
-                ensure_online_scp_deadline(deadline)?;
-            }
-            if !self.is_goal_state(
-                state_hash,
-                goal_facts,
-                numeric_domain_sizes,
-                hash_multipliers,
-            ) {
-                continue;
-            }
-            if comparison_branching {
-                let alts = self.enumerate_states_with_evaluated_comparisons_cached(
-                    state_hash,
-                    task,
-                    layout,
-                    &[],
-                    &mut comparison_enumeration_memo,
-                )?;
-                if !alts.contains(&state_hash) {
-                    continue;
-                }
-            }
-            *distance = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
-        }
-
-        let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, comparison_var_ids)
-        } else {
-            Vec::new()
-        };
-        let mut applicable_operator_ids: Vec<usize> = Vec::new();
-        while let Some((Reverse(d), state_hash)) = heap.pop() {
-            let d = d.into_inner();
-            if d > distances[state_hash] + 1e-12 {
-                continue;
-            }
-            if state_hash == target_state_hash {
-                return Ok(d);
-            }
-
-            match_tree.get_applicable_operator_ids(state_hash, &mut applicable_operator_ids);
-            for &op_id in &applicable_operator_ids {
-                let op = &operators[op_id];
-                ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
-                let alternative_cost = d + op.cost;
-                let target_base = if comparison_branching {
-                    self.clear_comparison_vars_except(
-                        state_hash,
-                        hash_multipliers,
-                        comparison_var_ids,
-                        &[],
-                    )?
-                } else {
-                    state_hash
-                };
-                let predecessor_base_i64 = target_base as i64 + op.hash_effect as i64;
-                if predecessor_base_i64 < 0 || predecessor_base_i64 >= num_states as i64 {
-                    continue;
-                }
-                let predecessor_base = predecessor_base_i64 as usize;
-                if comparison_branching {
-                    let possible_predecessors = self
-                        .enumerate_states_with_evaluated_comparisons_cached(
-                            predecessor_base,
-                            task,
-                            layout,
-                            &comparison_preconditions[op_id],
-                            &mut comparison_enumeration_memo,
-                        )?;
-
-                    for pred in possible_predecessors.iter().copied() {
-                        debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                        if alternative_cost + 1e-12 < distances[pred] {
-                            distances[pred] = alternative_cost;
-                            heap.push((
-                                Reverse(
-                                    NotNan::new(alternative_cost)
-                                        .context("alternative cost is NaN")?,
-                                ),
-                                pred,
-                            ));
-                        }
-                    }
-                } else {
-                    let pred = predecessor_base;
-                    debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                    if alternative_cost + 1e-12 < distances[pred] {
-                        distances[pred] = alternative_cost;
-                        heap.push((
-                            Reverse(
-                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
-                            ),
-                            pred,
-                        ));
-                    }
-                }
+        ensure!(
+            target_state_hash < space.num_states,
+            "target abstract state {target_state_hash} is out of bounds for {} states",
+            space.num_states
+        );
+        match self.compute_goal_distances(
+            space,
+            GoalDistanceStop::FirstReaching(target_state_hash),
+            None,
+            deadline,
+        )? {
+            GoalDistanceResult::Reached(distance) => Ok(distance),
+            GoalDistanceResult::Exhausted(_) => {
+                unreachable!("early goal-distance search exhausted in exhaustive mode")
             }
         }
-
-        Ok(f64::INFINITY)
     }
 }
 
