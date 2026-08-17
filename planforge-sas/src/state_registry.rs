@@ -1135,7 +1135,7 @@ impl<'a> StateRegistry<'a> {
             )
         };
 
-        self.apply_propositional_effects(next_buffer, parent, operator);
+        self.apply_propositional_effects(next_buffer, previous_buffer, operator);
 
         // Skip the comparison/propositional axiom passes during effect
         // application when the task has axiom-derived bits we can mask off.
@@ -1252,11 +1252,11 @@ impl<'a> StateRegistry<'a> {
     fn apply_propositional_effects(
         &self,
         buffer: &mut [u64],
-        current_state: &ConcreteState,
+        previous_buffer: &[u64],
         operator: &Operator,
     ) {
         for effect in operator.effects() {
-            if effect.conditions_met(current_state, self) {
+            if self.assignment_conditions_met(effect.conditions(), previous_buffer) {
                 let var_id = effect.var_id();
                 let value = effect.value() as u64;
                 self.global_state_packer.set(buffer, var_id, value);
@@ -1667,7 +1667,7 @@ impl<'a> StateRegistry<'a> {
         // snapshot is the parent every effect must read from.
         let parent_numeric_values = successor_numeric_values.clone();
 
-        self.apply_propositional_effects(&mut next_buffer, state, operator);
+        self.apply_propositional_effects(&mut next_buffer, previous_buffer, operator);
         self.apply_numeric_effects(
             NumericTransition {
                 parent_values: &parent_numeric_values,

@@ -7,7 +7,8 @@ type SegmentAndOffset = (usize, usize);
 #[derive(Debug)]
 pub struct SegmentedArrayVector<T: Clone> {
     elements_per_array: usize,
-    arrays_per_segment: usize,
+    segment_shift: u32,
+    segment_mask: usize,
     elements_per_segment: usize,
     // Flat arrays per segment.
     pub segments: Vec<Box<[T]>>,
@@ -18,14 +19,19 @@ pub struct SegmentedArrayVector<T: Clone> {
 impl<T: Clone + Default> SegmentedArrayVector<T> {
     pub fn new(elements_per_array: usize) -> Self {
         debug_assert!(elements_per_array > 0);
-        let arrays_per_segment = cmp::max(
+        let max_arrays_per_segment = cmp::max(
             SEGMENT_BYTES / (elements_per_array * std::mem::size_of::<T>()),
             1,
         );
+        // A power-of-two count turns the hot index quotient and remainder
+        // into a shift and a mask while keeping every ordinary segment within
+        // SEGMENT_BYTES.
+        let arrays_per_segment = 1usize << max_arrays_per_segment.ilog2();
         let elements_per_segment = elements_per_array * arrays_per_segment;
         Self {
             elements_per_array,
-            arrays_per_segment,
+            segment_shift: arrays_per_segment.trailing_zeros(),
+            segment_mask: arrays_per_segment - 1,
             elements_per_segment,
             segments: Vec::new(),
             size: 0,
@@ -34,8 +40,8 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
 
     #[inline]
     fn get_segment_index(&self, index: usize) -> SegmentAndOffset {
-        let segment = index / self.arrays_per_segment;
-        let offset = (index % self.arrays_per_segment) * self.elements_per_array;
+        let segment = index >> self.segment_shift;
+        let offset = (index & self.segment_mask) * self.elements_per_array;
         (segment, offset)
     }
 
@@ -112,5 +118,33 @@ impl<T: Clone + Default> SegmentedArrayVector<T> {
 
     pub fn is_empty(&self) -> bool {
         self.size == 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SegmentedArrayVector;
+
+    #[test]
+    fn indexing_crosses_a_power_of_two_segment_boundary() {
+        let mut values = SegmentedArrayVector::<u32>::new(3);
+        let arrays_per_segment = values.segment_mask + 1;
+
+        for value in 0..=arrays_per_segment {
+            values.push_back(&[value as u32; 3]);
+        }
+
+        assert!(arrays_per_segment.is_power_of_two());
+        assert_eq!(values.segments.len(), 2);
+        let last_in_first = (arrays_per_segment - 1) as u32;
+        let first_in_second = arrays_per_segment as u32;
+        assert_eq!(
+            values.get(arrays_per_segment - 1),
+            Some(&[last_in_first; 3][..])
+        );
+        assert_eq!(
+            values.get(arrays_per_segment),
+            Some(&[first_in_second; 3][..])
+        );
     }
 }

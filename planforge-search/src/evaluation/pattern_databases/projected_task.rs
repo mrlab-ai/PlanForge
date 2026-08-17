@@ -1203,6 +1203,8 @@ impl<'task> ProjectedTask<'task> {
             return Err("pattern regular ids and multipliers length mismatch".to_string());
         }
 
+        let buffer = state.buffer(registry);
+        let state_packer = registry.global_state_packer();
         let mut hash = 0usize;
         for (&projected_var_id, &multiplier) in self
             .pattern_regular_projected_ids
@@ -1210,9 +1212,7 @@ impl<'task> ProjectedTask<'task> {
             .zip(multipliers.iter())
         {
             let original_var_id = self.projected_var_to_original[projected_var_id];
-            let value = registry
-                .get_propositional_var_value(state, original_var_id)
-                .map_err(|err| format!("{err:?}"))?;
+            let value = state_packer.get(buffer, original_var_id) as usize;
             hash = hash.saturating_add(value.saturating_mul(multiplier));
         }
         Ok(hash)
