@@ -9,7 +9,7 @@ use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, linearize_numeric_var,
     linearize_operator_assignment_effects,
 };
-use std::{fmt, sync::Arc};
+use std::{collections::HashSet, fmt, sync::Arc};
 
 /// A planning task the search can read.
 ///
@@ -841,23 +841,14 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
     numeric_values: &mut [f64],
 ) {
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for axiom in task.assignment_axioms() {
-            let affected_var_id = axiom.get_affected_var_id();
-            if affected_var_id >= numeric_values.len() {
-                continue;
-            }
-
-            let previous_value = numeric_values[affected_var_id];
-            let Ok(updated_value) = axiom.update_values(numeric_values) else {
-                continue;
-            };
-            if updated_value != previous_value {
-                changed = true;
-            }
+    // Assignment axioms are stored in dependency-layer order, so each RHS is
+    // complete when it is visited and one forward pass closes the values.
+    for axiom in task.assignment_axioms() {
+        let affected_var_id = axiom.get_affected_var_id();
+        if affected_var_id >= numeric_values.len() {
+            continue;
         }
+        let _ = axiom.update_values(numeric_values);
     }
 }
 
@@ -1124,9 +1115,11 @@ pub struct NumericRootTask {
     numeric_variables: Vec<NumericVariable>,
     goals: Vec<ExplicitFact>,
     mutexes: Vec<Vec<ExplicitFact>>,
+    mutex_pairs: HashSet<(ExplicitFact, ExplicitFact)>,
     state: Vec<usize>,
     numeric_state: Vec<f64>,
     operators: Vec<Operator>,
+    operator_costs: Vec<f64>,
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -1196,9 +1189,11 @@ impl NumericRootTask {
             numeric_variables,
             goals,
             mutexes,
+            mutex_pairs: HashSet::new(),
             state,
             numeric_state,
             operators,
+            operator_costs: Vec::new(),
             axioms,
             comparison_axioms,
             assignment_axioms,
@@ -1207,6 +1202,23 @@ impl NumericRootTask {
         };
         task.assign_fact_namespaces();
         task.close_initial_state_under_axioms();
+        for group in &task.mutexes {
+            for (index, &left) in group.iter().enumerate() {
+                for &right in &group[index + 1..] {
+                    let pair = if left <= right {
+                        (left, right)
+                    } else {
+                        (right, left)
+                    };
+                    task.mutex_pairs.insert(pair);
+                }
+            }
+        }
+        task.operator_costs = task
+            .operators
+            .iter()
+            .map(|operator| metric_operator_cost_from_initial_values(&task, operator))
+            .collect();
         debug_assert_fact_namespaces(&task);
         task
     }
@@ -1397,9 +1409,16 @@ impl AbstractNumericTask for NumericRootTask {
         if fact1.var() == fact2.var() {
             return fact1.value() != fact2.value();
         }
-        self.mutexes
-            .iter()
-            .any(|group| group.contains(fact1) && group.contains(fact2))
+        let pair = if fact1 <= fact2 {
+            (*fact1, *fact2)
+        } else {
+            (*fact2, *fact1)
+        };
+        self.mutex_pairs.contains(&pair)
+    }
+
+    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
+        self.operator_costs[operator_id]
     }
 
     fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {

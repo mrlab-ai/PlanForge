@@ -175,7 +175,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
     }
 
     let unsatisfied = unsatisfied_goals(task, &states[operators.len()], registry);
-    debug_assert!(
+    assert!(
         !unsatisfied.is_empty(),
         "goal-reaching prefix should have been reported inside the loop"
     );

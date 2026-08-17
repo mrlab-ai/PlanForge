@@ -1,5 +1,3 @@
-use tracing::error;
-
 use crate::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
 use crate::utils::float_tolerance;
 
@@ -195,12 +193,9 @@ impl IntDoublePacker {
                 used_bits += bits;
                 num_vars_in_bin += 1;
             } else {
-                // This shouldn't happen because of the `is_empty()` check above
-                error!(
-                    "Unexpected: no variable with {} bits available for bin {}",
-                    bits, bin_index
+                unreachable!(
+                    "non-empty {bits}-bit variable bucket became empty while filling bin {bin_index}"
                 );
-                return num_vars_in_bin;
             }
         }
     }

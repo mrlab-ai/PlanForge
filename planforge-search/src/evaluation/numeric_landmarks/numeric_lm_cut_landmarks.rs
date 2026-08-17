@@ -3700,8 +3700,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
     }
 
     fn get_proposition_id_for_effect(&self, effect: &Effect) -> usize {
-        let fact = ExplicitFact::propositional(effect.var_id(), effect.value());
-        self.get_proposition_id(&fact)
+        self.numeric_helper
+            .get_proposition(effect.var_id(), effect.value())
+            .map(|helper_id| helper_id + 2)
+            .expect("helper proposition id must exist")
     }
 
     fn get_proposition_name(&self, var_id: usize, value: usize) -> String {

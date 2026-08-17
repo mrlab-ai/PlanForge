@@ -283,7 +283,9 @@ fn compute_axiom_layers(
 
     let mut axioms_by_layer: BTreeMap<i32, Vec<InstantiatedNumericAxiom>> = BTreeMap::new();
     for axiom in axioms {
-        let layer = *layer_cache.get(&axiom.effect).unwrap_or(&-1);
+        let layer = *layer_cache
+            .get(&axiom.effect)
+            .expect("every numeric axiom effect must have a computed layer");
         axioms_by_layer
             .entry(layer)
             .or_default()

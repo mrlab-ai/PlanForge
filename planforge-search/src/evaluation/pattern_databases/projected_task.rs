@@ -256,7 +256,14 @@ impl PatternLookupProjection {
             .zip(multipliers.iter())
         {
             let value = propositional_values[original_var_id];
-            hash = hash.saturating_add(value.saturating_mul(multiplier));
+            debug_assert!(
+                value
+                    .checked_mul(multiplier)
+                    .and_then(|contribution| hash.checked_add(contribution))
+                    .is_some(),
+                "PDB propositional hash must fit in usize"
+            );
+            hash += value * multiplier;
         }
         Ok(hash)
     }
@@ -277,7 +284,14 @@ impl PatternLookupProjection {
             .zip(multipliers.iter())
         {
             let value = propositional_values[original_var_id];
-            hash = hash.saturating_add(value.saturating_mul(multiplier));
+            debug_assert!(
+                value
+                    .checked_mul(multiplier)
+                    .and_then(|contribution| hash.checked_add(contribution))
+                    .is_some(),
+                "PDB propositional hash must fit in usize"
+            );
+            hash += value * multiplier;
         }
         hash
     }
@@ -999,7 +1013,14 @@ impl<'task> ProjectedTask<'task> {
         {
             let original_var_id = self.projected_var_to_original[projected_var_id];
             let value = propositional_values[original_var_id];
-            hash = hash.saturating_add(value.saturating_mul(multiplier));
+            debug_assert!(
+                value
+                    .checked_mul(multiplier)
+                    .and_then(|contribution| hash.checked_add(contribution))
+                    .is_some(),
+                "PDB propositional hash must fit in usize"
+            );
+            hash += value * multiplier;
         }
         Ok(hash)
     }
@@ -1213,7 +1234,14 @@ impl<'task> ProjectedTask<'task> {
         {
             let original_var_id = self.projected_var_to_original[projected_var_id];
             let value = state_packer.get(buffer, original_var_id) as usize;
-            hash = hash.saturating_add(value.saturating_mul(multiplier));
+            debug_assert!(
+                value
+                    .checked_mul(multiplier)
+                    .and_then(|contribution| hash.checked_add(contribution))
+                    .is_some(),
+                "PDB propositional hash must fit in usize"
+            );
+            hash += value * multiplier;
         }
         Ok(hash)
     }
