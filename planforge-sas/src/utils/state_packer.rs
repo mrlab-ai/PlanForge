@@ -25,170 +25,79 @@ fn get_bit_mask(from: u64, to: u64) -> u64 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SingleWordInfo {
-    range: u64,
+struct VariableInfo {
     bin_index: usize,
     shift: u64,
-    read_mask: u64,
-    clear_mask: u64,
-}
-
-impl SingleWordInfo {
-    fn new(range: u64, bin_index: usize, shift: u64, bit_size: u64) -> Self {
-        assert!(
-            shift + bit_size <= BITS_PER_BIN,
-            "single-word slot crosses a bin boundary"
-        );
-        let read_mask = get_bit_mask(shift, shift + bit_size);
-        let clear_mask = !read_mask;
-        Self {
-            range,
-            bin_index,
-            shift,
-            read_mask,
-            clear_mask,
-        }
-    }
-
-    #[inline]
-    fn get(&self, buffer: &[u64]) -> u64 {
-        (buffer[self.bin_index] & self.read_mask) >> self.shift
-    }
-
-    /// Bits a value written to this slot may occupy, aligned at bit zero.
-    #[inline]
-    fn value_mask(&self) -> u64 {
-        self.read_mask >> self.shift
-    }
-
-    #[inline]
-    fn set(&self, buffer: &mut [u64], value: u64) {
-        // The slot is exactly as wide as `range` needs, so a wider value would
-        // be truncated by `read_mask` and read back as a different value. That
-        // is silent data loss, so it fails here instead.
-        assert_eq!(
-            value & self.value_mask(),
-            value,
-            "value {value} does not fit the {} bits packed for range {}",
-            self.read_mask.count_ones(),
-            self.range
-        );
-        let bin_index = self.bin_index;
-        let bin = buffer[bin_index];
-        buffer[bin_index] = (bin & self.clear_mask) | (value << self.shift);
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct StraddlingInfo {
-    range: u64,
-    first_bin_index: usize,
-    first_shift: u64,
-    first_read_mask: u64,
-    first_clear_mask: u64,
-    second_read_mask: u64,
-    second_clear_mask: u64,
-    first_bit_count: u64,
+    bit_size: u64,
     value_mask: u64,
 }
 
-impl StraddlingInfo {
-    fn new(range: u64, first_bin_index: usize, first_shift: u64, bit_size: u64) -> Self {
-        assert!(first_shift > 0, "a straddling slot must use both bins");
+impl VariableInfo {
+    fn new(range: u64, bin_index: usize, shift: u64) -> Self {
+        let bit_size = get_bit_size_for_range(range);
         assert!(
-            first_shift + bit_size > BITS_PER_BIN,
-            "a straddling slot must cross a bin boundary"
+            bit_size <= BITS_PER_BIN,
+            "a packed slot cannot be wider than one bin"
         );
-        assert!(
-            bit_size < BITS_PER_BIN,
-            "full-width slots must be word-aligned"
-        );
-        let first_bit_count = BITS_PER_BIN - first_shift;
-        let second_bit_count = bit_size - first_bit_count;
-        let first_read_mask = get_bit_mask(first_shift, BITS_PER_BIN);
-        let second_read_mask = get_bit_mask(0, second_bit_count);
         Self {
-            range,
-            first_bin_index,
-            first_shift,
-            first_read_mask,
-            first_clear_mask: !first_read_mask,
-            second_read_mask,
-            second_clear_mask: !second_read_mask,
-            first_bit_count,
+            bin_index,
+            shift,
+            bit_size,
             value_mask: get_bit_mask(0, bit_size),
         }
     }
 
     #[inline]
     fn get(&self, buffer: &[u64]) -> u64 {
-        let low = (buffer[self.first_bin_index] & self.first_read_mask) >> self.first_shift;
-        let high = buffer[self.first_bin_index + 1] & self.second_read_mask;
-        low | (high << self.first_bit_count)
+        let low = buffer[self.bin_index] >> self.shift;
+        if self.shift + self.bit_size > BITS_PER_BIN {
+            self.get_straddling(buffer, low)
+        } else {
+            low & self.value_mask
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_straddling(&self, buffer: &[u64], low: u64) -> u64 {
+        let first_bit_count = BITS_PER_BIN - self.shift;
+        let high = buffer[self.bin_index + 1] & (self.value_mask >> first_bit_count);
+        low | (high << first_bit_count)
     }
 
     #[inline]
     fn set(&self, buffer: &mut [u64], value: u64) {
+        // The slot is exactly as wide as its range needs, so a wider value
+        // would be truncated and read back differently. Fail instead of
+        // silently losing data.
         assert_eq!(
             value & self.value_mask,
             value,
-            "value {value} does not fit the {} bits packed for range {}",
-            self.value_mask.count_ones(),
-            self.range
+            "value {value} does not fit the {} packed bits",
+            self.bit_size
         );
-        let first_bin = buffer[self.first_bin_index];
-        buffer[self.first_bin_index] =
-            (first_bin & self.first_clear_mask) | (value << self.first_shift);
-        let second_bin = buffer[self.first_bin_index + 1];
-        buffer[self.first_bin_index + 1] =
-            (second_bin & self.second_clear_mask) | (value >> self.first_bit_count);
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum VariableInfo {
-    #[default]
-    Unassigned,
-    Single(SingleWordInfo),
-    Straddling(StraddlingInfo),
-}
-
-impl VariableInfo {
-    fn new(range: u64, bin_index: usize, shift: u64) -> Self {
-        let bit_size = get_bit_size_for_range(range);
-        if shift + bit_size <= BITS_PER_BIN {
-            Self::Single(SingleWordInfo::new(range, bin_index, shift, bit_size))
-        } else {
-            Self::Straddling(StraddlingInfo::new(range, bin_index, shift, bit_size))
+        let first_mask = self.value_mask << self.shift;
+        let first_bin = buffer[self.bin_index];
+        buffer[self.bin_index] = (first_bin & !first_mask) | (value << self.shift);
+        if self.shift + self.bit_size > BITS_PER_BIN {
+            self.set_straddling_high(buffer, value);
         }
     }
 
-    #[inline]
-    fn get(&self, buffer: &[u64]) -> u64 {
-        match self {
-            Self::Single(info) => info.get(buffer),
-            Self::Straddling(info) => info.get(buffer),
-            Self::Unassigned => unreachable!("every packed variable must have a slot"),
-        }
-    }
-
-    #[inline]
-    fn set(&self, buffer: &mut [u64], value: u64) {
-        match self {
-            Self::Single(info) => info.set(buffer, value),
-            Self::Straddling(info) => info.set(buffer, value),
-            Self::Unassigned => unreachable!("every packed variable must have a slot"),
-        }
+    #[cold]
+    #[inline(never)]
+    fn set_straddling_high(&self, buffer: &mut [u64], value: u64) {
+        let first_bit_count = BITS_PER_BIN - self.shift;
+        let second_mask = self.value_mask >> first_bit_count;
+        let second_bin = buffer[self.bin_index + 1];
+        buffer[self.bin_index + 1] = (second_bin & !second_mask) | (value >> first_bit_count);
     }
 
     fn add_to_mask(&self, mask: &mut [u64]) {
-        match self {
-            Self::Single(info) => mask[info.bin_index] |= info.read_mask,
-            Self::Straddling(info) => {
-                mask[info.first_bin_index] |= info.first_read_mask;
-                mask[info.first_bin_index + 1] |= info.second_read_mask;
-            }
-            Self::Unassigned => unreachable!("every packed variable must have a slot"),
+        mask[self.bin_index] |= self.value_mask << self.shift;
+        if self.shift + self.bit_size > BITS_PER_BIN {
+            let first_bit_count = BITS_PER_BIN - self.shift;
+            mask[self.bin_index + 1] |= self.value_mask >> first_bit_count;
         }
     }
 }
@@ -280,37 +189,35 @@ impl StatePacker {
     fn pack_bins(&mut self, ranges: &[u64]) {
         debug_assert!(self.var_infos.is_empty());
 
-        let num_vars = ranges.len();
-        self.var_infos.resize(num_vars, VariableInfo::default());
-
         // Full-width numeric values are the hottest large slots and cannot share
         // a bin. Align them first so they retain the one-load fast path.
-        for (var, &range) in ranges.iter().enumerate() {
-            if get_bit_size_for_range(range) == BITS_PER_BIN {
-                self.var_infos[var] = VariableInfo::new(range, self.num_bins, 0);
-                self.num_bins += 1;
-            }
-        }
+        let full_width_count = ranges
+            .iter()
+            .filter(|&&range| get_bit_size_for_range(range) == BITS_PER_BIN)
+            .count();
 
         // Pack every narrower slot consecutively. A slot may cross one word
         // boundary, so the only unused bits are at the end of the final bin.
-        let narrow_bin_offset = self.num_bins;
         let mut narrow_bit_offset = 0usize;
-        for (var, &range) in ranges.iter().enumerate() {
+        let mut full_width_bin = 0usize;
+        self.var_infos.reserve(ranges.len());
+        for &range in ranges {
             let bit_size = get_bit_size_for_range(range);
             if bit_size == BITS_PER_BIN {
-                continue;
+                self.var_infos
+                    .push(VariableInfo::new(range, full_width_bin, 0));
+                full_width_bin += 1;
+            } else {
+                let bin_index = full_width_count + narrow_bit_offset / BITS_PER_BIN as usize;
+                let shift = (narrow_bit_offset % BITS_PER_BIN as usize) as u64;
+                self.var_infos
+                    .push(VariableInfo::new(range, bin_index, shift));
+                narrow_bit_offset = narrow_bit_offset
+                    .checked_add(bit_size as usize)
+                    .expect("packed state bit count overflow");
             }
-            let bin_index = narrow_bin_offset + narrow_bit_offset / BITS_PER_BIN as usize;
-            let shift = (narrow_bit_offset % BITS_PER_BIN as usize) as u64;
-            self.var_infos[var] = VariableInfo::new(range, bin_index, shift);
-            narrow_bit_offset = narrow_bit_offset
-                .checked_add(bit_size as usize)
-                .expect("packed state bit count overflow");
         }
-        if narrow_bit_offset > 0 {
-            self.num_bins += narrow_bit_offset.div_ceil(BITS_PER_BIN as usize);
-        }
+        self.num_bins = full_width_count + narrow_bit_offset.div_ceil(BITS_PER_BIN as usize);
     }
 
     pub fn pack_double(&self, plain_double: f64) -> u64 {

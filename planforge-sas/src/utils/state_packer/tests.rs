@@ -69,7 +69,7 @@ fn values_straddle_word_boundaries_without_padding() {
         assert_eq!(packer.get(&buffer, var), value);
     }
 
-    assert!(matches!(packer.var_infos[1], VariableInfo::Straddling(_)));
+    assert!(packer.var_infos[1].shift + packer.var_infos[1].bit_size > BITS_PER_BIN);
 }
 
 #[test]
@@ -88,12 +88,7 @@ fn full_width_values_keep_the_single_word_fast_path() {
     let range = 1u64 << 40;
     let packer = StatePacker::new(&[range, u64::MAX, range]);
 
-    assert!(matches!(
-        packer.var_infos[1],
-        VariableInfo::Single(SingleWordInfo {
-            bin_index: 0,
-            shift: 0,
-            ..
-        })
-    ));
+    assert_eq!(packer.var_infos[1].bin_index, 0);
+    assert_eq!(packer.var_infos[1].shift, 0);
+    assert_eq!(packer.var_infos[1].bit_size, BITS_PER_BIN);
 }
