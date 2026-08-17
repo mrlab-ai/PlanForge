@@ -417,6 +417,202 @@ struct PartitionedCollection<'a, 'task> {
     original_costs: &'a [f64],
 }
 
+enum SaturatedCosts {
+    Uniform(Vec<f64>),
+    AbstractOperator(AbstractOperatorCostFunction),
+    Regional(RegionalCostAllocation),
+}
+
+#[derive(Clone, Copy)]
+enum SaturationCostSpace {
+    Label,
+    AbstractOperator,
+    Regional,
+}
+
+struct ComponentSaturation<'a, 'task> {
+    component: &'a AbstractionComponent<'task>,
+    task: &'a dyn AbstractNumericTask,
+    combine_labels: bool,
+    cost_space: SaturationCostSpace,
+    current_state_id: Option<usize>,
+}
+
+impl ComponentSaturation<'_, '_> {
+    fn saturate(
+        &self,
+        residual: &TransitionResidualCosts,
+        component_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError> {
+        match (self.component, self.cost_space) {
+            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Label) => {
+                let abstraction = heuristic.abstraction();
+                let abstraction_task = abstraction.task_for_factory(self.task);
+                let operator_costs = residual.operator_costs_for_label_cp();
+                let (distances, saturated) = if let Some(state_id) = cap_state_id {
+                    let table = abstraction
+                        .factory
+                        .build_goal_distances_for_goals(
+                            abstraction_task,
+                            self.combine_labels,
+                            &operator_costs,
+                            &abstraction.distance_table.goal_facts,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute domain PERIM cap table: {error:#}"
+                            ))
+                        })?;
+                    let h_cap = table.distances.get(state_id).copied().ok_or_else(|| {
+                        EvaluationError::InvalidState(format!(
+                            "domain component {component_id} state id {state_id} out of bounds for {} states",
+                            table.distances.len()
+                        ))
+                    })?;
+                    SaturatedCostPartitioningOnlineHeuristic::compute_domain_perim_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.combine_labels,
+                        &operator_costs,
+                        h_cap,
+                    )?
+                } else {
+                    SaturatedCostPartitioningOnlineHeuristic::compute_domain_cp_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.combine_labels,
+                        &operator_costs,
+                        deadline,
+                    )?
+                };
+                Ok((distances, SaturatedCosts::Uniform(saturated)))
+            }
+            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::AbstractOperator) => {
+                let abstraction = heuristic.abstraction();
+                let abstraction_task = abstraction.task_for_factory(self.task);
+                let (table, saturated) = abstraction
+                    .factory
+                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                        abstraction_task,
+                        abstraction.combine_labels,
+                        &abstraction.abstract_operators,
+                        &abstraction.abstract_operator_footprints,
+                        SaturationStep {
+                            residual_costs: residual,
+                            abstraction_id: component_id,
+                            current_state_id: self.current_state_id,
+                            cap_state_id,
+                        },
+                        deadline,
+                    )
+                    .map_err(|error| {
+                        SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                            "failed to compute domain abstract-operator saturation",
+                            error,
+                        )
+                    })?;
+                Ok((table.distances, SaturatedCosts::AbstractOperator(saturated)))
+            }
+            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Regional) => {
+                let abstraction = heuristic.abstraction();
+                let abstraction_task = abstraction.task_for_factory(self.task);
+                let transition_system = abstraction
+                    .regional_transition_system(abstraction_task, deadline)
+                    .map_err(|error| {
+                        SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                            "failed to build domain regional transition system",
+                            error,
+                        )
+                    })?;
+                let (table, saturated) = abstraction
+                    .factory
+                    .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                        &transition_system,
+                        &abstraction.abstract_operator_footprints,
+                        residual,
+                        component_id,
+                        cap_state_id,
+                        deadline,
+                    )
+                    .map_err(|error| {
+                        SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                            "failed to compute domain regional saturation",
+                            error,
+                        )
+                    })?;
+                Ok((table.distances, SaturatedCosts::Regional(saturated)))
+            }
+            (AbstractionComponent::Cartesian(heuristic), SaturationCostSpace::Label) => {
+                let (distances, saturated) = build_explicit_label_cost_partitioning_table(
+                    &heuristic.abstraction().transition_system,
+                    &residual.operator_costs_for_label_cp(),
+                    cap_state_id,
+                    deadline,
+                )
+                .map_err(|error| {
+                    SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                        &format!(
+                            "failed to compute Cartesian label saturation for component {component_id}"
+                        ),
+                        error,
+                    )
+                })?;
+                Ok((distances, SaturatedCosts::Uniform(saturated)))
+            }
+            (
+                AbstractionComponent::Cartesian(heuristic),
+                SaturationCostSpace::AbstractOperator | SaturationCostSpace::Regional,
+            ) => {
+                let abstraction = heuristic.abstraction();
+                let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
+                    &abstraction.transition_system,
+                    &abstraction.abstract_operator_footprints,
+                    residual,
+                    component_id,
+                    cap_state_id,
+                    deadline,
+                )
+                .map_err(|error| {
+                    SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                        &format!(
+                            "failed to compute Cartesian regional saturation for component {component_id}"
+                        ),
+                        error,
+                    )
+                })?;
+                Ok((distances, SaturatedCosts::AbstractOperator(saturated)))
+            }
+            (AbstractionComponent::PatternDatabase(pdb), _) => {
+                let operator_costs = residual.operator_costs_for_label_cp();
+                let (distances, saturated) = if let Some(state_id) = cap_state_id {
+                    let cap_distances = pdb.build_goal_distances(&operator_costs).map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB PERIM cap table {component_id}: {error}"
+                        ))
+                    })?;
+                    let h_cap = cap_distances.get(state_id).copied().ok_or_else(|| {
+                        EvaluationError::InvalidState(format!(
+                            "PDB component {component_id} state id {state_id} out of bounds for {} states",
+                            cap_distances.len()
+                        ))
+                    })?;
+                    pdb.build_cost_partitioned_distance_table_capped(&operator_costs, h_cap)
+                } else {
+                    pdb.build_cost_partitioned_distance_table(&operator_costs)
+                }
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to compute PDB saturation {component_id}: {error}"
+                    ))
+                })?;
+                Ok((distances, SaturatedCosts::Uniform(saturated)))
+            }
+        }
+    }
+}
+
 impl CostPartitioningHeuristic {
     fn is_empty(&self) -> bool {
         self.lookup_tables.is_empty()
@@ -2482,33 +2678,37 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     abstract_state_ids,
                                     &remaining_costs,
                                 )?;
-                                let (table, allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
-                                    None,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
+                                let protocol = ComponentSaturation {
+                                    component,
+                                    task,
+                                    combine_labels: self.config.combine_labels,
+                                    cost_space: SaturationCostSpace::Regional,
+                                    current_state_id: abstract_state_ids
+                                        .get(pos)
+                                        .copied()
+                                        .flatten(),
+                                };
+                                let result =
+                                    protocol.saturate(&remaining_costs, pos, None, deadline);
+                                let (distances, allocation) = match result {
+                                    Ok((distances, SaturatedCosts::Regional(allocation))) => {
+                                        (distances, allocation)
+                                    }
+                                    Ok(_) => unreachable!(
+                                        "domain regional saturation must return a regional allocation"
+                                    ),
+                                    Err(error) if Self::is_online_deadline_error_eval(&error) => {
                                         info!(
                                             "scp_online: abstract-operator all abstraction {pos} stopped while computing table (deadline)"
                                         );
                                         break;
                                     }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute regional SCP table: {error:#}"
-                                    )));
-                                    }
+                                    Err(error) => return Err(error),
                                 };
                                 log_transition_table_summary(
                                     "all",
                                     pos,
-                                    &table.distances,
+                                    &distances,
                                     &regional_allocation_amounts(&allocation),
                                     abstract_state_ids,
                                 );
@@ -2516,7 +2716,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     self.config.diversify,
                                     "all",
                                     pos,
-                                    &table.distances,
+                                    &distances,
                                     abstract_state_ids,
                                 ) {
                                     continue;
@@ -2532,7 +2732,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                     );
                                     break;
                                 }
-                                cp.add_h_values(pos, table.distances);
+                                cp.add_h_values(pos, distances);
                                 log_transition_residual_summary(&remaining_costs);
                             }
                             Saturator::Perim => {
@@ -3036,15 +3236,23 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     );
                     match self.config.saturator {
                         Saturator::All => {
-                            let abstraction_task = abstraction.task_for_factory(task);
-                            let (distances, saturated) = match Self::compute_domain_cp_entry(
-                                abstraction,
-                                abstraction_task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                deadline,
-                            ) {
-                                Ok(entry) => entry,
+                            let residual =
+                                TransitionResidualCosts::from_operator_costs(&remaining_costs);
+                            let protocol = ComponentSaturation {
+                                component,
+                                task,
+                                combine_labels: self.config.combine_labels,
+                                cost_space: SaturationCostSpace::Label,
+                                current_state_id: abstract_state_ids.get(pos).copied().flatten(),
+                            };
+                            let result = protocol.saturate(&residual, pos, None, deadline);
+                            let (distances, saturated) = match result {
+                                Ok((distances, SaturatedCosts::Uniform(saturated))) => {
+                                    (distances, saturated)
+                                }
+                                Ok(_) => unreachable!(
+                                    "label saturation must return uniform operator costs"
+                                ),
                                 Err(error) if Self::is_online_deadline_error_eval(&error) => {
                                     info!(
                                         "scp_online: label all abstraction {pos} stopped while computing table (deadline)"
@@ -3434,30 +3642,24 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             let abstraction_task = abstraction.task_for_factory(task);
             match saturator {
                 Saturator::All => {
-                    let (table, tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: abstract_state_ids.get(pos).copied().flatten(),
-                                cap_state_id: None,
-                            },
-                            deadline,
+                    let protocol = ComponentSaturation {
+                        component,
+                        task,
+                        combine_labels: self.config.combine_labels,
+                        cost_space: SaturationCostSpace::AbstractOperator,
+                        current_state_id: abstract_state_ids.get(pos).copied().flatten(),
+                    };
+                    let (distances, saturated) =
+                        protocol.saturate(&remaining_costs, pos, None, deadline)?;
+                    let SaturatedCosts::AbstractOperator(tcf) = saturated else {
+                        unreachable!(
+                            "domain abstract-operator saturation must return abstract-operator costs"
                         )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator table: {error:#}"
-                            ))
-                        })?;
+                    };
                     log_transition_table_summary(
                         "fillSCP/all",
                         pos,
-                        &table.distances,
+                        &distances,
                         &tcf.operator_costs,
                         abstract_state_ids,
                     );
@@ -3465,7 +3667,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         self.config.diversify,
                         "fillSCP abstract-operator all",
                         pos,
-                        &table.distances,
+                        &distances,
                         abstract_state_ids,
                     ) {
                         continue;
@@ -3483,7 +3685,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         );
                         break;
                     }
-                    cp.add_h_values(pos, table.distances);
+                    cp.add_h_values(pos, distances);
                     log_transition_residual_summary(&remaining_costs);
                 }
                 Saturator::Perim => {
