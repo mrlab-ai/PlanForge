@@ -21,7 +21,9 @@ mod tests;
 
 use crate::axioms::AxiomEvaluator;
 use crate::numeric_task::{AssignmentOperation, ExplicitFact, Operator, RepeatedTarget, TaskRef};
-use crate::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
+use crate::utils::errors::{
+    AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
+};
 use crate::utils::float_tolerance;
 use crate::utils::segmented_vector::SegmentedArrayVector;
 use crate::{numeric_task::NumericType, utils::int_packer::IntDoublePacker};
@@ -1299,7 +1301,10 @@ impl<'a> StateRegistry<'a> {
     /// - Using stored constants for constant variables.
     /// - Retrieving cost variables from per-state storage.
     /// - Evaluating arithmetic axioms to compute derived values.
-    pub fn get_numeric_vars(&self, state: &ConcreteState) -> Result<Vec<f64>, InvalidIndex> {
+    pub fn get_numeric_vars(
+        &self,
+        state: &ConcreteState,
+    ) -> Result<Vec<f64>, AssignmentAxiomError> {
         let mut result = vec![0.0; self.task.numeric_variables().len()];
         self.fill_numeric_vars(state, &mut result)?;
         Ok(result)
@@ -1310,7 +1315,7 @@ impl<'a> StateRegistry<'a> {
         state: &ConcreteState,
         propositional_output: &mut Vec<usize>,
         numeric_output: &mut Vec<f64>,
-    ) -> Result<(), InvalidIndex> {
+    ) -> Result<(), AssignmentAxiomError> {
         self.fill_state_and_numeric_vars_with_options(
             state,
             propositional_output,
@@ -1325,7 +1330,7 @@ impl<'a> StateRegistry<'a> {
         propositional_output: &mut Vec<usize>,
         numeric_output: &mut Vec<f64>,
         evaluate_arithmetic_axioms: bool,
-    ) -> Result<(), InvalidIndex> {
+    ) -> Result<(), AssignmentAxiomError> {
         let buffer = state.buffer(self);
         let state_packer = &self.global_state_packer;
 
@@ -1405,7 +1410,7 @@ impl<'a> StateRegistry<'a> {
         &self,
         state: &ConcreteState,
         output: &mut Vec<f64>,
-    ) -> Result<(), InvalidIndex> {
+    ) -> Result<(), AssignmentAxiomError> {
         output.resize(self.numeric_template.len(), 0.0);
         output.copy_from_slice(&self.numeric_template);
 
@@ -1663,15 +1668,15 @@ impl<'a> StateRegistry<'a> {
         Ok(new_metric - old_metric)
     }
 
-    fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, InvalidIndex> {
+    fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, AxiomEvalError> {
         let Some((metric_fluent_id, metric_type)) = self.metric_var else {
             return Ok(0.0);
         };
         if metric_fluent_id >= self.numeric_var_types.len() {
-            return Err(InvalidIndex {
+            return Err(AxiomEvalError::InvalidIndex(InvalidIndex {
                 length: self.numeric_var_types.len(),
                 index: metric_fluent_id,
-            });
+            }));
         }
 
         match metric_type {
@@ -1692,8 +1697,11 @@ impl<'a> StateRegistry<'a> {
                 Ok(self.numeric_constants[self.numeric_indices[metric_fluent_id].unwrap()])
             }
             NumericType::Derived => {
-                let numeric_vals = self.get_numeric_vars(state)?;
+                let numeric_vals = self
+                    .get_numeric_vars(state)
+                    .map_err(AxiomEvalError::Assignment)?;
                 self.evaluate_metric(&numeric_vals)
+                    .map_err(AxiomEvalError::InvalidIndex)
             }
         }
     }
@@ -1708,13 +1716,15 @@ impl<'a> StateRegistry<'a> {
         &self,
         existing_state: &ConcreteState,
         successor_numeric_vals: &[f64],
-    ) -> Result<bool, InvalidIndex> {
+    ) -> Result<bool, AxiomEvalError> {
         if !self.task.metric().use_metric() {
             return Ok(false);
         }
 
         let old_metric_val = self.metric_value_for_state(existing_state)?;
-        let new_metric_val = self.evaluate_metric(successor_numeric_vals)?;
+        let new_metric_val = self
+            .evaluate_metric(successor_numeric_vals)
+            .map_err(AxiomEvalError::InvalidIndex)?;
 
         Ok(if self.task.metric().is_min() {
             old_metric_val < new_metric_val

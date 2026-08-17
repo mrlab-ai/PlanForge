@@ -689,15 +689,7 @@ impl Ord for Invariant {
 
 /// Helper to negate a literal condition
 fn negate_literal(cond: &Condition) -> Condition {
-    match cond {
-        Condition::Atom(a) => {
-            Condition::NegatedAtom(NegatedAtom::new(a.predicate.clone(), a.args.clone()))
-        }
-        Condition::NegatedAtom(na) => {
-            Condition::Atom(Atom::new(na.predicate.clone(), na.args.clone()))
-        }
-        _ => cond.clone(),
-    }
+    cond.negate()
 }
 
 /// Placed here to be accessible from Invariant methods.

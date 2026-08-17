@@ -5,6 +5,12 @@ pub struct InvalidIndex {
 }
 
 #[derive(Debug)]
+pub enum AssignmentAxiomError {
+    InvalidIndex(InvalidIndex),
+    DivisionByZero { divisor: usize },
+}
+
+#[derive(Debug)]
 pub struct ConstructError {
     pub message: String,
 }
@@ -18,6 +24,7 @@ pub struct WrongAxiomLayer {
 #[derive(Debug)]
 pub enum AxiomEvalError {
     InvalidIndex(InvalidIndex),
+    Assignment(AssignmentAxiomError),
     WrongAxiomLayer(WrongAxiomLayer),
 }
 

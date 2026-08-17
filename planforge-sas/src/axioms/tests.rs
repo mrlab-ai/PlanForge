@@ -3,6 +3,47 @@ use super::*;
 use crate::tests::*;
 
 #[test]
+fn assignment_axiom_reports_division_by_zero_distinctly() {
+    let axiom = AssignmentAxiom::new(2, CalOperator::Division, 0, 1);
+    let mut values = [4.0, 0.0, 99.0];
+
+    let error = axiom
+        .update_values(&mut values)
+        .expect_err("division by zero must fail");
+
+    assert!(
+        format!("{error:?}").contains("DivisionByZero"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn assignment_axiom_reports_the_invalid_right_operand() {
+    let axiom = AssignmentAxiom::new(1, CalOperator::Sum, 0, 3);
+    let mut values = [4.0, 0.0];
+
+    let error = axiom
+        .update_values(&mut values)
+        .expect_err("right operand is out of bounds");
+
+    assert!(
+        format!("{error:?}").contains("index: 3"),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn comparison_axiom_reports_the_invalid_right_operand() {
+    let axiom = ComparisonAxiom::new(0, 0, 3, ComparisonOperator::Equal);
+
+    let error = axiom
+        .is_hold(&[4.0, 0.0])
+        .expect_err("right operand is out of bounds");
+
+    assert_eq!(error.index, 3);
+}
+
+#[test]
 fn test_axiom_evaluator_creation() {
     let problem = std::sync::Arc::new(get_root_task());
     let mut domain_sizes = vec![];

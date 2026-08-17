@@ -278,13 +278,17 @@ fn translate_strips_conditions_aux(
                 // Build parts lookup - extract PNE from FunctionalExpression
                 let parts: Vec<usize> = parts_fexpr
                     .iter()
-                    .filter_map(|p| match p {
+                    .map(|p| match p {
                         FunctionalExpression::PrimitiveNumericExpression(pne) => {
-                            Some(*numeric_dictionary.get(pne).unwrap_or_else(|| {
+                            *numeric_dictionary.get(pne).unwrap_or_else(|| {
                                 panic!("PNE {:?} not in numeric dictionary", pne)
-                            }))
+                            })
                         }
-                        _ => None,
+                        FunctionalExpression::NumericConstant(_)
+                        | FunctionalExpression::ArithmeticExpression(_)
+                        | FunctionalExpression::AdditiveInverse(_) => {
+                            panic!("comparison operand {p} survived arithmetic normalization")
+                        }
                     })
                     .collect();
 
@@ -961,6 +965,9 @@ fn translate_strips_axiom(
         panic!("an axiom head is a positive atom, got {}", axiom.effect);
     };
     let Some(pairs) = translation.dictionary.get(atom) else {
+        // The head has no reachable SAS fact. Every occurrence of that head in
+        // a rule body was therefore simplified to false already, so omitting
+        // this producer cannot remove a reachable grounded fact.
         return vec![];
     };
     let effect = pairs[0];
@@ -1332,11 +1339,13 @@ fn translate_task(
         // Unit cost or special marker
         (task.metric.0.clone(), -1i64)
     } else {
-        if let Some(&idx) = translation.numeric.get(&task.metric.1) {
-            (task.metric.0.clone(), idx as i64)
-        } else {
-            (task.metric.0.clone(), -1i64)
-        }
+        let idx = translation.numeric.get(&task.metric.1).unwrap_or_else(|| {
+            panic!(
+                "metric fluent {} has no translated numeric variable",
+                task.metric.1
+            )
+        });
+        (task.metric.0.clone(), *idx as i64)
     };
 
     // The global constraint is a single atom (asserted by the caller) and
@@ -1402,6 +1411,8 @@ fn build_mutex_key(
                     group_key.push((var, val));
                 }
             } else {
+                // PARITY(numeric-fd): mutex facts absent from the strips-to-SAS
+                // map are unreachable and are intentionally omitted.
                 info!("not in strips_to_sas, left out: {:?}", fact);
             }
         }
@@ -1691,18 +1702,7 @@ fn make_fc_condition(
 
 /// Negate a condition
 fn negate_condition(cond: &Condition) -> Condition {
-    match cond {
-        Condition::Atom(a) => Condition::NegatedAtom(a.negate()),
-        Condition::NegatedAtom(na) => Condition::Atom(na.negate()),
-        // Negating a comparison moves the same payload to the other variant.
-        Condition::FunctionComparison(comparison) => {
-            Condition::NegatedFunctionComparison(comparison.clone())
-        }
-        Condition::NegatedFunctionComparison(comparison) => {
-            Condition::FunctionComparison(comparison.clone())
-        }
-        _ => cond.clone(),
-    }
+    cond.negate()
 }
 
 /// Extension trait for FunctionalExpression

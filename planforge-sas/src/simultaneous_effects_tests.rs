@@ -197,6 +197,14 @@ fn metric_cost_reads_parent_values_across_effects() {
     assert_eq!(delta, 3.0);
 }
 
+#[test]
+#[should_panic(expected = "negative metric cost")]
+fn negative_metric_cost_is_rejected_at_task_construction() {
+    let decrease = AssignmentEffect::new(X, AssignmentOperation::Minus, ONE, false, vec![]);
+
+    let _task = task_with_effects(vec![decrease], Some(X));
+}
+
 /// PDDL grounding produces operators like mprime's `drink ?n ?n`, whose two
 /// additive effects target the same variable. Both deltas apply to the parent
 /// value, so they cancel — and the result must not depend on which one is

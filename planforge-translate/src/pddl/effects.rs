@@ -153,26 +153,55 @@ impl EffectType {
 
     /// Extracts the cost effect from a conjunctive effect and returns the remaining effects + cost.
     pub fn extract_cost(&self) -> (EffectType, Option<FunctionAssignment>) {
+        self.extract_cost_inner(false)
+    }
+
+    fn extract_cost_inner(&self, guarded: bool) -> (EffectType, Option<FunctionAssignment>) {
         match self {
+            EffectType::Numeric(ne) if ne.effect.is_cost_assignment() => {
+                assert!(!guarded, "cost effect may not be conditional or quantified");
+                (
+                    EffectType::Conjunctive(ConjunctiveEffect::new(vec![])),
+                    Some(ne.effect.clone()),
+                )
+            }
+            EffectType::Simple(_) | EffectType::Numeric(_) => (self.clone(), None),
+            EffectType::Conditional(ce) => {
+                let (effect, cost) = ce.effect.extract_cost_inner(true);
+                assert!(cost.is_none(), "cost effect may not be conditional");
+                (
+                    EffectType::Conditional(ConditionalEffect::new(ce.condition.clone(), effect)),
+                    None,
+                )
+            }
+            EffectType::Universal(ue) => {
+                let (effect, cost) = ue.effect.extract_cost_inner(true);
+                assert!(
+                    cost.is_none(),
+                    "cost effect may not be universally quantified"
+                );
+                (
+                    EffectType::Universal(UniversalEffect::new(ue.parameters.clone(), effect)),
+                    None,
+                )
+            }
             EffectType::Conjunctive(ce) => {
                 let mut new_effects = vec![];
                 let mut cost_effect = None;
                 for eff in &ce.effects {
-                    match eff {
-                        // Extracted, so *not* kept among the remaining effects.
-                        // It used to be both, which double counted it: the
-                        // increase became the operator's cost and stayed a
-                        // numeric effect on the same fluent, so a domain using
-                        // the standard `(increase (total-cost) n)` idiom reported
-                        // every plan at twice its cost. A domain naming its
-                        // function anything else was unaffected, and since every
-                        // fixture here minimises `(cost)`, nothing caught it.
-                        EffectType::Numeric(ne) if ne.effect.is_cost_assignment() => {
-                            cost_effect = Some(ne.effect.clone());
-                        }
-                        _ => {
-                            new_effects.push(eff.clone());
-                        }
+                    let (remaining, cost) = eff.extract_cost_inner(guarded);
+                    if let Some(cost) = cost {
+                        assert!(
+                            cost_effect.is_none(),
+                            "action has more than one cost effect"
+                        );
+                        cost_effect = Some(cost);
+                    }
+                    if !matches!(
+                        remaining,
+                        EffectType::Conjunctive(ref nested) if nested.effects.is_empty()
+                    ) {
+                        new_effects.push(remaining);
                     }
                 }
                 if new_effects.len() == 1 {
@@ -184,7 +213,6 @@ impl EffectType {
                     )
                 }
             }
-            _ => (self.clone(), None),
         }
     }
 }
@@ -194,4 +222,50 @@ impl EffectType {
 pub enum EffectKind {
     Literal(Condition),
     Numeric(FunctionAssignment),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pddl::FunctionalExpression;
+    use crate::pddl::f_expression::{NumericConstant, PrimitiveNumericExpression};
+
+    fn cost_effect() -> EffectType {
+        EffectType::Numeric(NumericEffect::new(FunctionAssignment::new(
+            "+".to_string(),
+            PrimitiveNumericExpression::new("total-cost".to_string(), vec![]),
+            FunctionalExpression::NumericConstant(NumericConstant::new(5.0)),
+        )))
+    }
+
+    #[test]
+    fn extracts_standalone_cost_effect() {
+        let (remaining, cost) = cost_effect().extract_cost();
+
+        assert!(cost.is_some());
+        assert!(
+            matches!(remaining, EffectType::Conjunctive(ref effect) if effect.effects.is_empty())
+        );
+    }
+
+    #[test]
+    fn extracts_cost_from_nested_conjunction() {
+        let nested =
+            EffectType::Conjunctive(ConjunctiveEffect::new(vec![EffectType::Conjunctive(
+                ConjunctiveEffect::new(vec![cost_effect()]),
+            )]));
+
+        let (_, cost) = nested.extract_cost();
+
+        assert!(cost.is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "cost effect may not be conditional")]
+    fn rejects_conditional_cost_effect() {
+        let conditional =
+            EffectType::Conditional(ConditionalEffect::new(Condition::Truth, cost_effect()));
+
+        let _ = conditional.extract_cost();
+    }
 }

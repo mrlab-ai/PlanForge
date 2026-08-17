@@ -242,9 +242,16 @@ pub fn translate(task: &Task) -> PrologProgram {
             .flat_map(condition_to_atoms)
             .collect();
         let effect_atoms = condition_to_atoms(&rule.effect);
-        if let Some(effect) = effect_atoms.into_iter().next() {
-            program.add_rule(Rule::new(conditions, effect));
-        }
+        let effect = match effect_atoms.as_slice() {
+            [effect] => effect.clone(),
+            [] => unreachable!("exploration rule has no head atom: {}", rule.effect),
+            heads => unreachable!(
+                "exploration rule has {} head atoms, expected one: {}",
+                heads.len(),
+                rule.effect
+            ),
+        };
+        program.add_rule(Rule::new(conditions, effect));
     }
 
     // Normalize the program (steps 1-3 from Python)
@@ -279,6 +286,11 @@ fn condition_to_atoms(cond: &Condition) -> Vec<Vec<String>> {
                 result
             })
             .collect(),
-        _ => vec![],
+        Condition::Falsity
+        | Condition::Disjunction(_)
+        | Condition::UniversalCondition(_)
+        | Condition::ExistentialCondition(_) => panic!(
+            "condition {cond} should have been normalized away before Prolog rules are built"
+        ),
     }
 }

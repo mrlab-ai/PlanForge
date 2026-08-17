@@ -117,3 +117,23 @@ fn rejects_non_linear_product_of_two_variables() {
         }
     ));
 }
+
+#[test]
+fn rejects_short_initial_numeric_value_table() {
+    let task = base_task(
+        vec![NumericVariable::new(
+            "constant".to_string(),
+            NumericType::Constant,
+            None,
+        )],
+        vec![],
+        vec![],
+        vec![1.0],
+    );
+    let mut visiting = vec![false];
+
+    let error = linearize_numeric_var_with_lookup(&task, 0, &[None], &[], &mut visiting)
+        .expect_err("a missing initial numeric value must not become zero");
+
+    assert!(format!("{error:?}").contains("InitialNumericStateTooShort"));
+}

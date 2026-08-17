@@ -99,6 +99,10 @@ pub enum LinearizationError {
         numeric_var_id: usize,
         len: usize,
     },
+    InitialNumericStateTooShort {
+        numeric_var_id: usize,
+        len: usize,
+    },
     InvalidOperatorId {
         operator_id: usize,
         len: usize,
@@ -136,6 +140,13 @@ impl fmt::Display for LinearizationError {
             } => {
                 write!(f, "invalid numeric var id {numeric_var_id}; len={len}")
             }
+            Self::InitialNumericStateTooShort {
+                numeric_var_id,
+                len,
+            } => write!(
+                f,
+                "initial numeric state has length {len}, missing variable {numeric_var_id}"
+            ),
             Self::InvalidOperatorId { operator_id, len } => {
                 write!(f, "invalid operator id {operator_id}; len={len}")
             }
@@ -279,10 +290,15 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
     let numeric_var = &task.numeric_variables()[numeric_var_id];
     match numeric_var.get_type() {
         NumericType::Regular => Ok(LinearExpression::variable(num_numeric_vars, numeric_var_id)),
-        NumericType::Constant | NumericType::Cost => Ok(LinearExpression::constant(
-            num_numeric_vars,
-            *initial_numeric_values.get(numeric_var_id).unwrap_or(&0.0),
-        )),
+        NumericType::Constant | NumericType::Cost => {
+            let value = initial_numeric_values.get(numeric_var_id).ok_or(
+                LinearizationError::InitialNumericStateTooShort {
+                    numeric_var_id,
+                    len: initial_numeric_values.len(),
+                },
+            )?;
+            Ok(LinearExpression::constant(num_numeric_vars, *value))
+        }
         NumericType::Derived => {
             let axiom_id = assignment_lookup[numeric_var_id]
                 .ok_or(LinearizationError::MissingAssignmentAxiom { numeric_var_id })?;

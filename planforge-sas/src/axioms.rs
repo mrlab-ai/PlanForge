@@ -6,7 +6,7 @@ use std::cmp::max;
 use std::sync::Arc;
 
 use crate::numeric_task::{AbstractNumericTask, ExplicitFact, TaskRef};
-use crate::utils::errors::{AxiomEvalError, InvalidIndex, WrongAxiomLayer};
+use crate::utils::errors::{AssignmentAxiomError, AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use crate::utils::int_packer::IntDoublePacker;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,21 +85,27 @@ impl AssignmentAxiom {
         }
     }
 
-    pub fn update_values(&self, numeric_state: &mut [f64]) -> Result<f64, InvalidIndex> {
+    pub fn update_values(&self, numeric_state: &mut [f64]) -> Result<f64, AssignmentAxiomError> {
         let left = self.left_hand_side;
         let right = self.right_hand_side;
-        if left >= numeric_state.len() || right >= numeric_state.len() {
-            return Err(InvalidIndex {
+        if left >= numeric_state.len() {
+            return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
                 length: numeric_state.len(),
                 index: left,
-            });
+            }));
+        }
+        if right >= numeric_state.len() {
+            return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
+                length: numeric_state.len(),
+                index: right,
+            }));
         }
         let affected = self.affected_var_id;
         if affected >= numeric_state.len() {
-            return Err(InvalidIndex {
+            return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
                 length: numeric_state.len(),
                 index: affected,
-            });
+            }));
         }
         let result = match self.operator {
             CalOperator::Sum => numeric_state[left] + numeric_state[right],
@@ -107,10 +113,7 @@ impl AssignmentAxiom {
             CalOperator::Product => numeric_state[left] * numeric_state[right],
             CalOperator::Division => {
                 if numeric_state[right] == 0.0 {
-                    return Err(InvalidIndex {
-                        length: numeric_state.len(),
-                        index: right,
-                    });
+                    return Err(AssignmentAxiomError::DivisionByZero { divisor: right });
                 }
                 numeric_state[left] / numeric_state[right]
             }
@@ -186,10 +189,16 @@ impl ComparisonAxiom {
     pub fn is_hold(&self, numeric_state: &[f64]) -> Result<bool, InvalidIndex> {
         let left = self.left_hand_side;
         let right = self.right_hand_side;
-        if left >= numeric_state.len() || right >= numeric_state.len() {
+        if left >= numeric_state.len() {
             return Err(InvalidIndex {
                 length: numeric_state.len(),
                 index: left,
+            });
+        }
+        if right >= numeric_state.len() {
+            return Err(InvalidIndex {
+                length: numeric_state.len(),
+                index: right,
             });
         }
         let comp_op = &self.operator;
@@ -429,7 +438,7 @@ impl<'a> AxiomEvaluator<'a> {
     pub fn evaluate_arithmetic_axioms(
         &self,
         numeric_state: &mut [f64],
-    ) -> Result<(), InvalidIndex> {
+    ) -> Result<(), AssignmentAxiomError> {
         for axiom in self.numeric_task.assignment_axioms() {
             axiom.update_values(numeric_state)?;
         }

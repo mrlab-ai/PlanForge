@@ -4,6 +4,7 @@ use crate::numeric_conditions::{
 };
 use crate::numeric_parser::parse_numeric_sas_output;
 use crate::state_registry::{ConcreteState, StateRegistry};
+use crate::utils::errors::AssignmentAxiomError;
 use crate::utils::int_packer::IntDoublePacker;
 use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, linearize_numeric_var,
@@ -118,10 +119,10 @@ pub trait AbstractNumericTask: Send + Sync {
     fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String>;
 
     fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
-        self.get_operators()
-            .get(operator_id)
-            .map(|operator| metric_operator_cost_from_initial_values(self, operator))
-            .unwrap_or(0.0)
+        let operator = self.get_operators().get(operator_id).unwrap_or_else(|| {
+            panic!("operator id {operator_id} is out of bounds for cost lookup")
+        });
+        metric_operator_cost_from_initial_values(self, operator)
     }
 
     fn min_abstract_operator_cost(&self) -> f64 {
@@ -832,7 +833,12 @@ pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
 ) -> f64 {
     let metric_var_id = task.metric().var_id();
     match metric_var_id {
-        Some(var_id) => numeric_values.get(var_id).copied().unwrap_or(0.0),
+        Some(var_id) => *numeric_values.get(var_id).unwrap_or_else(|| {
+            panic!(
+                "metric variable {var_id} is out of bounds for {} numeric values",
+                numeric_values.len()
+            )
+        }),
         None => 0.0,
     }
 }
@@ -840,16 +846,19 @@ pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
 pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
     numeric_values: &mut [f64],
-) {
+) -> Result<(), AssignmentAxiomError> {
     // Assignment axioms are stored in dependency-layer order, so each RHS is
     // complete when it is visited and one forward pass closes the values.
     for axiom in task.assignment_axioms() {
         let affected_var_id = axiom.get_affected_var_id();
-        if affected_var_id >= numeric_values.len() {
-            continue;
-        }
-        let _ = axiom.update_values(numeric_values);
+        assert!(
+            affected_var_id < numeric_values.len(),
+            "assignment axiom target {affected_var_id} is out of bounds for {} numeric values",
+            numeric_values.len()
+        );
+        axiom.update_values(numeric_values)?;
     }
+    Ok(())
 }
 
 pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
@@ -896,14 +905,25 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
         numeric_values[affected_var_id] = result;
     }
 
-    propagate_assignment_axiom_values(task, &mut numeric_values);
+    propagate_assignment_axiom_values(task, &mut numeric_values).unwrap_or_else(|error| {
+        panic!(
+            "operator {} cannot evaluate assignment axioms while computing its metric cost: \
+             {error:?}",
+            operator.name()
+        )
+    });
     let new_metric = evaluate_metric_from_values(task, &numeric_values);
     let delta = if task.metric().is_min() {
         new_metric - old_metric
     } else {
         old_metric - new_metric
     };
-    delta.max(0.0)
+    assert!(
+        delta >= 0.0,
+        "operator {} has negative metric cost {delta}, which search does not support",
+        operator.name()
+    );
+    delta
 }
 
 fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
@@ -1425,20 +1445,20 @@ impl AbstractNumericTask for NumericRootTask {
         if is_axiom {
             return 0;
         }
-        if index >= self.operators.len() {
-            return 0;
-        }
-        self.operators[index].cost()
+        self.operators
+            .get(index)
+            .unwrap_or_else(|| panic!("operator id {index} is out of bounds for cost lookup"))
+            .cost()
     }
 
     fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
         if is_axiom {
             return "<axiom>";
         }
-        if index >= self.operators.len() {
-            return "";
-        }
-        self.operators[index].name()
+        self.operators
+            .get(index)
+            .unwrap_or_else(|| panic!("operator id {index} is out of bounds for name lookup"))
+            .name()
     }
 
     fn get_num_operators(&self) -> usize {
@@ -1450,10 +1470,13 @@ impl AbstractNumericTask for NumericRootTask {
             // Axioms don't have preconditions in the same way
             return 0;
         }
-        if index >= self.operators.len() {
-            return 0;
-        }
-        self.operators[index].preconditions().len()
+        self.operators
+            .get(index)
+            .unwrap_or_else(|| {
+                panic!("operator id {index} is out of bounds for precondition lookup")
+            })
+            .preconditions()
+            .len()
     }
 
     fn get_operator_precondition(
@@ -1470,10 +1493,11 @@ impl AbstractNumericTask for NumericRootTask {
             // Handle axiom effects differently.
             return 0;
         }
-        if index >= self.operators.len() {
-            return 0;
-        }
-        self.operators[index].effects().len()
+        self.operators
+            .get(index)
+            .unwrap_or_else(|| panic!("operator id {index} is out of bounds for effect lookup"))
+            .effects()
+            .len()
     }
 
     fn get_num_operator_effect_conditions(
