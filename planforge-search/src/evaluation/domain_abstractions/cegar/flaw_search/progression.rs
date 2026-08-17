@@ -7,7 +7,7 @@ use anyhow::{Result, ensure};
 use planforge_sas::{
     axioms::AxiomEvaluator,
     numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
-    utils::int_packer::IntDoublePacker,
+    state_registry::ConcreteStateView,
 };
 
 use super::target_centered::{
@@ -21,7 +21,7 @@ use crate::evaluation::domain_abstractions::{
     additive_numeric_views::numeric_dimension_delta_for_operator,
     domain_abstraction::NumericPartitions,
     domain_abstraction_factory::WildcardPlanResult,
-    utils::{fact_is_hold, get_initial_state, make_prop_state_packer, partition_for_value},
+    utils::{get_initial_state, make_prop_state_packer, partition_for_value},
 };
 
 /// The task a flaw is measured against: the task itself, the numeric partitions
@@ -34,15 +34,6 @@ pub struct PartitionedTask<'a> {
     pub task: &'a dyn AbstractNumericTask,
     pub partitions: &'a NumericPartitions,
     pub deltas: &'a HashMap<usize, Vec<f64>>,
-}
-
-/// One concrete state as the flaw walk carries it: the packed propositional half
-/// with the packer that reads facts out of it, and the numeric values.
-#[derive(Clone, Copy)]
-pub struct ConcreteStateView<'a> {
-    pub packer: &'a IntDoublePacker,
-    pub prop: &'a [u64],
-    pub numeric: &'a [f64],
 }
 
 /// Walk the wildcard plan and emit flaws using the chosen split direction.
@@ -91,11 +82,7 @@ pub fn get_progression_flaws(
             let Some(op) = task.get_operators().get(op_id) else {
                 continue;
             };
-            let state = ConcreteStateView {
-                packer: &state_packer,
-                prop: &prop_state,
-                numeric: &numeric_state,
-            };
+            let state = ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state);
             let operator_flaws =
                 get_progression_precondition_flaws(partitioned, op, state, step, direction);
             if !operator_flaws.is_empty() {
@@ -137,11 +124,7 @@ pub fn get_progression_flaws(
 
     Ok(get_goal_flaws(
         partitioned,
-        ConcreteStateView {
-            packer: &state_packer,
-            prop: &prop_state,
-            numeric: &numeric_state,
-        },
+        ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state),
         step,
         direction,
     ))
@@ -175,11 +158,7 @@ pub fn get_execute_entire_plan_flaws(
             "WildcardPlanResult abstract_numeric_states too short for step {step}"
         );
 
-        let state = ConcreteStateView {
-            packer: &state_packer,
-            prop: &prop_state,
-            numeric: &numeric_state,
-        };
+        let state = ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state);
         let mut step_flaws = Vec::new();
         let mut chosen_op: Option<&Operator> = None;
         let mut fallback_op: Option<&Operator> = None;
@@ -224,11 +203,7 @@ pub fn get_execute_entire_plan_flaws(
 
     collected_flaws.extend(get_goal_flaws(
         partitioned,
-        ConcreteStateView {
-            packer: &state_packer,
-            prop: &prop_state,
-            numeric: &numeric_state,
-        },
+        ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state),
         step,
         direction,
     ));
@@ -251,12 +226,15 @@ pub(crate) fn progress_and_get_deviation_flaws(
     step: usize,
     direction: SplitDirection,
 ) -> Result<ProgressedStateAndFlaws> {
-    let mut next_prop_state = state.prop.to_vec();
-    let mut next_numeric_state = state.numeric.to_vec();
+    let numeric = state
+        .decoded_numeric()
+        .expect("CEGAR progression uses decoded numeric states");
+    let mut next_prop_state = state.propositional().to_vec();
+    let mut next_numeric_state = numeric.to_vec();
     crate::evaluation::cegar::progress_concrete_state(
         op,
         axiom_evaluator,
-        state.packer,
+        state.packer(),
         &mut next_prop_state,
         &mut next_numeric_state,
     )?;
@@ -265,7 +243,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
         partitioned.task,
         op,
         NumericTransitionStates {
-            current: state.numeric,
+            current: numeric,
             successor: &next_numeric_state,
             abstract_successor: expected_abs_numeric_state,
         },
@@ -429,11 +407,13 @@ pub fn get_progression_precondition_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
-        if !fact_is_hold(pre, state.packer, state.prop) {
+        if !pre.is_hold(state) {
             out.push(build_prop_flaw_for_fact(
                 partitioned,
                 pre,
-                state.numeric,
+                state
+                    .decoded_numeric()
+                    .expect("CEGAR flaw search uses decoded numeric states"),
                 step,
                 direction,
             ));
@@ -450,11 +430,13 @@ pub fn get_goal_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for requirement in goal_facts(partitioned.task) {
-        if !fact_is_hold(&requirement, state.packer, state.prop) {
+        if !requirement.is_hold(state) {
             out.push(build_prop_flaw_for_fact(
                 partitioned,
                 &requirement,
-                state.numeric,
+                state
+                    .decoded_numeric()
+                    .expect("CEGAR flaw search uses decoded numeric states"),
                 step,
                 direction,
             ));

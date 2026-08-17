@@ -6,7 +6,7 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
     metric_operator_cost_from_initial_values,
 };
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::state_registry::ConcreteStateView;
 
 use super::BoundsProvider;
 use crate::evaluation::numeric_landmarks::numeric_helper::{
@@ -481,12 +481,11 @@ impl PotentialTask {
 
     pub fn feature_values(
         &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
         numeric_scratch: &mut Vec<f64>,
     ) -> Result<Vec<f64>, String> {
-        registry
-            .fill_numeric_vars(state, numeric_scratch)
+        state
+            .fill_numeric(numeric_scratch)
             .map_err(|error| format!("failed to unpack numeric state: {error:?}"))?;
         Ok(self
             .features

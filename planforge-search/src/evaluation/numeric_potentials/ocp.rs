@@ -70,7 +70,7 @@ impl PotentialAbstractionOcpHeuristic {
         let mut registry = StateRegistry::for_task(task_ref);
         let initial = registry.get_initial_state();
         let (plain_initial_h, plain_potential, dead_end_certified) = match optimizer
-            .optimize_for_state(&initial, &registry)?
+            .optimize_for_state(registry.view(&initial))?
         {
             OptimizationOutcome::Optimal { value, function } => (value, function, false),
             OptimizationOutcome::Unbounded { .. } => {
@@ -192,7 +192,8 @@ impl PotentialAbstractionOcpHeuristic {
         }
         let mut objective = vec![0.0; variables.len()];
         objective[operator_count + initial_abstract_state] = 1.0;
-        let potential_objective = optimizer.objective_for_state(&initial, &registry, &system)?;
+        let potential_objective =
+            optimizer.objective_for_state(registry.view(&initial), &system)?;
         for (column, coefficient) in potential_objective.into_iter().enumerate() {
             objective[potential_base + column] = coefficient;
         }
@@ -272,8 +273,7 @@ impl Heuristic for PotentialAbstractionOcpHeuristic {
         let potential = self
             .potential
             .value(
-                eval_state.state(),
-                registry,
+                registry.view(eval_state.state()),
                 &self.potential_task,
                 &mut self.prop_scratch.borrow_mut(),
                 &mut self.numeric_scratch.borrow_mut(),

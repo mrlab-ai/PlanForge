@@ -19,6 +19,22 @@ fn test_state_registry_initial_state() {
 }
 
 #[test]
+fn concrete_state_view_matches_registry_decoding() {
+    let task: TaskRef = Arc::new(get_root_task());
+    let mut registry = StateRegistry::for_task(task);
+    let initial = registry.get_initial_state();
+    let view = registry.view(&initial);
+
+    let mut propositional = Vec::new();
+    view.fill_propositional(&mut propositional);
+    assert_eq!(propositional, initial.get_state(&registry));
+
+    let mut numeric = Vec::new();
+    view.fill_numeric(&mut numeric).unwrap();
+    assert_eq!(numeric, registry.get_numeric_vars(&initial).unwrap());
+}
+
+#[test]
 fn initial_state_registration_does_not_mutate_shared_task() {
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,

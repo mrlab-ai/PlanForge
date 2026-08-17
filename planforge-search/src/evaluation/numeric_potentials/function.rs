@@ -1,4 +1,4 @@
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::state_registry::ConcreteStateView;
 
 use super::PotentialTask;
 
@@ -31,13 +31,12 @@ impl NumericPotentialFunction {
 
     pub fn value(
         &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
         task: &PotentialTask,
         prop_scratch: &mut Vec<usize>,
         numeric_scratch: &mut Vec<f64>,
     ) -> Result<f64, String> {
-        state.fill_state(registry, prop_scratch);
+        state.fill_propositional(prop_scratch);
         if let Some((var, value)) = self.conditioned_goal
             && prop_scratch.get(var).copied() == Some(value)
         {
@@ -49,7 +48,7 @@ impl NumericPotentialFunction {
             result += potentials[value];
         }
         if !self.numeric_potentials.is_empty() {
-            let feature_values = task.feature_values(state, registry, numeric_scratch)?;
+            let feature_values = task.feature_values(state, numeric_scratch)?;
             for &(feature_id, weight) in &self.numeric_potentials {
                 result += weight * feature_values[feature_id];
             }

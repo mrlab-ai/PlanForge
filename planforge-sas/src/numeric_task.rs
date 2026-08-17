@@ -18,7 +18,7 @@ use crate::numeric_conditions::{
     ConditionValue, NumericConditionError, NumericConditions, assignment_axiom_lookup,
 };
 use crate::numeric_parser::parse_numeric_sas_output;
-use crate::state_registry::{ConcreteState, StateRegistry};
+use crate::state_registry::ConcreteStateView;
 use crate::utils::errors::AssignmentAxiomError;
 use crate::utils::int_packer::IntDoublePacker;
 use crate::utils::linear_effects::{
@@ -704,10 +704,8 @@ impl ExplicitFact {
     pub fn value(&self) -> usize {
         self.value_id as usize
     }
-    pub fn is_hold(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
-        let buffer = state.buffer(state_registry);
-        let state_packer = state_registry.global_state_packer();
-        let value = state_packer.get(buffer, self.var());
+    pub fn is_hold(&self, state: ConcreteStateView<'_>) -> bool {
+        let value = state.packer().get(state.propositional(), self.var());
         value == self.value() as u64
     }
 }
@@ -806,9 +804,9 @@ impl Effect {
         self.effect_value
     }
 
-    pub fn conditions_met(&self, state: &ConcreteState, state_registry: &StateRegistry) -> bool {
+    pub fn conditions_met(&self, state: ConcreteStateView<'_>) -> bool {
         for condition in &self.conditions {
-            if !condition.is_hold(state, state_registry) {
+            if !condition.is_hold(state) {
                 return false;
             }
         }

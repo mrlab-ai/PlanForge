@@ -51,9 +51,16 @@ use super::domain_abstractions::additive_numeric_views::{
     numeric_dimension_delta_for_operator,
 };
 use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTable;
-use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
+use super::domain_abstractions::utils::{get_initial_state, make_prop_state_packer};
 use icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use planforge_sas::utils::interval::Interval;
+
+#[inline]
+fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
+    fact.is_hold(
+        planforge_sas::state_registry::ConcreteStateView::from_decoded(packer, buffer, &[]),
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianStopReason {

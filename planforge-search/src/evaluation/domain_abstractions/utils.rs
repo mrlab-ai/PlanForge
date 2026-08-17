@@ -3,7 +3,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact};
+use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 use tracing::debug;
@@ -17,8 +18,8 @@ use crate::evaluation::cegar::progress_concrete_state;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::SplitDirection;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::progression::{
-    ConcreteStateView, NumericTransitionStates, PartitionedTask,
-    get_progression_numeric_deviation_flaws, get_progression_precondition_flaws,
+    NumericTransitionStates, PartitionedTask, get_progression_numeric_deviation_flaws,
+    get_progression_precondition_flaws,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -492,11 +493,6 @@ pub(crate) fn get_initial_state(
     Ok((buffer, numeric_state))
 }
 
-pub(crate) fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
-    let current = packer.get(buffer, fact.var()) as usize;
-    current == fact.value()
-}
-
 pub(crate) fn debug_print_wildcard_plan(
     task: &dyn AbstractNumericTask,
     plan: &WildcardPlanResult,
@@ -639,11 +635,7 @@ fn debug_print_concrete_trace(
                     deltas: &deltas,
                 },
                 op,
-                ConcreteStateView {
-                    packer: &state_packer,
-                    prop: &buffer,
-                    numeric: &numeric_state,
-                },
+                ConcreteStateView::from_decoded(&state_packer, &buffer, &numeric_state),
                 step,
                 SplitDirection::Forward,
             )

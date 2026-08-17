@@ -4,7 +4,7 @@ use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
     NumericRootTaskParts, NumericType, NumericVariable, Operator,
 };
-use planforge_sas::state_registry::StateRegistry;
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
 use crate::evaluation::pattern_databases::pattern_database::{
     PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
@@ -24,6 +24,17 @@ fn build_pdb_with_heuristics(
     heuristic_config: PdbHeuristicConfig,
 ) -> PatternDatabase<'_> {
     PatternDatabase::with_heuristic_config(task, max_states, heuristic_config).unwrap()
+}
+
+fn lookup_concrete(
+    pdb: &PatternDatabase<'_>,
+    state: &ConcreteState,
+    registry: &StateRegistry<'_>,
+) -> f64 {
+    let prop = state.get_state(registry);
+    let numeric = registry.get_numeric_vars(state).unwrap();
+    pdb.lookup_projected_or_fallback_from_source_state_values(&prop, &numeric)
+        .unwrap()
 }
 
 fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
@@ -566,8 +577,7 @@ fn direct_concrete_lookup_matches_projected_lookup_for_propositional_task() {
     let initial_state = state_registry.get_initial_state();
 
     assert_eq!(
-        pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
-            .unwrap(),
+        lookup_concrete(&pdb, &initial_state, &state_registry),
         pdb.lookup_or_fallback(&[0], &[0.0]),
     );
 }
@@ -612,8 +622,7 @@ fn direct_concrete_lookup_matches_projected_lookup_for_comparison_guarded_task()
     let initial_state = state_registry.get_initial_state();
 
     assert_eq!(
-        pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
-            .unwrap(),
+        lookup_concrete(&pdb, &initial_state, &state_registry),
         pdb.lookup_or_fallback(&initial_prop, &initial_num),
     );
 }
@@ -694,11 +703,7 @@ fn direct_concrete_lookup_uses_compact_prop_table_for_pure_propositional_pattern
     let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
-    assert_eq!(
-        pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
-            .unwrap(),
-        1.0,
-    );
+    assert_eq!(lookup_concrete(&pdb, &initial_state, &state_registry), 1.0,);
 }
 
 #[test]
@@ -724,11 +729,7 @@ fn direct_concrete_numeric_lookup_keeps_slot_zero_for_prop_hash() {
     let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = state_registry.get_initial_state();
 
-    assert_eq!(
-        pdb.lookup_or_fallback_from_concrete_state(&initial_state, &state_registry)
-            .unwrap(),
-        11.0,
-    );
+    assert_eq!(lookup_concrete(&pdb, &initial_state, &state_registry), 11.0,);
 }
 
 #[test]

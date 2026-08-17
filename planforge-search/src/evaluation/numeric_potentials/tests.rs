@@ -112,15 +112,15 @@ fn optimize_initial(task: NumericRootTask) -> (f64, f64) {
     let mut optimizer =
         NumericPotentialOptimizer::new(&*task, &NumericPotentialConfig::default()).unwrap();
     let columns = optimizer.num_columns() as f64;
-    let OptimizationOutcome::Optimal { value, function } =
-        optimizer.optimize_for_state(&initial, &registry).unwrap()
+    let OptimizationOutcome::Optimal { value, function } = optimizer
+        .optimize_for_state(registry.view(&initial))
+        .unwrap()
     else {
         panic!("expected bounded optimal potential")
     };
     let h = function
         .value(
-            &initial,
-            &registry,
+            registry.view(&initial),
             optimizer.task(),
             &mut Vec::new(),
             &mut Vec::new(),
@@ -128,7 +128,7 @@ fn optimize_initial(task: NumericRootTask) -> (f64, f64) {
         .unwrap();
     assert!((h - value).abs() < 1e-7);
     let (dual_value, _, _) = optimizer
-        .validate_duality(&initial, &registry, value, 1e-7)
+        .validate_duality(registry.view(&initial), value, 1e-7)
         .unwrap();
     assert!((dual_value - value).abs() < 1e-7);
     (value, columns)
@@ -438,8 +438,9 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
     let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
     assert!(!optimizer.task().features.is_empty());
     assert!(optimizer.conditionable_goals().is_empty());
-    let OptimizationOutcome::Optimal { value, .. } =
-        optimizer.optimize_for_state(&initial, &registry).unwrap()
+    let OptimizationOutcome::Optimal { value, .. } = optimizer
+        .optimize_for_state(registry.view(&initial))
+        .unwrap()
     else {
         panic!("expected a bounded classical potential")
     };
@@ -604,7 +605,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     assert_eq!(optimizer.conditionable_goals(), [(1, 0)]);
     assert_eq!(optimizer.goal_achievers(1, 0), [1]);
     let OptimizationOutcome::Optimal { value, function } = optimizer
-        .optimize_for_conditioned_goal(1, 0, 1, &initial, &registry)
+        .optimize_for_conditioned_goal(1, 0, 1, registry.view(&initial))
         .unwrap()
     else {
         panic!("expected conditioned optimum")
@@ -613,8 +614,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     assert!(
         (function
             .value(
-                &initial,
-                &registry,
+                registry.view(&initial),
                 optimizer.task(),
                 &mut Vec::new(),
                 &mut Vec::new(),
@@ -696,8 +696,9 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
         let mut config = NumericPotentialConfig::default();
         config.bounds = bounds;
         let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
-        let OptimizationOutcome::Optimal { value, .. } =
-            optimizer.optimize_for_state(&initial, &registry).unwrap()
+        let OptimizationOutcome::Optimal { value, .. } = optimizer
+            .optimize_for_state(registry.view(&initial))
+            .unwrap()
         else {
             panic!("expected bounded optimum for {bounds:?}")
         };
@@ -755,14 +756,13 @@ fn exact_ray_certifies_numeric_dead_end() {
     let mut optimizer = NumericPotentialOptimizer::new(&*task, &config).unwrap();
     let mut generator = RayGenerator::new(&optimizer, config.ray_epsilon).unwrap();
     let ray = generator
-        .try_certify(&mut optimizer, &initial, &registry)
+        .try_certify(&mut optimizer, registry.view(&initial))
         .unwrap()
         .expect("the decreasing-only task must have an exact dead-end ray");
     assert!(ray.coefficients().iter().any(|value| value.abs() > 0.0));
     assert!(
         ray.value(
-            &initial,
-            &registry,
+            registry.view(&initial),
             optimizer.task(),
             &mut Vec::new(),
             &mut Vec::new(),
@@ -875,7 +875,9 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
     assert_eq!(optimizer.num_columns(), 0);
     assert_eq!(optimizer.num_rows(), 0);
     assert!(matches!(
-        optimizer.optimize_for_state(&initial, &registry).unwrap(),
+        optimizer
+            .optimize_for_state(registry.view(&initial))
+            .unwrap(),
         OptimizationOutcome::Unbounded { .. }
     ));
 }
@@ -1012,7 +1014,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let OptimizationOutcome::Optimal { value, .. } = optimizer
-        .optimize_for_conditioned_goal(1, 0, 1, &initial, &registry)
+        .optimize_for_conditioned_goal(1, 0, 1, registry.view(&initial))
         .unwrap()
     else {
         panic!("expected an optimal conditioned affine potential")

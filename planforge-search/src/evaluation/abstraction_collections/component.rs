@@ -148,14 +148,25 @@ impl<'task> AbstractionComponent<'task> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<Option<usize>, EvaluationError> {
+        let mut values = ComponentStateValues::default();
+        values.fill(eval_state)?;
         match self {
-            Self::Domain(heuristic) => heuristic.abstract_state_hash(eval_state).map(Some),
-            Self::Cartesian(heuristic) => heuristic.abstract_state_id(eval_state).map(Some),
-            Self::PatternDatabase(pdb) => {
-                let registry = eval_state.state_registry();
-                pdb.abstract_state_id_from_concrete_state(eval_state.state(), registry)
-                    .map_err(EvaluationError::ComputationFailed)
-            }
+            Self::Domain(heuristic) => heuristic
+                .compute_abstract_hash_from_projected_state_values_inner(
+                    &values.propositional,
+                    &values.numeric,
+                    None,
+                )
+                .map(Some),
+            Self::Cartesian(heuristic) => heuristic
+                .abstraction()
+                .hierarchy
+                .map_state(&values.propositional, &values.numeric)
+                .map(Some)
+                .map_err(|error| EvaluationError::ComputationFailed(error.to_string())),
+            Self::PatternDatabase(pdb) => pdb
+                .abstract_state_id_from_source_state_values(&values.propositional, &values.numeric)
+                .map_err(EvaluationError::ComputationFailed),
         }
     }
 

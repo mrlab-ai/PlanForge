@@ -12,7 +12,6 @@ use planforge_sas::numeric_task::{
     NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator, TaskRef,
     metric_operator_cost_from_initial_values,
 };
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::int_packer::IntDoublePacker;
 
@@ -1141,145 +1140,6 @@ impl<'task> ProjectedTask<'task> {
             .collect()
     }
 
-    pub fn pack_pattern_concrete_state_values_into(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        packer: &IntDoublePacker,
-        packed_values: &mut Vec<u64>,
-        numeric_value_cache: &mut Vec<Option<f64>>,
-    ) -> Result<(), String> {
-        numeric_value_cache.clear();
-        numeric_value_cache.resize(self.base.numeric_variables().len(), None);
-
-        packed_values.clear();
-        packed_values.resize(packer.num_bins(), 0);
-
-        for (compact_index, &projected_var_id) in
-            self.pattern_regular_projected_ids.iter().enumerate()
-        {
-            let original_var_id = self.projected_var_to_original[projected_var_id];
-            packer.set(
-                packed_values,
-                compact_index,
-                registry
-                    .get_propositional_var_value(state, original_var_id)
-                    .map_err(|err| format!("{err:?}"))? as u64,
-            );
-        }
-
-        let prop_len = self.pattern_regular_projected_ids.len();
-        for (numeric_index, &projected_numeric_id) in
-            self.pattern_numeric_projected_ids.iter().enumerate()
-        {
-            packer.set(
-                packed_values,
-                prop_len + numeric_index,
-                packer.pack_double(self.projected_numeric_value_from_concrete_state(
-                    projected_numeric_id,
-                    state,
-                    registry,
-                    numeric_value_cache,
-                )?),
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn fill_pattern_numeric_concrete_state_bins_into(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        bins: &mut Vec<u64>,
-        numeric_value_cache: &mut Vec<Option<f64>>,
-    ) -> Result<(), String> {
-        numeric_value_cache.clear();
-        numeric_value_cache.resize(self.base.numeric_variables().len(), None);
-
-        bins.clear();
-        bins.resize(1 + self.pattern_numeric_projected_ids.len(), 0);
-        for (numeric_index, &projected_numeric_id) in
-            self.pattern_numeric_projected_ids.iter().enumerate()
-        {
-            bins[numeric_index + 1] =
-                float_tolerance::canonical_bits(self.projected_numeric_value_from_concrete_state(
-                    projected_numeric_id,
-                    state,
-                    registry,
-                    numeric_value_cache,
-                )?);
-        }
-
-        Ok(())
-    }
-
-    pub fn compact_pattern_prop_hash_from_concrete_state(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        multipliers: &[usize],
-    ) -> Result<usize, String> {
-        if self.pattern_regular_projected_ids.len() != multipliers.len() {
-            return Err("pattern regular ids and multipliers length mismatch".to_string());
-        }
-
-        let buffer = state.buffer(registry);
-        let state_packer = registry.global_state_packer();
-        let mut hash = 0usize;
-        for (&projected_var_id, &multiplier) in self
-            .pattern_regular_projected_ids
-            .iter()
-            .zip(multipliers.iter())
-        {
-            let original_var_id = self.projected_var_to_original[projected_var_id];
-            let value = state_packer.get(buffer, original_var_id) as usize;
-            debug_assert!(
-                value
-                    .checked_mul(multiplier)
-                    .and_then(|contribution| hash.checked_add(contribution))
-                    .is_some(),
-                "PDB propositional hash must fit in usize"
-            );
-            hash += value * multiplier;
-        }
-        Ok(hash)
-    }
-
-    pub fn project_concrete_state_values_into(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        projected_prop_values: &mut Vec<usize>,
-        projected_numeric_values: &mut Vec<f64>,
-        numeric_value_cache: &mut Vec<Option<f64>>,
-    ) -> Result<(), String> {
-        numeric_value_cache.clear();
-        numeric_value_cache.resize(self.base.numeric_variables().len(), None);
-
-        projected_prop_values.clear();
-        projected_prop_values.reserve(self.projected_var_to_original.len());
-        for &original_var_id in &self.projected_var_to_original {
-            projected_prop_values.push(
-                registry
-                    .get_propositional_var_value(state, original_var_id)
-                    .map_err(|err| format!("{err:?}"))?,
-            );
-        }
-
-        projected_numeric_values.clear();
-        projected_numeric_values.reserve(self.projected_num_var_to_original.len());
-        for projected_index in 0..self.projected_num_var_to_original.len() {
-            projected_numeric_values.push(self.projected_numeric_value_from_concrete_state(
-                projected_index,
-                state,
-                registry,
-                numeric_value_cache,
-            )?);
-        }
-
-        Ok(())
-    }
     fn projected_numeric_value_from_source_numeric(
         &self,
         projected_index: usize,
@@ -1300,39 +1160,6 @@ impl<'task> ProjectedTask<'task> {
                     "source numeric state too short for numeric variable {original_numeric_var}"
                 )
             })
-    }
-
-    fn projected_numeric_value_from_concrete_state(
-        &self,
-        projected_index: usize,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        numeric_value_cache: &mut [Option<f64>],
-    ) -> Result<f64, String> {
-        let original_numeric_var = self
-            .projected_num_var_to_original
-            .get(projected_index)
-            .copied()
-            .ok_or_else(|| {
-                format!("projected numeric variable index out of bounds: {projected_index}")
-            })?;
-        if let Some(value) = numeric_value_cache
-            .get(original_numeric_var)
-            .and_then(|value| *value)
-        {
-            return Ok(value);
-        }
-
-        if self.base.numeric_variables()[original_numeric_var].get_type() == &NumericType::Derived {
-            return Err(format!(
-                "restricted task invariant violated: projected numeric variable {original_numeric_var} is derived"
-            ));
-        }
-        let value = registry
-            .get_numeric_var_value_unevaluated(state, original_numeric_var)
-            .map_err(|err| format!("{err:?}"))?;
-        numeric_value_cache[original_numeric_var] = Some(value);
-        Ok(value)
     }
 
     fn evaluate_axiom_closure(

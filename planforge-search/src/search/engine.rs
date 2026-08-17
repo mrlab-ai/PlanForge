@@ -403,7 +403,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
     /// Check if a state satisfies a specific fact.
     fn state_satisfies_fact(&self, state: &ConcreteState, fact: &ExplicitFact) -> bool {
-        fact.is_hold(state, &self.state_registry)
+        fact.is_hold(self.state_registry.view(state))
     }
 
     /// Evaluate a state for A* without materializing named evaluator results.

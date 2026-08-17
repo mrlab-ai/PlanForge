@@ -78,11 +78,10 @@ impl<'task> CheckAdmissibleHeuristic<'task> {
             return Ok(distance);
         }
 
-        let registry = eval_state.state_registry();
         let distance = self
             .oracle
             .borrow_mut()
-            .goal_distance(state, registry)
+            .goal_distance(eval_state.state_registry().view(state), state.get_id())
             .map_err(EvaluationError::ComputationFailed)?;
         self.goal_distances
             .borrow_mut()
@@ -194,10 +193,10 @@ impl<'task> GoalDistanceOracle<'task> {
     /// reachable. `state` belongs to `registry`, not to the oracle.
     fn goal_distance(
         &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: planforge_sas::state_registry::ConcreteStateView<'_>,
+        state_id: usize,
     ) -> Result<f64, String> {
-        let start = self.copy_state_in(state, registry)?;
+        let start = self.copy_state_in(state, state_id)?;
         self.blind_a_star(start)
     }
 
@@ -206,18 +205,20 @@ impl<'task> GoalDistanceOracle<'task> {
     /// values rather than through the state id or the packed buffer.
     fn copy_state_in(
         &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: planforge_sas::state_registry::ConcreteStateView<'_>,
+        state_id: usize,
     ) -> Result<ConcreteState, String> {
-        let propositional_values: Vec<u64> = state
-            .get_state(registry)
+        let mut propositional = Vec::new();
+        state.fill_propositional(&mut propositional);
+        let propositional_values: Vec<u64> = propositional
             .into_iter()
             .map(|value| value as u64)
             .collect();
-        let numeric_values = registry.get_numeric_vars(state).map_err(|error| {
+        let mut numeric_values = Vec::new();
+        state.fill_numeric(&mut numeric_values).map_err(|error| {
             format!(
                 "could not read the numeric values of state {}: {error:?}",
-                state.get_id()
+                state_id
             )
         })?;
         self.registry
@@ -225,8 +226,7 @@ impl<'task> GoalDistanceOracle<'task> {
             .map_err(|error| {
                 format!(
                     "could not copy state {} into the admissibility oracle: {}",
-                    state.get_id(),
-                    error.message
+                    state_id, error.message
                 )
             })
     }
@@ -235,7 +235,7 @@ impl<'task> GoalDistanceOracle<'task> {
         (0..self.task.get_num_goals()).all(|index| {
             self.task
                 .get_goal_fact(index)
-                .is_hold(state, &self.registry)
+                .is_hold(self.registry.view(state))
         })
     }
 

@@ -16,6 +16,8 @@ pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
     pdb: PatternDatabase<'task>,
     state_value_cache: RefCell<StateValueCache>,
+    prop_scratch: RefCell<Vec<usize>>,
+    numeric_scratch: RefCell<Vec<f64>>,
 }
 
 impl<'task> GreedyNumericPdbHeuristic<'task> {
@@ -37,6 +39,8 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
             name: "greedy_numeric_pdb".to_string(),
             pdb,
             state_value_cache: RefCell::new(StateValueCache::default()),
+            prop_scratch: RefCell::new(Vec::new()),
+            numeric_scratch: RefCell::new(Vec::new()),
         })
     }
 }
@@ -57,9 +61,15 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
         }
 
         let registry = eval_state.state_registry();
+        let mut prop = self.prop_scratch.borrow_mut();
+        let mut numeric = self.numeric_scratch.borrow_mut();
+        let view = registry.view(eval_state.state());
+        view.fill_propositional(&mut prop);
+        view.fill_numeric(&mut numeric)
+            .map_err(|error| EvaluationError::InvalidState(format!("{error:?}")))?;
         let heuristic_value = self
             .pdb
-            .lookup_or_fallback_from_concrete_state(eval_state.state(), registry)
+            .lookup_projected_or_fallback_from_source_state_values(&prop, &numeric)
             .map_err(EvaluationError::ComputationFailed)?;
         let heuristic_value = heuristic_value.max(self.pdb.min_operator_cost());
         self.state_value_cache

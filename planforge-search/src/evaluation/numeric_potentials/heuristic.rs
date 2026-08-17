@@ -92,12 +92,13 @@ impl NumericPotentialHeuristic {
             .transpose()?;
         let mut rays = Vec::new();
         let mut ray_certified_initial_state = if let Some(generator) = ray_generator.as_mut() {
-            if let Some(ray) = generator.try_certify(&mut optimizer, &initial_state, &registry)? {
+            if let Some(ray) =
+                generator.try_certify(&mut optimizer, registry.view(&initial_state))?
+            {
                 if generator.emit_certificate(
                     &ray,
                     &mut optimizer,
-                    &initial_state,
-                    &registry,
+                    registry.view(&initial_state),
                     Path::new(&config.ray_certificate_file),
                 )? {
                     rays.push(ray);
@@ -118,7 +119,7 @@ impl NumericPotentialHeuristic {
         let initial_outcome = if ray_certified_initial_state {
             None
         } else {
-            Some(optimizer.optimize_for_state(&initial_state, &registry)?)
+            Some(optimizer.optimize_for_state(registry.view(&initial_state))?)
         };
         let (initial_function, dead_end_certified, initial_value, initial_was_optimal) =
             match initial_outcome {
@@ -134,20 +135,18 @@ impl NumericPotentialHeuristic {
                             generator.certify_native(
                                 &mut optimizer,
                                 primal_ray,
-                                &initial_state,
-                                &registry,
+                                registry.view(&initial_state),
                             )?
                         };
                         if candidate.is_none() {
-                            candidate =
-                                generator.try_certify(&mut optimizer, &initial_state, &registry)?;
+                            candidate = generator
+                                .try_certify(&mut optimizer, registry.view(&initial_state))?;
                         }
                         if let Some(ray) = candidate {
                             if generator.emit_certificate(
                                 &ray,
                                 &mut optimizer,
-                                &initial_state,
-                                &registry,
+                                registry.view(&initial_state),
                                 Path::new(&config.ray_certificate_file),
                             )? {
                                 rays.push(ray);
@@ -194,7 +193,7 @@ impl NumericPotentialHeuristic {
         }
         if config.validate_duality && initial_was_optimal {
             let (optimum, columns, rows) =
-                optimizer.validate_duality(&initial_state, &registry, initial_value, 1e-6)?;
+                optimizer.validate_duality(registry.view(&initial_state), initial_value, 1e-6)?;
             info!(
                 "Numeric potential duality validation: h_pot(s_0)={initial_value}, operator-counting optimum={optimum} ({columns} columns, {rows} rows)"
             );
@@ -260,8 +259,7 @@ impl NumericPotentialHeuristic {
                     .iter()
                     .map(|ray| {
                         ray.value(
-                            &state,
-                            &registry,
+                            registry.view(&state),
                             &potential_task,
                             &mut Vec::new(),
                             &mut Vec::new(),
@@ -273,7 +271,8 @@ impl NumericPotentialHeuristic {
                 if covered {
                     continue;
                 }
-                if let Some(candidate) = generator.try_certify(&mut optimizer, &state, &registry)?
+                if let Some(candidate) =
+                    generator.try_certify(&mut optimizer, registry.view(&state))?
                     && !generator.is_duplicate(&candidate, &rays, &potential_task)
                 {
                     rays.push(candidate);
@@ -465,17 +464,12 @@ impl Heuristic for NumericPotentialHeuristic {
             return Ok(f64::INFINITY);
         }
         let registry = eval_state.state_registry();
+        let state = registry.view(eval_state.state());
         let mut prop_scratch = self.prop_scratch.borrow_mut();
         let mut numeric_scratch = self.numeric_scratch.borrow_mut();
         for (ray_id, ray) in self.rays.borrow().iter().enumerate() {
             let candidate = ray
-                .value(
-                    eval_state.state(),
-                    registry,
-                    &self.task,
-                    &mut prop_scratch,
-                    &mut numeric_scratch,
-                )
+                .value(state, &self.task, &mut prop_scratch, &mut numeric_scratch)
                 .map_err(EvaluationError::ComputationFailed)?;
             if candidate > self.ray_epsilon {
                 self.ray_hit_counts.borrow_mut()[ray_id] += 1;
@@ -487,13 +481,7 @@ impl Heuristic for NumericPotentialHeuristic {
         let mut value: f64 = 0.0;
         for function in self.functions.borrow().iter() {
             let candidate = function
-                .value(
-                    eval_state.state(),
-                    registry,
-                    &self.task,
-                    &mut prop_scratch,
-                    &mut numeric_scratch,
-                )
+                .value(state, &self.task, &mut prop_scratch, &mut numeric_scratch)
                 .map_err(EvaluationError::ComputationFailed)?;
             value = value.max(candidate);
         }
@@ -502,13 +490,7 @@ impl Heuristic for NumericPotentialHeuristic {
             let mut group_value = f64::INFINITY;
             for function in group {
                 let candidate = function
-                    .value(
-                        eval_state.state(),
-                        registry,
-                        &self.task,
-                        &mut prop_scratch,
-                        &mut numeric_scratch,
-                    )
+                    .value(state, &self.task, &mut prop_scratch, &mut numeric_scratch)
                     .map_err(EvaluationError::ComputationFailed)?;
                 group_value = group_value.min(candidate);
                 if !self.goal_group_has_additive_share[group_id] && group_value <= value {
@@ -588,15 +570,14 @@ impl NumericPotentialHeuristic {
             .borrow_mut()
             .as_mut()
             .expect("online optimizer disappeared during evaluation")
-            .optimize_for_state(eval_state.state(), registry)
+            .optimize_for_state(registry.view(eval_state.state()))
             .map_err(EvaluationError::ComputationFailed)?;
         let mut useful = false;
         match outcome {
             OptimizationOutcome::Optimal { function, .. } => {
                 let online_value = function
                     .value(
-                        eval_state.state(),
-                        registry,
+                        registry.view(eval_state.state()),
                         &self.task,
                         &mut self.prop_scratch.borrow_mut(),
                         &mut self.numeric_scratch.borrow_mut(),
@@ -627,12 +608,12 @@ impl NumericPotentialHeuristic {
                     None
                 } else {
                     generator
-                        .certify_native(optimizer, primal_ray, eval_state.state(), registry)
+                        .certify_native(optimizer, primal_ray, registry.view(eval_state.state()))
                         .map_err(EvaluationError::ComputationFailed)?
                 };
                 if candidate.is_none() {
                     candidate = generator
-                        .try_certify(optimizer, eval_state.state(), registry)
+                        .try_certify(optimizer, registry.view(eval_state.state()))
                         .map_err(EvaluationError::ComputationFailed)?;
                 }
                 if let Some(ray) = candidate {
@@ -764,7 +745,7 @@ fn build_goal_cost_partitions(
     }
     let mut partitions = Vec::new();
     for state in objective_states {
-        let partition = compute_goal_cost_partition(task, groups, &state, registry)?;
+        let partition = compute_goal_cost_partition(task, groups, registry.view(&state))?;
         if !partitions.iter().any(|existing: &Vec<f64>| {
             existing.len() == partition.len()
                 && existing
@@ -781,15 +762,14 @@ fn build_goal_cost_partitions(
 fn compute_goal_cost_partition(
     task: &PotentialTask,
     groups: &[Vec<NumericPotentialFunction>],
-    objective_state: &ConcreteState,
-    registry: &StateRegistry<'_>,
+    objective_state: planforge_sas::state_registry::ConcreteStateView<'_>,
 ) -> Result<Vec<f64>, String> {
     let infinity = Model::infinity();
     let mut variables = Vec::with_capacity(groups.len());
     for group in groups {
         let group_value = group
             .iter()
-            .map(|function| function_value(function, objective_state, task, registry))
+            .map(|function| function_value(function, objective_state, task))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .fold(f64::INFINITY, f64::min)
@@ -1040,7 +1020,7 @@ fn build_diverse_portfolio(
             continue;
         }
         if let OptimizationOutcome::Optimal { function, .. } =
-            optimizer.optimize_for_state(&state, registry)?
+            optimizer.optimize_for_state(registry.view(&state))?
         {
             targets.push(SampleTarget {
                 state,
@@ -1103,11 +1083,10 @@ fn average_operator_cost(task: &PotentialTask) -> f64 {
 
 fn function_value(
     function: &NumericPotentialFunction,
-    state: &ConcreteState,
+    state: planforge_sas::state_registry::ConcreteStateView<'_>,
     task: &PotentialTask,
-    registry: &StateRegistry<'_>,
 ) -> Result<f64, String> {
-    function.value(state, registry, task, &mut Vec::new(), &mut Vec::new())
+    function.value(state, task, &mut Vec::new(), &mut Vec::new())
 }
 
 fn remove_covered(
@@ -1119,8 +1098,9 @@ fn remove_covered(
     let before = targets.len();
     let mut kept = Vec::with_capacity(targets.len());
     for target in targets.drain(..) {
-        let optimum = function_value(&target.optimum, &target.state, task, registry)?.max(0.0);
-        let value = function_value(function, &target.state, task, registry)?.max(0.0);
+        let state = registry.view(&target.state);
+        let optimum = function_value(&target.optimum, state, task)?.max(0.0);
+        let value = function_value(function, state, task)?.max(0.0);
         let tolerance = 1e-6 * optimum.abs().max(1.0);
         if value + tolerance < optimum {
             kept.push(target);
@@ -1139,11 +1119,11 @@ fn largest_gap_target(
     let mut best = 0;
     let mut largest_gap = f64::NEG_INFINITY;
     for (target_id, target) in targets.iter().enumerate() {
-        let optimum = function_value(&target.optimum, &target.state, task, registry)?.max(0.0);
+        let state = registry.view(&target.state);
+        let optimum = function_value(&target.optimum, state, task)?.max(0.0);
         let mut ensemble: f64 = 0.0;
         for function in functions {
-            ensemble =
-                ensemble.max(function_value(function, &target.state, task, registry)?.max(0.0));
+            ensemble = ensemble.max(function_value(function, state, task)?.max(0.0));
         }
         if optimum - ensemble > largest_gap {
             largest_gap = optimum - ensemble;

@@ -21,7 +21,7 @@ impl Heuristic for GoalCountHeuristic {
         let state = eval_state.state();
         let mut unsatisfied = 0usize;
         for i in 0..task.get_num_goals() {
-            if !task.get_goal_fact(i).is_hold(state, registry) {
+            if !task.get_goal_fact(i).is_hold(registry.view(state)) {
                 unsatisfied += 1;
             }
         }

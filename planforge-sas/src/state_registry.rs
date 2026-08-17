@@ -152,6 +152,156 @@ pub struct ConcreteState {
     pool_offset: usize,
 }
 
+/// A short-lived, read-only view of concrete state values.
+///
+/// Registered states borrow their registry only for the lifetime of the view;
+/// decoded CEGAR states borrow their numeric slice directly. The type cannot
+/// outlive either backing store and therefore does not create the long-lived
+/// aliasing problem of a `(StateID, &StateRegistry)` state handle.
+#[derive(Clone, Copy)]
+pub struct ConcreteStateView<'a> {
+    packer: &'a IntDoublePacker,
+    prop: &'a [u64],
+    backing: ConcreteStateViewBacking<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum ConcreteStateViewBacking<'a> {
+    Decoded(&'a [f64]),
+    Registered {
+        state_id: StateID,
+        numeric_template: &'a [f64],
+        regular_numeric_slots: &'a [(usize, usize)],
+        cost_numeric_indices: &'a [(usize, usize)],
+        numeric_var_types: &'a [NumericType],
+        numeric_indices: &'a [Option<usize>],
+        numeric_constants: &'a [f64],
+        compact_numeric_values: &'a RefCell<CompactNumericValues>,
+        cost_info: &'a RefCell<DenseCostInformation>,
+        axiom_evaluator: &'a AxiomEvaluator<'a>,
+    },
+}
+
+impl<'a> ConcreteStateView<'a> {
+    pub fn from_decoded(packer: &'a IntDoublePacker, prop: &'a [u64], numeric: &'a [f64]) -> Self {
+        Self {
+            packer,
+            prop,
+            backing: ConcreteStateViewBacking::Decoded(numeric),
+        }
+    }
+}
+
+impl<'a> ConcreteStateView<'a> {
+    pub fn packer(self) -> &'a IntDoublePacker {
+        self.packer
+    }
+
+    pub fn propositional(self) -> &'a [u64] {
+        self.prop
+    }
+
+    pub fn fill_propositional(self, output: &mut Vec<usize>) {
+        output.clear();
+        output.extend(
+            (0..self.packer.numeric_slot_offset())
+                .map(|slot| self.packer.get(self.prop, slot) as usize),
+        );
+    }
+
+    pub fn decoded_numeric(self) -> Option<&'a [f64]> {
+        match self.backing {
+            ConcreteStateViewBacking::Decoded(values) => Some(values),
+            ConcreteStateViewBacking::Registered { .. } => None,
+        }
+    }
+
+    pub fn fill_numeric(self, output: &mut Vec<f64>) -> Result<(), AssignmentAxiomError> {
+        match self.backing {
+            ConcreteStateViewBacking::Decoded(values) => {
+                output.clear();
+                output.extend_from_slice(values);
+                Ok(())
+            }
+            ConcreteStateViewBacking::Registered {
+                state_id,
+                numeric_template,
+                regular_numeric_slots,
+                cost_numeric_indices,
+                compact_numeric_values,
+                cost_info,
+                axiom_evaluator,
+                ..
+            } => {
+                output.resize(numeric_template.len(), 0.0);
+                output.copy_from_slice(numeric_template);
+                let interned = compact_numeric_values.borrow();
+                for &(out_idx, packed_slot) in regular_numeric_slots {
+                    let id = self.packer.get(self.prop, packed_slot) as usize;
+                    output[out_idx] = *interned
+                        .values
+                        .get(id)
+                        .unwrap_or_else(|| panic!("missing compact numeric value ID {id}"));
+                }
+                let costs = cost_info.borrow();
+                let cost_values = costs.get(state_id);
+                for &(out_idx, cost_idx) in cost_numeric_indices {
+                    output[out_idx] = cost_values[cost_idx];
+                }
+                if axiom_evaluator.has_numeric_axioms() {
+                    axiom_evaluator.evaluate_arithmetic_axioms(output)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub fn numeric_value_unevaluated(self, var_id: usize) -> Result<f64, InvalidIndex> {
+        match self.backing {
+            ConcreteStateViewBacking::Decoded(values) => {
+                values.get(var_id).copied().ok_or(InvalidIndex {
+                    index: var_id,
+                    length: values.len(),
+                })
+            }
+            ConcreteStateViewBacking::Registered {
+                state_id,
+                numeric_var_types,
+                numeric_indices,
+                numeric_constants,
+                compact_numeric_values,
+                cost_info,
+                ..
+            } => {
+                let Some(&numeric_type) = numeric_var_types.get(var_id) else {
+                    return Err(InvalidIndex {
+                        index: var_id,
+                        length: numeric_var_types.len(),
+                    });
+                };
+                let value = match numeric_type {
+                    NumericType::Cost => {
+                        let cost_idx = numeric_indices[var_id].unwrap();
+                        cost_info.borrow().get(state_id)[cost_idx]
+                    }
+                    NumericType::Constant => numeric_constants[numeric_indices[var_id].unwrap()],
+                    NumericType::Regular => {
+                        let id =
+                            self.packer.get(self.prop, numeric_indices[var_id].unwrap()) as usize;
+                        *compact_numeric_values
+                            .borrow()
+                            .values
+                            .get(id)
+                            .unwrap_or_else(|| panic!("missing compact numeric value ID {id}"))
+                    }
+                    NumericType::Derived => 0.0,
+                };
+                Ok(value)
+            }
+        }
+    }
+}
+
 impl ConcreteState {
     /// Create a new concrete state with the given pool offset.
     pub const fn new(pool_offset: usize) -> Self {
@@ -404,6 +554,28 @@ struct CompactNumericValues {
 }
 
 impl<'a> StateRegistry<'a> {
+    pub fn view<'s>(&'s self, state: &'s ConcreteState) -> ConcreteStateView<'s>
+    where
+        'a: 's,
+    {
+        ConcreteStateView {
+            packer: &self.global_state_packer,
+            prop: self.get_buffer(state.get_id()),
+            backing: ConcreteStateViewBacking::Registered {
+                state_id: state.get_id(),
+                numeric_template: &self.numeric_template,
+                regular_numeric_slots: &self.regular_numeric_slots,
+                cost_numeric_indices: &self.cost_numeric_indices,
+                numeric_var_types: &self.numeric_var_types,
+                numeric_indices: &self.numeric_indices,
+                numeric_constants: &self.numeric_constants,
+                compact_numeric_values: &self.compact_numeric_values,
+                cost_info: &self.cost_info,
+                axiom_evaluator: &self.axiom_evaluator,
+            },
+        }
+    }
+
     /// Build the state packer, axiom evaluator, and registry for `task` in
     /// one step. This is the common construction path; use [`Self::new`]
     /// when a custom packer or axiom evaluator is needed.

@@ -408,20 +408,6 @@ impl<'task> LmcutInnerHeuristic<'task> {
         }
     }
 
-    fn evaluate_from_concrete_state(
-        &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-    ) -> Result<InnerHeuristicResult, String> {
-        state.fill_state(registry, &mut self.propositional_scratch);
-        registry
-            .fill_numeric_vars(state, &mut self.numeric_scratch)
-            .map_err(|err| format!("failed to read projected numeric state: {err:?}"))?;
-        let propositional = self.propositional_scratch.clone();
-        let numeric = self.numeric_scratch.clone();
-        self.evaluate_from_values(&propositional, &numeric, state.buffer(registry).len())
-    }
-
     fn evaluate_from_values(
         &mut self,
         propositional: &[usize],
@@ -471,7 +457,6 @@ pub struct PatternDatabase<'task> {
     failed_lookup_cache: RefCell<HashMap<u64, f64>>,
     projection_prop_scratch: RefCell<Vec<usize>>,
     projection_numeric_scratch: RefCell<Vec<f64>>,
-    direct_numeric_cache_scratch: RefCell<Vec<Option<f64>>>,
     pattern_lookup_bins_scratch: RefCell<Vec<u64>>,
     compact_numeric_bins_scratch: RefCell<Vec<u64>>,
     failed_lookup_lmcut: RefCell<Option<LmcutInnerHeuristic<'task>>>,
@@ -532,7 +517,6 @@ impl<'task> PatternDatabase<'task> {
             projection_numeric_scratch: RefCell::new(Vec::with_capacity(
                 projection_numeric_capacity,
             )),
-            direct_numeric_cache_scratch: RefCell::new(Vec::new()),
             pattern_lookup_bins_scratch: RefCell::new(vec![0; pattern_lookup_bin_count]),
             compact_numeric_bins_scratch: RefCell::new(vec![0; compact_numeric_bin_count]),
             failed_lookup_lmcut: RefCell::new(None),
@@ -835,46 +819,6 @@ impl<'task> PatternDatabase<'task> {
         self.lookup_packed_pattern_distance(&bins)
     }
 
-    fn lookup_pattern_distance_from_concrete_state(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-    ) -> Result<Option<f64>, String> {
-        let prop_hash = self.task.compact_pattern_prop_hash_from_concrete_state(
-            state,
-            registry,
-            &self.compact_prop_hash_multipliers,
-        )?;
-
-        if !self.task.pattern_numeric_projected_ids().is_empty() {
-            let mut packed_bins = self.compact_numeric_bins_scratch.borrow_mut();
-            let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
-            self.task.fill_pattern_numeric_concrete_state_bins_into(
-                state,
-                registry,
-                &mut packed_bins,
-                &mut numeric_cache,
-            )?;
-            packed_bins[0] = prop_hash as u64;
-            return Ok(self.lookup_compact_numeric_distance(&packed_bins));
-        }
-
-        if let Some(distance) = self.lookup_compact_prop_distance_by_hash(prop_hash) {
-            return Ok(Some(distance));
-        }
-
-        let mut packed_bins = self.pattern_lookup_bins_scratch.borrow_mut();
-        let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
-        self.task.pack_pattern_concrete_state_values_into(
-            state,
-            registry,
-            &self.pattern_lookup_packer,
-            &mut packed_bins,
-            &mut numeric_cache,
-        )?;
-        Ok(self.lookup_packed_pattern_distance(&packed_bins))
-    }
-
     fn lookup_pattern_distance_from_source_state_values(
         &self,
         propositional: &[usize],
@@ -1092,24 +1036,6 @@ impl<'task> PatternDatabase<'task> {
                 &mut projected_prop,
                 &mut projected_num,
             )?;
-        Ok(self.lookup_exact_state_id(&projected_prop, &projected_num))
-    }
-
-    pub fn abstract_state_id_from_concrete_state(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-    ) -> Result<Option<usize>, String> {
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-        let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
-        self.task.project_concrete_state_values_into(
-            state,
-            registry,
-            &mut projected_prop,
-            &mut projected_num,
-            &mut numeric_cache,
-        )?;
         Ok(self.lookup_exact_state_id(&projected_prop, &projected_num))
     }
 
@@ -1361,30 +1287,6 @@ impl<'task> PatternDatabase<'task> {
             );
 
         self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num)
-    }
-
-    pub fn lookup_or_fallback_from_concrete_state(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-    ) -> Result<f64, String> {
-        if let Some(distance) = self.lookup_pattern_distance_from_concrete_state(state, registry)?
-            && distance.is_finite()
-        {
-            return Ok(distance);
-        }
-
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-        let mut numeric_cache = self.direct_numeric_cache_scratch.borrow_mut();
-        self.task.project_concrete_state_values_into(
-            state,
-            registry,
-            &mut projected_prop,
-            &mut projected_num,
-            &mut numeric_cache,
-        )?;
-        Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
     }
 
     pub(super) fn state_propositional_values<'state>(
@@ -1686,8 +1588,7 @@ impl<'task> PatternDatabase<'task> {
                 let inner_h = inner_heuristic.evaluate(
                     self.heuristic_config.exploration_heuristic,
                     next_id,
-                    &exploration.representative_states[next_id],
-                    registry,
+                    registry.view(&exploration.representative_states[next_id]),
                 )?;
                 if inner_h.dead_end {
                     continue;
@@ -1747,8 +1648,7 @@ impl<'task> PatternDatabase<'task> {
                 let inner_h = inner_heuristic.evaluate(
                     self.heuristic_config.frontier_heuristic,
                     state_id,
-                    &exploration.representative_states[state_id],
-                    registry,
+                    registry.view(&exploration.representative_states[state_id]),
                 )?;
                 if inner_h.dead_end {
                     continue;
@@ -1873,8 +1773,7 @@ impl<'task> PdbInnerHeuristic<'task> {
         &mut self,
         heuristic: PdbInternalHeuristic,
         state_id: usize,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: planforge_sas::state_registry::ConcreteStateView<'_>,
     ) -> Result<InnerHeuristicResult, String> {
         match heuristic {
             PdbInternalHeuristic::Zero | PdbInternalHeuristic::Blind => Ok(InnerHeuristicResult {
@@ -1888,11 +1787,21 @@ impl<'task> PdbInnerHeuristic<'task> {
                 if let Some(result) = self.cache[state_id] {
                     return Ok(result);
                 }
-                let result = self
+                let lmcut = self
                     .lmcut
                     .as_mut()
-                    .expect("LM-cut inner heuristic must be initialized when configured")
-                    .evaluate_from_concrete_state(state, registry)?;
+                    .expect("LM-cut inner heuristic must be initialized when configured");
+                state.fill_propositional(&mut lmcut.propositional_scratch);
+                state
+                    .fill_numeric(&mut lmcut.numeric_scratch)
+                    .map_err(|err| format!("failed to read projected numeric state: {err:?}"))?;
+                let propositional = lmcut.propositional_scratch.clone();
+                let numeric = lmcut.numeric_scratch.clone();
+                let result = lmcut.evaluate_from_values(
+                    &propositional,
+                    &numeric,
+                    state.propositional().len(),
+                )?;
                 self.cache[state_id] = Some(result);
                 Ok(result)
             }

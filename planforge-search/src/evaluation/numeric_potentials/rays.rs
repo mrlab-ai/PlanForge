@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus};
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::state_registry::ConcreteStateView;
 use serde_json::json;
 use tracing::info;
 
@@ -19,14 +19,13 @@ pub(crate) struct Ray {
 impl Ray {
     pub(crate) fn value(
         &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
         task: &PotentialTask,
         prop_scratch: &mut Vec<usize>,
         numeric_scratch: &mut Vec<f64>,
     ) -> Result<f64, String> {
         self.function
-            .value(state, registry, task, prop_scratch, numeric_scratch)
+            .value(state, task, prop_scratch, numeric_scratch)
     }
 
     fn signature(&self, numeric_feature_count: usize) -> Vec<f64> {
@@ -66,10 +65,9 @@ impl RayGenerator {
     pub(crate) fn try_certify(
         &mut self,
         optimizer: &mut NumericPotentialOptimizer,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
     ) -> Result<Option<Ray>, String> {
-        let objective = optimizer.objective_for_state(state, registry, &self.system)?;
+        let objective = optimizer.objective_for_state(state, &self.system)?;
         self.model
             .set_objective(&objective)
             .map_err(|error| error.to_string())?;
@@ -132,10 +130,9 @@ impl RayGenerator {
         &self,
         optimizer: &mut NumericPotentialOptimizer,
         coefficients: Vec<f64>,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
     ) -> Result<Option<Ray>, String> {
-        let objective = optimizer.objective_for_state(state, registry, &self.system)?;
+        let objective = optimizer.objective_for_state(state, &self.system)?;
         self.certify_coefficients(optimizer, coefficients, &objective)
     }
 
@@ -201,11 +198,10 @@ impl RayGenerator {
         &self,
         ray: &Ray,
         optimizer: &mut NumericPotentialOptimizer,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
         artifact_path: &Path,
     ) -> Result<bool, String> {
-        let objective = optimizer.objective_for_state(state, registry, &self.system)?;
+        let objective = optimizer.objective_for_state(state, &self.system)?;
         if !verify_exact(&self.system, &ray.coefficients, &objective) {
             return Ok(false);
         }

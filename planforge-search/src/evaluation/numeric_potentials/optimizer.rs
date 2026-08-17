@@ -5,7 +5,7 @@ use planforge_cplex::{
     Constraint, Model, ObjectiveSense, SolveStatus, Variable, assert_unrestricted_license,
 };
 use planforge_sas::numeric_task::AbstractNumericTask;
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::state_registry::{ConcreteState, ConcreteStateView, StateRegistry};
 
 use super::{NumericPotentialConfig, NumericPotentialFunction, PotentialTask};
 
@@ -119,8 +119,7 @@ impl NumericPotentialOptimizer {
 
     pub fn validate_duality(
         &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
         expected: f64,
         tolerance: f64,
     ) -> Result<(f64, usize, usize), String> {
@@ -138,7 +137,7 @@ impl NumericPotentialOptimizer {
             })
             .collect::<Vec<_>>();
         let mut constraints = Vec::new();
-        state.fill_state(registry, &mut self.prop_scratch);
+        state.fill_propositional(&mut self.prop_scratch);
         let mut goals = vec![None; self.task.domain_sizes.len()];
         for goal in &self.task.propositional_goals {
             goals[goal.var()] = Some(goal.value());
@@ -185,9 +184,7 @@ impl NumericPotentialOptimizer {
                 constraints.push(Constraint::new(lower, infinity, coefficients));
             }
         }
-        let initial_features =
-            self.task
-                .feature_values(state, registry, &mut self.numeric_scratch)?;
+        let initial_features = self.task.feature_values(state, &mut self.numeric_scratch)?;
         for (feature_id, bounds) in self.task.feature_goal_bounds.iter().enumerate() {
             let coefficients = self
                 .task
@@ -254,15 +251,14 @@ impl NumericPotentialOptimizer {
 
     pub fn optimize_for_state(
         &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
     ) -> Result<OptimizationOutcome, String> {
         if self.task.goal_unsatisfiable {
             return Ok(OptimizationOutcome::Unbounded {
                 primal_ray: Vec::new(),
             });
         }
-        let objective = self.state_objective(state, registry)?;
+        let objective = self.state_objective(state)?;
         self.model
             .set_objective(&objective)
             .map_err(|error| error.to_string())?;
@@ -271,8 +267,7 @@ impl NumericPotentialOptimizer {
 
     pub fn optimize_for_all_propositional_states(
         &mut self,
-        numeric_reference: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        numeric_reference: ConcreteStateView<'_>,
     ) -> Result<OptimizationOutcome, String> {
         let mut objective = vec![0.0; self.system.variables.len()];
         for (var_id, &domain_size) in self.task.domain_sizes.iter().enumerate() {
@@ -286,9 +281,9 @@ impl NumericPotentialOptimizer {
         }
         if let Some(column) = self.system.constant_column {
             objective[column] = 1.0;
-            let values =
-                self.task
-                    .feature_values(numeric_reference, registry, &mut self.numeric_scratch)?;
+            let values = self
+                .task
+                .feature_values(numeric_reference, &mut self.numeric_scratch)?;
             for (feature_id, value) in values.into_iter().enumerate() {
                 objective[self.system.weight_columns[feature_id]] = value;
             }
@@ -309,7 +304,7 @@ impl NumericPotentialOptimizer {
         }
         let mut objective = vec![0.0; self.system.variables.len()];
         for state in states {
-            let state_objective = self.state_objective(state, registry)?;
+            let state_objective = self.state_objective(registry.view(state))?;
             for (sum, coefficient) in objective.iter_mut().zip(state_objective) {
                 *sum += coefficient;
             }
@@ -367,8 +362,7 @@ impl NumericPotentialOptimizer {
         var: usize,
         value: usize,
         achiever: usize,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
     ) -> Result<OptimizationOutcome, String> {
         if !self.task.operators[achiever]
             .effects
@@ -389,7 +383,7 @@ impl NumericPotentialOptimizer {
                 &self.system.constraints,
             )
             .map_err(|error| error.to_string())?;
-        let objective = self.state_objective(state, registry)?;
+        let objective = self.state_objective(state)?;
         self.model
             .set_objective(&objective)
             .map_err(|error| error.to_string())?;
@@ -442,20 +436,17 @@ impl NumericPotentialOptimizer {
 
     pub(super) fn objective_for_state(
         &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
+        state: ConcreteStateView<'_>,
         system: &PotentialSystem,
     ) -> Result<Vec<f64>, String> {
         let mut objective = vec![0.0; system.variables.len()];
-        state.fill_state(registry, &mut self.prop_scratch);
+        state.fill_propositional(&mut self.prop_scratch);
         for (var_id, &value) in self.prop_scratch.iter().enumerate() {
             objective[system.fact_columns[var_id][value]] += 1.0;
         }
         if let Some(column) = system.constant_column {
             objective[column] = 1.0;
-            let values = self
-                .task
-                .feature_values(state, registry, &mut self.numeric_scratch)?;
+            let values = self.task.feature_values(state, &mut self.numeric_scratch)?;
             for (feature_id, value) in values.into_iter().enumerate() {
                 objective[system.weight_columns[feature_id]] += value;
             }
@@ -479,13 +470,9 @@ impl NumericPotentialOptimizer {
         &self.system
     }
 
-    fn state_objective(
-        &mut self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-    ) -> Result<Vec<f64>, String> {
+    fn state_objective(&mut self, state: ConcreteStateView<'_>) -> Result<Vec<f64>, String> {
         let mut objective = vec![0.0; self.system.variables.len()];
-        state.fill_state(registry, &mut self.prop_scratch);
+        state.fill_propositional(&mut self.prop_scratch);
         if !self.system.fact_columns.is_empty() {
             for (var_id, &value) in self.prop_scratch.iter().enumerate() {
                 objective[self.system.fact_columns[var_id][value]] += 1.0;
@@ -493,9 +480,7 @@ impl NumericPotentialOptimizer {
         }
         if let Some(column) = self.system.constant_column {
             objective[column] = 1.0;
-            let values = self
-                .task
-                .feature_values(state, registry, &mut self.numeric_scratch)?;
+            let values = self.task.feature_values(state, &mut self.numeric_scratch)?;
             for (feature_id, value) in values.into_iter().enumerate() {
                 objective[self.system.weight_columns[feature_id]] += value;
             }

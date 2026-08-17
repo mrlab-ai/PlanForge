@@ -157,13 +157,13 @@ fn goal_distance_is_computed_per_state() {
     let mut oracle = heuristic.oracle.borrow_mut();
     assert_eq!(
         oracle
-            .goal_distance(&initial_state, &registry)
+            .goal_distance(registry.view(&initial_state), initial_state.get_id())
             .expect("the goal is reachable from the initial state"),
         2.0
     );
     assert_eq!(
         oracle
-            .goal_distance(&successor, &registry)
+            .goal_distance(registry.view(&successor), successor.get_id())
             .expect("the goal is reachable after one step"),
         1.0
     );

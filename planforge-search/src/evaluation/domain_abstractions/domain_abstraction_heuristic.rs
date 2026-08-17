@@ -7,7 +7,7 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
 use planforge_sas::numeric_task::Operator;
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::state_registry::ConcreteState;
 
 use super::abstraction_numeric_var;
 use super::domain_abstraction_generator::DomainAbstraction;
@@ -204,8 +204,7 @@ impl DomainAbstractionHeuristic {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<usize, EvaluationError> {
-        let (_, registry) = Self::require_task_and_registry(eval_state)?;
-        self.compute_abstract_hash(eval_state.state(), registry)
+        self.compute_abstract_hash(eval_state.state_registry().view(eval_state.state()))
     }
 
     pub fn abstract_state_hash_from_state_values(
@@ -271,33 +270,14 @@ impl DomainAbstractionHeuristic {
         Ok(())
     }
 
-    fn require_task_and_registry<'s, 't>(
-        eval_state: &'s EvaluationState<'s, 't>,
-    ) -> Result<
-        (
-            &'t dyn planforge_sas::numeric_task::AbstractNumericTask,
-            &'s StateRegistry<'t>,
-        ),
-        EvaluationError,
-    > {
-        let task = eval_state.task().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "DomainAbstractionHeuristic requires task in EvaluationState".to_string(),
-            )
-        })?;
-        let registry = eval_state.state_registry();
-        Ok((task, registry))
-    }
-
-    fn compute_abstract_hash<'t>(
+    fn compute_abstract_hash(
         &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'t>,
+        state: planforge_sas::state_registry::ConcreteStateView<'_>,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
 
         let mut prop = self.prop_scratch.borrow_mut();
-        state.fill_state(registry, &mut prop);
+        state.fill_propositional(&mut prop);
         if prop.len() < num_props {
             return Err(EvaluationError::InvalidState(format!(
                 "propositional state too short: {} < {num_props}",
@@ -306,11 +286,9 @@ impl DomainAbstractionHeuristic {
         }
 
         let mut numeric = self.numeric_scratch.borrow_mut();
-        registry
-            .fill_numeric_vars(state, &mut numeric)
-            .map_err(|e| {
-                EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
-            })?;
+        state.fill_numeric(&mut numeric).map_err(|e| {
+            EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
+        })?;
         self.compute_abstract_hash_inner(&prop, &numeric, None)
     }
 
@@ -484,10 +462,8 @@ impl Heuristic for DomainAbstractionHeuristic {
         //    return Ok(0.0);
         //}
 
-        let (_task, registry) = Self::require_task_and_registry(eval_state)?;
-        let state = eval_state.state();
-
-        let hash = self.compute_abstract_hash(state, registry)?;
+        let hash =
+            self.compute_abstract_hash(eval_state.state_registry().view(eval_state.state()))?;
         let dist = self
             .abstraction
             .distance_table

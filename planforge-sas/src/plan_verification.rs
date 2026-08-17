@@ -88,12 +88,11 @@ impl Replay {
 /// Goal facts that do not hold in `state`.
 fn unsatisfied_goals<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    state: &ConcreteState,
-    registry: &StateRegistry<'_>,
+    state: crate::state_registry::ConcreteStateView<'_>,
 ) -> Vec<ExplicitFact> {
     (0..task.get_num_goals())
         .map(|i| task.get_goal_fact(i))
-        .filter(|fact| !fact.is_hold(state, registry))
+        .filter(|fact| !fact.is_hold(state))
         .copied()
         .collect()
 }
@@ -124,7 +123,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
     for step in 0..=operators.len() {
         let current = &states[step];
 
-        if !global_constraint.is_hold(current, registry) {
+        if !global_constraint.is_hold(registry.view(current)) {
             return Ok(Replay {
                 outcome: ReplayOutcome::Rejected(PlanRejection::GlobalConstraintViolated { step }),
                 applied: states.len() - 1,
@@ -132,7 +131,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
             });
         }
 
-        if unsatisfied_goals(task, current, registry).is_empty() {
+        if unsatisfied_goals(task, registry.view(current)).is_empty() {
             return Ok(Replay {
                 outcome: ReplayOutcome::Solved(VerifiedPlan {
                     prefix_len: step,
@@ -151,7 +150,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
         if let Some(fact) = operator
             .preconditions()
             .iter()
-            .find(|fact| !fact.is_hold(current, registry))
+            .find(|fact| !fact.is_hold(registry.view(current)))
         {
             return Ok(Replay {
                 outcome: ReplayOutcome::Rejected(PlanRejection::InapplicableOperator {
@@ -174,7 +173,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
         states.push(successor);
     }
 
-    let unsatisfied = unsatisfied_goals(task, &states[operators.len()], registry);
+    let unsatisfied = unsatisfied_goals(task, registry.view(&states[operators.len()]));
     assert!(
         !unsatisfied.is_empty(),
         "goal-reaching prefix should have been reported inside the loop"

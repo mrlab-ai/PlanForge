@@ -340,7 +340,7 @@ impl Task {
         let mut all = true;
         for i in 0..self.task.get_num_goals() {
             let g = self.task.get_goal_fact(i);
-            if !g.is_hold(&cstate, &reg) {
+            if !g.is_hold(reg.view(&cstate)) {
                 all = false;
                 break;
             }

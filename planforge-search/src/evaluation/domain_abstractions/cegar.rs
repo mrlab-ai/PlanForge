@@ -16,6 +16,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
+use planforge_sas::state_registry::ConcreteStateView;
 
 use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 
@@ -25,9 +26,7 @@ pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, Init
 use crate::evaluation::cegar::{CegarDriver, CegarIterationResult, progress_concrete_state};
 pub use crate::evaluation::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
-use crate::evaluation::domain_abstractions::utils::{
-    fact_is_hold, get_initial_state, make_prop_state_packer,
-};
+use crate::evaluation::domain_abstractions::utils::{get_initial_state, make_prop_state_packer};
 use crate::evaluation::validate_abstractable_goal;
 
 use super::abstract_operator_generator::DomainMapping;
@@ -784,13 +783,13 @@ fn wildcard_plan_is_real(
 fn is_applicable(buffer: &[u64], packer: &IntDoublePacker, op: &Operator) -> bool {
     op.preconditions()
         .iter()
-        .all(|pre| fact_is_hold(pre, packer, buffer))
+        .all(|pre| pre.is_hold(ConcreteStateView::from_decoded(packer, buffer, &[])))
 }
 
 fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &IntDoublePacker) -> bool {
     sorted_goal_facts(task)
         .iter()
-        .all(|goal_fact| fact_is_hold(goal_fact, packer, buffer))
+        .all(|goal_fact| goal_fact.is_hold(ConcreteStateView::from_decoded(packer, buffer, &[])))
 }
 
 fn current_time_seed() -> u64 {

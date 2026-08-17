@@ -68,7 +68,6 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
     Operator, metric_operator_cost_from_initial_values,
 };
-use planforge_sas::state_registry::StateRegistry;
 
 type FactId = usize;
 type OpId = usize;
@@ -1000,12 +999,13 @@ impl<'task> FfHeuristic<'task> {
     fn fill_initial_numeric_state(
         &self,
         eval_state: &EvaluationState<'_, '_>,
-        registry: &StateRegistry<'_>,
         raw: &mut Vec<f64>,
         ranges: &mut Vec<NumericRange>,
     ) -> Result<(), EvaluationError> {
-        registry
-            .fill_numeric_vars(eval_state.state(), raw)
+        eval_state
+            .state_registry()
+            .view(eval_state.state())
+            .fill_numeric(raw)
             .map_err(|err| {
                 EvaluationError::ComputationFailed(format!(
                     "FF heuristic failed to read numeric state: {err:?}"
@@ -1179,7 +1179,6 @@ impl<'task> FfHeuristic<'task> {
     fn build_rpg(
         &self,
         eval_state: &EvaluationState<'_, '_>,
-        registry: &StateRegistry<'_>,
         scratch: &mut ScratchBuffers,
     ) -> Result<i32, EvaluationError> {
         // Operator eligibility from state-dependent preconditions. An op
@@ -1192,16 +1191,16 @@ impl<'task> FfHeuristic<'task> {
             .op_eligible
             .resize(self.op_preconditions.len(), true);
         let live_state = eval_state.state();
+        let registry = eval_state.state_registry();
         for (op_id, deps) in &self.state_dep_ops {
             let eligible = deps.iter().all(|&(var, value)| {
-                ExplicitFact::propositional(var, value).is_hold(live_state, registry)
+                ExplicitFact::propositional(var, value).is_hold(registry.view(live_state))
             });
             scratch.op_eligible[*op_id] = eligible;
         }
 
         self.fill_initial_numeric_state(
             eval_state,
-            registry,
             &mut scratch.numeric_raw,
             &mut scratch.numeric,
         )?;
@@ -1614,10 +1613,9 @@ impl<'task> Heuristic for FfHeuristic<'task> {
             self.last_helpful_action_ids.borrow_mut().clear();
             return Ok(0.0);
         }
-        let registry = eval_state.state_registry();
         let mut scratch = self.scratch.borrow_mut();
         scratch.reset();
-        let goal_layer = self.build_rpg(eval_state, registry, &mut scratch)?;
+        let goal_layer = self.build_rpg(eval_state, &mut scratch)?;
         if goal_layer == i32::MAX {
             self.last_helpful_action_ids.borrow_mut().clear();
             return Err(EvaluationError::DeadEnd { reliable: false });
