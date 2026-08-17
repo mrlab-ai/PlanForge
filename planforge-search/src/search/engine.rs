@@ -1,6 +1,6 @@
 use super::config::{ExpansionScratch, SearchConfig};
 use super::open_list::{DualQueueOpenList, OpenEntry};
-use super::policy::SearchPolicy;
+use super::policy::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm};
 use super::space::{SearchNodeInfo, SearchSpace};
 use super::stats::{ProgressSnapshot, SearchCounters, SearchStats};
 use super::{
@@ -59,7 +59,7 @@ struct SearchEvaluation {
     heuristic_revision: u64,
 }
 
-pub struct AStarSearch<'a> {
+pub struct BestFirstSearch<'a, A: SearchAlgorithm> {
     task: &'a dyn AbstractNumericTask,
     operators: &'a [Operator],
     goals: &'a [ExplicitFact],
@@ -74,7 +74,7 @@ pub struct AStarSearch<'a> {
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
     initial_state_is_proven_optimal: bool,
-    policy: SearchPolicy<'a>,
+    algorithm: A,
 
     config: SearchConfig,
     stats: SearchStats,
@@ -92,7 +92,9 @@ pub struct AStarSearch<'a> {
     heuristic_revisions: Option<Vec<u64>>,
 }
 
-impl<'a> AStarSearch<'a> {
+pub type AStarSearch<'a> = BestFirstSearch<'a, AStar>;
+
+impl<'a> BestFirstSearch<'a, AStar> {
     /// Create a new A* search instance.
     pub fn new(
         task: &'a dyn AbstractNumericTask,
@@ -101,13 +103,13 @@ impl<'a> AStarSearch<'a> {
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {
-        Self::with_policy(
+        Self::with_algorithm(
             task,
             state_registry,
             heuristic,
             time_limit,
             max_memory_bytes,
-            SearchPolicy::AStar,
+            AStar,
             false,
         )
     }
@@ -122,13 +124,13 @@ impl<'a> AStarSearch<'a> {
         max_memory_bytes: Option<u64>,
         mpd: bool,
     ) -> Self {
-        Self::with_policy(
+        Self::with_algorithm(
             task,
             state_registry,
             heuristic,
             time_limit,
             max_memory_bytes,
-            SearchPolicy::AStar,
+            AStar,
             mpd,
         )
     }
@@ -144,14 +146,14 @@ impl<'a> AStarSearch<'a> {
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
-    ) -> Self {
-        Self::with_policy(
+    ) -> BestFirstSearch<'a, GreedyBestFirst> {
+        BestFirstSearch::with_algorithm(
             task,
             state_registry,
             heuristic,
             time_limit,
             max_memory_bytes,
-            SearchPolicy::Gbfs,
+            GreedyBestFirst,
             false,
         )
     }
@@ -175,27 +177,30 @@ impl<'a> AStarSearch<'a> {
         heuristic_slow: Box<dyn Heuristic + 'a>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
-    ) -> Self {
-        Self::with_policy(
+    ) -> BestFirstSearch<'a, FastSlow<'a>> {
+        BestFirstSearch::with_algorithm(
             task,
             state_registry,
             Some(heuristic_fast),
             time_limit,
             max_memory_bytes,
-            SearchPolicy::FastSlow {
+            FastSlow {
                 slow: heuristic_slow,
             },
             false,
         )
     }
+}
 
-    fn with_policy(
+impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
+    /// Build the standard best-first driver around a custom algorithm.
+    pub fn with_algorithm(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
-        policy: SearchPolicy<'a>,
+        algorithm: A,
         mpd: bool,
     ) -> Self {
         let successor_generator = SuccessorTree::new(task);
@@ -227,7 +232,7 @@ impl<'a> AStarSearch<'a> {
 
         let use_metric = task.metric().use_metric();
         // Dual-queue preferred-first ordering is the FF default for GBFS.
-        let use_preferred_first = policy.is_gbfs();
+        let use_preferred_first = algorithm.uses_preferred_first();
         let num_variables = task.variables().len();
         let num_numeric_variables = task.numeric_variables().len();
         info!(
@@ -245,7 +250,7 @@ impl<'a> AStarSearch<'a> {
             heuristic,
             heuristic_name,
             initial_state_is_proven_optimal,
-            policy,
+            algorithm,
             config: SearchConfig {
                 operator_costs,
                 use_metric,
@@ -309,7 +314,7 @@ impl<'a> AStarSearch<'a> {
         // For GBFS the priority is `h`, which is non-monotonic — the "next
         // layer" abstraction doesn't apply. Skip; per-improvement progress is
         // still reported via `maybe_report_heuristic_progress`.
-        if !self.policy.reports_f_layers() {
+        if !self.algorithm.reports_priority_layers() {
             return;
         }
         let f_layer = f_value as i64;
@@ -336,7 +341,7 @@ impl<'a> AStarSearch<'a> {
 
         info!(
             "{} = {} [{} evaluated, {} expanded, {} states, {} open, t={:.6}s, {} KB]",
-            self.policy.priority_label(),
+            self.algorithm.priority_label(),
             f_layer,
             self.stats.nodes_evaluated,
             self.stats.nodes_expanded,
@@ -429,7 +434,7 @@ impl<'a> AStarSearch<'a> {
             }
             Ok(h_value) => SearchEvaluation {
                 h_value,
-                f_value: self.policy.priority_value(g_value, h_value),
+                f_value: self.algorithm.priority(g_value, h_value),
                 g_value,
                 is_dead_end: false,
                 heuristic_revision: self.heuristic.revision(),
@@ -543,7 +548,7 @@ impl<'a> AStarSearch<'a> {
         entry: OpenEntry,
         state: &ConcreteState,
     ) -> Result<()> {
-        let SearchPolicy::FastSlow { slow } = &self.policy else {
+        let Some(slow) = self.algorithm.slow_heuristic() else {
             unreachable!("slow evaluation requires the fast/slow search policy");
         };
         let mut eval_state = EvaluationState::new_with_registry(
@@ -575,7 +580,7 @@ impl<'a> AStarSearch<'a> {
             return Ok(());
         }
         let combined_h = entry.h_value.into_inner().max(slow_h);
-        let new_f = entry.g_value + combined_h;
+        let new_f = self.algorithm.priority(entry.g_value, combined_h);
         self.open_list.insert_with_second(
             entry.state_id(),
             entry.g_value,
@@ -738,7 +743,7 @@ impl<'a> AStarSearch<'a> {
         // either a "first pop" that triggers the slow evaluation, or a
         // "second pop" that proceeds to expand. Because max of admissible
         // heuristics is admissible, optimality is preserved.
-        if matches!(self.policy, SearchPolicy::FastSlow { .. }) && !entry.is_second() {
+        if self.algorithm.slow_heuristic().is_some() && !entry.is_second() {
             self.evaluate_and_reinsert_for_slow(entry, &state)?;
             return Ok(PoppedNode::Skipped);
         }
@@ -986,16 +991,16 @@ impl<'a> AStarSearch<'a> {
     }
 }
 
-impl<'a> SearchEngine for AStarSearch<'a> {
+impl<'a, A: SearchAlgorithm> SearchEngine for BestFirstSearch<'a, A> {
     fn initialize(&mut self) -> Result<()> {
-        AStarSearch::initialize(self)
+        BestFirstSearch::initialize(self)
     }
 
     fn step(&mut self) -> Result<SearchStatus> {
-        AStarSearch::step(self)
+        BestFirstSearch::step(self)
     }
 
     fn finish(&mut self, status: SearchStatus) -> SearchResult {
-        AStarSearch::finish(self, status)
+        BestFirstSearch::finish(self, status)
     }
 }

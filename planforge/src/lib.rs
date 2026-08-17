@@ -28,7 +28,7 @@ use limits::{
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::HeuristicBuildError;
-use planforge_search::search::{AStarSearch, SearchEngine, SearchResult};
+use planforge_search::search::{SearchBuildContext, SearchResult, search_algorithm};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
 use planforge_searcher::{HeuristicSpec, SearchSpec};
 use std::ffi::OsString;
@@ -103,7 +103,7 @@ pub struct PlannersCli {
         value_name = "SPEC",
         default_value = "astar(blind())",
         value_parser = planforge_searcher::parse_search_spec,
-        long_help = planforge_search::heuristic_factory::HEURISTIC_HELP
+        long_help = planforge_search::search::search_algorithm_help()
     )]
     pub search: SearchSpec,
 
@@ -187,35 +187,16 @@ pub fn solve_task(
     memory_limit: Option<u64>,
 ) -> std::io::Result<SearchResult> {
     let state_registry = StateRegistry::for_task(task.clone());
-    match spec {
+    let (algorithm_name, primary_heuristic, secondary_heuristic, mpd) = match spec {
         SearchSpec::Astar(heuristic, mpd) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            let mut search = AStarSearch::new_with_mpd(
-                &*task,
-                state_registry,
-                heuristic_override,
-                time_limit,
-                memory_limit,
-                *mpd,
-            );
             info!("Starting A* search with {heuristic:?}, mpd={mpd}...");
-            search
-                .search()
-                .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
+            ("astar", heuristic_override, None, *mpd)
         }
         SearchSpec::Gbfs(heuristic) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            let mut search = AStarSearch::new_gbfs(
-                &*task,
-                state_registry,
-                heuristic_override,
-                time_limit,
-                memory_limit,
-            );
             info!("Starting GBFS search with {heuristic:?}...");
-            search
-                .search()
-                .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
+            ("gbfs", heuristic_override, None, false)
         }
         SearchSpec::AstarFs(fast_spec, slow_spec) => {
             // A* with two admissible heuristics: a fast one for ordering
@@ -253,25 +234,32 @@ pub fn solve_task(
                 .unwrap_or_else(make_blind);
             let slow_h = build_heuristic_from_spec(slow_spec, task_ref, task.clone())?
                 .unwrap_or_else(make_blind);
-            let mut search = AStarSearch::new_fast_slow(
-                &*task,
-                state_registry,
-                fast_h,
-                slow_h,
-                time_limit,
-                memory_limit,
-            );
             info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
-            search
-                .search()
-                .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
+            ("astar_fs", Some(fast_h), Some(slow_h), false)
         }
         // `sgd(...)` is not a search engine and does not go through a state
         // registry or an open list; `run_internal` dispatches it directly.
-        SearchSpec::Sgd(_) => Err(std::io::Error::other(
-            "solve_task does not handle `sgd(...)`; it is dispatched in run_internal",
-        )),
-    }
+        SearchSpec::Sgd(_) => {
+            return Err(std::io::Error::other(
+                "solve_task does not handle `sgd(...)`; it is dispatched in run_internal",
+            ));
+        }
+    };
+    let plugin = search_algorithm(algorithm_name)
+        .expect("every parsed state-space search has a registered builder");
+    let mut driver = (plugin.build)(SearchBuildContext {
+        task: &*task,
+        state_registry,
+        primary_heuristic,
+        secondary_heuristic,
+        time_limit,
+        max_memory_bytes: memory_limit,
+        mpd,
+    })
+    .map_err(|error| std::io::Error::other(format!("could not build search: {error:#}")))?;
+    driver
+        .run()
+        .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {

@@ -433,14 +433,13 @@ impl Task {
         let time_limit = max_time.map(Duration::from_secs_f64);
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
-        let mut search = if greedy {
+        let result = if greedy {
             AStarSearch::new_gbfs(&*self.task, registry, Some(heur), time_limit, max_memory)
+                .search()
         } else {
-            AStarSearch::new(&*self.task, registry, Some(heur), time_limit, max_memory)
-        };
-        let result = search
-            .search()
-            .map_err(|error| PlanforgeError::new_err(format!("search failed: {error:#}")))?;
+            AStarSearch::new(&*self.task, registry, Some(heur), time_limit, max_memory).search()
+        }
+        .map_err(|error| PlanforgeError::new_err(format!("search failed: {error:#}")))?;
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);
         }

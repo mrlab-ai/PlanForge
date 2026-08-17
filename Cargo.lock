@@ -1779,6 +1779,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tutorial-custom-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "planforge-sas",
+ "planforge-search",
+]
+
+[[package]]
 name = "tutorial-goal-count"
 version = "0.1.0"
 dependencies = [

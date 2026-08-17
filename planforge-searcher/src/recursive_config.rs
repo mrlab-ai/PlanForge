@@ -8,6 +8,7 @@ pub use planforge_search::config::{
     ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue, HeuristicSpec, atom,
     for_each_option, parse_heuristic_spec,
 };
+use planforge_search::search::{SearchOptionKind, search_algorithm, search_algorithm_names};
 
 #[cfg(test)]
 mod tests;
@@ -106,13 +107,26 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
         return build_search_spec(&nested);
     }
 
-    match call.name.as_str() {
-        "astar" => {
+    if call.name == "sgd" {
+        return Ok(SearchSpec::Sgd(call.args.clone()));
+    }
+
+    let plugin = search_algorithm(&call.name).ok_or_else(|| {
+        format!(
+            "unknown search engine `{}`; expected one of: {}",
+            call.name,
+            search_algorithm_names().collect::<Vec<_>>().join(", ")
+        )
+    })?;
+    match plugin.options {
+        SearchOptionKind::AStar => {
             let (heuristic, mpd) = extract_astar_options(call)?;
             Ok(SearchSpec::Astar(heuristic, mpd))
         }
-        "gbfs" => Ok(SearchSpec::Gbfs(extract_heuristic_for_search(call)?)),
-        "astar_fs" => {
+        SearchOptionKind::GreedyBestFirst => {
+            Ok(SearchSpec::Gbfs(extract_heuristic_for_search(call)?))
+        }
+        SearchOptionKind::FastSlow => {
             let mut fast = None;
             let mut slow = None;
             for arg in &call.args {
@@ -129,8 +143,6 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
             let slow = slow.ok_or_else(|| "`astar_fs(...)` requires `slow=...`".to_string())?;
             Ok(SearchSpec::AstarFs(fast, slow))
         }
-        "sgd" => Ok(SearchSpec::Sgd(call.args.clone())),
-        other => Err(format!("unknown search engine `{other}`")),
     }
 }
 

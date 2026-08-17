@@ -21,6 +21,7 @@ members = [
     "planforge-cplex",
     "planforge-sgd",
     "tutorials/rust-goal-count",
+    "tutorials/rust-custom-search",
     "tests",
 ]
 

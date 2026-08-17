@@ -14,11 +14,16 @@ mod config;
 mod engine;
 mod open_list;
 mod policy;
+mod registry;
 mod space;
 mod stats;
 
-pub use engine::AStarSearch;
-pub use policy::SearchPolicy;
+pub use engine::{AStarSearch, BestFirstSearch};
+pub use policy::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm};
+pub use registry::{
+    SEARCH_ALGORITHMS, SearchAlgorithmPlugin, SearchBuildContext, SearchBuilder, SearchOptionKind,
+    search_algorithm, search_algorithm_help, search_algorithm_names,
+};
 
 use anyhow::Result;
 use planforge_sas::numeric_task::{
@@ -84,6 +89,20 @@ pub trait SearchEngine {
                 terminal => return Ok(self.finish(terminal)),
             }
         }
+    }
+}
+
+/// Type-erased boundary used by search registries.
+///
+/// A registry performs this one dynamic call per complete search run. The
+/// expansion loop itself remains monomorphized over [`SearchAlgorithm`].
+pub trait SearchDriver {
+    fn run(&mut self) -> Result<SearchResult>;
+}
+
+impl<T: SearchEngine> SearchDriver for T {
+    fn run(&mut self) -> Result<SearchResult> {
+        self.search()
     }
 }
 
