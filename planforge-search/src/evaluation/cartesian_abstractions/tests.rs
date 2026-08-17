@@ -17,9 +17,9 @@ use super::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSemantics, CartesianSplitSelection, CartesianStopReason, FlawKind, OperatorBitSet,
     RefinementNode, ShortestPaths, Split, SplitDimension, StateRegion, TransitionKey,
-    WorkingAbstraction, apply_split, artifact_unwanted_score, numeric_split_choice_key,
-    numeric_split_intervals, push_unique_split, retain_min_growth_splits,
-    select_next_cartesian_collection_goal, select_refinement_split,
+    WorkingAbstraction, artifact_unwanted_score, numeric_split_choice_key, numeric_split_intervals,
+    push_unique_split, retain_min_growth_splits, select_next_cartesian_collection_goal,
+    select_refinement_split,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_sas::utils::interval::Interval;
@@ -211,18 +211,18 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
         working.add_transition(0, op_id, 0);
     }
 
-    apply_split(
-        &mut working,
-        &semantics,
-        Split::Propositional {
-            state_id: 0,
-            var_id: 0,
-            wanted: vec![1],
-            witness_value: 0,
-            description: String::new(),
-        },
-    )
-    .unwrap();
+    working
+        .apply_split(
+            &semantics,
+            Split::Propositional {
+                state_id: 0,
+                var_id: 0,
+                wanted: vec![1],
+                witness_value: 0,
+                description: String::new(),
+            },
+        )
+        .unwrap();
 
     assert_eq!(
         working.icaps_self_loop_order.as_ref().unwrap(),
@@ -478,8 +478,10 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
         integer_lattice: false,
         description: String::new(),
     };
-    apply_split(&mut indexed, &semantics, numeric_split.clone()).unwrap();
-    apply_split(&mut icaps, &semantics, numeric_split).unwrap();
+    indexed
+        .apply_split(&semantics, numeric_split.clone())
+        .unwrap();
+    icaps.apply_split(&semantics, numeric_split).unwrap();
 
     let propositional_split = Split::Propositional {
         state_id: 0,
@@ -488,8 +490,10 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
         witness_value: 0,
         description: String::new(),
     };
-    apply_split(&mut indexed, &semantics, propositional_split.clone()).unwrap();
-    apply_split(&mut icaps, &semantics, propositional_split).unwrap();
+    indexed
+        .apply_split(&semantics, propositional_split.clone())
+        .unwrap();
+    icaps.apply_split(&semantics, propositional_split).unwrap();
 
     let snapshot = |working: &WorkingAbstraction| {
         let mut transitions = working
@@ -1000,20 +1004,19 @@ fn shortest_path_dependency_positions_survive_swap_removal() {
         concrete_op_id: 1,
         target: 2,
     };
-    let mut shortest_paths = ShortestPaths {
-        distances: vec![1.0, 1.0, 0.0],
-        generating_transition: vec![Some(first), Some(second), None],
-        dependents: vec![vec![], vec![], vec![0, 1]],
-        dependent_positions: vec![Some(0), Some(1), None],
-        is_goal: vec![false, false, true],
-        invalid: vec![false; 3],
-    };
+    let mut shortest_paths = ShortestPaths::for_test(
+        vec![1.0, 1.0, 0.0],
+        vec![Some(first), Some(second), None],
+        vec![vec![], vec![], vec![0, 1]],
+        vec![Some(0), Some(1), None],
+        vec![false, false, true],
+    );
 
     shortest_paths.remove_generating_transition(0);
-    assert_eq!(shortest_paths.dependents[2], vec![1]);
-    assert_eq!(shortest_paths.dependent_positions[1], Some(0));
+    assert_eq!(shortest_paths.dependents(2), [1]);
+    assert_eq!(shortest_paths.dependent_position(1), Some(0));
     shortest_paths.remove_generating_transition(1);
-    assert!(shortest_paths.dependents[2].is_empty());
+    assert!(shortest_paths.dependents(2).is_empty());
 }
 
 /// A goal on a comparison variable is refined until the comparison holds.
