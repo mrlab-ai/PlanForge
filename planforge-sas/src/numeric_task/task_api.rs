@@ -913,14 +913,6 @@ impl NumericRootTask {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum NumericType {
-    Constant,
-    Derived,
-    Cost,
-    Regular, // Not sure if Root is correct.
-}
-
 impl AbstractNumericTask for NumericRootTask {
     fn project_state_values(
         &self,

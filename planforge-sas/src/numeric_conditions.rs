@@ -10,8 +10,9 @@
 //!
 //! Conditions are a first-class part of a task: [`NumericConditions`] is
 //! built once at task construction and reached through
-//! [`AbstractNumericTask::numeric_conditions`]. Nothing else in the codebase
-//! rebuilds the "propositional variable -> comparison axiom" mapping.
+//! [`crate::numeric_task::AbstractNumericTask::numeric_conditions`]. Nothing
+//! else in the codebase rebuilds the "propositional variable -> comparison
+//! axiom" mapping.
 //!
 //! Evaluation is generic over the value domain via [`ConditionDomain`], so
 //! concrete states (`f64`) and abstract states ([`Interval`]) share one
@@ -21,9 +22,7 @@
 mod tests;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use crate::numeric_task::{
-    AbstractNumericTask, ExplicitFact, FactNamespace, NumericType, NumericVariable,
-};
+use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The two values a propositional variable carrying a numeric condition's
@@ -621,15 +620,6 @@ pub struct NumericConditions {
 }
 
 impl NumericConditions {
-    pub fn from_task(task: &dyn AbstractNumericTask) -> Result<Self, NumericConditionError> {
-        Self::build(
-            task.variables().len(),
-            task.numeric_variables(),
-            task.comparison_axioms(),
-            task.assignment_axioms(),
-        )
-    }
-
     pub fn build(
         num_propositional_vars: usize,
         numeric_variables: &[NumericVariable],

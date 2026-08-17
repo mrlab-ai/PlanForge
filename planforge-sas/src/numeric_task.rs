@@ -18,7 +18,6 @@ use crate::numeric_conditions::{
     ConditionValue, NumericConditionError, NumericConditions, assignment_axiom_lookup,
 };
 use crate::numeric_parser::parse_numeric_sas_output;
-use crate::state_registry::ConcreteStateView;
 use crate::utils::errors::AssignmentAxiomError;
 use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, linearize_numeric_var,
@@ -28,7 +27,7 @@ use crate::utils::state_packer::StatePacker;
 use std::{collections::HashSet, fmt, sync::Arc};
 
 mod task_api;
-mod value_types;
+pub(crate) mod value_types;
 
 pub use task_api::*;
 pub use value_types::*;

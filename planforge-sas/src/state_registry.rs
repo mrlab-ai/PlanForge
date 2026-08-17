@@ -20,7 +20,9 @@
 mod tests;
 
 use crate::axioms::AxiomEvaluator;
-use crate::numeric_task::{AssignmentOperation, ExplicitFact, Operator, RepeatedTarget, TaskRef};
+use crate::numeric_task::{
+    AssignmentOperation, Effect, ExplicitFact, Operator, RepeatedTarget, TaskRef,
+};
 use crate::utils::errors::{
     AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
 };
@@ -186,6 +188,21 @@ impl<'a> ConcreteStateView<'a> {
             prop,
             backing: ConcreteStateViewBacking::Decoded(numeric),
         }
+    }
+}
+
+impl ExplicitFact {
+    pub fn is_hold(&self, state: ConcreteStateView<'_>) -> bool {
+        let value = state.packer().get(state.propositional(), self.var());
+        value == self.value() as u64
+    }
+}
+
+impl Effect {
+    pub fn conditions_met(&self, state: ConcreteStateView<'_>) -> bool {
+        self.conditions()
+            .iter()
+            .all(|condition| condition.is_hold(state))
     }
 }
 

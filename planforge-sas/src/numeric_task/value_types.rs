@@ -1,4 +1,4 @@
-use super::*;
+use std::{fmt, hash::Hash};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Metric {
@@ -86,6 +86,14 @@ pub struct NumericVariable {
     name: String,
     numeric_type: NumericType,
     axiom_layer: Option<usize>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum NumericType {
+    Constant,
+    Derived,
+    Cost,
+    Regular,
 }
 
 impl NumericVariable {
@@ -248,10 +256,6 @@ impl ExplicitFact {
     pub fn value(&self) -> usize {
         self.value_id as usize
     }
-    pub fn is_hold(&self, state: ConcreteStateView<'_>) -> bool {
-        let value = state.packer().get(state.propositional(), self.var());
-        value == self.value() as u64
-    }
 }
 
 /// Identity, ordering and hashing are all over `(variable, value)` and ignore
@@ -346,15 +350,6 @@ impl Effect {
 
     pub fn value(&self) -> usize {
         self.effect_value
-    }
-
-    pub fn conditions_met(&self, state: ConcreteStateView<'_>) -> bool {
-        for condition in &self.conditions {
-            if !condition.is_hold(state) {
-                return false;
-            }
-        }
-        true
     }
 }
 
