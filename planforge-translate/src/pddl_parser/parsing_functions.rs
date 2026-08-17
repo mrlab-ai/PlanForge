@@ -711,11 +711,14 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
             ":derived" => {
                 axioms.push(parse_axiom(&section[1..], &type_dict));
             }
+            ":durative-action" | ":constraints" | ":safety" => {
+                panic!("domain section {tag} is valid PDDL but not supported")
+            }
             // PDDL 2.1's `(:axiom :vars ... :context ... :implies ...)` is a
             // different block shape, not a spelling of `:derived`; parsing it
             // as one would silently take `:vars` for the head predicate.
             ":axiom" => panic!(
-                "the PDDL 2.1 `(:axiom ...)` block is not supported; write the derived \
+                "domain section :axiom is valid PDDL but not supported; write the derived \
                  predicate as `(:derived (NAME ?x - t) CONDITION)`"
             ),
             ":global-constraint" => {
@@ -793,6 +796,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
             // The problem names the domain it belongs to; nothing checks
             // that against the domain file, which the caller chose.
             ":domain" => {}
+            ":requirements" => check_requirements(&section[1..]),
             ":objects" => {
                 objects = parse_typed_list(&section[1..], false, "object", type_dict);
             }
@@ -846,6 +850,9 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
                 };
                 metric = Some((dir_symbol.to_string(), metric_pne));
             }
+            ":constraints" | ":length" | ":situation" | ":expansion" => {
+                panic!("problem section {tag} is valid PDDL but not supported")
+            }
             unknown => panic!("unknown problem section {unknown}"),
         }
     }
@@ -887,6 +894,41 @@ mod tests {
     }
 
     #[test]
+    fn accepts_problem_requirements() {
+        parse_problem(
+            "(define (problem typed-problem)
+                (:domain typing-test)
+                (:requirements :typing)
+                (:init)
+                (:goal (and)))",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported requirement :durative-actions")]
+    fn validates_problem_requirements() {
+        parse_problem(
+            "(define (problem temporal-problem)
+                (:domain temporal-test)
+                (:requirements :durative-actions)
+                (:init)
+                (:goal (and)))",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "problem section :constraints is valid PDDL but not supported")]
+    fn rejects_unsupported_valid_problem_section_distinctly() {
+        parse_problem(
+            "(define (problem constrained-problem)
+                (:domain constraint-test)
+                (:init)
+                (:goal (and))
+                (:constraints (always (p))))",
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "action move: unknown key :preconditions")]
     fn rejects_unknown_action_key() {
         let form = parse_nested_list_string(
@@ -911,6 +953,20 @@ mod tests {
         .expect("test domain is valid S-expression");
 
         parse_domain_pddl(form.as_list());
+    }
+
+    #[test]
+    #[should_panic(expected = "domain section :durative-action is valid PDDL but not supported")]
+    fn rejects_unsupported_valid_domain_section_distinctly() {
+        parse_domain(
+            "(define (domain temporal-test)
+                (:requirements :strips)
+                (:durative-action wait
+                    :parameters ()
+                    :duration (= ?duration 1)
+                    :condition (and)
+                    :effect (and)))",
+        );
     }
 
     #[test]
