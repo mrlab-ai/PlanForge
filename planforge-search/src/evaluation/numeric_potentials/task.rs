@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use planforge_sas::axioms::{CalOperator, ComparisonOperator};
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericTaskExt, NumericType,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::ConcreteStateView;

@@ -195,21 +195,21 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.get_num_cmp_axioms()
     }
 
-    fn abstract_state_values(
+    fn project_state_values(
         &self,
         propositional_values: &[usize],
         numeric_values: &[f64],
     ) -> Result<(Vec<usize>, Vec<f64>), String> {
         self.base
-            .abstract_state_values(propositional_values, numeric_values)
+            .project_state_values(propositional_values, numeric_values)
     }
 
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
-        self.base.evaluated_initial_abstract_state_values()
+    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+        self.base.evaluate_initial_state_values()
     }
 
-    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
-        self.base.abstract_operator_cost(operator_id)
+    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64 {
+        self.base.operator_cost_for_abstraction(operator_id)
     }
 }
 

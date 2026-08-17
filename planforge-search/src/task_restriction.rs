@@ -4,8 +4,8 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
-    metric_operator_cost_from_initial_values,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType, NumericVariable,
+    Operator, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
 use tracing::info;

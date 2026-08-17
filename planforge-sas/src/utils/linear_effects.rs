@@ -6,7 +6,8 @@ use std::fmt;
 use crate::axioms::{AssignmentAxiom, CalOperator};
 use crate::numeric_conditions::NumericConditionError;
 use crate::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericTaskExt,
+    NumericType,
 };
 
 #[derive(Debug, Clone, PartialEq)]

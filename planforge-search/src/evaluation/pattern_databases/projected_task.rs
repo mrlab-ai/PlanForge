@@ -1429,7 +1429,7 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         self.comparison_axioms.len()
     }
 
-    fn abstract_state_values(
+    fn project_state_values(
         &self,
         propositional_values: &[usize],
         numeric_values: &[f64],
@@ -1437,11 +1437,11 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         ProjectedTask::project_state_values(self, propositional_values, numeric_values)
     }
 
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
         ProjectedTask::evaluated_initial_state_values(self).map_err(|err| err.to_string())
     }
 
-    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
+    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64 {
         self.operator_costs[operator_id]
     }
 }

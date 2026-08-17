@@ -7,7 +7,7 @@ use std::collections::BinaryHeap;
 use std::fmt;
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt};
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;

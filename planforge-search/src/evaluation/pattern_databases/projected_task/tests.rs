@@ -4,7 +4,7 @@ use planforge_sas::axioms::{
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    NumericRootTaskParts, NumericTaskExt, NumericType, NumericVariable, Operator,
 };
 
 use super::*;
@@ -91,6 +91,40 @@ fn projection_builds_a_compact_restricted_transition_system() {
     assert_eq!(projected.get_num_axioms(), 0);
     assert_eq!(projected.get_num_goals(), 1);
     assert_eq!(projected.get_initial_numeric_state_values(), &[0.0, 10.0]);
+}
+
+#[test]
+fn borrowed_task_extension_methods_preserve_projected_overrides() {
+    let task = restricted_sample_task();
+    let projected = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![0],
+            numeric: vec![1],
+        },
+    )
+    .unwrap();
+    let task_object: &dyn AbstractNumericTask = &projected;
+    let forwarded: &dyn AbstractNumericTask = &task_object;
+
+    let expected = projected
+        .abstract_state_values(
+            task.get_initial_propositional_state_values(),
+            task.get_initial_numeric_state_values(),
+        )
+        .unwrap();
+    let actual = forwarded
+        .abstract_state_values(
+            task.get_initial_propositional_state_values(),
+            task.get_initial_numeric_state_values(),
+        )
+        .unwrap();
+
+    assert_eq!(actual, expected);
+    assert_eq!(
+        forwarded.abstract_operator_cost(0),
+        projected.abstract_operator_cost(0)
+    );
 }
 
 #[test]

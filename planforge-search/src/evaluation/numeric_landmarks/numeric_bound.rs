@@ -1,6 +1,6 @@
 use super::numeric_helper::NumericTaskHelper;
 use planforge_sas::axioms::PropositionalAxiom;
-use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation};
+use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericTaskExt};
 use planforge_sas::utils::linear_effects::LinearExpression;
 
 #[derive(Debug, Clone)]

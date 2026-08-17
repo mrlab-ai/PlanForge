@@ -1,6 +1,7 @@
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericTaskExt,
+    NumericType, Operator,
 };
 use planforge_sas::utils::linear_effects::{LinearExpression, LinearNumericEffect};
 use std::collections::{BTreeMap, BTreeSet};

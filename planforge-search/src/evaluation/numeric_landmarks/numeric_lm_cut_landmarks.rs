@@ -7,7 +7,8 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, Effect, ExplicitFact, Operator, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, Effect, ExplicitFact, NumericTaskExt, Operator,
+    metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 use planforge_sas::utils::linear_effects::LinearNumericEffect;

@@ -9,7 +9,7 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueEr
 use pyo3::prelude::*;
 
 use planforge_sas::numeric_task::{
-    AssignmentOperation, Effect, NumericRootTask, NumericType, Operator, TaskRef,
+    AssignmentOperation, Effect, NumericRootTask, NumericTaskExt, NumericType, Operator, TaskRef,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};

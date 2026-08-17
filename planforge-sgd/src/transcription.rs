@@ -25,7 +25,7 @@
 //!   not consumable demand: retaining duplicate incidences would make grouped
 //!   causal demand exceed one even for an integral action.
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt};
 
 use crate::classical::{NotClassical, check_classical};
 
