@@ -105,7 +105,20 @@ impl Hasher for MixedU64Hasher {
 
 type MixedHasherBuilder = BuildHasherDefault<MixedU64Hasher>;
 
-type RegisteredStates = HashTable<u32>;
+/// The registered states, as `(hash, compact state id)` pairs.
+///
+/// The hash is stored rather than recomputed. hashbrown asks for an entry's hash
+/// again every time the table grows, and deriving it here means fetching that
+/// state's packed bins out of the data pool and running `fast_hash_bins` over
+/// them. Growing to a few hundred thousand states doubles the table around nine
+/// times, and because the sizes form a geometric series the last doublings
+/// dominate: raising the initial capacity is almost worthless, while making the
+/// rehash itself cheap removes the whole cost. It was 6% of search runtime.
+///
+/// The stored hash also pre-filters lookups. A bucket collision used to go
+/// straight to comparing packed bins, which is another data-pool fetch; now it
+/// compares two `u64`s first.
+type RegisteredStates = HashTable<(u64, u32)>;
 
 #[derive(Debug)]
 struct DenseCostInformation {
@@ -752,32 +765,23 @@ impl<'a> StateRegistry<'a> {
     fn find_registered_state_id(&self, key: u64, bins: &[u64]) -> Option<StateID> {
         let num_bins = self.num_state_bins();
         self.registered_states
-            .find(key, |&compact_existing_id| {
-                let existing_id = compact_existing_id as StateID;
-                self.get_buffer(existing_id)[..num_bins] == bins[..num_bins]
+            .find(key, |&(existing_hash, compact_existing_id)| {
+                existing_hash == key && {
+                    let existing_id = compact_existing_id as StateID;
+                    self.get_buffer(existing_id)[..num_bins] == bins[..num_bins]
+                }
             })
-            .map(|&id| id as StateID)
+            .map(|&(_, id)| id as StateID)
     }
 
     fn insert_registered_state_id(&mut self, key: u64, state_id: StateID) {
         let compact_state_id = u32::try_from(state_id)
             .unwrap_or_else(|_| panic!("registered state ID {state_id} exceeds u32"));
-        let num_bins = self.num_state_bins();
-        let state_data_pool = &self.state_data_pool;
-        let non_derived_bits_mask = &self.non_derived_bits_mask;
-        let has_axiom_derived_bits = self.has_axiom_derived_bits;
-        self.registered_states
-            .insert_unique(key, compact_state_id, |&compact_existing_id| {
-                let existing_id = compact_existing_id as StateID;
-                let bins = state_data_pool
-                    .get(existing_id)
-                    .expect("registered state ID must reference stored state data");
-                if has_axiom_derived_bits {
-                    fast_hash_bins_masked(&bins[..num_bins], &non_derived_bits_mask[..num_bins])
-                } else {
-                    fast_hash_bins(&bins[..num_bins])
-                }
-            });
+        self.registered_states.insert_unique(
+            key,
+            (key, compact_state_id),
+            |&(existing_hash, _)| existing_hash,
+        );
     }
 
     fn insert_id_or_pop_state(&mut self) -> (StateID, bool) {
@@ -829,17 +833,19 @@ impl<'a> StateRegistry<'a> {
 
         let existing_id = self
             .registered_states
-            .find(key, |&compact_candidate| {
-                let candidate = compact_candidate as StateID;
-                let existing = self.get_buffer(candidate);
-                let probe = self.get_buffer(state_id);
-                bins_eq_masked(
-                    &existing[..num_bins],
-                    &probe[..num_bins],
-                    &self.non_derived_bits_mask[..num_bins],
-                )
+            .find(key, |&(candidate_hash, compact_candidate)| {
+                candidate_hash == key && {
+                    let candidate = compact_candidate as StateID;
+                    let existing = self.get_buffer(candidate);
+                    let probe = self.get_buffer(state_id);
+                    bins_eq_masked(
+                        &existing[..num_bins],
+                        &probe[..num_bins],
+                        &self.non_derived_bits_mask[..num_bins],
+                    )
+                }
             })
-            .map(|&id| id as StateID);
+            .map(|&(_, id)| id as StateID);
 
         if let Some(existing_id) = existing_id {
             self.state_data_pool.pop_back();
