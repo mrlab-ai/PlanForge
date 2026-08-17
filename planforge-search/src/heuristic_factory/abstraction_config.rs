@@ -454,15 +454,18 @@ pub(crate) fn apply_icaps26_cartesian_options(
     let mut config = CartesianAbstractionConfig {
         max_states: usize::MAX,
         max_time: Some(Duration::from_secs(900)),
-        ..CartesianAbstractionConfig::default()
+        combine_labels: false,
+        compute_operator_footprints: component_use.needs_operator_footprints(),
+        retain_transition_system: component_use.needs_transition_system(),
+        random_seed: Some(2011),
+        flaw_kind: FlawKind::Progression,
+        refinement_direction: CartesianRefinementDirection::Regression,
+        abstract_plan_selection: CartesianAbstractPlanSelection::StableAStar,
+        flaw_candidate_generation: CartesianFlawCandidateGeneration::DesiredRegion,
+        split_selection_rank: None,
+        split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted),
+        debug: false,
     };
-    config.compute_operator_footprints = component_use.needs_operator_footprints();
-    config.retain_transition_system = component_use.needs_transition_system();
-    config.random_seed = Some(2011);
-    config.refinement_direction = CartesianRefinementDirection::Regression;
-    config.abstract_plan_selection = CartesianAbstractPlanSelection::StableAStar;
-    config.flaw_candidate_generation = CartesianFlawCandidateGeneration::DesiredRegion;
-    config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted);
 
     let mut seen = HashSet::new();
     for arg in args {

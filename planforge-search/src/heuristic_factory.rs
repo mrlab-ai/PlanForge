@@ -15,7 +15,9 @@ use crate::evaluation::abstraction_collections::saturated_cost_partitioning_onli
     FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
 };
 use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+    CartesianAbstractPlanSelection, CartesianAbstractionConfig, CartesianAbstractionGenerator,
+    CartesianAbstractionHeuristic, CartesianFlawCandidateGeneration,
+    CartesianRefinementDirection, CartesianSplitSelection,
 };
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
@@ -128,15 +130,104 @@ fn cartesian_config_from_collection(
     } else {
         None
     };
+    if !matches!(
+        config.flaw_kind,
+        crate::evaluation::cegar::FlawKind::Progression
+            | crate::evaluation::cegar::FlawKind::ExecuteEntirePlan
+    ) {
+        return Err(format!(
+            "Cartesian abstractions do not support flaw_kind={}; expected progression or execute_entire_plan",
+            config.flaw_kind
+        ));
+    }
     Ok(CartesianAbstractionConfig {
         max_states: config.max_abstraction_size,
         max_time,
         combine_labels: config.combine_labels,
         compute_operator_footprints,
+        retain_transition_system: true,
         random_seed: config.random_seed,
+        flaw_kind: config.flaw_kind,
+        refinement_direction: CartesianRefinementDirection::Progression,
+        abstract_plan_selection: CartesianAbstractPlanSelection::BackwardShortestPath,
+        flaw_candidate_generation: CartesianFlawCandidateGeneration::General,
+        split_selection_rank: None,
+        split_selection: CartesianSplitSelection::MinTransitionGrowth,
         debug: config.debug,
-        ..Default::default()
     })
+}
+
+fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConfig {
+    CartesianAbstractionConfig {
+        max_states: config.max_abstraction_size,
+        max_time: config.max_time,
+        combine_labels: config.combine_labels,
+        compute_operator_footprints: false,
+        retain_transition_system: true,
+        random_seed: config.random_seed,
+        flaw_kind: config.flaw_kind,
+        refinement_direction: CartesianRefinementDirection::Progression,
+        abstract_plan_selection: CartesianAbstractPlanSelection::BackwardShortestPath,
+        flaw_candidate_generation: CartesianFlawCandidateGeneration::General,
+        split_selection_rank: None,
+        split_selection: CartesianSplitSelection::MinTransitionGrowth,
+        debug: config.debug,
+    }
+}
+
+fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
+    const ORDER: &[&str] = &[
+        "max_abstraction_size",
+        "max_iterations",
+        "max_time",
+        "use_wildcard_plans",
+        "combine_labels",
+        "random_seed",
+        "flaw_treatment",
+        "flaw_kind",
+        "init_split_method",
+    ];
+    crate::config::for_each_option(args, ORDER, |key, _| match key {
+        "max_abstraction_size" | "max_time" | "combine_labels" | "random_seed" | "flaw_kind" => {
+            Ok(())
+        }
+        "max_iterations" | "use_wildcard_plans" | "flaw_treatment" | "init_split_method" => Err(
+            format!("option `{key}` is not supported for Cartesian abstractions"),
+        ),
+        other => Err(format!(
+            "unknown option `{other}` for `cartesian_abstraction`"
+        )),
+    })
+}
+
+fn validate_legacy_cartesian_collection_options(args: &[ConfigArg]) -> Result<(), String> {
+    const DOMAIN_ONLY: &[&str] = &[
+        "max_collection_size",
+        "total_max_time",
+        "stagnation_limit",
+        "blacklist_trigger_percentage",
+        "enable_blacklist_on_stagnation",
+        "blacklist_option",
+        "init_split_candidates",
+        "init_split_quantity",
+        "use_wildcard_plans",
+        "flaw_treatment",
+        "init_split_method",
+        "numeric_split_strategy",
+        "collection_strategy",
+        "interleave_split_directions",
+        "split_direction",
+    ];
+    for arg in args {
+        if let Some(key) = arg.key()
+            && DOMAIN_ONLY.contains(&key)
+        {
+            return Err(format!(
+                "option `{key}` is not supported for a Cartesian abstraction collection"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn build_max_from_sources<'task>(
@@ -285,17 +376,10 @@ pub fn build_heuristic_from_spec<'a>(
         }
         "cartesian_abstraction" => {
             info!("Building Cartesian abstraction (CEGAR)...");
+            validate_cartesian_cegar_options(&spec.args)?;
             let mut cegar_cfg = CegarConfig::default();
             cegar_cfg.apply_options(&spec.args)?;
-            let cfg = CartesianAbstractionConfig {
-                max_states: cegar_cfg.max_abstraction_size,
-                max_time: cegar_cfg.max_time,
-                combine_labels: cegar_cfg.combine_labels,
-                compute_operator_footprints: false,
-                random_seed: cegar_cfg.random_seed,
-                debug: cegar_cfg.debug,
-                ..Default::default()
-            };
+            let cfg = cartesian_config_from_cegar(&cegar_cfg);
             let generator = CartesianAbstractionGenerator::new(cfg)
                 .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
             let abstraction = generator
@@ -307,17 +391,12 @@ pub fn build_heuristic_from_spec<'a>(
             ))
         }
         "max_cartesian_abstraction" | "canonical_cartesian_abstraction" => {
+            validate_cartesian_cegar_options(&spec.args)?;
             let mut cegar_cfg = CegarConfig::default();
             cegar_cfg.apply_options(&spec.args)?;
-            let generator = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-                max_states: cegar_cfg.max_abstraction_size,
-                max_time: cegar_cfg.max_time,
-                combine_labels: cegar_cfg.combine_labels,
-                compute_operator_footprints: false,
-                random_seed: cegar_cfg.random_seed,
-                debug: cegar_cfg.debug,
-                ..Default::default()
-            })
+            let generator = CartesianAbstractionGenerator::new(cartesian_config_from_cegar(
+                &cegar_cfg,
+            ))
             .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
             let abstraction = generator
                 .generate(task)
@@ -550,9 +629,12 @@ pub fn build_heuristic_from_spec<'a>(
                     source_config.construction_deadline,
                 );
             }
+            let use_cartesian = spec.name == "scp_online_cartesian";
+            if use_cartesian {
+                validate_legacy_cartesian_collection_options(&spec.args)?;
+            }
             let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            let use_cartesian = spec.name == "scp_online_cartesian";
             let abstractions = if use_cartesian {
                 Vec::new()
             } else {
@@ -622,13 +704,16 @@ pub fn build_heuristic_from_spec<'a>(
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
         "fillscp" | "fill_scp" | "fillscp_cartesian" | "fill_scp_cartesian" => {
-            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.force_full_goal_tasks();
             let use_cartesian = matches!(
                 spec.name.as_str(),
                 "fillscp_cartesian" | "fill_scp_cartesian"
             );
+            if use_cartesian {
+                validate_legacy_cartesian_collection_options(&spec.args)?;
+            }
+            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
+            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            cfg.force_full_goal_tasks();
             let (abstractions, cartesian_abstractions) = if use_cartesian {
                 info!("Building fillSCP Cartesian abstraction (CEGAR)...");
                 let cartesian_config = cartesian_config_from_collection(

@@ -247,6 +247,66 @@ fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
 }
 
 #[test]
+fn direct_cartesian_abstraction_rejects_unsupported_flaw_kind() {
+    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=regression))");
+    let mut cegar = CegarConfig::default();
+    cegar.apply_options(&h.args).unwrap();
+
+    let result = crate::evaluation::cartesian_abstractions::CartesianAbstractionGenerator::new(
+        super::cartesian_config_from_cegar(&cegar),
+    );
+    assert!(
+        result.is_err(),
+        "flaw_kind=regression must not silently become progression"
+    );
+}
+
+#[test]
+fn direct_cartesian_abstraction_rejects_cegar_only_options() {
+    for option in [
+        "max_iterations=10",
+        "use_wildcard_plans=true",
+        "flaw_treatment=first",
+        "init_split_method=identity",
+    ] {
+        let h = astar_heuristic(&format!("astar(cartesian_abstraction({option}))"));
+        let error = super::validate_cartesian_cegar_options(&h.args).unwrap_err();
+        assert!(
+            error.contains("not supported for Cartesian"),
+            "got `{error}`"
+        );
+    }
+}
+
+#[test]
+fn legacy_cartesian_collection_conversion_preserves_flaw_kind() {
+    let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        flaw_kind: FlawKind::ExecuteEntirePlan,
+        ..Default::default()
+    };
+    let cartesian = super::cartesian_config_from_collection(&config, false).unwrap();
+    assert_eq!(cartesian.flaw_kind, FlawKind::ExecuteEntirePlan);
+
+    config.flaw_kind = FlawKind::Regression;
+    let error = super::cartesian_config_from_collection(&config, false).unwrap_err();
+    assert!(error.contains("flaw_kind=regression"), "got `{error}`");
+}
+
+#[test]
+fn legacy_cartesian_collection_rejects_domain_only_options() {
+    for option in [
+        "max_collection_size=100",
+        "use_wildcard_plans=true",
+        "flaw_treatment=first",
+        "init_split_method=identity",
+    ] {
+        let h = astar_heuristic(&format!("astar(scp_online_cartesian({option}))"));
+        let error = super::validate_legacy_cartesian_collection_options(&h.args).unwrap_err();
+        assert!(error.contains("not supported"), "got `{error}`");
+    }
+}
+
+#[test]
 fn rejects_boolean_cost_partitioning_mode() {
     let h = astar_heuristic("astar(scp(domain(), partitioning=label))");
     let (_, options) = abstraction_config::split_component_sources(&h.args).unwrap();
