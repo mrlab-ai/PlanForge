@@ -7,7 +7,9 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::abstract_operator_generator::AbstractOperator;
 use super::cegar::{Cegar, CegarConfig, CegarStopReason};
-use super::domain_abstraction_factory::{AbstractDistanceTable, DomainAbstractionFactory};
+use super::domain_abstraction_factory::{
+    AbstractDistanceTable, DistanceTableOptions, DomainAbstractionFactory,
+};
 use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransitionSystem,
 };
@@ -99,11 +101,13 @@ impl DomainAbstraction {
         if self.regional_transition_system.borrow().is_none() {
             let mut transition_system = self
                 .factory
-                .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+                .build_abstract_transition_system_from_operators(
                     task,
                     self.combine_labels,
                     &self.abstract_operators,
-                    deadline,
+                    DistanceTableOptions::default()
+                        .without_state_regions()
+                        .with_deadline(deadline),
                 )?;
             transition_system.forward.clear();
             *self.regional_transition_system.borrow_mut() = Some(transition_system);
@@ -216,11 +220,11 @@ impl DomainAbstractionGenerator {
             compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
                 .context("failed to compute hash multipliers")?;
         let relevant_operator_ids = factory
-            .relevant_operator_ids_from_operators_with_deadline(
+            .relevant_operator_ids_from_operators(
                 task,
                 self.config.combine_labels,
                 &abstract_operators,
-                None,
+                DistanceTableOptions::default(),
             )
             .context("failed to compute relevant operator ids")?;
 

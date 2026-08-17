@@ -38,7 +38,9 @@ use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, Numeri
 use planforge_sas::utils::interval::Interval;
 
 use super::domain_abstraction::NumericPartitions;
-use super::domain_abstraction_factory::{DomainAbstractionFactory, WildcardPlanResult};
+use super::domain_abstraction_factory::{
+    DistanceTableOptions, DomainAbstractionFactory, WildcardPlanResult,
+};
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
 /// The only abstract domain a refined condition variable ever has: the value
@@ -377,13 +379,14 @@ impl Cegar {
 
             let iteration_start = Instant::now();
             let plan_start = Instant::now();
-            match factory.compute_plan_with_rng_and_deadline(
+            match factory.compute_plan_with_rng(
                 task,
                 config.combine_labels,
-                config.debug,
                 config.use_wildcard_plans,
                 Some(&mut rng),
-                deadline,
+                DistanceTableOptions::default()
+                    .with_dump_distances(config.debug)
+                    .with_deadline(deadline),
             ) {
                 Ok(plan) => wildcard_plan = plan,
                 Err(error) if is_deadline_error(&error) => {

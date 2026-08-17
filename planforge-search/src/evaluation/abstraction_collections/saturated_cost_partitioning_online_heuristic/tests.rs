@@ -1252,11 +1252,11 @@ mod handcrafted_sailing_tests {
             &abstract_operators,
             false,
         )?;
-        let relevant_operator_ids = factory.relevant_operator_ids_from_operators_with_deadline(
+        let relevant_operator_ids = factory.relevant_operator_ids_from_operators(
             transformed_task,
             false,
             &abstract_operators,
-            None,
+            DistanceTableOptions::default(),
         )?;
         let hash_multipliers =
             compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())?;

@@ -5,7 +5,9 @@ use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use tracing::{info, warn};
 
-use crate::evaluation::domain_abstractions::domain_abstraction_factory::OcpTransitionSystemBuild;
+use crate::evaluation::domain_abstractions::domain_abstraction_factory::{
+    DistanceTableOptions, OcpTransitionSystemBuild,
+};
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -39,12 +41,11 @@ impl PotentialAbstractionOcpHeuristic {
     ) -> Result<Self, String> {
         let transition_build = abstraction
             .factory
-            .build_ocp_transition_system_from_operators_with_deadline(
+            .build_ocp_transition_system_from_operators(
                 task,
                 abstraction.combine_labels,
                 &abstraction.abstract_operators,
-                None,
-                max_recorded_transitions,
+                DistanceTableOptions::default().with_concrete_label_cap(max_recorded_transitions),
             )
             .map_err(|error| format!("pot_da_ocp could not record transitions: {error:#}"))?;
         let (transition_system, recorded_transition_count) = match transition_build {

@@ -177,7 +177,13 @@ fn transition_cost_partitioned_table_uses_abstract_transitions() {
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
 
     let (table, tcf, transition_system) = factory
-        .build_transition_cost_partitioned_distance_table(&task, false, &residuals, 0, None)
+        .build_transition_cost_partitioned_distance_table(
+            &task,
+            false,
+            &residuals,
+            0,
+            DistanceTableOptions::default(),
+        )
         .unwrap();
 
     assert_eq!(transition_system.transitions.len(), 1);
@@ -267,11 +273,11 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         );
     }
     let transition_system = factory
-        .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+        .build_abstract_transition_system_from_operators(
             &task,
             false,
             &abstract_operators,
-            None,
+            DistanceTableOptions::default().without_state_regions(),
         )
         .unwrap();
     let (explicit, _) =
@@ -420,11 +426,11 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     let abstract_operators = operator_generator.build_abstract_operators(&task).unwrap();
     assert_eq!(abstract_operators.len(), 1);
     let transition_system = factory
-        .build_abstract_transition_system_from_operators_without_regions_with_deadline(
+        .build_abstract_transition_system_from_operators(
             &task,
             false,
             &abstract_operators,
-            None,
+            DistanceTableOptions::default().without_state_regions(),
         )
         .unwrap();
     let footprints = vec![AbstractOperatorFootprint {
@@ -440,13 +446,12 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
 
     let (table, allocation) = factory
-        .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+        .build_precise_regional_cost_partitioned_distance_table(
             &transition_system,
             &footprints,
             &residuals,
             0,
-            None,
-            None,
+            DistanceTableOptions::default(),
         )
         .unwrap();
 
@@ -851,7 +856,13 @@ fn singleton_plan_selection_uses_seeded_rng() {
     let factory = factory_identity_cutpoints(&task).unwrap();
     let mut rng = SmallRng::seed_from_u64(7);
     let result = factory
-        .compute_plan_with_rng(&task, true, false, false, Some(&mut rng))
+        .compute_plan_with_rng(
+            &task,
+            true,
+            false,
+            Some(&mut rng),
+            DistanceTableOptions::default(),
+        )
         .unwrap()
         .expect("plan exists");
     assert_eq!(result.wildcard_plan.len(), 1);

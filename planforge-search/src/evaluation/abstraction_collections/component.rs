@@ -5,6 +5,7 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use crate::evaluation::cartesian_abstractions::{
     CartesianAbstraction, CartesianAbstractionHeuristic,
 };
+use crate::evaluation::domain_abstractions::domain_abstraction_factory::DistanceTableOptions;
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -225,11 +226,11 @@ impl<'task> AbstractionComponent<'task> {
                         })?;
                     abstraction
                         .factory
-                        .relevant_operator_ids_from_operators_with_deadline(
+                        .relevant_operator_ids_from_operators(
                             abstraction_task,
                             abstraction.combine_labels,
                             &operators,
-                            None,
+                            DistanceTableOptions::default(),
                         )
                         .map_err(|error| {
                             format!("failed to compute domain relevant operators: {error:#}")

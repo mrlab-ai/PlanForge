@@ -27,7 +27,7 @@ use super::cost_partitioning::{
 };
 use crate::evaluation::domain_abstractions::abstract_operator_generator::AbstractOperator;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::{
-    AbstractDistanceTable, SaturationStep,
+    AbstractDistanceTable, DistanceTableOptions, SaturationStep,
 };
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
@@ -180,7 +180,7 @@ impl ComponentSaturation<'_, '_> {
                 let abstraction_task = abstraction.task_for_factory(self.task);
                 let (table, saturated) = abstraction
                     .factory
-                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints(
                         abstraction_task,
                         abstraction.combine_labels,
                         &abstraction.abstract_operators,
@@ -191,7 +191,7 @@ impl ComponentSaturation<'_, '_> {
                             current_state_id: self.current_state_id,
                             cap_state_id,
                         },
-                        deadline,
+                        DistanceTableOptions::default().with_deadline(deadline),
                     )
                     .map_err(|error| {
                         SaturatedCostPartitioningOnlineHeuristic::construction_error(
@@ -214,13 +214,14 @@ impl ComponentSaturation<'_, '_> {
                     })?;
                 let (table, saturated) = abstraction
                     .factory
-                    .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                    .build_precise_regional_cost_partitioned_distance_table(
                         &transition_system,
                         &abstraction.abstract_operator_footprints,
                         residual,
                         component_id,
-                        cap_state_id,
-                        deadline,
+                        DistanceTableOptions::default()
+                            .with_cap_state(cap_state_id)
+                            .with_deadline(deadline),
                     )
                     .map_err(|error| {
                         SaturatedCostPartitioningOnlineHeuristic::construction_error(
@@ -557,12 +558,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                         })?;
                     let (_, saturated) = abstraction
                         .factory
-                        .build_cost_partitioned_distance_table_for_goals(
+                        .build_cost_partitioned_distance_table(
                             abstraction_task,
                             config.combine_labels,
                             &original_costs,
-                            false,
-                            goal_facts,
+                            DistanceTableOptions::default().with_goal_facts(goal_facts),
                         )
                         .map_err(|error| {
                             EvaluationError::ComputationFailed(format!(
@@ -2670,13 +2670,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let start = Instant::now();
         let (table, saturated) = abstraction
             .factory
-            .build_cost_partitioned_distance_table_for_goals_with_deadline(
+            .build_cost_partitioned_distance_table(
                 task,
                 combine_labels,
                 remaining_costs,
-                false,
-                &abstraction.distance_table.goal_facts,
-                deadline,
+                DistanceTableOptions::default()
+                    .with_goal_facts(&abstraction.distance_table.goal_facts)
+                    .with_deadline(deadline),
             )
             .map_err(|error| Self::construction_error("failed to compute SCP table", error))?;
         debug!(
@@ -2703,12 +2703,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
         let (table, _) = abstraction
             .factory
-            .build_cost_partitioned_distance_table_for_goals(
+            .build_cost_partitioned_distance_table(
                 task,
                 combine_labels,
                 remaining_costs,
-                false,
-                &abstraction.distance_table.goal_facts,
+                DistanceTableOptions::default()
+                    .with_goal_facts(&abstraction.distance_table.goal_facts),
             )
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
