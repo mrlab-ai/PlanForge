@@ -150,7 +150,11 @@ fn get_objects_by_type(
         .filter_map(|t| Some((t.name.as_str(), t.basetype_name.as_deref()?)))
         .collect();
 
-    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    let mut result: HashMap<String, Vec<String>> = types
+        .iter()
+        .map(|type_| (type_.name.clone(), Vec::new()))
+        .chain(std::iter::once(("object".to_string(), Vec::new())))
+        .collect();
     for object in objects {
         let mut type_name = object.type_name.as_str();
         loop {
@@ -444,13 +448,18 @@ pub(crate) fn for_each_parameter_tuple(
     objects_by_type: &HashMap<String, Vec<String>>,
     visit: &mut impl FnMut(&[String]),
 ) {
-    const NO_OBJECTS: &[String] = &[];
     let domains: Vec<&[String]> = parameters
         .iter()
         .map(|parameter| {
             objects_by_type
                 .get(&parameter.type_name)
-                .map_or(NO_OBJECTS, Vec::as_slice)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "parameter {} uses type {} that was not validated at parse time",
+                        parameter.name, parameter.type_name
+                    )
+                })
+                .as_slice()
         })
         .collect();
     if domains.iter().any(|objects| objects.is_empty()) {

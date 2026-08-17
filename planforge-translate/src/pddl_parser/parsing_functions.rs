@@ -17,6 +17,7 @@ pub fn parse_typed_list(
     alist: &[SExpr],
     only_variables: bool,
     default_type: &str,
+    type_dict: &HashMap<String, Vec<String>>,
 ) -> Vec<TypedObject> {
     let mut result = vec![];
     let mut untyped_items: Vec<String> = vec![];
@@ -41,7 +42,10 @@ pub fn parse_typed_list(
             // parameter list from a declaration, so this is recorded here rather
             // than guarded here. Issue 50 tracks it.
             let type_name: String = match &alist[i] {
-                SExpr::Atom(name) => name.clone(),
+                SExpr::Atom(name) => {
+                    assert!(type_dict.contains_key(name), "undeclared type {name}");
+                    name.clone()
+                }
                 SExpr::List(parts) => {
                     let words: Vec<&str> = parts.iter().map(SExpr::as_atom).collect();
                     assert_eq!(
@@ -49,6 +53,13 @@ pub fn parse_typed_list(
                         Some("either"),
                         "a type is a single word or (either WORD...), got {parts:?}"
                     );
+                    assert!(
+                        words.len() > 1,
+                        "an either type must name at least one type"
+                    );
+                    for name in &words[1..] {
+                        assert!(type_dict.contains_key(*name), "undeclared type {name}");
+                    }
                     format!("either-{}", words[1..].join("-"))
                 }
             };
@@ -67,6 +78,10 @@ pub fn parse_typed_list(
     }
 
     // Remaining items have the default type
+    assert!(
+        type_dict.contains_key(default_type),
+        "undeclared default type {default_type}"
+    );
     for name in &untyped_items {
         if only_variables && !name.starts_with('?') {
             panic!("Expected variable, got: {}", name);
@@ -170,15 +185,19 @@ fn check_requirements(requirements: &[SExpr]) {
     }
 }
 
-pub fn parse_predicate(alist: &[SExpr]) -> Predicate {
+pub fn parse_predicate(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Predicate {
     let name = alist[0].as_atom().to_string();
-    let arguments = parse_typed_list(&alist[1..], true, "object");
+    let arguments = parse_typed_list(&alist[1..], true, "object", type_dict);
     Predicate::new(name, arguments)
 }
 
-pub fn parse_function(alist: &[SExpr], type_name: &str) -> Function {
+pub fn parse_function(
+    alist: &[SExpr],
+    type_name: &str,
+    type_dict: &HashMap<String, Vec<String>>,
+) -> Function {
     let name = alist[0].as_atom().to_string();
-    let arguments = parse_typed_list(&alist[1..], true, "object");
+    let arguments = parse_typed_list(&alist[1..], true, "object", type_dict);
     Function::new(name, arguments, type_name.to_string())
 }
 
@@ -267,13 +286,13 @@ fn parse_condition_aux(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>
         }
         "forall" => {
             let params_list = alist[1].as_list();
-            let parameters = parse_typed_list(params_list, true, "object");
+            let parameters = parse_typed_list(params_list, true, "object", type_dict);
             let body = parse_condition(&alist[2], type_dict);
             Condition::UniversalCondition(UniversalCondition::new(parameters, vec![body]))
         }
         "exists" => {
             let params_list = alist[1].as_list();
-            let parameters = parse_typed_list(params_list, true, "object");
+            let parameters = parse_typed_list(params_list, true, "object", type_dict);
             let body = parse_condition(&alist[2], type_dict);
             Condition::ExistentialCondition(ExistentialCondition::new(parameters, vec![body]))
         }
@@ -477,7 +496,7 @@ fn parse_effect(alist: &SExpr, type_dict: &HashMap<String, Vec<String>>) -> Effe
         }
         "forall" => {
             let params_list = items[1].as_list();
-            let parameters = parse_typed_list(params_list, true, "object");
+            let parameters = parse_typed_list(params_list, true, "object", type_dict);
             let effect = parse_effect(&items[2], type_dict);
             EffectType::Universal(UniversalEffect::new(parameters, effect))
         }
@@ -521,7 +540,7 @@ pub fn parse_action(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -
             ":parameters" => {
                 i += 1;
                 let params_list = alist[i].as_list();
-                parameters = parse_typed_list(params_list, true, "object");
+                parameters = parse_typed_list(params_list, true, "object", type_dict);
             }
             ":precondition" => {
                 i += 1;
@@ -581,7 +600,7 @@ pub fn parse_global_constraint(alist: &[SExpr], type_dict: &HashMap<String, Vec<
             ":parameters" => {
                 i += 1;
                 let params_list = alist[i].as_list();
-                parameters = parse_typed_list(params_list, true, "object");
+                parameters = parse_typed_list(params_list, true, "object", type_dict);
             }
             ":condition" => {
                 i += 1;
@@ -619,7 +638,7 @@ pub fn parse_axiom(alist: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
         alist[0].as_atom()
     );
 
-    let head = parse_predicate(alist[0].as_list());
+    let head = parse_predicate(alist[0].as_list(), type_dict);
     let condition = parse_condition(&alist[1], type_dict);
     let num_external = head.arguments.len();
     Axiom::new(head.name, head.arguments, num_external, condition)
@@ -649,6 +668,17 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
     let mut actions: Vec<Action> = vec![];
     let mut axioms: Vec<Axiom> = vec![];
 
+    // Domain sections are not required to put `:types` before declarations
+    // that use them, so build the complete type table before parsing any such
+    // declaration.
+    for item in &items[2..] {
+        let section = item.as_list();
+        if section.first().is_some_and(|tag| tag.as_atom() == ":types") {
+            types = parse_type_list(&section[1..]);
+            type_dict = set_supertypes(&types);
+        }
+    }
+
     for item in &items[2..] {
         let section = item.as_list();
         if section.is_empty() {
@@ -661,22 +691,19 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
             // requirement list adds nothing. It still has to be matched here,
             // or it would be reported as an unknown section.
             ":requirements" => check_requirements(&section[1..]),
-            ":types" => {
-                types = parse_type_list(&section[1..]);
-                type_dict = set_supertypes(&types);
-            }
+            ":types" => {}
             ":constants" => {
-                constants = parse_typed_list(&section[1..], false, "object");
+                constants = parse_typed_list(&section[1..], false, "object", &type_dict);
             }
             ":predicates" => {
                 predicates = section[1..]
                     .iter()
-                    .map(|p| parse_predicate(p.as_list()))
+                    .map(|p| parse_predicate(p.as_list(), &type_dict))
                     .collect();
             }
             ":functions" => {
                 // Functions can have a return type after "-"
-                functions = parse_function_list(&section[1..]);
+                functions = parse_function_list(&section[1..], &type_dict);
             }
             ":action" => {
                 actions.push(parse_action(&section[1..], &type_dict));
@@ -712,7 +739,7 @@ fn parse_domain_pddl(items: &[SExpr]) -> (DomainDefinition, HashMap<String, Vec<
 }
 
 /// Parse function declarations with types
-fn parse_function_list(items: &[SExpr]) -> Vec<Function> {
+fn parse_function_list(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) -> Vec<Function> {
     let mut result = vec![];
     let mut current_functions: Vec<&SExpr> = vec![];
     let mut i = 0;
@@ -724,7 +751,7 @@ fn parse_function_list(items: &[SExpr]) -> Vec<Function> {
                 let type_name = items[i].as_atom();
                 for func_expr in &current_functions {
                     let func_list = func_expr.as_list();
-                    result.push(parse_function(func_list, type_name));
+                    result.push(parse_function(func_list, type_name, type_dict));
                 }
                 current_functions.clear();
             }
@@ -738,7 +765,7 @@ fn parse_function_list(items: &[SExpr]) -> Vec<Function> {
     // Remaining functions have default type "number"
     for func_expr in &current_functions {
         let func_list = func_expr.as_list();
-        result.push(parse_function(func_list, "number"));
+        result.push(parse_function(func_list, "number", type_dict));
     }
 
     result
@@ -767,7 +794,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
             // that against the domain file, which the caller chose.
             ":domain" => {}
             ":objects" => {
-                objects = parse_typed_list(&section[1..], false, "object");
+                objects = parse_typed_list(&section[1..], false, "object", type_dict);
             }
             ":init" => {
                 for item in &section[1..] {
@@ -920,6 +947,62 @@ mod tests {
                 (:init (= (fuel) 1) (= (time) 2))
                 (:goal (and))
                 (:metric minimize (+ (fuel) (time))))",
+        );
+    }
+
+    fn parse_domain(domain: &str) {
+        let form = parse_nested_list_string(domain).expect("test domain is valid S-expression");
+        parse_domain_pddl(form.as_list());
+    }
+
+    #[test]
+    #[should_panic(expected = "undeclared type typoo")]
+    fn rejects_undeclared_predicate_parameter_type() {
+        parse_domain(
+            "(define (domain bad-predicate-type)
+                (:requirements :typing)
+                (:types place)
+                (:predicates (at ?x - typoo)))",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "undeclared type typoo")]
+    fn rejects_undeclared_action_parameter_type() {
+        parse_domain(
+            "(define (domain bad-action-type)
+                (:requirements :typing)
+                (:types place)
+                (:predicates (p))
+                (:action a :parameters (?x - typoo) :effect (p)))",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "undeclared type typoo")]
+    fn rejects_undeclared_universal_parameter_type() {
+        parse_domain(
+            "(define (domain bad-forall-type)
+                (:requirements :adl)
+                (:types place)
+                (:predicates (p ?x - place))
+                (:action a :parameters ()
+                    :precondition (forall (?x - typoo) (p ?x))
+                    :effect (p nowhere)))",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "undeclared type typoo")]
+    fn rejects_undeclared_existential_parameter_type() {
+        parse_domain(
+            "(define (domain bad-exists-type)
+                (:requirements :adl)
+                (:types place)
+                (:predicates (p ?x - place))
+                (:action a :parameters ()
+                    :precondition (exists (?x - typoo) (p ?x))
+                    :effect (p nowhere)))",
         );
     }
 }
