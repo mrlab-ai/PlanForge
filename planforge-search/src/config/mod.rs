@@ -19,6 +19,38 @@ pub use planforge_config_derive::ApplyOptions;
 
 mod parser;
 
+/// Declares a name-indexed static plugin table and its lookup function.
+///
+/// The descriptor type decides what a plugin must declare. Registry users add
+/// one entry containing every required field; omitted fields are therefore a
+/// compile error. Heuristics and search algorithms share this mechanism.
+#[macro_export]
+macro_rules! plugin_registry {
+    (
+        $registry_vis:vis static $registry:ident: $descriptor:ty;
+        $lookup_vis:vis fn $lookup:ident;
+        entries {
+            $(
+                $(#[$entry_meta:meta])*
+                $name:expr => $value:expr
+            ),+ $(,)?
+        }
+    ) => {
+        $registry_vis static $registry: &[(&str, $descriptor)] = &[
+            $(
+                $(#[$entry_meta])*
+                ($name, $value),
+            )+
+        ];
+
+        $lookup_vis fn $lookup(name: &str) -> Option<&'static $descriptor> {
+            $registry
+                .iter()
+                .find_map(|(registered, descriptor)| (*registered == name).then_some(descriptor))
+        }
+    };
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConfigCall {
     pub name: String,

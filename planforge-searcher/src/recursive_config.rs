@@ -86,7 +86,11 @@ impl fmt::Display for SearchSpec {
 // =============================================================================
 
 pub fn parse_search_spec(raw: &str) -> Result<SearchSpec, String> {
-    build_search_spec(&parse_call(raw)?)
+    let spec = build_search_spec(&parse_call(raw)?)?;
+    for heuristic in spec.heuristics() {
+        planforge_search::heuristic_factory::validate_heuristic_spec(heuristic)?;
+    }
+    Ok(spec)
 }
 
 // =============================================================================

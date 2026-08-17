@@ -1,9 +1,9 @@
 //! `--search` heuristic construction: a parsed [`HeuristicSpec`] in, a
 //! `Box<dyn Heuristic>` out.
 //!
-//! This lives next to the heuristics it builds, so adding one is a change to
-//! this crate alone: the heuristic's own module, and one arm of
-//! [`build_heuristic_from_spec_with_task_ref`] below.
+//! The registry at the bottom of this file declares every built-in exactly
+//! once. Dispatch, backend preflight, task-shape validation, legal names and
+//! CLI help are generated from that declaration.
 
 use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use tracing::info;
@@ -42,21 +42,198 @@ mod tests;
 
 use crate::config::{ApplyOptions, ConfigArg, HeuristicSpec};
 
-/// Fail before construction starts if `spec` names a heuristic this build
-/// cannot supply a solver backend for. Nothing else in the pipeline can tell
-/// the difference between "no CPLEX compiled in" and "CPLEX said no", and a
-/// half-hour translation before that error is a waste.
-///
-/// The list of LP-backed names lives here, with the heuristics themselves, so
-/// that adding one is still a change to this crate alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RequiredBackend {
+    None,
+    Cplex,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TaskRequirements {
+    restricted: bool,
+    abstractable_goal: bool,
+}
+
+impl TaskRequirements {
+    const ANY: Self = Self {
+        restricted: false,
+        abstractable_goal: false,
+    };
+    const ABSTRACTABLE_GOAL: Self = Self {
+        restricted: false,
+        abstractable_goal: true,
+    };
+    const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
+        restricted: true,
+        abstractable_goal: true,
+    };
+
+    fn validate(self, task: &dyn AbstractNumericTask) -> Result<(), String> {
+        if self.restricted {
+            validate_restricted_task(task)?;
+        }
+        if self.abstractable_goal {
+            crate::evaluation::validate_abstractable_goal(task)?;
+        }
+        Ok(())
+    }
+}
+
+type RequirementsFn = fn(&HeuristicSpec) -> Result<TaskRequirements, String>;
+type NestedHeuristicsFn = fn(&HeuristicSpec) -> Result<Vec<HeuristicSpec>, String>;
+
+struct HeuristicPlugin {
+    backend: RequiredBackend,
+    requirements: RequirementsFn,
+    nested_heuristics: NestedHeuristicsFn,
+}
+
+fn any_task(_: &HeuristicSpec) -> Result<TaskRequirements, String> {
+    Ok(TaskRequirements::ANY)
+}
+
+fn abstractable_task(_: &HeuristicSpec) -> Result<TaskRequirements, String> {
+    Ok(TaskRequirements::ABSTRACTABLE_GOAL)
+}
+
+fn restricted_abstractable_task(_: &HeuristicSpec) -> Result<TaskRequirements, String> {
+    Ok(TaskRequirements::RESTRICTED_ABSTRACTABLE_GOAL)
+}
+
+fn component_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
+    let restricted = spec.contains_call("pdb") || spec.contains_call("numeric_pdb");
+    Ok(TaskRequirements {
+        restricted,
+        abstractable_goal: true,
+    })
+}
+
+fn scp_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
+    let (sources, _) = split_component_sources(&spec.args)?;
+    if !sources.is_empty() {
+        return component_task_requirements(spec);
+    }
+    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
+    config.apply_options(&spec.args)?;
+    Ok(TaskRequirements {
+        restricted: config.use_numeric_pdbs,
+        abstractable_goal: true,
+    })
+}
+
+fn no_nested_heuristics(_: &HeuristicSpec) -> Result<Vec<HeuristicSpec>, String> {
+    Ok(Vec::new())
+}
+
+fn wrapped_heuristic(spec: &HeuristicSpec) -> Result<Vec<HeuristicSpec>, String> {
+    Ok(vec![single_wrapped_heuristic_spec(&spec.name, &spec.args)?])
+}
+
+macro_rules! heuristic_registry {
+    (
+        build($spec:ident, $task:ident, $sampling_task:ident);
+        $(
+            $entry:ident {
+                names: [$($name:literal),+ $(,)?],
+                backend: $backend:expr,
+                requirements: $requirements:expr,
+                nested: $nested:expr,
+                build: $body:block
+            }
+        )+
+    ) => {
+        crate::plugin_registry! {
+            static HEURISTIC_PLUGINS: HeuristicPlugin;
+            fn heuristic_plugin;
+            entries {
+                $(
+                    $(
+                        $name => HeuristicPlugin {
+                            backend: $backend,
+                            requirements: $requirements,
+                            nested_heuristics: $nested,
+                        }
+                    ),+
+                ),+
+            }
+        }
+
+        pub const HEURISTIC_HELP: &str = concat!(
+            "Built-in heuristics: ",
+            $($( $name, ", ", )+)+
+            "Custom Rust heuristics can still be passed directly as Box<dyn Heuristic>."
+        );
+
+        pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
+            HEURISTIC_PLUGINS.iter().map(|(name, _)| *name)
+        }
+
+        pub fn build_heuristic_from_spec<'a>(
+            $spec: &HeuristicSpec,
+            $task: &'a dyn AbstractNumericTask,
+            $sampling_task: TaskRef<'a>,
+        ) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
+            let plugin = heuristic_plugin(&$spec.name).ok_or_else(|| {
+                format!(
+                    "unknown heuristic `{}`; expected one of {}",
+                    $spec.name,
+                    heuristic_names().collect::<Vec<_>>().join(", ")
+                )
+            })?;
+            (plugin.requirements)($spec)?.validate($task)?;
+            match $spec.name.as_str() {
+                $(
+                    $($name)|+ => $body,
+                )+
+                _ => unreachable!("the registry lookup and generated dispatch have the same names"),
+            }
+        }
+    };
+}
+
+/// Validate a heuristic name and every nested heuristic against the generated
+/// registry. Parsers call this before translation, while direct Rust callers
+/// receive the same check at construction.
+pub fn validate_heuristic_spec(spec: &HeuristicSpec) -> Result<(), String> {
+    let plugin = heuristic_plugin(&spec.name).ok_or_else(|| {
+        format!(
+            "unknown heuristic `{}`; expected one of {}",
+            spec.name,
+            heuristic_names().collect::<Vec<_>>().join(", ")
+        )
+    })?;
+    for nested in (plugin.nested_heuristics)(spec)? {
+        validate_heuristic_spec(&nested)?;
+    }
+    Ok(())
+}
+
+/// Fail before construction starts if `spec` or one of its nested heuristics
+/// needs a solver backend this build cannot supply.
 pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> {
-    if !spec.contains_call("numeric_potential")
-        && !spec.contains_call("pot_da_ocp")
-        && !spec.contains_call("posthoc_optimization")
-        && !spec.contains_call("pho")
-    {
+    fn needs_cplex(spec: &HeuristicSpec) -> Result<bool, String> {
+        let plugin = heuristic_plugin(&spec.name).ok_or_else(|| {
+            format!(
+                "unknown heuristic `{}`; expected one of {}",
+                spec.name,
+                heuristic_names().collect::<Vec<_>>().join(", ")
+            )
+        })?;
+        if plugin.backend == RequiredBackend::Cplex {
+            return Ok(true);
+        }
+        for nested in (plugin.nested_heuristics)(spec)? {
+            if needs_cplex(&nested)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    if !needs_cplex(spec).map_err(std::io::Error::other)? {
         return Ok(());
     }
+
     #[cfg(feature = "cplex")]
     {
         crate::evaluation::numeric_potentials::assert_cplex_ready().map_err(std::io::Error::other)
@@ -71,8 +248,8 @@ pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> 
 
 use crate::evaluation::Heuristic;
 use abstraction_config::{
-    ComponentUse, build_components, remaining_construction_time, require_only_component_sources,
-    split_component_sources, validate_scp_combinator_options,
+    ComponentUse, build_components, component_source_help, remaining_construction_time,
+    require_only_component_sources, split_component_sources, validate_scp_combinator_options,
 };
 
 #[derive(Debug)]
@@ -270,7 +447,8 @@ fn build_scp_from_sources<'task>(
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     if sources.is_empty() {
         return Err(format!(
-            "`{name}` requires at least one domain(...), cartesian(...), cartesian_collection(...), or pdb(...) source"
+            "`{name}` requires at least one abstraction source: {}",
+            component_source_help(),
         )
         .into());
     }
@@ -302,25 +480,28 @@ fn build_scp_from_sources<'task>(
     Ok(Some(Box::new(heuristic)))
 }
 
-/// Build the heuristic `spec` names. `Ok(None)` is `blind`, which is the
-/// absence of a heuristic rather than a heuristic that returns zero.
-///
-/// `task` is what the heuristic abstracts; `sampling_task` is the same task as
-/// a shared handle, which the heuristics that run their own search or sample
-/// their own states need.
-pub fn build_heuristic_from_spec<'a>(
-    spec: &HeuristicSpec,
-    task: &'a dyn AbstractNumericTask,
-    sampling_task: TaskRef<'a>,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
-    match spec.name.as_str() {
-        "blind" => {
+heuristic_registry! {
+    build(spec, task, sampling_task);
+
+    Blind {
+        names: ["blind"],
+        backend: RequiredBackend::None,
+        requirements: any_task,
+        nested: no_nested_heuristics,
+        build: {
             if !spec.args.is_empty() {
                 return Err("`blind` does not accept arguments".to_string().into());
             }
             Ok(None)
         }
-        "check_admissible" => {
+    }
+
+    CheckAdmissible {
+        names: ["check_admissible"],
+        backend: RequiredBackend::None,
+        requirements: any_task,
+        nested: wrapped_heuristic,
+        build: {
             let inner_spec = single_wrapped_heuristic_spec("check_admissible", &spec.args)?;
             // The oracle solves the remaining task from scratch, which needs a
             // registry of its own and therefore a shared handle on the task.
@@ -329,7 +510,14 @@ pub fn build_heuristic_from_spec<'a>(
                 .map_err(|error| format!("failed to construct `check_admissible`: {error}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "ff" => {
+    }
+
+    Ff {
+        names: ["ff"],
+        backend: RequiredBackend::None,
+        requirements: any_task,
+        nested: no_nested_heuristics,
+        build: {
             if !spec.args.is_empty() {
                 return Err("`ff` does not accept arguments".to_string().into());
             }
@@ -337,16 +525,37 @@ pub fn build_heuristic_from_spec<'a>(
                 .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "max" => {
+    }
+
+    Max {
+        names: ["max"],
+        backend: RequiredBackend::None,
+        requirements: component_task_requirements,
+        nested: no_nested_heuristics,
+        build: {
             let sources = require_only_component_sources("max", &spec.args)?;
             build_max_from_sources(task, &sources, "max")
         }
-        "canonical" => {
+    }
+
+    Canonical {
+        names: ["canonical"],
+        backend: RequiredBackend::None,
+        requirements: component_task_requirements,
+        nested: no_nested_heuristics,
+        build: {
             let (sources, construction_deadline) =
                 abstraction_config::canonical_sources_and_deadline(&spec.args)?;
             build_canonical_from_sources(task, &sources, "canonical", construction_deadline)
         }
-        "scp" | "cost_partitioning" => {
+    }
+
+    Scp {
+        names: ["scp", "cost_partitioning"],
+        backend: RequiredBackend::None,
+        requirements: component_task_requirements,
+        nested: no_nested_heuristics,
+        build: {
             let source_config = abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
             build_scp_from_sources(
                 task,
@@ -357,7 +566,14 @@ pub fn build_heuristic_from_spec<'a>(
                 source_config.construction_deadline,
             )
         }
-        "domain_abstraction" => {
+    }
+
+    DomainAbstraction {
+        names: ["domain_abstraction"],
+        backend: RequiredBackend::None,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             info!("Building domain abstraction (CEGAR)...");
             let mut cfg = CegarConfig::default();
             cfg.apply_options(&spec.args)?;
@@ -374,7 +590,14 @@ pub fn build_heuristic_from_spec<'a>(
                     as Box<dyn Heuristic + 'a>,
             ))
         }
-        "cartesian_abstraction" => {
+    }
+
+    CartesianAbstraction {
+        names: ["cartesian_abstraction"],
+        backend: RequiredBackend::None,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             info!("Building Cartesian abstraction (CEGAR)...");
             validate_cartesian_cegar_options(&spec.args)?;
             let mut cegar_cfg = CegarConfig::default();
@@ -390,7 +613,14 @@ pub fn build_heuristic_from_spec<'a>(
                     as Box<dyn Heuristic + 'a>,
             ))
         }
-        "max_cartesian_abstraction" | "canonical_cartesian_abstraction" => {
+    }
+
+    SingleCartesianCollection {
+        names: ["max_cartesian_abstraction", "canonical_cartesian_abstraction"],
+        backend: RequiredBackend::None,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             validate_cartesian_cegar_options(&spec.args)?;
             let mut cegar_cfg = CegarConfig::default();
             cegar_cfg.apply_options(&spec.args)?;
@@ -417,7 +647,14 @@ pub fn build_heuristic_from_spec<'a>(
                 Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
             }
         }
-        "canonical_domain_abstractions" => {
+    }
+
+    CanonicalDomainAbstractions {
+        names: ["canonical_domain_abstractions"],
+        backend: RequiredBackend::None,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
@@ -447,7 +684,14 @@ pub fn build_heuristic_from_spec<'a>(
             .map_err(|e| format!("failed to construct canonical abstraction heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "multi_domain_abstractions" => {
+    }
+
+    MultiDomainAbstractions {
+        names: ["multi_domain_abstractions"],
+        backend: RequiredBackend::None,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
@@ -474,31 +718,49 @@ pub fn build_heuristic_from_spec<'a>(
             .map_err(|e| format!("failed to construct max abstraction heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        #[cfg(feature = "cplex")]
-        "posthoc_optimization" | "pho" => {
-            use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.compute_operator_footprints = false;
-            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
-            info!("Building posthoc_optimization domain abstractions (CEGAR)...");
-            let abstractions = generator.generate_collection(task).map_err(|e| {
-                format!("failed to build posthoc_optimization domain abstractions: {e:#}")
-            })?;
-            let h = PostHocOptimizationHeuristic::new(None, task, abstractions)
-                .map_err(|e| format!("failed to construct posthoc_optimization heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+    }
+
+    PosthocOptimization {
+        names: ["posthoc_optimization", "pho"],
+        backend: RequiredBackend::Cplex,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
+            #[cfg(feature = "cplex")]
+            {
+                use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+                let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+                ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+                cfg.compute_operator_footprints = false;
+                let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
+                info!("Building posthoc_optimization domain abstractions (CEGAR)...");
+                let abstractions = generator.generate_collection(task).map_err(|e| {
+                    format!("failed to build posthoc_optimization domain abstractions: {e:#}")
+                })?;
+                let h = PostHocOptimizationHeuristic::new(None, task, abstractions).map_err(|e| {
+                    format!("failed to construct posthoc_optimization heuristic: {e}")
+                })?;
+                Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            }
+            #[cfg(not(feature = "cplex"))]
+            {
+                Err("posthoc_optimization requires CPLEX, which is not compiled into this build. \
+                     Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
+                     installation."
+                    .to_string()
+                    .into())
+            }
         }
-        #[cfg(not(feature = "cplex"))]
-        "posthoc_optimization" | "pho" => Err(
-            "posthoc_optimization requires CPLEX, which is not compiled into this build. \
-             Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
-             installation."
-                .to_string()
-                .into(),
-        ),
-        #[cfg(feature = "cplex")]
-        "pot_da_ocp" => {
+    }
+
+    PotentialDomainAbstractionOcp {
+        names: ["pot_da_ocp"],
+        backend: RequiredBackend::Cplex,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
+            #[cfg(feature = "cplex")]
+            {
             use crate::config::for_each_option;
             use crate::evaluation::numeric_potentials::{
                 NumericPotentialConfig, PotentialAbstractionOcpHeuristic,
@@ -584,17 +846,26 @@ pub fn build_heuristic_from_spec<'a>(
             )
             .map_err(|error| format!("failed to construct pot_da_ocp: {error}"))?;
             Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
+            }
+            #[cfg(not(feature = "cplex"))]
+            {
+                Err("pot_da_ocp requires unrestricted CPLEX, which is not compiled into this build. \
+                     Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
+                     installation."
+                    .to_string()
+                    .into())
+            }
         }
-        #[cfg(not(feature = "cplex"))]
-        "pot_da_ocp" => Err(
-            "pot_da_ocp requires unrestricted CPLEX, which is not compiled into this build. \
-             Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
-             installation."
-                .to_string()
-                .into(),
-        ),
-        #[cfg(feature = "cplex")]
-        "numeric_potential" => {
+    }
+
+    NumericPotential {
+        names: ["numeric_potential"],
+        backend: RequiredBackend::Cplex,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
+            #[cfg(feature = "cplex")]
+            {
             use crate::evaluation::numeric_potentials::{
                 NumericPotentialConfig, NumericPotentialHeuristic,
             };
@@ -606,16 +877,24 @@ pub fn build_heuristic_from_spec<'a>(
                     format!("failed to construct numeric_potential heuristic: {error}")
                 })?;
             Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
+            }
+            #[cfg(not(feature = "cplex"))]
+            {
+                Err("numeric_potential requires unrestricted CPLEX, which is not compiled into this build. \
+                     Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
+                     installation."
+                    .to_string()
+                    .into())
+            }
         }
-        #[cfg(not(feature = "cplex"))]
-        "numeric_potential" => Err(
-            "numeric_potential requires unrestricted CPLEX, which is not compiled into this build. \
-             Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
-             installation."
-                .to_string()
-                .into(),
-        ),
-        "scp_online" | "scp_online_cartesian" => {
+    }
+
+    ScpOnline {
+        names: ["scp_online", "scp_online_cartesian"],
+        backend: RequiredBackend::None,
+        requirements: scp_task_requirements,
+        nested: no_nested_heuristics,
+        build: {
             let (component_sources, _) = split_component_sources(&spec.args)?;
             if !component_sources.is_empty() {
                 let source_config =
@@ -703,7 +982,14 @@ pub fn build_heuristic_from_spec<'a>(
             .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "fillscp" | "fill_scp" | "fillscp_cartesian" | "fill_scp_cartesian" => {
+    }
+
+    FillScp {
+        names: ["fillscp", "fill_scp", "fillscp_cartesian", "fill_scp_cartesian"],
+        backend: RequiredBackend::None,
+        requirements: abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             let use_cartesian = matches!(
                 spec.name.as_str(),
                 "fillscp_cartesian" | "fill_scp_cartesian"
@@ -747,15 +1033,28 @@ pub fn build_heuristic_from_spec<'a>(
             .map_err(|e| format!("failed to construct fillSCP heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "greedy_numeric_pdb" => {
+    }
+
+    GreedyNumericPdb {
+        names: ["greedy_numeric_pdb"],
+        backend: RequiredBackend::None,
+        requirements: restricted_abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             let mut cfg = crate::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let h = GreedyNumericPdbHeuristic::new(task, cfg)
                 .map_err(|e| format!("failed to build greedy numeric pdb heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "canonical_numeric_pdb" => {
-            validate_restricted_task(task)?;
+    }
+
+    CanonicalNumericPdb {
+        names: ["canonical_numeric_pdb"],
+        backend: RequiredBackend::None,
+        requirements: restricted_abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             let mut cfg = crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let patterns = generate_systematic_patterns(
@@ -785,8 +1084,14 @@ pub fn build_heuristic_from_spec<'a>(
             .map_err(|e| format!("failed to build canonical numeric PDB heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "max_numeric_pdb" => {
-            validate_restricted_task(task)?;
+    }
+
+    MaxNumericPdb {
+        names: ["max_numeric_pdb"],
+        backend: RequiredBackend::None,
+        requirements: restricted_abstractable_task,
+        nested: no_nested_heuristics,
+        build: {
             let mut cfg = crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let patterns = generate_systematic_patterns(
@@ -812,14 +1117,20 @@ pub fn build_heuristic_from_spec<'a>(
                 .map_err(|e| format!("failed to build max numeric PDB heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        "lmcutnumeric" => {
+    }
+
+    LmCutNumeric {
+        names: ["lmcutnumeric"],
+        backend: RequiredBackend::None,
+        requirements: any_task,
+        nested: no_nested_heuristics,
+        build: {
             let mut cfg = crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let h = LandmarkCutNumericHeuristic::from_config(task, cfg)
                 .map_err(|e| format!("failed to build lmcutnumeric heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
-        other => Err(format!("unknown heuristic `{other}`").into()),
     }
 }
 

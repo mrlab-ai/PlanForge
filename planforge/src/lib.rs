@@ -102,7 +102,8 @@ pub struct PlannersCli {
         long,
         value_name = "SPEC",
         default_value = "astar(blind())",
-        value_parser = planforge_searcher::parse_search_spec
+        value_parser = planforge_searcher::parse_search_spec,
+        long_help = planforge_search::heuristic_factory::HEURISTIC_HELP
     )]
     pub search: SearchSpec,
 

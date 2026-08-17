@@ -29,6 +29,26 @@ use tracing::info;
 
 use super::HeuristicBuildError;
 
+pub(crate) const COMPONENT_SOURCE_NAMES: &[&str] = &[
+    "domain",
+    "domain_abstractions",
+    "cartesian",
+    "cartesian_abstraction",
+    "cartesian_collection",
+    "cartesian_abstraction_collection",
+    "icaps26_cartesian",
+    "pdb",
+    "numeric_pdb",
+];
+
+pub(crate) fn component_source_help() -> String {
+    COMPONENT_SOURCE_NAMES
+        .iter()
+        .map(|name| format!("{name}(...)"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ComponentUse {
     Standalone,
@@ -147,12 +167,14 @@ pub(crate) fn require_only_component_sources(
             |key| format!("{key}={}", format_config_value(option.value())),
         );
         return Err(format!(
-            "`{combinator}` accepts only domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), and pdb(...) sources; got `{description}`"
+            "`{combinator}` accepts only these abstraction sources: {}; got `{description}`",
+            component_source_help(),
         ));
     }
     if sources.is_empty() {
         return Err(format!(
-            "`{combinator}` requires at least one domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), or pdb(...) source"
+            "`{combinator}` requires at least one abstraction source: {}",
+            component_source_help(),
         ));
     }
     Ok(sources)
@@ -187,7 +209,8 @@ pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), 
         })?;
         if !ALLOWED.contains(&key) {
             return Err(format!(
-                "unknown `scp` combinator option `{key}`; abstraction-generation options belong inside domain(...), cartesian(...), cartesian_collection(...), or pdb(...)"
+                "unknown `scp` combinator option `{key}`; abstraction-generation options belong inside one of: {}",
+                component_source_help(),
             ));
         }
         if !seen.insert(key) {
@@ -349,7 +372,8 @@ pub(crate) fn build_components<'task>(
             }
             other => {
                 return Err(format!(
-                    "unknown abstraction source `{other}`; expected domain(...), cartesian(...), cartesian_collection(...), icaps26_cartesian(...), or pdb(...)"
+                    "unknown abstraction source `{other}`; expected one of {}",
+                    component_source_help(),
                 )
                 .into());
             }
@@ -433,18 +457,7 @@ fn component_source_call(value: &ConfigValue) -> Option<ConfigCall> {
 }
 
 fn is_component_source_name(name: &str) -> bool {
-    matches!(
-        name,
-        "domain"
-            | "domain_abstractions"
-            | "cartesian"
-            | "cartesian_abstraction"
-            | "cartesian_collection"
-            | "cartesian_abstraction_collection"
-            | "icaps26_cartesian"
-            | "pdb"
-            | "numeric_pdb"
-    )
+    COMPONENT_SOURCE_NAMES.contains(&name)
 }
 
 pub(crate) fn apply_icaps26_cartesian_options(

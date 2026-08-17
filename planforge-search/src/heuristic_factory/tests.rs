@@ -4,7 +4,7 @@
 //! The option language is parsed in this crate too, so these tests need nothing
 //! from `planforge-searcher` and the factory's internals stay private.
 
-use super::abstraction_config;
+use super::{abstraction_config, heuristic_names};
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
@@ -654,4 +654,33 @@ fn rejects_removed_exec_entire_plan_randomize_option() {
     )
     .unwrap_err();
     assert!(err.contains("exec_entire_plan"));
+}
+
+#[test]
+fn heuristic_registry_names_are_unique_and_complete() {
+    let names = heuristic_names().collect::<Vec<_>>();
+    let unique = names
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        names.len(),
+        unique.len(),
+        "duplicate registry names: {names:?}"
+    );
+    for required in [
+        "blind",
+        "ff",
+        "domain_abstraction",
+        "cartesian_abstraction",
+        "scp",
+        "greedy_numeric_pdb",
+        "lmcutnumeric",
+        "numeric_potential",
+    ] {
+        assert!(
+            unique.contains(required),
+            "missing registry entry {required}"
+        );
+    }
 }

@@ -304,9 +304,11 @@ fn errors_are_human_readable() {
 }
 
 #[test]
-fn unknown_heuristic_name_propagates() {
-    let h = astar_heuristic("astar(does_not_exist)");
-    assert_eq!(h.name, "does_not_exist");
+fn unknown_heuristic_name_is_rejected_from_the_registry() {
+    let error = parse_search_spec("astar(does_not_exist)").unwrap_err();
+    assert!(error.contains("unknown heuristic `does_not_exist`"));
+    assert!(error.contains("blind"));
+    assert!(error.contains("lmcutnumeric"));
 }
 
 #[test]
