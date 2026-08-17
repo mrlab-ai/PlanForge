@@ -1661,9 +1661,6 @@ fn finish_axiom_closure(
     axiom_evaluator: &AxiomEvaluator<'_>,
 ) -> Result<(), String> {
     axiom_evaluator
-        .evaluate_arithmetic_axioms(numeric)
-        .map_err(|err| format!("failed to evaluate arithmetic axioms: {err:?}"))?;
-    axiom_evaluator
         .evaluate(packed, numeric)
         .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
 

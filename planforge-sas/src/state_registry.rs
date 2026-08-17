@@ -813,12 +813,6 @@ impl<'a> StateRegistry<'a> {
     ) -> Result<(), StateInsertError> {
         canonicalize_numeric_values(numeric_state);
         self.axiom_evaluator
-            .evaluate_arithmetic_axioms(numeric_state)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
-            })?;
-
-        self.axiom_evaluator
             .evaluate(buffer, numeric_state)
             .map_err(|e| StateInsertError {
                 message: format!("Failed to evaluate axioms: {:?}", e),
@@ -1570,17 +1564,17 @@ impl<'a> StateRegistry<'a> {
             }
         }
 
-        self.axiom_evaluator
-            .evaluate_arithmetic_axioms(current_values)
-            .map_err(|e| StateInsertError {
-                message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
-            })?;
-
         if run_full_axioms {
             self.axiom_evaluator
                 .evaluate(next_buffer, current_values)
                 .map_err(|e| StateInsertError {
                     message: format!("Failed to evaluate axioms: {:?}", e),
+                })?;
+        } else {
+            self.axiom_evaluator
+                .evaluate_arithmetic_axioms(current_values)
+                .map_err(|e| StateInsertError {
+                    message: format!("Failed to evaluate arithmetic axioms: {:?}", e),
                 })?;
         }
 

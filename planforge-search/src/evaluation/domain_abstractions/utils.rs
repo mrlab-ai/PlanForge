@@ -487,11 +487,6 @@ pub(crate) fn get_initial_state(
     }
 
     axiom_evaluator
-        .evaluate_arithmetic_axioms(&mut numeric_state)
-        .map_err(|e| {
-            anyhow::anyhow!("failed to evaluate arithmetic axioms for initial state: {e:?}")
-        })?;
-    axiom_evaluator
         .evaluate(&mut buffer, &mut numeric_state)
         .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
 
@@ -509,7 +504,7 @@ pub(crate) fn debug_print_wildcard_plan(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     partitions: &NumericPartitions,
-) {
+) -> Result<()> {
     let steps = plan.wildcard_plan.len();
     debug!("[Abstract Plan] steps={steps}");
 
@@ -575,7 +570,8 @@ pub(crate) fn debug_print_wildcard_plan(
     }
 
     debug!("[Plan] {}", representative.join(" -> "));
-    debug_print_concrete_trace(task, plan, partitions, shown_steps);
+    debug_print_concrete_trace(task, plan, partitions, shown_steps)?;
+    Ok(())
 }
 
 fn debug_print_concrete_trace(
@@ -583,7 +579,7 @@ fn debug_print_concrete_trace(
     plan: &WildcardPlanResult,
     partitions: &NumericPartitions,
     shown_steps: usize,
-) {
+) -> Result<()> {
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
@@ -591,8 +587,9 @@ fn debug_print_concrete_trace(
     set_initial_prop_values(task, &state_packer, &mut buffer);
     let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
 
-    let _ = axiom_evaluator.evaluate_arithmetic_axioms(&mut numeric_state);
-    let _ = axiom_evaluator.evaluate(&mut buffer, &mut numeric_state);
+    axiom_evaluator
+        .evaluate(&mut buffer, &mut numeric_state)
+        .map_err(|error| anyhow!("failed to evaluate initial-state axioms: {error:?}"))?;
 
     let (prop_scope, num_scope) = trace_variable_scope(task, plan, shown_steps);
     debug!(
@@ -720,6 +717,7 @@ fn debug_print_concrete_trace(
             fmt_concrete_nums(&numeric_state, &num_scope, partitions, 200)
         );
     }
+    Ok(())
 }
 
 fn trace_variable_scope(

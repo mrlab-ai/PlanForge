@@ -649,6 +649,8 @@ impl<'a> AxiomEvaluator<'a> {
             return Ok(());
         }
         if self.has_numeric_axioms() {
+            self.evaluate_arithmetic_axioms(numeric_state)
+                .map_err(AxiomEvalError::Assignment)?;
             self.evaluate_comparison_axioms(buffer, numeric_state)?;
         }
         if self.has_propositional_axioms() {

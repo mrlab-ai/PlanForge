@@ -409,7 +409,7 @@ impl Cegar {
                         &factory.domain_sizes,
                         &factory.numeric_domain_sizes,
                         &factory.partitions,
-                    ),
+                    )?,
                     None => debug!("[Abstract Plan] <none>"),
                 }
             }

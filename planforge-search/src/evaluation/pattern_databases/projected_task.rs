@@ -1361,13 +1361,6 @@ impl<'task> ProjectedTask<'task> {
         let task: TaskRef<'_> = Arc::new(self);
         let axiom_evaluator = AxiomEvaluator::new(task, Arc::clone(&self.propositional_packer));
 
-        axiom_evaluator
-            .evaluate_arithmetic_axioms(numeric)
-            .map_err(
-                |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
-                    reason: format!("arithmetic axioms: {err:?}"),
-                },
-            )?;
         axiom_evaluator.evaluate(buffer, numeric).map_err(|err| {
             ProjectedTaskBuildError::InitialStateEvaluationFailed {
                 reason: format!("propositional axioms: {err:?}"),

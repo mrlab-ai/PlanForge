@@ -90,9 +90,6 @@ pub fn progress_concrete_state(
     }
 
     axiom_evaluator
-        .evaluate_arithmetic_axioms(numeric_state)
-        .map_err(|error| anyhow::anyhow!("failed to evaluate arithmetic axioms: {error:?}"))?;
-    axiom_evaluator
         .evaluate(prop_state, numeric_state)
         .map_err(|error| anyhow::anyhow!("failed to evaluate axioms: {error:?}"))?;
     Ok(())
