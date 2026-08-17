@@ -169,3 +169,39 @@ def test_python_heuristic_error_propagates():
 
     with pytest.raises(RuntimeError):
         task.search_with_heuristic(bad, max_time=10.0)
+
+
+def test_complete_state_space_is_returned_as_numpy_csr():
+    import pytest
+
+    np = pytest.importorskip("numpy")
+    task = planforge.Task.from_pddl(
+        "tests/assets/strips-pddl-files/blocks-minimal/domain.pddl",
+        "tests/assets/strips-pddl-files/blocks-minimal/probBLOCKS-2-reverse.pddl",
+    )
+    graph = task.enumerate_state_space(
+        max_states=100,
+        max_transitions=1000,
+        max_time=10.0,
+    )
+    assert graph.state_count == 5
+    assert graph.h_star[0] == 4.0
+    assert graph.propositional_values.shape[0] == graph.state_count
+    assert graph.transition_offsets.shape == (graph.state_count + 1,)
+    assert graph.transition_offsets[-1] == graph.transition_count
+    assert np.all(graph.h_star[graph.goal_states] == 0.0)
+
+
+def test_state_space_bound_is_an_explicit_error():
+    import pytest
+
+    task = planforge.Task.from_pddl(
+        "tests/assets/strips-pddl-files/blocks-minimal/domain.pddl",
+        "tests/assets/strips-pddl-files/blocks-minimal/probBLOCKS-2-reverse.pddl",
+    )
+    with pytest.raises(planforge.EnumerationError, match="max_states bound 1 reached"):
+        task.enumerate_state_space(
+            max_states=1,
+            max_transitions=1000,
+            max_time=10.0,
+        )

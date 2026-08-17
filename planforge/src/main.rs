@@ -7,6 +7,15 @@ fn main() -> std::io::Result<()> {
         cli.log_level
             .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
     );
+    if let Some(command) = &cli.command {
+        return run_command(command);
+    }
+    if cli.inputs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "search requires one SAS input or a domain/problem PDDL pair",
+        ));
+    }
     // The portfolio drives whole `planforge` runs as its stages, so it has to
     // branch off before this process turns itself into one of them.
     if cli.portfolio.portfolio {

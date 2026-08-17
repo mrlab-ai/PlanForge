@@ -364,15 +364,75 @@ pub(crate) fn build_explicit_goal_distances(
     transition_system: &AbstractTransitionSystem,
     transition_costs: &[f64],
     deadline: Option<Instant>,
-    mut generating: Option<&mut [Option<usize>]>,
+    generating: Option<&mut [Option<usize>]>,
 ) -> Result<Vec<f64>> {
+    backward_goal_distances(
+        transition_system,
+        transition_costs,
+        || ensure_scp_table_deadline(deadline),
+        generating,
+    )
+}
+
+pub(crate) trait BackwardDijkstraGraph {
+    fn num_states(&self) -> usize;
+    fn goal_state_ids(&self) -> &[usize];
+    fn incoming_transition_ids(&self, target_id: usize) -> Option<&[usize]>;
+    fn transition_endpoints(&self, transition_id: usize) -> Option<(usize, usize)>;
+    fn transition_operator_id(&self, transition_id: usize) -> Option<usize>;
+    fn num_transitions(&self) -> usize;
+}
+
+impl BackwardDijkstraGraph for AbstractTransitionSystem {
+    fn num_states(&self) -> usize {
+        self.backward.len()
+    }
+
+    fn goal_state_ids(&self) -> &[usize] {
+        &self.goal_state_hashes
+    }
+
+    fn incoming_transition_ids(&self, target_id: usize) -> Option<&[usize]> {
+        self.backward.get(target_id).map(Vec::as_slice)
+    }
+
+    fn transition_endpoints(&self, transition_id: usize) -> Option<(usize, usize)> {
+        self.transitions
+            .get(transition_id)
+            .map(|transition| (transition.source_hash, transition.target_hash))
+    }
+
+    fn transition_operator_id(&self, transition_id: usize) -> Option<usize> {
+        self.transitions
+            .get(transition_id)
+            .map(|transition| transition.abstract_op_id)
+    }
+
+    fn num_transitions(&self) -> usize {
+        self.transitions.len()
+    }
+}
+
+/// Backward Dijkstra shared by abstract transition systems and the concrete
+/// reachable-state graph. The graph adapter owns the representation choice;
+/// this routine owns cost validation, epsilon handling, and relaxation.
+pub(crate) fn backward_goal_distances<G, F>(
+    graph: &G,
+    transition_costs: &[f64],
+    mut check_limit: F,
+    mut generating: Option<&mut [Option<usize>]>,
+) -> Result<Vec<f64>>
+where
+    G: BackwardDijkstraGraph,
+    F: FnMut() -> Result<()>,
+{
     ensure!(
-        transition_system.transitions.len() == transition_costs.len(),
+        graph.num_transitions() == transition_costs.len(),
         "transition system/cost vector size mismatch: {} vs {}",
-        transition_system.transitions.len(),
+        graph.num_transitions(),
         transition_costs.len()
     );
-    let num_states = transition_system.backward.len();
+    let num_states = graph.num_states();
     if let Some(generating) = &generating {
         ensure!(
             generating.len() == num_states,
@@ -382,7 +442,7 @@ pub(crate) fn build_explicit_goal_distances(
     }
     let mut distances = vec![f64::INFINITY; num_states];
     let mut heap = BinaryHeap::new();
-    for &goal_state_id in &transition_system.goal_state_hashes {
+    for &goal_state_id in graph.goal_state_ids() {
         ensure!(
             goal_state_id < num_states,
             "goal state id {goal_state_id} out of bounds for {num_states} states"
@@ -396,47 +456,49 @@ pub(crate) fn build_explicit_goal_distances(
     let mut expansions = 0usize;
     while let Some((Reverse(distance), target_id)) = heap.pop() {
         if expansions.is_multiple_of(1024) {
-            ensure_scp_table_deadline(deadline)?;
+            check_limit()?;
         }
         expansions += 1;
         let distance = distance.into_inner();
         if distance > distances[target_id] + float_tolerance::SEARCH_EPSILON {
             continue;
         }
-        let predecessors = transition_system
-            .backward
-            .get(target_id)
-            .with_context(|| format!("missing predecessor list for abstract state {target_id}"))?;
+        let predecessors = graph
+            .incoming_transition_ids(target_id)
+            .with_context(|| format!("missing predecessor list for state {target_id}"))?;
         for &transition_id in predecessors {
-            let transition = transition_system
-                .transitions
-                .get(transition_id)
-                .with_context(|| format!("missing abstract transition {transition_id}"))?;
+            let (source_id, transition_target_id) = graph
+                .transition_endpoints(transition_id)
+                .with_context(|| format!("missing transition {transition_id}"))?;
             ensure!(
-                transition.target_hash == target_id,
-                "backward transition {transition_id} targets {}, expected {target_id}",
-                transition.target_hash
+                transition_target_id == target_id,
+                "backward transition {transition_id} targets {transition_target_id}, expected {target_id}",
             );
             let cost = transition_costs[transition_id];
             ensure!(
                 cost.is_finite() && cost >= -float_tolerance::SEARCH_EPSILON,
-                "abstract transition {transition_id} has invalid cost {cost}"
+                "transition {transition_id} has invalid cost {cost}"
             );
             let alternative = distance + cost.max(0.0);
-            let source_distance = distances.get_mut(transition.source_hash).with_context(|| {
+            let source_distance = distances.get_mut(source_id).with_context(|| {
                 format!(
-                    "transition {transition_id} source {} out of bounds for {num_states} states",
-                    transition.source_hash
+                    "transition {transition_id} source {source_id} out of bounds for {num_states} states",
                 )
             })?;
             if alternative + float_tolerance::SEARCH_EPSILON < *source_distance {
                 *source_distance = alternative;
                 if let Some(generating) = &mut generating {
-                    generating[transition.source_hash] = Some(transition.abstract_op_id);
+                    generating[source_id] = Some(
+                        graph
+                            .transition_operator_id(transition_id)
+                            .with_context(|| {
+                                format!("transition {transition_id} has no operator id")
+                            })?,
+                    );
                 }
                 heap.push((
                     Reverse(NotNan::new(alternative).context("abstract distance is NaN")?),
-                    transition.source_hash,
+                    source_id,
                 ));
             }
         }

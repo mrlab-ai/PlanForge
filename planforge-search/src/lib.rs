@@ -9,5 +9,6 @@ pub mod evaluation;
 pub mod heuristic_factory;
 pub mod resource_limits;
 pub mod search;
+pub mod state_space;
 pub mod successor_generator;
 pub mod task_restriction;

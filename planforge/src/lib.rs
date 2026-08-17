@@ -20,7 +20,7 @@ pub use output::{
 pub use portfolio::PortfolioOptions;
 
 use allocator::register_event_handlers;
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
@@ -29,10 +29,13 @@ use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef}
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::HeuristicBuildError;
 use planforge_search::search::{SearchBuildContext, SearchResult, search_algorithm};
+use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
 use planforge_searcher::{HeuristicSpec, SearchSpec};
 use std::ffi::OsString;
+use std::io::{BufWriter, Write};
 use std::num::NonZero;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -110,8 +113,46 @@ pub struct PlannersCli {
     #[command(flatten)]
     pub portfolio: PortfolioOptions,
 
+    #[command(subcommand)]
+    pub command: Option<PlanforgeCommand>,
+
+    #[arg(value_name = "INPUT", num_args = 0..=2)]
+    pub inputs: Vec<String>,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PlanforgeCommand {
+    /// Enumerate the complete reachable state space and write standard CSV files.
+    Enumerate(EnumerateCli),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct EnumerateCli {
+    #[arg(long)]
+    pub max_states: usize,
+
+    #[arg(long)]
+    pub max_transitions: usize,
+
+    #[arg(long, value_name = "DURATION", value_parser = parse_time_limit)]
+    pub max_time: Duration,
+
+    /// New directory that will receive states.csv, transitions.csv,
+    /// summary.csv, and h_star_histogram.csv.
+    #[arg(long, value_name = "DIRECTORY")]
+    pub output: PathBuf,
+
+    #[arg(long = "restrict-task")]
+    pub restrict_task: bool,
+
     #[arg(value_name = "INPUT", required = true, num_args = 1..=2)]
     pub inputs: Vec<String>,
+}
+
+pub fn run_command(command: &PlanforgeCommand) -> std::io::Result<()> {
+    match command {
+        PlanforgeCommand::Enumerate(arguments) => run_enumeration(arguments),
+    }
 }
 
 #[cfg(unix)]
@@ -262,7 +303,151 @@ pub fn solve_task(
         .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
+fn load_enumeration_task(arguments: &EnumerateCli) -> std::io::Result<NumericRootTask> {
+    let mut task = if arguments.inputs.len() == 2 {
+        planforge_translate::translate_to_task(&arguments.inputs[0], &arguments.inputs[1])
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+    } else {
+        NumericRootTask::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
+    };
+    if arguments.restrict_task
+        && let Some(restricted) = build_restricted_task(&task)
+            .map_err(|error| std::io::Error::other(format!("failed to restrict task: {error:#}")))?
+    {
+        task = restricted.into_task();
+    }
+    Ok(task)
+}
+
+fn create_csv(path: &Path) -> std::io::Result<BufWriter<std::fs::File>> {
+    std::fs::File::create(path).map(BufWriter::new)
+}
+
+fn write_state_space_csv(output: &Path, graph: &OwnedStateSpace) -> std::io::Result<()> {
+    if output.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "enumeration output directory {} already exists; refusing to overwrite it",
+                output.display()
+            ),
+        ));
+    }
+    std::fs::create_dir(output)?;
+
+    let mut states = create_csv(&output.join("states.csv"))?;
+    write!(states, "state_id,is_goal,h_star")?;
+    for variable in 0..graph.num_propositional_variables {
+        write!(states, ",proposition_{variable}")?;
+    }
+    for variable in 0..graph.num_numeric_variables {
+        write!(states, ",numeric_{variable}")?;
+    }
+    writeln!(states)?;
+    for state_id in 0..graph.num_states() {
+        write!(
+            states,
+            "{state_id},{},{}",
+            graph.goal_states[state_id], graph.h_star[state_id]
+        )?;
+        let propositional_start = state_id
+            .checked_mul(graph.num_propositional_variables)
+            .expect("propositional CSV row offset overflow");
+        let propositional_end = propositional_start + graph.num_propositional_variables;
+        for value in &graph.propositional_values[propositional_start..propositional_end] {
+            write!(states, ",{value}")?;
+        }
+        let numeric_start = state_id
+            .checked_mul(graph.num_numeric_variables)
+            .expect("numeric CSV row offset overflow");
+        let numeric_end = numeric_start + graph.num_numeric_variables;
+        for value in &graph.numeric_values[numeric_start..numeric_end] {
+            write!(states, ",{value}")?;
+        }
+        writeln!(states)?;
+    }
+    states.flush()?;
+
+    let mut transitions = create_csv(&output.join("transitions.csv"))?;
+    writeln!(
+        transitions,
+        "source_state_id,operator_id,successor_state_id,cost"
+    )?;
+    for source_state_id in 0..graph.num_states() {
+        let start = usize::try_from(graph.transition_offsets[source_state_id])
+            .expect("transition offset exceeds usize");
+        let end = usize::try_from(graph.transition_offsets[source_state_id + 1])
+            .expect("transition offset exceeds usize");
+        for transition_id in start..end {
+            writeln!(
+                transitions,
+                "{source_state_id},{},{},{}",
+                graph.transition_operator_ids[transition_id],
+                graph.transition_successor_ids[transition_id],
+                graph.transition_costs[transition_id]
+            )?;
+        }
+    }
+    transitions.flush()?;
+
+    let summary = graph.summary();
+    let mut summary_csv = create_csv(&output.join("summary.csv"))?;
+    writeln!(summary_csv, "metric,value")?;
+    writeln!(summary_csv, "states,{}", summary.state_count)?;
+    writeln!(summary_csv, "transitions,{}", summary.transition_count)?;
+    writeln!(summary_csv, "goal_states,{}", summary.goal_state_count)?;
+    writeln!(summary_csv, "dead_ends,{}", summary.dead_end_count)?;
+    match summary.diameter {
+        Some(diameter) => writeln!(summary_csv, "diameter,{diameter}")?,
+        None => writeln!(summary_csv, "diameter,inf")?,
+    }
+    summary_csv.flush()?;
+
+    let mut histogram = create_csv(&output.join("h_star_histogram.csv"))?;
+    writeln!(histogram, "h_star,state_count")?;
+    for (distance, count) in summary.h_star_histogram {
+        writeln!(histogram, "{distance},{count}")?;
+    }
+    if summary.dead_end_count > 0 {
+        writeln!(histogram, "inf,{}", summary.dead_end_count)?;
+    }
+    histogram.flush()
+}
+
+fn run_enumeration(arguments: &EnumerateCli) -> std::io::Result<()> {
+    let task: TaskRef<'static> = Arc::new(load_enumeration_task(arguments)?);
+    let start = std::time::Instant::now();
+    let graph = enumerate_state_space(
+        task,
+        EnumerationLimits {
+            max_states: arguments.max_states,
+            max_transitions: arguments.max_transitions,
+            max_time: arguments.max_time,
+        },
+    )
+    .map_err(|error| std::io::Error::other(error.to_string()))?;
+    let elapsed = start.elapsed();
+    let summary = graph.summary();
+    write_state_space_csv(&arguments.output, &graph)?;
+    println!("states={}", summary.state_count);
+    println!("transitions={}", summary.transition_count);
+    println!("goal_states={}", summary.goal_state_count);
+    println!("dead_ends={}", summary.dead_end_count);
+    match summary.diameter {
+        Some(diameter) => println!("diameter={diameter}"),
+        None => println!("diameter=inf"),
+    }
+    println!("h_star_histogram={:?}", summary.h_star_histogram);
+    println!("elapsed_seconds={:.6}", elapsed.as_secs_f64());
+    println!("output={}", arguments.output.display());
+    Ok(())
+}
+
 pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
+    assert!(
+        cli.command.is_none(),
+        "subcommands are dispatched before the search pipeline"
+    );
     register_event_handlers();
     planforge_searcher::preflight_required_backends(&cli.search)?;
 

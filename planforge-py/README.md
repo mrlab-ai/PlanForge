@@ -19,6 +19,14 @@ benchmarking interface.
 Pure Rust search has no Python callback or Python-specific branch in its
 expansion loop. `Task.solve` and the module-level `solve` use that path.
 
+For bulk analysis, `Task.enumerate_state_space` crosses the FFI boundary once.
+Rust exhaustively enumerates and interns states, records CSR transitions, and
+runs backward Dijkstra for exact `h_star`; Python receives the completed graph
+as NumPy arrays. `max_states`, `max_transitions`, and `max_time` are mandatory.
+If any bound is reached, `EnumerationError` names the bound and reached counts,
+and no graph or h* array is returned. This is distinct from the Python-driven
+prototyping loop above and is the appropriate interface for large state spaces.
+
 `Task.operators()` exposes each operator's finite-domain preconditions,
 conditional finite-domain effects, numeric assignment effects, and cost.
 Finite-domain facts are `(variable, value)` pairs. An `Effect` assigns `value`

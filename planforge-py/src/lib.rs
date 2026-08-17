@@ -14,6 +14,10 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
+use planforge_search::state_space::{
+    EnumerationLimits, OwnedStateSpace,
+    StateSpaceEnumerationError as RustStateSpaceEnumerationError, enumerate_state_space,
+};
 use planforge_search::successor_generator::SuccessorTree;
 use planforge_search::task_restriction::build_restricted_task;
 
@@ -21,6 +25,7 @@ create_exception!(planforge, PlanforgeError, PyException);
 create_exception!(planforge, TranslateError, PlanforgeError);
 create_exception!(planforge, ParseError, PlanforgeError);
 create_exception!(planforge, SpecError, PyValueError);
+create_exception!(planforge, EnumerationError, PlanforgeError);
 
 /// Internal error carried out of the GIL-released closure. PyErr values are
 /// constructed only after the GIL is reacquired.
@@ -180,6 +185,104 @@ struct PySearchResult {
     dead_ends: usize,
     registered_states: usize,
     search_time: f64,
+}
+
+#[pyclass(name = "StateSpace", frozen)]
+struct PyStateSpace {
+    state_count: usize,
+    transition_count: usize,
+    goal_state_count: usize,
+    dead_end_count: usize,
+    diameter: Option<f64>,
+    h_star_histogram: Vec<(f64, usize)>,
+    propositional_values: Py<PyAny>,
+    numeric_values: Py<PyAny>,
+    transition_offsets: Py<PyAny>,
+    transition_operator_ids: Py<PyAny>,
+    transition_successor_ids: Py<PyAny>,
+    transition_costs: Py<PyAny>,
+    goal_states: Py<PyAny>,
+    h_star: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyStateSpace {
+    #[getter]
+    fn state_count(&self) -> usize {
+        self.state_count
+    }
+
+    #[getter]
+    fn transition_count(&self) -> usize {
+        self.transition_count
+    }
+
+    #[getter]
+    fn goal_state_count(&self) -> usize {
+        self.goal_state_count
+    }
+
+    #[getter]
+    fn dead_end_count(&self) -> usize {
+        self.dead_end_count
+    }
+
+    #[getter]
+    fn diameter(&self) -> Option<f64> {
+        self.diameter
+    }
+
+    #[getter]
+    fn h_star_histogram(&self) -> Vec<(f64, usize)> {
+        self.h_star_histogram.clone()
+    }
+
+    #[getter]
+    fn propositional_values(&self, py: Python<'_>) -> Py<PyAny> {
+        self.propositional_values.clone_ref(py)
+    }
+
+    #[getter]
+    fn numeric_values(&self, py: Python<'_>) -> Py<PyAny> {
+        self.numeric_values.clone_ref(py)
+    }
+
+    #[getter]
+    fn transition_offsets(&self, py: Python<'_>) -> Py<PyAny> {
+        self.transition_offsets.clone_ref(py)
+    }
+
+    #[getter]
+    fn transition_operator_ids(&self, py: Python<'_>) -> Py<PyAny> {
+        self.transition_operator_ids.clone_ref(py)
+    }
+
+    #[getter]
+    fn transition_successor_ids(&self, py: Python<'_>) -> Py<PyAny> {
+        self.transition_successor_ids.clone_ref(py)
+    }
+
+    #[getter]
+    fn transition_costs(&self, py: Python<'_>) -> Py<PyAny> {
+        self.transition_costs.clone_ref(py)
+    }
+
+    #[getter]
+    fn goal_states(&self, py: Python<'_>) -> Py<PyAny> {
+        self.goal_states.clone_ref(py)
+    }
+
+    #[getter]
+    fn h_star(&self, py: Python<'_>) -> Py<PyAny> {
+        self.h_star.clone_ref(py)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "StateSpace(states={}, transitions={}, goals={}, dead_ends={})",
+            self.state_count, self.transition_count, self.goal_state_count, self.dead_end_count
+        )
+    }
 }
 
 #[pymethods]
@@ -342,6 +445,13 @@ impl GilReleasedTask {
     ) -> std::io::Result<SearchResult> {
         planforge_core::solve_task(self.0, spec, time_limit, max_memory)
     }
+
+    fn enumerate(
+        self,
+        limits: EnumerationLimits,
+    ) -> Result<OwnedStateSpace, RustStateSpaceEnumerationError> {
+        enumerate_state_space(self.0, limits)
+    }
 }
 
 /// The default way from PDDL to a task: no SAS+ text in between. `from_sas` and
@@ -426,6 +536,69 @@ fn operator_to_py(
             task_id,
         },
     )
+}
+
+fn checked_duration(seconds: f64, name: &str) -> PyResult<Duration> {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be a finite non-negative number of seconds"
+        )));
+    }
+    Ok(Duration::from_secs_f64(seconds))
+}
+
+fn state_space_to_py(py: Python<'_>, graph: OwnedStateSpace) -> PyResult<PyStateSpace> {
+    let summary = graph.summary();
+    let state_count = graph.num_states();
+    let numpy = py.import("numpy").map_err(|error| {
+        PyErr::new::<pyo3::exceptions::PyImportError, _>(format!(
+            "state-space arrays require numpy (declared by planforge-py's package metadata): {error}"
+        ))
+    })?;
+    let propositional_values = numpy
+        .call_method1("asarray", (graph.propositional_values,))?
+        .call_method1(
+            "reshape",
+            ((state_count, graph.num_propositional_variables),),
+        )?
+        .unbind();
+    let numeric_values = numpy
+        .call_method1("asarray", (graph.numeric_values,))?
+        .call_method1("reshape", ((state_count, graph.num_numeric_variables),))?
+        .unbind();
+    let transition_offsets = numpy
+        .call_method1("asarray", (graph.transition_offsets,))?
+        .unbind();
+    let transition_operator_ids = numpy
+        .call_method1("asarray", (graph.transition_operator_ids,))?
+        .unbind();
+    let transition_successor_ids = numpy
+        .call_method1("asarray", (graph.transition_successor_ids,))?
+        .unbind();
+    let transition_costs = numpy
+        .call_method1("asarray", (graph.transition_costs,))?
+        .unbind();
+    let goal_states = numpy
+        .call_method1("asarray", (graph.goal_states,))?
+        .unbind();
+    let h_star = numpy.call_method1("asarray", (graph.h_star,))?.unbind();
+
+    Ok(PyStateSpace {
+        state_count: summary.state_count,
+        transition_count: summary.transition_count,
+        goal_state_count: summary.goal_state_count,
+        dead_end_count: summary.dead_end_count,
+        diameter: summary.diameter,
+        h_star_histogram: summary.h_star_histogram,
+        propositional_values,
+        numeric_values,
+        transition_offsets,
+        transition_operator_ids,
+        transition_successor_ids,
+        transition_costs,
+        goal_states,
+        h_star,
+    })
 }
 
 #[pymethods]
@@ -631,6 +804,30 @@ impl Task {
         operator: PyRef<'_, PyOperator>,
     ) -> PyResult<(State, f64)> {
         self.apply_operator_snapshot(state, &operator)
+    }
+
+    /// Enumerate the complete reachable graph in Rust and compute exact h*.
+    ///
+    /// Every bound is mandatory. Hitting one raises `EnumerationError`; no
+    /// partial graph and no plausible-but-wrong h* array is returned.
+    #[pyo3(signature = (*, max_states, max_transitions, max_time))]
+    fn enumerate_state_space(
+        &self,
+        py: Python<'_>,
+        max_states: usize,
+        max_transitions: usize,
+        max_time: f64,
+    ) -> PyResult<PyStateSpace> {
+        let limits = EnumerationLimits {
+            max_states,
+            max_transitions,
+            max_time: checked_duration(max_time, "max_time")?,
+        };
+        let task = GilReleasedTask(self.task.clone());
+        let graph = py
+            .allow_threads(move || task.enumerate(limits))
+            .map_err(|error| EnumerationError::new_err(error.to_string()))?;
+        state_space_to_py(py, graph)
     }
 
     /// (operator, successor_state, transition_cost) for every applicable operator.
@@ -938,6 +1135,7 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
 fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
+    m.add_class::<PyStateSpace>()?;
     m.add_class::<PyOperator>()?;
     m.add_class::<PyEffect>()?;
     m.add_class::<PyNumericEffect>()?;
@@ -948,5 +1146,6 @@ fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TranslateError", py.get_type::<TranslateError>())?;
     m.add("ParseError", py.get_type::<ParseError>())?;
     m.add("SpecError", py.get_type::<SpecError>())?;
+    m.add("EnumerationError", py.get_type::<EnumerationError>())?;
     Ok(())
 }
