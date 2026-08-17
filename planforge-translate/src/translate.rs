@@ -636,34 +636,61 @@ fn translate_strips_operator_aux(
         if eff_condition_list.is_none() {
             continue;
         }
-        if let Some(expr_pne) = assignment.expression.as_pne() {
-            if let Some(&expr_var) = translation.numeric.get(expr_pne)
-                && let Some(&fluent_var) = translation.numeric.get(&assignment.fluent)
-            {
-                ass_effects_by_variable
-                    .entry(fluent_var)
-                    .or_default()
-                    .entry((assignment.symbol.clone(), expr_var))
-                    .or_default()
-                    .extend(eff_condition_list.unwrap());
-            }
-        } else {
-            // Expression might be in numeric translation.dictionary directly
-            // Check if expression can be looked up
-        }
-    }
-
-    if let Some(cost_assignment) = &operator.cost
-        && let Some(expr_pne) = cost_assignment.expression.as_pne()
-        && let Some(&expr_var) = translation.numeric.get(expr_pne)
-        && let Some(&fluent_var) = translation.numeric.get(&cost_assignment.fluent)
-    {
+        let expr_pne = assignment.expression.as_pne().unwrap_or_else(|| {
+            panic!(
+                "numeric effect of operator {} has non-PNE expression {}",
+                operator.name, assignment.expression
+            )
+        });
+        let &expr_var = translation.numeric.get(expr_pne).unwrap_or_else(|| {
+            panic!(
+                "numeric effect expression {expr_pne} of operator {} has no numeric variable",
+                operator.name
+            )
+        });
+        let &fluent_var = translation
+            .numeric
+            .get(&assignment.fluent)
+            .unwrap_or_else(|| {
+                panic!(
+                    "numeric effect fluent {} of operator {} has no numeric variable",
+                    assignment.fluent, operator.name
+                )
+            });
         ass_effects_by_variable
             .entry(fluent_var)
             .or_default()
-            .entry((cost_assignment.symbol.clone(), expr_var))
+            .entry((assignment.symbol.clone(), expr_var))
             .or_default()
-            .push(Assignment::default());
+            .extend(eff_condition_list.unwrap());
+    }
+
+    if let Some(cost_assignment) = &operator.cost {
+        let expr_pne = cost_assignment.expression.as_pne().unwrap_or_else(|| {
+            panic!(
+                "cost effect of operator {} has non-PNE expression {}",
+                operator.name, cost_assignment.expression
+            )
+        });
+        let &expr_var = translation.numeric.get(expr_pne).unwrap_or_else(|| {
+            panic!(
+                "cost expression {expr_pne} of operator {} has no numeric variable",
+                operator.name
+            )
+        });
+        // `operator.cost` is bookkeeping on `total-cost`. A problem may optimize
+        // another fluent instead, in which case `total-cost` is static and has no
+        // SAS numeric variable (for example, the Depots fixture minimizes
+        // `fuel-cost`). The scalar cost above still uses the expression, while no
+        // live numeric effect is needed for the non-metric bookkeeping fluent.
+        if let Some(&fluent_var) = translation.numeric.get(&cost_assignment.fluent) {
+            ass_effects_by_variable
+                .entry(fluent_var)
+                .or_default()
+                .entry((cost_assignment.symbol.clone(), expr_var))
+                .or_default()
+                .push(Assignment::default());
+        }
     }
 
     // Handle del effects: add var=none_of_those when deleted and no add effect
@@ -1700,5 +1727,120 @@ impl FunctionalExpression {
             FunctionalExpression::PrimitiveNumericExpression(pne) => Some(pne),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pne(symbol: &str) -> PrimitiveNumericExpression {
+        PrimitiveNumericExpression::new(symbol.to_string(), vec![])
+    }
+
+    fn translation_with_numeric(
+        numeric: impl IntoIterator<Item = PrimitiveNumericExpression>,
+    ) -> Translation {
+        let numeric: HashMap<_, _> = numeric
+            .into_iter()
+            .enumerate()
+            .map(|(index, expression)| (expression, index))
+            .collect();
+        let numeric_count = numeric.len();
+        Translation {
+            ranges: vec![],
+            dictionary: HashMap::new(),
+            numeric,
+            mutex_ranges: vec![],
+            mutex_dictionary: HashMap::new(),
+            comparison_axioms: HashMap::new(),
+            sas_comparison_axioms: vec![],
+            numeric_names: vec![],
+            translation_key: vec![],
+            mutex_key: vec![],
+            implied_facts: HashMap::new(),
+            num_vals: vec![0.0; numeric_count],
+            relevant_numeric: (0..numeric_count).collect(),
+            simplified_effect_conditions: 0,
+            added_implied_preconditions: 0,
+        }
+    }
+
+    fn action_with_assignment(assignment: FunctionAssignment) -> PropositionalAction {
+        PropositionalAction {
+            name: "broken-action".to_string(),
+            precondition: vec![],
+            add_effects: vec![],
+            del_effects: vec![],
+            assign_effects: vec![(vec![], assignment)],
+            cost: None,
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "numeric effect of operator broken-action has non-PNE expression")]
+    fn rejects_non_normalized_numeric_effect_expression() {
+        let fluent = pne("fuel");
+        let mut translation = translation_with_numeric([fluent.clone()]);
+        let assignment = FunctionAssignment::new(
+            "+".to_string(),
+            fluent,
+            FunctionalExpression::ArithmeticExpression(ArithmeticExpression::new(
+                "+".to_string(),
+                vec![FunctionalExpression::NumericConstant(NumericConstant::new(
+                    1.0,
+                ))],
+            )),
+        );
+
+        translate_strips_operator(&mut translation, &action_with_assignment(assignment));
+    }
+
+    #[test]
+    #[should_panic(expected = "numeric effect expression PNE missing() of operator broken-action")]
+    fn rejects_missing_numeric_effect_expression_variable() {
+        let fluent = pne("fuel");
+        let mut translation = translation_with_numeric([fluent.clone()]);
+        let assignment = FunctionAssignment::new(
+            "+".to_string(),
+            fluent,
+            FunctionalExpression::PrimitiveNumericExpression(pne("missing")),
+        );
+
+        translate_strips_operator(&mut translation, &action_with_assignment(assignment));
+    }
+
+    #[test]
+    #[should_panic(expected = "numeric effect fluent PNE missing() of operator broken-action")]
+    fn rejects_missing_numeric_effect_fluent_variable() {
+        let expression = pne("amount");
+        let mut translation = translation_with_numeric([expression.clone()]);
+        let assignment = FunctionAssignment::new(
+            "+".to_string(),
+            pne("missing"),
+            FunctionalExpression::PrimitiveNumericExpression(expression),
+        );
+
+        translate_strips_operator(&mut translation, &action_with_assignment(assignment));
+    }
+
+    #[test]
+    fn permits_pruned_non_metric_cost_fluent() {
+        let expression = pne("amount");
+        let mut translation = translation_with_numeric([expression.clone()]);
+        let action = PropositionalAction {
+            name: "broken-action".to_string(),
+            precondition: vec![],
+            add_effects: vec![],
+            del_effects: vec![],
+            assign_effects: vec![],
+            cost: Some(FunctionAssignment::new(
+                "+".to_string(),
+                PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                FunctionalExpression::PrimitiveNumericExpression(expression),
+            )),
+        };
+
+        assert!(translate_strips_operator(&mut translation, &action).is_empty());
     }
 }
