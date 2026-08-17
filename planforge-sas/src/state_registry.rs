@@ -23,7 +23,7 @@ use crate::axioms::AxiomEvaluator;
 use crate::numeric_task::{AssignmentEffect, AssignmentOperation, ExplicitFact, Operator, TaskRef};
 use crate::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::utils::float_tolerance;
-use crate::utils::segmented_vector2::SegmentedArrayVector;
+use crate::utils::segmented_vector::SegmentedArrayVector;
 use crate::{numeric_task::NumericType, utils::int_packer::IntDoublePacker};
 use hashbrown::HashTable;
 use std::cell::RefCell;
