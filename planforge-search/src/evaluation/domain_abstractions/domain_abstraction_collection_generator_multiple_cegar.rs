@@ -261,6 +261,23 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     }
 }
 
+impl DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    /// Bound both collection-level and per-abstraction construction by the
+    /// time remaining to the caller.
+    pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
+        self.total_max_time = self.total_max_time.min(max_seconds);
+        self.abstraction_generation_max_time =
+            self.abstraction_generation_max_time.min(max_seconds);
+    }
+
+    /// Select whether generated abstractions retain operator footprints.
+    ///
+    /// This is an internal construction policy rather than a user option.
+    pub(crate) fn set_compute_operator_footprints(&mut self, enabled: bool) {
+        self.compute_operator_footprints = enabled;
+    }
+}
+
 fn fmt_f64(value: f64) -> String {
     if value.is_infinite() {
         "infinity".to_string()

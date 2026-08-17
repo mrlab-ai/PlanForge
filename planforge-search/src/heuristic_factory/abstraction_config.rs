@@ -242,14 +242,11 @@ pub(crate) fn build_components<'task>(
                 let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 config.apply_options(source.args())?;
                 if let Some(remaining) = remaining {
-                    let seconds = remaining.as_secs_f64();
-                    config.total_max_time = config.total_max_time.min(seconds);
-                    config.abstraction_generation_max_time =
-                        config.abstraction_generation_max_time.min(seconds);
+                    config.cap_construction_time(remaining.as_secs_f64());
                 }
                 // Footprints do not influence CEGAR. Build them after the collection so
                 // canonical, label SCP, and region SCP receive the same generation budget.
-                config.compute_operator_footprints = false;
+                config.set_compute_operator_footprints(false);
                 info!("Building domain abstraction source {source_index}...");
                 let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
                     config,

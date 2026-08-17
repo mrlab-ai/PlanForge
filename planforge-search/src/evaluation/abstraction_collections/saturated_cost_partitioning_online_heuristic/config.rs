@@ -258,7 +258,8 @@ impl FillScpConfig {
         // canonical/max already skip via 468f06a). Disable it unconditionally for
         // the label-CP path.
         if !self.partitioning.uses_regions() {
-            self.collection_config.compute_operator_footprints = false;
+            self.collection_config
+                .set_compute_operator_footprints(false);
         }
     }
 
@@ -339,6 +340,14 @@ impl Default for ScpOnlineConfig {
 }
 
 impl ScpOnlineConfig {
+    /// Bound every phase of SCP construction by the caller's remaining time.
+    pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
+        self.table_construction_max_time = self.table_construction_max_time.min(max_seconds);
+        self.initial_order_generation_max_time =
+            self.initial_order_generation_max_time.min(max_seconds);
+        self.order_optimization_max_time = self.order_optimization_max_time.min(max_seconds);
+    }
+
     pub fn pdb_heuristic_config(&self) -> PdbHeuristicConfig {
         PdbHeuristicConfig {
             exploration_heuristic: self.pdb_exploration_heuristic,

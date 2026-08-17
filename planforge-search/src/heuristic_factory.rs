@@ -462,11 +462,7 @@ fn build_scp_from_sources<'task>(
     };
     let components = build_components(task, sources, component_use, construction_deadline)?;
     if let Some(remaining) = remaining_construction_time(construction_deadline)? {
-        let remaining = remaining.as_secs_f64();
-        config.table_construction_max_time = config.table_construction_max_time.min(remaining);
-        config.initial_order_generation_max_time =
-            config.initial_order_generation_max_time.min(remaining);
-        config.order_optimization_max_time = config.order_optimization_max_time.min(remaining);
+        config.cap_construction_time(remaining.as_secs_f64());
     }
     let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
         Some(name.to_string()),
@@ -660,7 +656,7 @@ heuristic_registry! {
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             // Canonical never consumes operator footprints — skip ~12 GB of
             // per-concrete-op StateRegion storage on big tasks.
-            cfg.compute_operator_footprints = false;
+            cfg.set_compute_operator_footprints(false);
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building canonical domain abstractions (CEGAR)...");
             let abstractions = generator
@@ -695,7 +691,7 @@ heuristic_registry! {
             use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.compute_operator_footprints = false;
+            cfg.set_compute_operator_footprints(false);
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building multiple domain abstractions (CEGAR)...");
             let abstractions = generator
@@ -731,7 +727,7 @@ heuristic_registry! {
                 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
                 let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-                cfg.compute_operator_footprints = false;
+                cfg.set_compute_operator_footprints(false);
                 let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
                 info!("Building posthoc_optimization domain abstractions (CEGAR)...");
                 let abstractions = generator.generate_collection(task).map_err(|e| {
