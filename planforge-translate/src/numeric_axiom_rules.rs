@@ -122,12 +122,18 @@ fn fold_axiom_if_constant(
     let parts = axioms[idx].parts.clone();
 
     let result = if op.is_empty() {
-        match parts.first() {
-            Some(FunctionalExpression::NumericConstant(nc)) => Some(nc.value),
-            Some(part) if parts.len() == 1 => {
-                resolve_constant_part(part, axioms, axiom_index, memo, visiting)
-            }
-            _ => None,
+        match parts.as_slice() {
+            [FunctionalExpression::NumericConstant(nc)] => Some(nc.value),
+            [part] => resolve_constant_part(part, axioms, axiom_index, memo, visiting),
+            [] => panic!(
+                "numeric axiom {} has no defining expression",
+                axioms[idx].name
+            ),
+            [_, _, ..] => panic!(
+                "numeric axiom {} with no operator has {} defining expressions, expected one",
+                axioms[idx].name,
+                parts.len()
+            ),
         }
     } else {
         let mut values = Vec::with_capacity(parts.len());
@@ -170,7 +176,10 @@ fn resolve_constant_part(
                 fold_axiom_if_constant(dep_idx, axioms, axiom_index, memo, visiting)
             })
         }
-        _ => None,
+        FunctionalExpression::ArithmeticExpression(_)
+        | FunctionalExpression::AdditiveInverse(_) => {
+            panic!("nested expression {part} survived numeric-axiom flattening")
+        }
     }
 }
 
@@ -200,7 +209,7 @@ fn evaluate_constant_expression(
             let first = iter.next()?;
             iter.fold(first, |acc, value| acc / value)
         }
-        _ => return None,
+        unknown => panic!("unknown numeric axiom operator {unknown}"),
     };
 
     Some(OrderedFloat(result))
@@ -232,7 +241,11 @@ fn compute_axiom_layers(
                     -1
                 }
             }
-            _ => -1,
+            FunctionalExpression::NumericConstant(_) => -1,
+            FunctionalExpression::ArithmeticExpression(_)
+            | FunctionalExpression::AdditiveInverse(_) => {
+                panic!("nested expression {expr} survived numeric-axiom flattening")
+            }
         }
     }
 
@@ -319,7 +332,11 @@ fn identify_equivalent_axioms(
                             FunctionalExpression::PrimitiveNumericExpression(pne.clone())
                         }
                     }
-                    _ => part.clone(),
+                    FunctionalExpression::NumericConstant(_) => part.clone(),
+                    FunctionalExpression::ArithmeticExpression(_)
+                    | FunctionalExpression::AdditiveInverse(_) => {
+                        panic!("nested expression {part} survived numeric-axiom flattening")
+                    }
                 })
                 .collect();
 
@@ -364,5 +381,30 @@ mod tests {
         assert_eq!(forward, reverse);
         assert_eq!(forward.axioms[0].effect.symbol, "a");
         assert_eq!(forward.axioms[1].effect.symbol, "z");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown numeric axiom operator ^")]
+    fn rejects_unknown_numeric_axiom_operator() {
+        let mut axiom = derived_axiom("z", "x");
+        axiom.op = "^".to_string();
+        axiom.parts = vec![FunctionalExpression::NumericConstant(NumericConstant::new(
+            2.0,
+        ))];
+
+        handle_axioms(&[axiom]);
+    }
+
+    #[test]
+    #[should_panic(expected = "with no operator has 2 defining expressions, expected one")]
+    fn rejects_ambiguous_constant_numeric_axiom() {
+        let mut axiom = derived_axiom("z", "x");
+        axiom.op.clear();
+        axiom.parts = vec![
+            FunctionalExpression::NumericConstant(NumericConstant::new(1.0)),
+            FunctionalExpression::NumericConstant(NumericConstant::new(2.0)),
+        ];
+
+        handle_axioms(&[axiom]);
     }
 }

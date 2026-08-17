@@ -264,9 +264,8 @@ fn translate_strips_conditions_aux(
                 );
 
                 // Check if fact is already in dictionary
-                if let Some(atom) = condition_to_atom(fact)
-                    && let Some(pairs) = dictionary.get(&atom)
-                {
+                let atom = condition_to_atom(fact);
+                if let Some(pairs) = dictionary.get(&atom) {
                     let (var, val) = pairs[0];
                     if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
                         return None; // conflicting
@@ -301,9 +300,8 @@ fn translate_strips_conditions_aux(
                     } else {
                         existing_fact.clone()
                     };
-                    if let Some(atom) = condition_to_atom(&lookup_fact)
-                        && let Some(pairs) = dictionary.get(&atom)
-                    {
+                    let atom = condition_to_atom(&lookup_fact);
+                    if let Some(pairs) = dictionary.get(&atom) {
                         let (var, val) = pairs[0];
                         if condition.get(var).is_some_and(|vals| !vals.contains(&val)) {
                             return None;
@@ -319,8 +317,8 @@ fn translate_strips_conditions_aux(
                     let pos_fact = make_fc_condition(comparator, parts_fexpr, false);
                     let neg_fact = make_fc_condition(comparator, parts_fexpr, true);
 
-                    let pos_atom = condition_to_atom(&pos_fact).unwrap();
-                    let neg_atom = condition_to_atom(&neg_fact).unwrap();
+                    let pos_atom = condition_to_atom(&pos_fact);
+                    let neg_atom = condition_to_atom(&neg_fact);
 
                     if !mutex_check {
                         sas_comp_axioms.push(axiom);
@@ -339,9 +337,8 @@ fn translate_strips_conditions_aux(
 
                     // Now use the fact
                     let lookup_fact = if negated { &neg_fact } else { &pos_fact };
-                    if let Some(atom) = condition_to_atom(lookup_fact)
-                        && let Some(pairs) = dictionary.get(&atom)
-                    {
+                    let atom = condition_to_atom(lookup_fact);
+                    if let Some(pairs) = dictionary.get(&atom) {
                         let (var, val) = pairs[0];
                         condition.set_single(var, val);
                     }
@@ -1661,13 +1658,11 @@ pub fn translate_task_from_grounded_internal(
 // Helper functions
 // ============================================================
 
-/// Convert a Condition to an Atom for dictionary lookup
-fn condition_to_atom(cond: &Condition) -> Option<Atom> {
+/// Convert a single normalized fact to its dictionary atom.
+fn condition_to_atom(cond: &Condition) -> Atom {
     match cond {
-        Condition::Atom(a) => Some(a.clone()),
-        Condition::NegatedAtom(na) => {
-            Some(Atom::new(format!("NOT-{}", na.predicate), na.args.clone()))
-        }
+        Condition::Atom(a) => a.clone(),
+        Condition::NegatedAtom(na) => Atom::new(format!("NOT-{}", na.predicate), na.args.clone()),
         // A comparison has no atom of its own, so it is given one, named after
         // the comparison it stands for. The two kinds need different names: the
         // dictionary holds a variable's positive and its negative fact, and
@@ -1680,9 +1675,16 @@ fn condition_to_atom(cond: &Condition) -> Option<Atom> {
                 .map(FunctionalExpression::to_string)
                 .collect();
             let name = format!("{prefix}_{}_{}", cond.comparator(), operands.join("_"));
-            Some(Atom::new(name, vec![]))
+            Atom::new(name, vec![])
         }
-        _ => None,
+        Condition::Truth
+        | Condition::Falsity
+        | Condition::Conjunction(_)
+        | Condition::Disjunction(_)
+        | Condition::UniversalCondition(_)
+        | Condition::ExistentialCondition(_) => {
+            panic!("condition {cond} is not a single dictionary fact")
+        }
     }
 }
 

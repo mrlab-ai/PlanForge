@@ -233,7 +233,12 @@ impl Condition {
             Condition::Disjunction(disjunction) => disjunction.parts,
             Condition::UniversalCondition(universal) => universal.parts,
             Condition::ExistentialCondition(existential) => existential.parts,
-            _ => Vec::new(),
+            Condition::Truth
+            | Condition::Falsity
+            | Condition::Atom(_)
+            | Condition::NegatedAtom(_)
+            | Condition::FunctionComparison(_)
+            | Condition::NegatedFunctionComparison(_) => Vec::new(),
         }
     }
 

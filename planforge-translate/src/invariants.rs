@@ -60,20 +60,52 @@ fn get_literals(condition: &Condition) -> Vec<&Condition> {
         Condition::Conjunction(conj) => conj
             .parts
             .iter()
-            .filter(|p| matches!(p, Condition::Atom(_) | Condition::NegatedAtom(_)))
+            .filter(|part| match part {
+                Condition::Atom(_) | Condition::NegatedAtom(_) => true,
+                // Numeric conditions do not constrain propositional invariants.
+                // `add_inequality_preconds` can also wrap an existing conjunction
+                // in another one; omitting that nested conjunction is the existing
+                // conservative relaxation, which may lose a mutex group but cannot
+                // make an invalid one pass the balance check.
+                Condition::Truth
+                | Condition::Falsity
+                | Condition::Conjunction(_)
+                | Condition::FunctionComparison(_)
+                | Condition::NegatedFunctionComparison(_) => false,
+                Condition::Disjunction(_)
+                | Condition::UniversalCondition(_)
+                | Condition::ExistentialCondition(_) => panic!(
+                    "condition {part} should have been normalized away before invariant analysis"
+                ),
+            })
             .collect(),
-        _ => vec![],
+        Condition::Truth
+        | Condition::Falsity
+        | Condition::FunctionComparison(_)
+        | Condition::NegatedFunctionComparison(_) => vec![],
+        Condition::Disjunction(_)
+        | Condition::UniversalCondition(_)
+        | Condition::ExistentialCondition(_) => panic!(
+            "condition {condition} should have been normalized away before invariant analysis"
+        ),
     }
 }
 
-/// Whether the condition is negated, its predicate and its arguments, or `None`
-/// if it is not a literal. Effects of numeric actions need not be literals, so
-/// the invariant analysis filters rather than asserts on them.
-fn literal_info(cond: &Condition) -> Option<(bool, &str, &[String])> {
+/// Whether the literal is negated, its predicate and its arguments.
+fn literal_info(cond: &Condition) -> (bool, &str, &[String]) {
     match cond {
-        Condition::Atom(a) => Some((false, &a.predicate, &a.args)),
-        Condition::NegatedAtom(na) => Some((true, &na.predicate, &na.args)),
-        _ => None,
+        Condition::Atom(a) => (false, &a.predicate, &a.args),
+        Condition::NegatedAtom(na) => (true, &na.predicate, &na.args),
+        Condition::Truth
+        | Condition::Falsity
+        | Condition::Conjunction(_)
+        | Condition::Disjunction(_)
+        | Condition::UniversalCondition(_)
+        | Condition::ExistentialCondition(_)
+        | Condition::FunctionComparison(_)
+        | Condition::NegatedFunctionComparison(_) => {
+            panic!("expected a literal, got {cond}")
+        }
     }
 }
 
@@ -82,7 +114,16 @@ fn literal_args(cond: &Condition) -> &[String] {
     match cond {
         Condition::Atom(a) => &a.args,
         Condition::NegatedAtom(na) => &na.args,
-        other => panic!("expected a literal, got {other}"),
+        Condition::Truth
+        | Condition::Falsity
+        | Condition::Conjunction(_)
+        | Condition::Disjunction(_)
+        | Condition::UniversalCondition(_)
+        | Condition::ExistentialCondition(_)
+        | Condition::FunctionComparison(_)
+        | Condition::NegatedFunctionComparison(_) => {
+            panic!("expected a literal, got {cond}")
+        }
     }
 }
 
@@ -95,9 +136,7 @@ pub fn ensure_conjunction_sat(system: &mut ConstraintSystem, parts: &[&[&Conditi
     let mut neg: HashMap<&str, Vec<&[String]>> = HashMap::new();
 
     for literal in parts.iter().copied().flatten() {
-        let Some((negated, predicate, args)) = literal_info(literal) else {
-            continue;
-        };
+        let (negated, predicate, args) = literal_info(literal);
         if predicate == "=" {
             assert_eq!(args.len(), 2, "an (in)equality relates two terms");
             let pair = vec![(args[0].clone(), args[1].clone())];
@@ -139,11 +178,9 @@ fn ensure_cover(
 }
 
 fn ensure_inequality(system: &mut ConstraintSystem, literal1: &Condition, literal2: &Condition) {
-    if let (Some((_, pred1, args1)), Some((_, pred2, args2))) =
-        (literal_info(literal1), literal_info(literal2))
-        && pred1 == pred2
-        && !args1.is_empty()
-    {
+    let (_, pred1, args1) = literal_info(literal1);
+    let (_, pred2, args2) = literal_info(literal2);
+    if pred1 == pred2 && !args1.is_empty() {
         let parts: Vec<(String, String)> = args1
             .iter()
             .zip(args2.iter())
@@ -250,8 +287,7 @@ impl InvariantPart {
         own_literal: &Condition,
         other_literal: &Condition,
     ) -> Vec<InvariantPart> {
-        let (_, other_pred, _) =
-            literal_info(other_literal).expect("matches are only sought between literals");
+        let (_, other_pred, _) = literal_info(other_literal);
 
         let mut result = vec![];
         for mapping in self.possible_mappings(own_literal, other_literal) {
@@ -337,8 +373,7 @@ impl Invariant {
     /// number of distinct predicates; several parts would make covering a
     /// disjunction rather than a single equality conjunction.
     fn part_for(&self, atom: &Condition) -> &InvariantPart {
-        let (_, predicate, _) =
-            literal_info(atom).expect("invariant parts are only matched against literals");
+        let (_, predicate, _) = literal_info(atom);
         self.predicate_to_part
             .get(predicate)
             .expect("the invariant has a part for the atom's predicate")
@@ -467,11 +502,11 @@ impl Invariant {
         Ok(false)
     }
 
-    /// Whether the effect is negated, or `None` if the invariant has no part for
-    /// it -- either because it is not a literal, which a numeric effect need not
-    /// be, or because its predicate does not occur in the invariant.
+    /// Whether the effect is negated, or `None` if its predicate does not occur
+    /// in the invariant. Numeric effects are stored separately from these
+    /// literal effects before invariant analysis.
     fn covers(&self, peffect: &Condition) -> Option<bool> {
-        let (negated, predicate, _) = literal_info(peffect)?;
+        let (negated, predicate, _) = literal_info(peffect);
         self.predicate_to_part
             .contains_key(predicate)
             .then_some(negated)
@@ -501,7 +536,7 @@ impl Invariant {
             .chain(add_cond_literals.iter())
             .chain(std::iter::once(&&add_neg))
         {
-            let (_, predicate, _) = literal_info(literal).expect("get_literals yields literals");
+            let (_, predicate, _) = literal_info(literal);
             produced_by_pred.entry(predicate).or_default().push(literal);
         }
 
@@ -599,8 +634,7 @@ impl Invariant {
         let del_cond_literals = get_literals(&del_effect.condition);
         let del_neg = negate_literal(&del_effect.peffect);
         for literal in del_cond_literals.iter().chain(std::iter::once(&&del_neg)) {
-            let (negated, predicate, args) =
-                literal_info(literal).expect("get_literals yields literals");
+            let (negated, predicate, args) = literal_info(literal);
             // The ways in which one of the literals that hold on production
             // implies this literal: they must agree on every argument.
             let possibilities: Vec<Assignment> = produced_by_pred
@@ -608,8 +642,7 @@ impl Invariant {
                 .map_or(&[][..], Vec::as_slice)
                 .iter()
                 .filter_map(|candidate| {
-                    let (candidate_negated, _, candidate_args) =
-                        literal_info(candidate).expect("get_literals yields literals");
+                    let (candidate_negated, _, candidate_args) = literal_info(candidate);
                     (candidate_negated == negated).then(|| {
                         Assignment::new(
                             args.iter()
@@ -638,10 +671,8 @@ impl Invariant {
     ) {
         let part = self.part_for(&add_effect.peffect);
         for del_eff in &action.effects {
-            if let Some((negated, del_pred, _)) = literal_info(&del_eff.peffect)
-                && negated
-                && !self.predicate_to_part.contains_key(del_pred)
-            {
+            let (negated, del_pred, _) = literal_info(&del_eff.peffect);
+            if negated && !self.predicate_to_part.contains_key(del_pred) {
                 for match_part in part.possible_matches(&add_effect.peffect, &del_eff.peffect) {
                     let mut new_parts: HashSet<InvariantPart> = self.parts.clone();
                     new_parts.insert(match_part);
