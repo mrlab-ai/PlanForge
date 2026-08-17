@@ -7,7 +7,7 @@ use planforge_sas::{
     numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
 };
 
-use planforge_sas::utils::interval::{EMPTY_INTERVAL, Interval, UNBOUNDED_INTERVAL};
+use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
 
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 use crate::evaluation::domain_abstractions::{
@@ -149,7 +149,7 @@ pub(crate) fn materialize_comparison_requirements(
             continue;
         };
         state.numeric[numeric_var_id] =
-            intersect_intervals(state.numeric[numeric_var_id], required_interval);
+            state.numeric[numeric_var_id].intersection(&required_interval);
     }
 }
 
@@ -170,28 +170,4 @@ fn split_for_missing_numeric_requirement(
         return Some((requirement.upper, requirement.upper_closed));
     }
     None
-}
-
-fn intersect_intervals(left: Interval, right: Interval) -> Interval {
-    if left.is_empty() || right.is_empty() {
-        return EMPTY_INTERVAL;
-    }
-
-    let (lower, lower_closed) = if left.lower > right.lower {
-        (left.lower, left.lower_closed)
-    } else if right.lower > left.lower {
-        (right.lower, right.lower_closed)
-    } else {
-        (left.lower, left.lower_closed && right.lower_closed)
-    };
-
-    let (upper, upper_closed) = if left.upper < right.upper {
-        (left.upper, left.upper_closed)
-    } else if right.upper < left.upper {
-        (right.upper, right.upper_closed)
-    } else {
-        (left.upper, left.upper_closed && right.upper_closed)
-    };
-
-    Interval::new(lower, upper, lower_closed, upper_closed)
 }

@@ -4,6 +4,7 @@ mod tests;
 use std::fmt;
 
 use crate::axioms::{AssignmentAxiom, CalOperator};
+use crate::numeric_conditions::NumericConditionError;
 use crate::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
 };
@@ -123,6 +124,7 @@ pub enum LinearizationError {
     DivisionByZeroConstant {
         numeric_var_id: usize,
     },
+    InvalidAssignmentAxiomLayout(NumericConditionError),
 }
 
 impl fmt::Display for LinearizationError {
@@ -174,28 +176,20 @@ impl fmt::Display for LinearizationError {
                 f,
                 "numeric var {numeric_var_id} depends on division by a zero constant"
             ),
+            Self::InvalidAssignmentAxiomLayout(error) => {
+                write!(f, "invalid assignment axiom layout: {error}")
+            }
         }
     }
-}
-
-pub fn build_assignment_axiom_lookup<T: AbstractNumericTask + ?Sized>(
-    task: &T,
-) -> Vec<Option<usize>> {
-    let mut lookup = vec![None; task.numeric_variables().len()];
-    for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
-        let affected_var_id = axiom.get_affected_var_id();
-        if affected_var_id < lookup.len() {
-            lookup[affected_var_id] = Some(axiom_id);
-        }
-    }
-    lookup
 }
 
 pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
     task: &T,
     numeric_var_id: usize,
 ) -> Result<LinearExpression, LinearizationError> {
-    let assignment_lookup = build_assignment_axiom_lookup(task);
+    let assignment_lookup = task
+        .assignment_axiom_lookup()
+        .map_err(LinearizationError::InvalidAssignmentAxiomLayout)?;
     let initial_numeric_values = task.get_initial_numeric_state_values().to_vec();
     let mut visiting = vec![false; task.numeric_variables().len()];
     linearize_numeric_var_with_lookup(
@@ -218,7 +212,9 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
             operator_id,
             len: operators.len(),
         })?;
-    let assignment_lookup = build_assignment_axiom_lookup(task);
+    let assignment_lookup = task
+        .assignment_axiom_lookup()
+        .map_err(LinearizationError::InvalidAssignmentAxiomLayout)?;
     let initial_numeric_values = task.get_initial_numeric_state_values().to_vec();
     let num_numeric_vars = task.numeric_variables().len();
     let mut effects = Vec::with_capacity(operator.assignment_effects().len());

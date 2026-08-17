@@ -1,10 +1,12 @@
 use crate::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
-use crate::numeric_conditions::{ConditionValue, NumericConditions};
+use crate::numeric_conditions::{
+    ConditionValue, NumericConditionError, NumericConditions, assignment_axiom_lookup,
+};
 use crate::numeric_parser::parse_numeric_sas_output;
 use crate::state_registry::{ConcreteState, StateRegistry};
 use crate::utils::int_packer::IntDoublePacker;
 use crate::utils::linear_effects::{
-    LinearNumericEffect, LinearizationError, build_assignment_axiom_lookup, linearize_numeric_var,
+    LinearNumericEffect, LinearizationError, linearize_numeric_var,
     linearize_operator_assignment_effects,
 };
 use std::{fmt, sync::Arc};
@@ -132,8 +134,8 @@ pub trait AbstractNumericTask: Send + Sync {
         }
     }
 
-    fn assignment_axiom_lookup(&self) -> Vec<Option<usize>> {
-        build_assignment_axiom_lookup(self)
+    fn assignment_axiom_lookup(&self) -> Result<Vec<Option<usize>>, NumericConditionError> {
+        assignment_axiom_lookup(self.numeric_variables().len(), self.assignment_axioms())
     }
 
     fn linearize_numeric_var(
@@ -338,7 +340,7 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn min_abstract_operator_cost(&self) -> f64 {
         (**self).min_abstract_operator_cost()
     }
-    fn assignment_axiom_lookup(&self) -> Vec<Option<usize>> {
+    fn assignment_axiom_lookup(&self) -> Result<Vec<Option<usize>>, NumericConditionError> {
         (**self).assignment_axiom_lookup()
     }
     fn linearize_numeric_var(

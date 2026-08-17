@@ -3219,24 +3219,10 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .ok_or_else(|| {
                     format!("LM-cut relaxed operator id {relaxed_operator_id} is invalid")
                 })?;
-        let condition = self
-            .conditions
-            .get(condition_id)
-            .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
-
-        let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
-        for linear_effect in &relaxed_operator.linear_assignment_effects {
-            let target_coefficient = condition
-                .coefficients
-                .get(linear_effect.affected_var_id)
-                .copied()
-                .unwrap_or(0.0);
-            if target_coefficient.abs() < self.config.precision {
-                continue;
-            }
-            expression = expression.add(&linear_effect.delta.scale(target_coefficient));
-        }
-        Ok(expression)
+        self.condition_delta_expression(
+            condition_id,
+            relaxed_operator.linear_assignment_effects.iter(),
+        )
     }
 
     fn original_operator_condition_delta_expression(
@@ -3250,36 +3236,46 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .ok_or_else(|| {
                 format!("LM-cut helper linear effects {original_operator_id} are missing")
             })?;
+        let reconstructed_linear_effects = helper_linear_effects
+            .iter()
+            .map(|linear_effect| {
+                self.numeric_helper
+                    .linearized_effect_for_action_assignment(
+                        original_operator_id,
+                        linear_effect.source_assignment_effect_id,
+                    )
+                    .ok_or_else(|| {
+                        format!(
+                            "LM-cut helper linearized effect {} is missing for operator {original_operator_id}",
+                            linear_effect.source_assignment_effect_id
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.condition_delta_expression(condition_id, reconstructed_linear_effects.iter())
+    }
+
+    fn condition_delta_expression<'a>(
+        &self,
+        condition_id: usize,
+        linear_effects: impl Iterator<Item = &'a LinearNumericEffect>,
+    ) -> Result<LinearExpression, String> {
         let condition = self
             .conditions
             .get(condition_id)
             .ok_or_else(|| format!("LM-cut numeric condition {condition_id} is invalid"))?;
 
         let mut expression = LinearExpression::zero(self.task.numeric_variables().len());
-        for linear_effect in helper_linear_effects {
-            let reconstructed_linear_effect = self
-                .numeric_helper
-                .linearized_effect_for_action_assignment(
-                    original_operator_id,
-                    linear_effect.source_assignment_effect_id,
-                )
-                .ok_or_else(|| {
-                    format!(
-                        "LM-cut helper linearized effect {} is missing for operator {original_operator_id}",
-                        linear_effect.source_assignment_effect_id
-                    )
-                })?;
+        for linear_effect in linear_effects {
             let target_coefficient = condition
                 .coefficients
-                .get(reconstructed_linear_effect.affected_var_id)
+                .get(linear_effect.affected_var_id)
                 .copied()
                 .unwrap_or(0.0);
             if target_coefficient.abs() < self.config.precision {
                 continue;
             }
-
-            expression =
-                expression.add(&reconstructed_linear_effect.delta.scale(target_coefficient));
+            expression = expression.add(&linear_effect.delta.scale(target_coefficient));
         }
         Ok(expression)
     }

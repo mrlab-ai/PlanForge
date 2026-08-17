@@ -22,7 +22,6 @@ use planforge_sas::utils::float_tolerance;
 
 use planforge_sas::utils::interval::Interval;
 
-const EPSILON: f64 = 1e-9;
 const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
 const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
 const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
@@ -277,7 +276,8 @@ pub fn build_explicit_label_cost_partitioning_table(
                 .map(|costs| costs.into_iter().fold(f64::INFINITY, f64::min))
         })
         .collect::<Result<Vec<_>>>()?;
-    let distances = build_explicit_goal_distances(transition_system, &transition_costs, deadline)?;
+    let distances =
+        build_explicit_goal_distances(transition_system, &transition_costs, deadline, None)?;
     let saturation_table = capped_saturation_table(&distances, cap_state_id)?;
     let saturated = saturated_label_costs(
         transition_system,
@@ -300,8 +300,12 @@ pub fn build_explicit_label_cost_partitioning_table(
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();
-    let global_distances =
-        build_explicit_goal_distances(transition_system, &saturated_transition_costs, deadline)?;
+    let global_distances = build_explicit_goal_distances(
+        transition_system,
+        &saturated_transition_costs,
+        deadline,
+        None,
+    )?;
     Ok((global_distances, saturated))
 }
 
@@ -322,7 +326,8 @@ pub fn build_explicit_regional_cost_partitioning_table(
     )?;
     let transition_costs =
         transition_costs_from_abstract_operator_costs(transition_system, &operator_costs)?;
-    let distances = build_explicit_goal_distances(transition_system, &transition_costs, deadline)?;
+    let distances =
+        build_explicit_goal_distances(transition_system, &transition_costs, deadline, None)?;
     let saturation_table = capped_saturation_table(&distances, cap_state_id)?;
     let saturated =
         saturated_abstract_operator_costs(transition_system, &operator_costs, &saturation_table)?;
@@ -337,8 +342,12 @@ pub fn build_explicit_regional_cost_partitioning_table(
     }
     let saturated_transition_costs =
         transition_costs_from_abstract_operator_costs(transition_system, &saturated)?;
-    let global_distances =
-        build_explicit_goal_distances(transition_system, &saturated_transition_costs, deadline)?;
+    let global_distances = build_explicit_goal_distances(
+        transition_system,
+        &saturated_transition_costs,
+        deadline,
+        None,
+    )?;
     Ok((
         global_distances,
         AbstractOperatorCostFunction {
@@ -351,10 +360,11 @@ fn ensure_scp_table_deadline(deadline: Option<Instant>) -> Result<()> {
     crate::resource_limits::ensure_before_deadline(deadline, "SCP table construction")
 }
 
-fn build_explicit_goal_distances(
+pub(crate) fn build_explicit_goal_distances(
     transition_system: &AbstractTransitionSystem,
     transition_costs: &[f64],
     deadline: Option<Instant>,
+    mut generating: Option<&mut [Option<usize>]>,
 ) -> Result<Vec<f64>> {
     ensure!(
         transition_system.transitions.len() == transition_costs.len(),
@@ -363,6 +373,13 @@ fn build_explicit_goal_distances(
         transition_costs.len()
     );
     let num_states = transition_system.backward.len();
+    if let Some(generating) = &generating {
+        ensure!(
+            generating.len() == num_states,
+            "generating-operator table/state count mismatch: {} vs {num_states}",
+            generating.len()
+        );
+    }
     let mut distances = vec![f64::INFINITY; num_states];
     let mut heap = BinaryHeap::new();
     for &goal_state_id in &transition_system.goal_state_hashes {
@@ -383,7 +400,7 @@ fn build_explicit_goal_distances(
         }
         expansions += 1;
         let distance = distance.into_inner();
-        if distance > distances[target_id] + EPSILON {
+        if distance > distances[target_id] + float_tolerance::SEARCH_EPSILON {
             continue;
         }
         let predecessors = transition_system
@@ -402,7 +419,7 @@ fn build_explicit_goal_distances(
             );
             let cost = transition_costs[transition_id];
             ensure!(
-                cost.is_finite() && cost >= -EPSILON,
+                cost.is_finite() && cost >= -float_tolerance::SEARCH_EPSILON,
                 "abstract transition {transition_id} has invalid cost {cost}"
             );
             let alternative = distance + cost.max(0.0);
@@ -412,8 +429,11 @@ fn build_explicit_goal_distances(
                     transition.source_hash
                 )
             })?;
-            if alternative + EPSILON < *source_distance {
+            if alternative + float_tolerance::SEARCH_EPSILON < *source_distance {
                 *source_distance = alternative;
+                if let Some(generating) = &mut generating {
+                    generating[transition.source_hash] = Some(transition.abstract_op_id);
+                }
                 heap.push((
                     Reverse(NotNan::new(alternative).context("abstract distance is NaN")?),
                     transition.source_hash,
@@ -455,15 +475,15 @@ fn saturated_label_costs(
     for transition in &transition_system.transitions {
         let source_h = distances[transition.source_hash];
         let target_h = distances[transition.target_hash];
-        if !source_h.is_finite() || !target_h.is_finite() {
+        let Some(needed) = saturation_need(
+            source_h,
+            target_h,
+            transition_costs[transition.transition_id],
+            "saturated transition cost",
+        )?
+        else {
             continue;
-        }
-        let needed = (source_h - target_h).max(0.0);
-        ensure!(
-            needed <= transition_costs[transition.transition_id] + 1e-7,
-            "saturated transition cost {needed} exceeds residual transition cost {}",
-            transition_costs[transition.transition_id]
-        );
+        };
         for &operator_id in &transition.concrete_op_ids {
             let slot = saturated.get_mut(operator_id).with_context(|| {
                 format!("transition references missing concrete operator {operator_id}")
@@ -495,7 +515,7 @@ fn transition_costs_from_abstract_operator_costs(
         .collect()
 }
 
-fn saturated_abstract_operator_costs(
+pub(crate) fn saturated_abstract_operator_costs(
     transition_system: &AbstractTransitionSystem,
     operator_costs: &[f64],
     distances: &[f64],
@@ -504,10 +524,6 @@ fn saturated_abstract_operator_costs(
     for transition in &transition_system.transitions {
         let source_h = distances[transition.source_hash];
         let target_h = distances[transition.target_hash];
-        if !source_h.is_finite() || !target_h.is_finite() {
-            continue;
-        }
-        let needed = (source_h - target_h).max(0.0);
         let operator_cost = *operator_costs
             .get(transition.abstract_op_id)
             .with_context(|| {
@@ -516,13 +532,35 @@ fn saturated_abstract_operator_costs(
                     transition.transition_id, transition.abstract_op_id
                 )
             })?;
-        ensure!(
-            needed <= operator_cost + 1e-7,
-            "saturated abstract-operator cost {needed} exceeds residual cost {operator_cost}"
-        );
+        let Some(needed) = saturation_need(
+            source_h,
+            target_h,
+            operator_cost,
+            "saturated abstract-operator cost",
+        )?
+        else {
+            continue;
+        };
         saturated[transition.abstract_op_id] = saturated[transition.abstract_op_id].max(needed);
     }
     Ok(saturated)
+}
+
+pub(crate) fn saturation_need(
+    source_h: f64,
+    target_h: f64,
+    residual_budget: f64,
+    context: &str,
+) -> Result<Option<f64>> {
+    if !source_h.is_finite() || !target_h.is_finite() {
+        return Ok(None);
+    }
+    let needed = (source_h - target_h).max(0.0);
+    ensure!(
+        needed <= residual_budget + 1e-7,
+        "{context} {needed} exceeds residual cost {residual_budget}"
+    );
+    Ok(Some(needed))
 }
 
 fn abstract_operator_costs_from_footprints(
@@ -656,7 +694,7 @@ impl TableRegionalEnvelope {
     ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount > 0.0);
         debug_assert!(base_cost.is_finite() && base_cost > 0.0);
-        if amount + EPSILON >= base_cost {
+        if amount + float_tolerance::SEARCH_EPSILON >= base_cost {
             match self {
                 Self::Full(regions) => regions.push(region.clone()),
                 Self::Fractional(usage) => usage.maximize(region, base_cost, deadline)?,
@@ -796,7 +834,7 @@ impl RegionalUsage {
         deadline: Option<Instant>,
     ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount >= 0.0);
-        if amount <= EPSILON {
+        if amount <= float_tolerance::SEARCH_EPSILON {
             return Ok(());
         }
         self.overlay(region, |old| old.max(amount), amount, deadline)
@@ -817,7 +855,7 @@ impl RegionalUsage {
         deadline: Option<Instant>,
     ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount >= 0.0);
-        if amount <= EPSILON {
+        if amount <= float_tolerance::SEARCH_EPSILON {
             return Ok(());
         }
         self.overlay(region, |old| old + amount, amount, deadline)
@@ -876,7 +914,7 @@ impl RegionalUsage {
             region,
             amount: uncovered_amount,
         }));
-        new_cells.retain(|cell| cell.amount > EPSILON);
+        new_cells.retain(|cell| cell.amount > float_tolerance::SEARCH_EPSILON);
         debug_assert!(regional_usage_cells_are_disjoint(&new_cells));
         self.cells = new_cells;
         *self.index.get_mut() = None;
@@ -970,7 +1008,7 @@ pub(crate) fn state_region_intersection(
         .iter()
         .copied()
         .zip(right.numeric.iter().copied())
-        .map(|(left, right)| intersect_intervals(left, right))
+        .map(|(left, right)| left.intersection(&right))
         .collect::<Vec<_>>();
     if numeric.iter().any(Interval::is_empty) {
         return None;
@@ -1003,29 +1041,6 @@ fn sorted_value_difference(left: &[PropValueId], right: &[PropValueId]) -> Vec<P
         .copied()
         .filter(|value| right.binary_search(value).is_err())
         .collect()
-}
-
-fn intersect_intervals(left: Interval, right: Interval) -> Interval {
-    let lower = left.lower.max(right.lower);
-    let upper = left.upper.min(right.upper);
-    Interval::new(
-        lower,
-        upper,
-        if left.lower > right.lower {
-            left.lower_closed
-        } else if left.lower < right.lower {
-            right.lower_closed
-        } else {
-            left.lower_closed && right.lower_closed
-        },
-        if left.upper < right.upper {
-            left.upper_closed
-        } else if left.upper > right.upper {
-            right.upper_closed
-        } else {
-            left.upper_closed && right.upper_closed
-        },
-    )
 }
 
 /// Returns a disjoint cover of `region \\ removed`. `removed` must be a
@@ -1623,12 +1638,12 @@ impl TransitionResidualCosts {
         for transition in &transition_system.transitions {
             let saturated = tcf.transition_costs[transition.transition_id];
             ensure!(
-                !saturated.is_finite() || saturated >= -EPSILON,
+                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
                 "negative transition saturated costs are not supported: transition {} has {}",
                 transition.transition_id,
                 saturated
             );
-            if !saturated.is_finite() || saturated <= EPSILON {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             for &concrete_op_id in &transition.concrete_op_ids {
@@ -1672,7 +1687,7 @@ impl TransitionResidualCosts {
             transition_system.transition_counts_by_abstract_operator(tcf.operator_costs.len());
         let mut total_reduction_pieces = 0usize;
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
-            if !saturated.is_finite() || saturated <= EPSILON {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             total_reduction_pieces = total_reduction_pieces.saturating_add(
@@ -1689,12 +1704,12 @@ impl TransitionResidualCosts {
         let covers = transition_system.abstract_operator_region_covers();
         for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
             ensure!(
-                !saturated.is_finite() || saturated >= -EPSILON,
+                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
                 "negative abstract-operator saturated costs are not supported: abstract op {} has {}",
                 abstract_op_id,
                 saturated
             );
-            if !saturated.is_finite() || saturated <= EPSILON {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             let Some(cover) = covers.get(abstract_op_id) else {
@@ -1710,7 +1725,7 @@ impl TransitionResidualCosts {
                         "no base residual cost for operator {concrete_op_id}"
                     );
                     ensure!(
-                        saturated <= residual.base_cost + EPSILON,
+                        saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
                         "residual cost underflow: abstract-operator reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                         residual.base_cost
                     );
@@ -1726,7 +1741,7 @@ impl TransitionResidualCosts {
                         let reduction = &mut residual.reductions[index];
                         let new_amount = reduction.amount + saturated;
                         ensure!(
-                            new_amount <= residual.base_cost + EPSILON,
+                            new_amount <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
                             "abstract-operator reductions for concrete operator {concrete_op_id} exceed base cost {}",
                             residual.base_cost
                         );
@@ -1781,12 +1796,12 @@ impl TransitionResidualCosts {
                 ensure_scp_table_deadline(deadline)?;
             }
             ensure!(
-                !saturated.is_finite() || saturated >= -EPSILON,
+                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
                 "negative abstract-operator saturated costs are not supported: abstract op {} has {}",
                 abstract_op_id,
                 saturated
             );
-            if !saturated.is_finite() || saturated <= EPSILON {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
 
@@ -1802,13 +1817,13 @@ impl TransitionResidualCosts {
                     "residual cost for abstract op {abstract_op_id}, concrete op {concrete_op_id} must be finite"
                 );
                 ensure!(
-                    saturated <= current_residual + EPSILON,
+                    saturated <= current_residual + float_tolerance::SEARCH_EPSILON,
                     "abstract-operator footprint reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
                 );
                 let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
                     continue;
                 };
-                if residual.base_cost <= EPSILON {
+                if residual.base_cost <= float_tolerance::SEARCH_EPSILON {
                     continue;
                 }
                 ensure!(
@@ -1816,7 +1831,7 @@ impl TransitionResidualCosts {
                     "no base residual cost for operator {concrete_op_id}"
                 );
                 ensure!(
-                    saturated <= residual.base_cost + EPSILON,
+                    saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
                     "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
@@ -1844,11 +1859,11 @@ impl TransitionResidualCosts {
                 ensure_scp_table_deadline(deadline)?;
             }
             ensure!(
-                entry.amount.is_finite() && entry.amount >= -EPSILON,
+                entry.amount.is_finite() && entry.amount >= -float_tolerance::SEARCH_EPSILON,
                 "regional allocation entry {entry_id} has invalid amount {}",
                 entry.amount
             );
-            if entry.amount <= EPSILON {
+            if entry.amount <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             let concrete_op_id = entry.footprint.concrete_op_id;
@@ -1861,11 +1876,12 @@ impl TransitionResidualCosts {
                     )
                 })?;
             ensure!(
-                residual.base_cost.is_finite() && residual.base_cost > EPSILON,
+                residual.base_cost.is_finite()
+                    && residual.base_cost > float_tolerance::SEARCH_EPSILON,
                 "regional allocation requires a positive finite base cost for operator {concrete_op_id}"
             );
             ensure!(
-                entry.amount <= residual.base_cost + EPSILON,
+                entry.amount <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
                 "regional allocation {} exceeds base cost {} for operator {concrete_op_id}",
                 entry.amount,
                 residual.base_cost
@@ -1896,7 +1912,7 @@ impl TransitionResidualCosts {
                             residual.regional_usage.max_over(region)
                         };
                         ensure!(
-                            already_used <= EPSILON,
+                            already_used <= float_tolerance::SEARCH_EPSILON,
                             "full regional allocation overlaps prior usage for operator {concrete_op_id}: used={already_used}, base={}",
                             residual.base_cost
                         );
@@ -1913,7 +1929,8 @@ impl TransitionResidualCosts {
                             residual.regional_usage.max_over(&cell.region)
                         };
                         ensure!(
-                            already_used + cell.amount <= residual.base_cost + EPSILON,
+                            already_used + cell.amount
+                                <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
                             "regional residual cost underflow for operator {concrete_op_id}: used={already_used}, allocation={}, base={}",
                             cell.amount,
                             residual.base_cost
@@ -1940,10 +1957,10 @@ impl TransitionResidualCosts {
         );
         for (op_id, saturated) in saturated_costs.iter().copied().enumerate() {
             ensure!(
-                !saturated.is_finite() || saturated >= -EPSILON,
+                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
                 "negative uniform saturated costs are not supported: operator {op_id} has {saturated}"
             );
-            if !saturated.is_finite() || saturated <= EPSILON {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             self.operator_residuals[op_id].base_cost =
@@ -1979,7 +1996,7 @@ impl TransitionResidualCosts {
             let reduction = &mut residual.reductions[index];
             let new_amount = reduction.amount + saturated;
             ensure!(
-                new_amount <= residual.base_cost + EPSILON,
+                new_amount <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
                 "residual cost underflow: transition reductions for operator {concrete_op_id} exceed base cost {}",
                 residual.base_cost
             );
@@ -1993,7 +2010,7 @@ impl TransitionResidualCosts {
             "no base residual cost for operator {concrete_op_id}"
         );
         ensure!(
-            saturated <= residual.base_cost + EPSILON,
+            saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
             "residual cost underflow: transition reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
             residual.base_cost
         );
@@ -2105,7 +2122,10 @@ impl OperatorResidual {
     }
 
     fn lookup_full_reduction_overlap(&self, query: &TransitionCondition) -> Option<bool> {
-        if !self.base_cost.is_finite() || self.base_cost <= EPSILON || self.reductions.is_empty() {
+        if !self.base_cost.is_finite()
+            || self.base_cost <= float_tolerance::SEARCH_EPSILON
+            || self.reductions.is_empty()
+        {
             return None;
         }
         self.ensure_full_reduction_index()?;
@@ -2160,7 +2180,7 @@ impl OperatorResidual {
                     };
                 }
                 for indexed in &intervals[..end] {
-                    if !intervals_overlap(indexed.interval, *query_interval) {
+                    if !indexed.interval.intersects(query_interval) {
                         continue;
                     }
                     let reduction = &self.reductions[indexed.reduction_id];
@@ -2200,18 +2220,18 @@ fn build_full_reduction_index(
     cap: f64,
     generation: u64,
 ) -> Option<FullReductionIndex> {
-    if reductions.is_empty() || !cap.is_finite() || cap <= EPSILON {
+    if reductions.is_empty() || !cap.is_finite() || cap <= float_tolerance::SEARCH_EPSILON {
         return None;
     }
     let all_reductions_full = reductions
         .iter()
-        .all(|reduction| reduction.amount >= cap - EPSILON);
+        .all(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON);
     let feature = best_full_reduction_feature(reductions, cap)?;
     let kind = match feature {
         RegionFeature::SourceProp(_) | RegionFeature::TargetProp(_) => {
             let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
             for (reduction_id, reduction) in reductions.iter().enumerate() {
-                if reduction.amount < cap - EPSILON {
+                if reduction.amount < cap - float_tolerance::SEARCH_EPSILON {
                     continue;
                 }
                 let value = singleton_value_for_feature(&reduction.condition.region, feature)?;
@@ -2225,7 +2245,7 @@ fn build_full_reduction_index(
         RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => {
             let mut intervals = Vec::new();
             for (reduction_id, reduction) in reductions.iter().enumerate() {
-                if reduction.amount < cap - EPSILON {
+                if reduction.amount < cap - float_tolerance::SEARCH_EPSILON {
                     continue;
                 }
                 let interval = *interval_for_feature(&reduction.condition.region, feature)?;
@@ -2272,7 +2292,7 @@ fn best_full_reduction_feature(
 ) -> Option<RegionFeature> {
     let first_full = reductions
         .iter()
-        .find(|reduction| reduction.amount >= cap - EPSILON)?;
+        .find(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON)?;
     let source_len = first_full.condition.region.source.propositions.len();
     let target_len = first_full.condition.region.target.propositions.len();
     let mut best = None;
@@ -2285,7 +2305,7 @@ fn best_full_reduction_feature(
         let mut usable = false;
         for reduction in reductions
             .iter()
-            .filter(|reduction| reduction.amount >= cap - EPSILON)
+            .filter(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON)
         {
             let Some(value) = singleton_value_for_feature(&reduction.condition.region, feature)
             else {
@@ -2310,7 +2330,7 @@ fn best_full_reduction_feature(
         let mut usable = false;
         for reduction in reductions
             .iter()
-            .filter(|reduction| reduction.amount >= cap - EPSILON)
+            .filter(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON)
         {
             let Some(interval) = interval_for_feature(&reduction.condition.region, feature) else {
                 usable = false;
@@ -2374,34 +2394,12 @@ fn interval_starts_after(left: &Interval, right: &Interval) -> bool {
         || (left.lower == right.upper && !(left.lower_closed && right.upper_closed))
 }
 
-fn intervals_overlap(left: Interval, right: Interval) -> bool {
-    !Interval::new(
-        left.lower.max(right.lower),
-        left.upper.min(right.upper),
-        if left.lower > right.lower {
-            left.lower_closed
-        } else if left.lower < right.lower {
-            right.lower_closed
-        } else {
-            left.lower_closed && right.lower_closed
-        },
-        if left.upper < right.upper {
-            left.upper_closed
-        } else if left.upper > right.upper {
-            right.upper_closed
-        } else {
-            left.upper_closed && right.upper_closed
-        },
-    )
-    .is_empty()
-}
-
 fn max_overlap_reduction(
     query: Option<&TransitionCondition>,
     residual: &OperatorResidual,
     cap: f64,
 ) -> f64 {
-    if !cap.is_finite() || cap <= EPSILON {
+    if !cap.is_finite() || cap <= float_tolerance::SEARCH_EPSILON {
         return 0.0;
     }
     let reductions = &residual.reductions;
@@ -2421,8 +2419,8 @@ fn max_overlap_reduction(
     let mut has_subcap_reduction = false;
     if candidates.iter().any(|&i| {
         let reduction = &reductions[i];
-        has_subcap_reduction |= reduction.amount < cap - EPSILON;
-        reduction.amount >= cap - EPSILON
+        has_subcap_reduction |= reduction.amount < cap - float_tolerance::SEARCH_EPSILON;
+        reduction.amount >= cap - float_tolerance::SEARCH_EPSILON
             && query.is_none_or(|query| {
                 compatible_identities(query, &reduction.condition)
                     && reduction.condition.region.overlaps(&query.region)
@@ -2490,10 +2488,10 @@ fn max_overlap_reduction(
             *best = best.max(current_sum);
             return;
         }
-        if *best >= space.cap - EPSILON {
+        if *best >= space.cap - float_tolerance::SEARCH_EPSILON {
             return;
         }
-        if current_sum + space.suffix[index] <= *best + EPSILON {
+        if current_sum + space.suffix[index] <= *best + float_tolerance::SEARCH_EPSILON {
             return;
         }
 
@@ -2680,7 +2678,7 @@ fn subtract_cost(cost: f64, saturated: f64) -> Result<f64> {
         "saturated cost must be finite, got {saturated}"
     );
     let reduced = cost - saturated;
-    if reduced < 0.0 && reduced > -EPSILON {
+    if reduced < 0.0 && reduced > -float_tolerance::SEARCH_EPSILON {
         Ok(0.0)
     } else {
         ensure!(
@@ -2717,7 +2715,7 @@ fn prop_regions_overlap(left: &[Vec<PropValueId>], right: &[Vec<PropValueId>]) -
         .all(|(l, r)| sorted_value_sets_overlap(l, r))
 }
 
-fn sorted_value_sets_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
+pub(crate) fn sorted_value_sets_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
     let mut i = 0;
     let mut j = 0;
     while i < left.len() && j < right.len() {

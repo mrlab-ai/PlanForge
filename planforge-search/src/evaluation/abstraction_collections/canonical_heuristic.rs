@@ -9,6 +9,8 @@ use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::maximal_cliques::maximal_cliques;
+use crate::evaluation::state_value_cache::StateValueCache;
 
 use super::component::AbstractionComponent;
 
@@ -18,7 +20,7 @@ pub struct CanonicalAbstractionHeuristic<'task> {
     max_additive_subsets: Vec<Vec<usize>>,
     relevant_operator_ids: Vec<BTreeSet<usize>>,
     component_value_cache: RefCell<Vec<Option<f64>>>,
-    state_value_cache: RefCell<Vec<Option<f64>>>,
+    state_value_cache: RefCell<StateValueCache>,
     diagnostics_logged: RefCell<bool>,
 }
 
@@ -87,7 +89,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             max_additive_subsets,
             relevant_operator_ids,
             component_value_cache: RefCell::new(Vec::new()),
-            state_value_cache: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(StateValueCache::default()),
             diagnostics_logged: RefCell::new(false),
         })
     }
@@ -98,21 +100,6 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
 
     pub fn max_additive_subsets(&self) -> &[Vec<usize>] {
         &self.max_additive_subsets
-    }
-
-    fn cached_state_value(&self, state_id: usize) -> Option<f64> {
-        self.state_value_cache
-            .borrow()
-            .get(state_id)
-            .and_then(|value| *value)
-    }
-
-    fn cache_state_value(&self, state_id: usize, value: f64) {
-        let mut cache = self.state_value_cache.borrow_mut();
-        if cache.len() <= state_id {
-            cache.resize(state_id + 1, None);
-        }
-        cache[state_id] = Some(value);
     }
 
     fn component_value(
@@ -208,11 +195,11 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.cached_state_value(state_id) {
+        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
             return Ok(value);
         }
         let value = self.evaluate_subsets(eval_state)?;
-        self.cache_state_value(state_id, value);
+        self.state_value_cache.borrow_mut().insert(state_id, value);
         Ok(value)
     }
 
@@ -275,81 +262,10 @@ fn are_operator_sets_additive(left: &BTreeSet<usize>, right: &BTreeSet<usize>) -
 fn compute_max_additive_subsets_from_relevant_operators(
     relevant_operators: &[BTreeSet<usize>],
 ) -> Vec<Vec<usize>> {
-    let mut compatibility_graph = vec![Vec::new(); relevant_operators.len()];
-    for left in 0..relevant_operators.len() {
-        for right in (left + 1)..relevant_operators.len() {
-            if are_operator_sets_additive(&relevant_operators[left], &relevant_operators[right]) {
-                compatibility_graph[left].push(right);
-                compatibility_graph[right].push(left);
-            }
-        }
-    }
-
-    let mut maximal_cliques = Vec::new();
-    bron_kerbosch(
-        &compatibility_graph,
-        &mut Vec::new(),
-        (0..relevant_operators.len()).collect(),
-        Vec::new(),
-        &mut maximal_cliques,
-    );
+    let mut maximal_cliques = maximal_cliques(relevant_operators.len(), |left, right| {
+        are_operator_sets_additive(&relevant_operators[left], &relevant_operators[right])
+    });
     maximal_cliques.sort();
     maximal_cliques.dedup();
     maximal_cliques
-}
-
-fn bron_kerbosch(
-    graph: &[Vec<usize>],
-    current: &mut Vec<usize>,
-    candidates: Vec<usize>,
-    excluded: Vec<usize>,
-    maximal_cliques: &mut Vec<Vec<usize>>,
-) {
-    if candidates.is_empty() && excluded.is_empty() {
-        let mut clique = current.clone();
-        clique.sort_unstable();
-        maximal_cliques.push(clique);
-        return;
-    }
-
-    let pivot = candidates
-        .iter()
-        .chain(excluded.iter())
-        .copied()
-        .max_by_key(|&vertex| graph[vertex].len());
-    let pivot_neighbors: BTreeSet<_> = pivot
-        .map(|vertex| graph[vertex].iter().copied().collect())
-        .unwrap_or_default();
-    let mut remaining_candidates = candidates.clone();
-    let mut local_excluded = excluded;
-    let vertices: Vec<_> = candidates
-        .iter()
-        .copied()
-        .filter(|candidate| !pivot_neighbors.contains(candidate))
-        .collect();
-
-    for vertex in vertices {
-        current.push(vertex);
-        let neighbors: BTreeSet<_> = graph[vertex].iter().copied().collect();
-        let next_candidates = remaining_candidates
-            .iter()
-            .copied()
-            .filter(|candidate| neighbors.contains(candidate))
-            .collect();
-        let next_excluded = local_excluded
-            .iter()
-            .copied()
-            .filter(|candidate| neighbors.contains(candidate))
-            .collect();
-        bron_kerbosch(
-            graph,
-            current,
-            next_candidates,
-            next_excluded,
-            maximal_cliques,
-        );
-        current.pop();
-        remaining_candidates.retain(|candidate| *candidate != vertex);
-        local_excluded.push(vertex);
-    }
 }

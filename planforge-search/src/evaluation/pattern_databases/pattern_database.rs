@@ -1150,81 +1150,9 @@ impl<'task> PatternDatabase<'task> {
         &self,
         operator_costs: &[f64],
     ) -> Result<(Vec<f64>, Vec<f64>), String> {
-        let mut distances = vec![f64::INFINITY; self.states.len()];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-
-        for &goal_state_id in &self.goal_state_ids {
-            if goal_state_id < distances.len() {
-                distances[goal_state_id] = 0.0;
-                heap.push((
-                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
-                    goal_state_id,
-                ));
-            }
-        }
-        if self.truncated {
-            for &frontier_state_id in &self.frontier_states {
-                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
-                    distances[frontier_state_id] = 0.0;
-                    heap.push((
-                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
-                        frontier_state_id,
-                    ));
-                }
-            }
-        }
-
-        while let Some((Reverse(distance), state_id)) = heap.pop() {
-            let distance = distance.into_inner();
-            if distance > distances[state_id] + 1e-12 {
-                continue;
-            }
-            for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
-                let base_operator_id = self
-                    .task
-                    .base_operator_id(projected_operator_id)
-                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
-                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
-                    format!("missing residual cost for operator {base_operator_id}")
-                })?;
-                let alternative = distance + operator_cost;
-                if alternative + 1e-12 < distances[parent_id] {
-                    distances[parent_id] = alternative;
-                    heap.push((
-                        Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
-                        parent_id,
-                    ));
-                }
-            }
-        }
-
-        let mut saturated_costs = vec![f64::NEG_INFINITY; operator_costs.len()];
-        for (target_id, predecessors) in self.transition_predecessors.iter().enumerate() {
-            let target_h = distances[target_id];
-            if !target_h.is_finite() {
-                continue;
-            }
-            for &(parent_id, projected_operator_id) in predecessors {
-                let parent_h = distances[parent_id];
-                if !parent_h.is_finite() {
-                    continue;
-                }
-                let Some(base_operator_id) = self.task.base_operator_id(projected_operator_id)
-                else {
-                    continue;
-                };
-                if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
-                    *slot = slot.max((parent_h - target_h).max(0.0));
-                }
-            }
-        }
-
-        for cost in &mut saturated_costs {
-            if *cost == f64::NEG_INFINITY {
-                *cost = 0.0;
-            }
-        }
-
+        let distances = self.build_goal_distances(operator_costs)?;
+        let saturated_costs =
+            self.saturated_costs_from_distances(&distances, operator_costs.len())?;
         Ok((distances, saturated_costs))
     }
 
@@ -1257,7 +1185,7 @@ impl<'task> PatternDatabase<'task> {
 
         while let Some((Reverse(distance), state_id)) = heap.pop() {
             let distance = distance.into_inner();
-            if distance > distances[state_id] + 1e-12 {
+            if distance > distances[state_id] + float_tolerance::DIJKSTRA_EPSILON {
                 continue;
             }
             for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
@@ -1269,7 +1197,7 @@ impl<'task> PatternDatabase<'task> {
                     format!("missing residual cost for operator {base_operator_id}")
                 })?;
                 let alternative = distance + operator_cost;
-                if alternative + 1e-12 < distances[parent_id] {
+                if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
                     distances[parent_id] = alternative;
                     heap.push((
                         Reverse(NotNan::new(alternative).map_err(|err| err.to_string())?),
@@ -1303,7 +1231,26 @@ impl<'task> PatternDatabase<'task> {
             }
         }
 
-        let mut saturated_costs = vec![f64::NEG_INFINITY; operator_costs.len()];
+        let saturated_costs =
+            self.saturated_costs_from_distances(&distances, operator_costs.len())?;
+
+        let mut lookup_costs = saturated_costs.clone();
+        for cost in &mut lookup_costs {
+            if !cost.is_finite() {
+                *cost = 0.0;
+            }
+        }
+        let global_distances = self.build_goal_distances(&lookup_costs)?;
+
+        Ok((global_distances, saturated_costs))
+    }
+
+    fn saturated_costs_from_distances(
+        &self,
+        distances: &[f64],
+        num_operators: usize,
+    ) -> Result<Vec<f64>, String> {
+        let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
         for (target_id, predecessors) in self.transition_predecessors.iter().enumerate() {
             let target_h = distances[target_id];
             if !target_h.is_finite() {
@@ -1314,23 +1261,22 @@ impl<'task> PatternDatabase<'task> {
                 if !parent_h.is_finite() {
                     continue;
                 }
-                let Some(base_operator_id) = self.task.base_operator_id(projected_operator_id)
-                else {
-                    continue;
-                };
-                if let Some(slot) = saturated_costs.get_mut(base_operator_id) {
-                    *slot = slot.max((parent_h - target_h).max(0.0));
-                }
+                let base_operator_id = self
+                    .task
+                    .base_operator_id(projected_operator_id)
+                    .ok_or_else(|| {
+                        format!(
+                            "missing base operator id for projected operator {projected_operator_id}"
+                        )
+                    })?;
+                let slot = saturated_costs.get_mut(base_operator_id).ok_or_else(|| {
+                    format!(
+                        "base operator id {base_operator_id} out of bounds for {num_operators} operators"
+                    )
+                })?;
+                *slot = slot.max((parent_h - target_h).max(0.0));
             }
         }
-
-        let mut lookup_costs = saturated_costs.clone();
-        for cost in &mut lookup_costs {
-            if !cost.is_finite() {
-                *cost = 0.0;
-            }
-        }
-        let global_distances = self.build_goal_distances(&lookup_costs)?;
 
         for cost in &mut saturated_costs {
             if *cost == f64::NEG_INFINITY {
@@ -1338,7 +1284,7 @@ impl<'task> PatternDatabase<'task> {
             }
         }
 
-        Ok((global_distances, saturated_costs))
+        Ok(saturated_costs)
     }
 
     pub fn abstract_state_values(
@@ -1810,7 +1756,7 @@ impl<'task> PatternDatabase<'task> {
                 }
                 inner_h.value.max(self.min_operator_cost())
             };
-            if seed_cost + 1e-12 < distances[state_id] {
+            if seed_cost + float_tolerance::DIJKSTRA_EPSILON < distances[state_id] {
                 distances[state_id] = seed_cost;
                 heap.push((Reverse(NotNan::new(seed_cost).unwrap()), state_id));
             }
@@ -1829,12 +1775,12 @@ impl<'task> PatternDatabase<'task> {
     ) {
         while let Some((Reverse(distance), state_id)) = heap.pop() {
             let distance = distance.into_inner();
-            if distance > distances[state_id] + 1e-12 {
+            if distance > distances[state_id] + float_tolerance::DIJKSTRA_EPSILON {
                 continue;
             }
             for &(parent_id, operator_id) in &predecessors[state_id] {
                 let alternative = distance + self.task.abstract_operator_cost(operator_id);
-                if alternative + 1e-12 < distances[parent_id] {
+                if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
                     distances[parent_id] = alternative;
                     heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
                 }

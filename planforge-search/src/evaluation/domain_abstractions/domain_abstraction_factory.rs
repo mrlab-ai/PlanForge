@@ -35,7 +35,8 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
     AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
     OperatorTransition, RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion,
-    TransitionResidualCosts, state_region_intersection,
+    TransitionResidualCosts, saturated_abstract_operator_costs, saturation_need,
+    state_region_intersection,
 };
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
@@ -163,7 +164,7 @@ const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
 type ComparisonEnumerationCache = HashMap<
     u64,
     Vec<usize>,
-    std::hash::BuildHasherDefault<planforge_sas::state_registry::IdentityU64Hasher>,
+    std::hash::BuildHasherDefault<planforge_sas::utils::hashing::IdentityU64Hasher>,
 >;
 
 #[inline]
@@ -1113,7 +1114,10 @@ impl DomainAbstractionFactory {
         let mut operators = operators.to_vec();
         apply_abstract_operator_costs(&mut operators, &operator_costs)?;
         let generator = self.make_operator_generator(task, combine_labels)?;
-        if operator_costs.iter().all(|&cost| cost <= 1e-12) {
+        if operator_costs
+            .iter()
+            .all(|&cost| cost <= float_tolerance::DIJKSTRA_EPSILON)
+        {
             let table = self.zero_distance_table_for_generator(task, &generator)?;
             let tcf = AbstractOperatorCostFunction {
                 operator_costs: vec![0.0; operator_costs.len()],
@@ -1130,7 +1134,7 @@ impl DomainAbstractionFactory {
                 current_state_id,
                 deadline,
             )?;
-            if current_distance <= 1e-12 {
+            if current_distance <= float_tolerance::DIJKSTRA_EPSILON {
                 let table = self.zero_distance_table_for_generator(task, &generator)?;
                 let tcf = AbstractOperatorCostFunction {
                     operator_costs: vec![0.0; operator_costs.len()],
@@ -1311,11 +1315,13 @@ impl DomainAbstractionFactory {
                     *h = f64::NEG_INFINITY;
                 }
             }
-            let tcf = self.compute_saturated_abstract_operator_costs(
-                transition_system,
-                &operator_costs,
-                &perim_table,
-            )?;
+            let tcf = AbstractOperatorCostFunction {
+                operator_costs: saturated_abstract_operator_costs(
+                    transition_system,
+                    &operator_costs,
+                    &perim_table.distances,
+                )?,
+            };
             let saturated_transition_costs = transition_costs_from_abstract_operator_costs(
                 transition_system,
                 &tcf.operator_costs,
@@ -1329,11 +1335,13 @@ impl DomainAbstractionFactory {
             return Ok((global_table, tcf));
         }
 
-        let tcf = self.compute_saturated_abstract_operator_costs(
-            transition_system,
-            &operator_costs,
-            &table,
-        )?;
+        let tcf = AbstractOperatorCostFunction {
+            operator_costs: saturated_abstract_operator_costs(
+                transition_system,
+                &operator_costs,
+                &table.distances,
+            )?,
+        };
         Ok((table, tcf))
     }
 
@@ -1391,7 +1399,7 @@ impl DomainAbstractionFactory {
             deterministic_affected_regular_numeric_vars(task, concrete_operator);
         for (numeric_var_id, view) in self.additive_numeric_views.iter() {
             if self.numeric_domain_sizes[numeric_var_id] > 1
-                && view.operator_delta(concrete_op_id)?.abs() >= 1e-12
+                && view.operator_delta(concrete_op_id)?.abs() >= float_tolerance::DIJKSTRA_EPSILON
             {
                 affected_numeric_dimensions.push(numeric_var_id);
             }
@@ -1441,7 +1449,7 @@ impl DomainAbstractionFactory {
                         "restricted SNP operator {concrete_op_id} cannot reach abstract target {target_interval:?} for numeric variable {numeric_var_id}"
                     )
                 })?;
-            let regressed_source = interval_intersection(source_interval, inverse_source);
+            let regressed_source = source_interval.intersection(&inverse_source);
             ensure!(
                 !regressed_source.is_empty(),
                 "restricted SNP operator {concrete_op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}: source={source_interval:?}, target={target_interval:?}, image={:?}, inverse_source={inverse_source:?}",
@@ -2347,7 +2355,7 @@ impl DomainAbstractionFactory {
 
         while let Some((Reverse(d), target_hash)) = heap.pop() {
             let d = d.into_inner();
-            if d > distances[target_hash] + 1e-12 {
+            if d > distances[target_hash] + float_tolerance::DIJKSTRA_EPSILON {
                 continue;
             }
             for &transition_id in &transition_system.backward[target_hash] {
@@ -2362,7 +2370,9 @@ impl DomainAbstractionFactory {
                 );
                 let transition_cost = transition_cost.max(0.0);
                 let alternative_cost = d + transition_cost;
-                if alternative_cost + 1e-12 < distances[transition.source_hash] {
+                if alternative_cost + float_tolerance::DIJKSTRA_EPSILON
+                    < distances[transition.source_hash]
+                {
                     distances[transition.source_hash] = alternative_cost;
                     generating_op_ids[transition.source_hash] = Some(transition.abstract_op_id);
                     heap.push((
@@ -2399,65 +2409,19 @@ impl DomainAbstractionFactory {
         for transition in &transition_system.transitions {
             let source_h = table.distances[transition.source_hash];
             let target_h = table.distances[transition.target_hash];
-            if !source_h.is_finite() || !target_h.is_finite() {
+            let Some(needed) = saturation_need(
+                source_h,
+                target_h,
+                transition_costs[transition.transition_id],
+                "saturated transition cost",
+            )?
+            else {
                 continue;
-            }
-            let mut needed = source_h - target_h;
-            if needed < 0.0 && needed > -1e-9 {
-                needed = 0.0;
-            }
-            if needed < 0.0 {
-                needed = 0.0;
-            }
-            ensure!(
-                needed <= transition_costs[transition.transition_id] + 1e-7,
-                "saturated transition cost exceeds residual transition cost: {} > {}",
-                needed,
-                transition_costs[transition.transition_id]
-            );
+            };
             saturated[transition.transition_id] = needed;
         }
         Ok(AbstractTransitionCostFunction {
             transition_costs: saturated,
-        })
-    }
-
-    fn compute_saturated_abstract_operator_costs(
-        &self,
-        transition_system: &AbstractTransitionSystem,
-        operator_costs: &[f64],
-        table: &AbstractDistanceTable,
-    ) -> Result<AbstractOperatorCostFunction> {
-        let mut saturated = vec![0.0_f64; operator_costs.len()];
-        for transition in &transition_system.transitions {
-            let source_h = table.distances[transition.source_hash];
-            let target_h = table.distances[transition.target_hash];
-            if !source_h.is_finite() || !target_h.is_finite() {
-                continue;
-            }
-            let mut needed = source_h - target_h;
-            if needed < 0.0 && needed > -1e-9 {
-                needed = 0.0;
-            }
-            if needed < 0.0 {
-                needed = 0.0;
-            }
-            let abstract_op_id = transition.abstract_op_id;
-            ensure!(
-                abstract_op_id < operator_costs.len(),
-                "abstract operator id out of range: {abstract_op_id} >= {}",
-                operator_costs.len()
-            );
-            ensure!(
-                needed <= operator_costs[abstract_op_id] + 1e-7,
-                "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
-                needed,
-                operator_costs[abstract_op_id]
-            );
-            saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
-        }
-        Ok(AbstractOperatorCostFunction {
-            operator_costs: saturated,
         })
     }
 
@@ -2543,19 +2507,15 @@ impl DomainAbstractionFactory {
 
                 let consider_source = |source_hash: usize, saturated: &mut [f64]| -> Result<()> {
                     let source_h = table.distances[source_hash];
-                    if !source_h.is_finite() {
+                    let Some(needed) = saturation_need(
+                        source_h,
+                        target_h,
+                        operator_costs[abstract_op_id],
+                        "saturated abstract-operator cost",
+                    )?
+                    else {
                         return Ok(());
-                    }
-                    let mut needed = source_h - target_h;
-                    if needed < 0.0 {
-                        needed = 0.0;
-                    }
-                    ensure!(
-                        needed <= operator_costs[abstract_op_id] + 1e-7,
-                        "saturated abstract-operator cost exceeds residual abstract-operator cost: {} > {}",
-                        needed,
-                        operator_costs[abstract_op_id]
-                    );
+                    };
                     saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
                     Ok(())
                 };
@@ -3417,7 +3377,7 @@ impl DomainAbstractionFactory {
                 ensure_online_scp_deadline(deadline)?;
             }
             let d = d.into_inner();
-            if d > distances[state_hash] + 1e-12 {
+            if d > distances[state_hash] + float_tolerance::DIJKSTRA_EPSILON {
                 continue;
             }
             if matches!(stop, GoalDistanceStop::FirstReaching(target) if state_hash == target) {
@@ -3455,7 +3415,7 @@ impl DomainAbstractionFactory {
 
                     for pred in possible_predecessors.iter().copied() {
                         debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                        if alternative_cost + 1e-12 < distances[pred] {
+                        if alternative_cost + float_tolerance::DIJKSTRA_EPSILON < distances[pred] {
                             distances[pred] = alternative_cost;
                             if let Some(generating) = generating_op_ids.as_deref_mut() {
                                 generating[pred] = Some(op_id);
@@ -3472,7 +3432,7 @@ impl DomainAbstractionFactory {
                 } else {
                     let pred = predecessor_i64 as usize;
                     debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                    if alternative_cost + 1e-12 < distances[pred] {
+                    if alternative_cost + float_tolerance::DIJKSTRA_EPSILON < distances[pred] {
                         distances[pred] = alternative_cost;
                         if let Some(generating) = generating_op_ids.as_deref_mut() {
                             generating[pred] = Some(op_id);
@@ -3714,7 +3674,9 @@ enum DeterministicNumericEffectInverse {
 impl DeterministicNumericEffectImage {
     fn is_noop_for_source(&self, source_interval: Interval) -> bool {
         match self.inverse {
-            DeterministicNumericEffectInverse::Additive { delta } => delta.abs() <= 1e-12,
+            DeterministicNumericEffectInverse::Additive { delta } => {
+                delta.abs() <= float_tolerance::DIJKSTRA_EPSILON
+            }
             DeterministicNumericEffectInverse::AssignmentConstant { value } => {
                 interval_is_singleton(source_interval) && source_interval.contains(value)
             }
@@ -3790,7 +3752,7 @@ fn deterministic_numeric_effect_image(
             image: Interval::singleton(value),
             inverse: DeterministicNumericEffectInverse::AssignmentConstant { value },
         })
-    } else if touched && delta.abs() > 1e-12 {
+    } else if touched && delta.abs() > float_tolerance::DIJKSTRA_EPSILON {
         Some(DeterministicNumericEffectImage {
             image: shift_interval(source_interval, delta),
             inverse: DeterministicNumericEffectInverse::Additive { delta },
@@ -3853,7 +3815,9 @@ fn deterministic_affected_regular_numeric_vars(
     let mut vars: Vec<usize> = deltas
         .iter()
         .enumerate()
-        .filter_map(|(var_id, &delta)| (delta.abs() > 1e-12).then_some(var_id))
+        .filter_map(|(var_id, &delta)| {
+            (delta.abs() > float_tolerance::DIJKSTRA_EPSILON).then_some(var_id)
+        })
         .collect();
     vars.extend(assignments);
     vars.sort_unstable();
@@ -3873,24 +3837,6 @@ fn shift_interval(interval: Interval, delta: f64) -> Interval {
 
 fn interval_is_singleton(interval: Interval) -> bool {
     interval.lower == interval.upper && interval.lower_closed && interval.upper_closed
-}
-
-fn interval_intersection(lhs: Interval, rhs: Interval) -> Interval {
-    let (lower, lower_closed) = if lhs.lower > rhs.lower {
-        (lhs.lower, lhs.lower_closed)
-    } else if lhs.lower < rhs.lower {
-        (rhs.lower, rhs.lower_closed)
-    } else {
-        (lhs.lower, lhs.lower_closed && rhs.lower_closed)
-    };
-    let (upper, upper_closed) = if lhs.upper < rhs.upper {
-        (lhs.upper, lhs.upper_closed)
-    } else if lhs.upper > rhs.upper {
-        (rhs.upper, rhs.upper_closed)
-    } else {
-        (lhs.upper, lhs.upper_closed && rhs.upper_closed)
-    };
-    Interval::new(lower, upper, lower_closed, upper_closed)
 }
 
 fn decode_state_to_vectors(

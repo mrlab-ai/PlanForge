@@ -1,5 +1,7 @@
 pub const ABS_EPSILON: f64 = 1e-12;
 pub const REL_EPSILON: f64 = 1e-12;
+pub const DIJKSTRA_EPSILON: f64 = 1e-12;
+pub const SEARCH_EPSILON: f64 = 1e-9;
 
 const _: () = assert!(ABS_EPSILON > f64::EPSILON);
 const _: () = assert!(REL_EPSILON > f64::EPSILON);

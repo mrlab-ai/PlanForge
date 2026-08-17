@@ -5,11 +5,12 @@ use std::cell::RefCell;
 use std::fmt;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use planforge_sas::state_registry::{StateID, StateRegistry};
+use planforge_sas::state_registry::StateRegistry;
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::state_value_cache::StateValueCache;
 
 use super::max_additive_subsets::{compute_additive_vars, compute_max_additive_subsets};
 use super::pattern_collection::PatternCollection;
@@ -211,7 +212,7 @@ pub struct CanonicalNumericPdbHeuristic<'task> {
     prop_scratch: RefCell<Vec<usize>>,
     numeric_scratch: RefCell<Vec<f64>>,
     pdb_value_cache: RefCell<PdbValueCache>,
-    state_value_cache: RefCell<Vec<f64>>,
+    state_value_cache: RefCell<StateValueCache>,
 }
 
 impl<'task> CanonicalNumericPdbHeuristic<'task> {
@@ -237,24 +238,8 @@ impl<'task> CanonicalNumericPdbHeuristic<'task> {
             prop_scratch: RefCell::new(Vec::new()),
             numeric_scratch: RefCell::new(Vec::new()),
             pdb_value_cache: RefCell::new(PdbValueCache::default()),
-            state_value_cache: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(StateValueCache::default()),
         }
-    }
-
-    fn cached_state_value(&self, state_id: StateID) -> Option<f64> {
-        self.state_value_cache
-            .borrow()
-            .get(state_id)
-            .copied()
-            .filter(|value| !value.is_nan())
-    }
-
-    fn cache_state_value(&self, state_id: StateID, value: f64) {
-        let mut cache = self.state_value_cache.borrow_mut();
-        if cache.len() <= state_id {
-            cache.resize(state_id + 1, f64::NAN);
-        }
-        cache[state_id] = value;
     }
 
     fn require_registry<'s, 't>(
@@ -281,7 +266,7 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.cached_state_value(state_id) {
+        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
             return Ok(value);
         }
 
@@ -304,7 +289,9 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
             &mut pdb_value_cache,
         );
 
-        self.cache_state_value(state_id, heuristic_value);
+        self.state_value_cache
+            .borrow_mut()
+            .insert(state_id, heuristic_value);
         Ok(heuristic_value)
     }
 

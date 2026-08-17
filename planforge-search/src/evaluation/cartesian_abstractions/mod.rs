@@ -36,7 +36,8 @@ use crate::evaluation::validate_abstractable_goal;
 
 use super::abstraction_collections::cost_partitioning::{
     AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
-    ConcreteOperatorFootprint, PropValueId, StateRegion,
+    ConcreteOperatorFootprint, PropValueId, StateRegion, build_explicit_goal_distances,
+    sorted_value_sets_overlap,
 };
 use super::abstraction_collections::portfolio::{
     CollectionStrategy, derive_variant_seed, mix_seed, stable_text_seed,
@@ -53,8 +54,6 @@ use super::domain_abstractions::domain_abstraction_factory::AbstractDistanceTabl
 use super::domain_abstractions::utils::{fact_is_hold, get_initial_state, make_prop_state_packer};
 use icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use planforge_sas::utils::interval::Interval;
-
-const EPSILON: f64 = 1e-9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianStopReason {
@@ -917,7 +916,7 @@ impl<'task> CartesianSemantics<'task> {
                     .unwrap_or_default(),
                 NumericType::Constant | NumericType::Cost => Vec::new(),
             };
-            deltas.retain(|delta| delta.abs() > EPSILON);
+            deltas.retain(|delta| delta.abs() > float_tolerance::SEARCH_EPSILON);
             deltas.sort_by(f64::total_cmp);
             deltas.dedup_by(|left, right| approximately_equal(*left, *right));
             additive_effect_deltas.push(deltas);
@@ -974,7 +973,7 @@ impl<'task> CartesianSemantics<'task> {
             for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
                 if view.as_ref().is_some_and(|view| {
                     view.operator_delta(op_id)
-                        .is_ok_and(|delta| delta.abs() > EPSILON)
+                        .is_ok_and(|delta| delta.abs() > float_tolerance::SEARCH_EPSILON)
                 }) {
                     numeric_dependencies[numeric_var_id] = true;
                 }
@@ -1134,9 +1133,10 @@ impl<'task> CartesianSemantics<'task> {
         dimension: SplitDimension,
     ) -> bool {
         match dimension {
-            SplitDimension::Propositional(var_id) => {
-                sorted_values_overlap(&source.propositions[var_id], &target.propositions[var_id])
-            }
+            SplitDimension::Propositional(var_id) => sorted_value_sets_overlap(
+                &source.propositions[var_id],
+                &target.propositions[var_id],
+            ),
             SplitDimension::Numeric(var_id) => {
                 source.numeric[var_id].intersects(&target.numeric[var_id])
             }
@@ -1421,7 +1421,7 @@ impl<'task> CartesianSemantics<'task> {
                 .binary_search(&(precondition.value() as PropValueId))
                 .is_ok();
         }
-        sorted_values_overlap(&source.propositions[var_id], &target.propositions[var_id])
+        sorted_value_sets_overlap(&source.propositions[var_id], &target.propositions[var_id])
     }
 
     fn split_dimension_may_transition(
@@ -1455,7 +1455,7 @@ impl<'task> CartesianSemantics<'task> {
             return Ok(false);
         };
         let source = if matches!(self.split_selection, CartesianSplitSelection::Icaps26(_)) {
-            interval_intersection(source, self.icaps_numeric_precondition(op_id, var_id)?)
+            source.intersection(&self.icaps_numeric_precondition(op_id, var_id)?)
         } else {
             source
         };
@@ -1471,7 +1471,7 @@ impl<'task> CartesianSemantics<'task> {
             let (condition_var_id, condition) =
                 desired_comparison_interval(self, tree_id, fact.value())?;
             if condition_var_id == var_id {
-                interval = interval_intersection(interval, condition);
+                interval = interval.intersection(&condition);
             }
         }
         Ok(interval)
@@ -1646,7 +1646,7 @@ impl<'task> CartesianSemantics<'task> {
                     else {
                         return Ok(None);
                     };
-                    let regressed = interval_intersection(source.numeric[numeric_var_id], preimage);
+                    let regressed = source.numeric[numeric_var_id].intersection(&preimage);
                     if regressed.is_empty() {
                         return Ok(None);
                     }
@@ -1665,7 +1665,7 @@ impl<'task> CartesianSemantics<'task> {
                             numeric_var_id,
                         )?
                         .expect("additive-view preimage is always defined");
-                    let regressed = interval_intersection(source.numeric[numeric_var_id], preimage);
+                    let regressed = source.numeric[numeric_var_id].intersection(&preimage);
                     if regressed.is_empty() {
                         return Ok(None);
                     }
@@ -2880,7 +2880,7 @@ impl StableAbstractSearch {
         let mut abstract_goal = None;
         while let Some((Reverse(old_f), _, state_id)) = self.open.pop() {
             let current_f = self.g_values[state_id] + self.h_values[state_id];
-            if current_f + EPSILON < old_f.into_inner() {
+            if current_f + float_tolerance::SEARCH_EPSILON < old_f.into_inner() {
                 continue;
             }
             if is_goal[state_id] {
@@ -2932,7 +2932,7 @@ impl StableAbstractSearch {
             let path_h = self.h_values[transition.target]
                 + semantics.operator_costs[transition.concrete_op_id];
             ensure!(
-                path_h + EPSILON >= self.h_values[transition.source],
+                path_h + float_tolerance::SEARCH_EPSILON >= self.h_values[transition.source],
                 "ICAPS Cartesian inherited h-value decreased along selected abstract plan"
             );
             self.h_values[transition.source] = path_h;
@@ -3012,7 +3012,7 @@ fn compute_shortest_paths_with_goals(
     }
     while let Some((Reverse(distance), target)) = heap.pop() {
         let distance = distance.into_inner();
-        if distance > distances[target] + EPSILON {
+        if distance > distances[target] + float_tolerance::SEARCH_EPSILON {
             continue;
         }
         for &transition_id in &working.incoming[target] {
@@ -3022,12 +3022,12 @@ fn compute_shortest_paths_with_goals(
             }
             let cost = semantics.operator_costs[transition.concrete_op_id];
             ensure!(
-                cost >= -EPSILON && cost.is_finite(),
+                cost >= -float_tolerance::SEARCH_EPSILON && cost.is_finite(),
                 "invalid operator cost {cost}"
             );
             let alternative = distance + cost.max(0.0);
             let source = transition.source;
-            if alternative + EPSILON < distances[source] {
+            if alternative + float_tolerance::SEARCH_EPSILON < distances[source] {
                 distances[source] = alternative;
                 generating_transition[source] = Some(TransitionKey {
                     source,
@@ -3152,7 +3152,7 @@ fn update_shortest_paths_after_split(
             }
             let candidate =
                 target_distance + semantics.operator_costs[transition.concrete_op_id].max(0.0);
-            if candidate + EPSILON < shortest_paths.distances[source] {
+            if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
                 shortest_paths.set_generating_transition(
                     source,
@@ -3169,7 +3169,7 @@ fn update_shortest_paths_after_split(
 
     while let Some((Reverse(distance), target)) = heap.pop() {
         let distance = distance.into_inner();
-        if distance > shortest_paths.distances[target] + EPSILON {
+        if distance > shortest_paths.distances[target] + float_tolerance::SEARCH_EPSILON {
             continue;
         }
         for &transition_id in &working.incoming[target] {
@@ -3179,7 +3179,9 @@ fn update_shortest_paths_after_split(
             }
             let alternative =
                 distance + semantics.operator_costs[transition.concrete_op_id].max(0.0);
-            if alternative + EPSILON < shortest_paths.distances[transition.source] {
+            if alternative + float_tolerance::SEARCH_EPSILON
+                < shortest_paths.distances[transition.source]
+            {
                 shortest_paths.distances[transition.source] = alternative;
                 shortest_paths.set_generating_transition(
                     transition.source,
@@ -3399,14 +3401,18 @@ fn numeric_split_intervals(
             !lower_includes_boundary,
         )
     };
-    let lower = interval_intersection(
-        parent,
-        Interval::new(f64::NEG_INFINITY, lower_bound, false, lower_closed),
-    );
-    let upper = interval_intersection(
-        parent,
-        Interval::new(upper_bound, f64::INFINITY, upper_closed, false),
-    );
+    let lower = parent.intersection(&Interval::new(
+        f64::NEG_INFINITY,
+        lower_bound,
+        false,
+        lower_closed,
+    ));
+    let upper = parent.intersection(&Interval::new(
+        upper_bound,
+        f64::INFINITY,
+        upper_closed,
+        false,
+    ));
     ensure!(
         !lower.is_empty() && !upper.is_empty(),
         "non-strict numeric Cartesian split at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
@@ -3779,7 +3785,7 @@ fn constrain_desired_region(
         let (numeric_var_id, interval) =
             desired_comparison_interval(semantics, comparison_axiom_id, fact.value())?;
         let current = desired.numeric[numeric_var_id];
-        let restricted = interval_intersection(current, interval);
+        let restricted = current.intersection(&interval);
         ensure!(
             !restricted.is_empty(),
             "desired comparison fact {fact:?} has an empty intersection on numeric variable {numeric_var_id}"
@@ -4101,9 +4107,9 @@ fn additive_step_distance(
         .copied()
         .filter(|delta| {
             if positive_direction {
-                *delta > EPSILON
+                *delta > float_tolerance::SEARCH_EPSILON
             } else {
-                *delta < -EPSILON
+                *delta < -float_tolerance::SEARCH_EPSILON
             }
         })
         .map(f64::abs)
@@ -5567,7 +5573,13 @@ fn finalize_abstraction(
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();
-    let (distances, generating_op_ids) = explicit_distances(&transition_system, &transition_costs)?;
+    let mut generating_op_ids = vec![None; transition_system.backward.len()];
+    let distances = build_explicit_goal_distances(
+        &transition_system,
+        &transition_costs,
+        None,
+        Some(&mut generating_op_ids),
+    )?;
     let distance_table = AbstractDistanceTable {
         distances,
         generating_op_ids,
@@ -5637,47 +5649,6 @@ fn finalize_standalone_abstraction(
         relevant_operator_ids,
         Vec::new(),
     ))
-}
-
-pub fn explicit_distances(
-    transition_system: &AbstractTransitionSystem,
-    transition_costs: &[f64],
-) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
-    ensure!(
-        transition_system.transitions.len() == transition_costs.len(),
-        "transition/cost length mismatch"
-    );
-    let mut distances = vec![f64::INFINITY; transition_system.backward.len()];
-    let mut generating = vec![None; distances.len()];
-    let mut heap = BinaryHeap::new();
-    for &goal in &transition_system.goal_state_hashes {
-        distances[goal] = 0.0;
-        heap.push((Reverse(NotNan::new(0.0).unwrap()), goal));
-    }
-    while let Some((Reverse(distance), target)) = heap.pop() {
-        let distance = distance.into_inner();
-        if distance > distances[target] + EPSILON {
-            continue;
-        }
-        for &transition_id in &transition_system.backward[target] {
-            let transition = &transition_system.transitions[transition_id];
-            let cost = transition_costs[transition_id];
-            ensure!(
-                cost >= -EPSILON && cost.is_finite(),
-                "invalid transition cost {cost}"
-            );
-            let alternative = distance + cost.max(0.0);
-            if alternative + EPSILON < distances[transition.source_hash] {
-                distances[transition.source_hash] = alternative;
-                generating[transition.source_hash] = Some(transition.abstract_op_id);
-                heap.push((
-                    Reverse(NotNan::new(alternative).unwrap()),
-                    transition.source_hash,
-                ));
-            }
-        }
-    }
-    Ok((distances, generating))
 }
 
 pub struct CartesianAbstractionHeuristic {
@@ -5765,35 +5736,4 @@ impl Heuristic for CartesianAbstractionHeuristic {
     fn heuristic_name(&self) -> &str {
         &self.name
     }
-}
-
-fn sorted_values_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
-    let mut left_id = 0;
-    let mut right_id = 0;
-    while left_id < left.len() && right_id < right.len() {
-        match left[left_id].cmp(&right[right_id]) {
-            std::cmp::Ordering::Less => left_id += 1,
-            std::cmp::Ordering::Greater => right_id += 1,
-            std::cmp::Ordering::Equal => return true,
-        }
-    }
-    false
-}
-
-fn interval_intersection(left: Interval, right: Interval) -> Interval {
-    let (lower, lower_closed) = if left.lower > right.lower {
-        (left.lower, left.lower_closed)
-    } else if right.lower > left.lower {
-        (right.lower, right.lower_closed)
-    } else {
-        (left.lower, left.lower_closed && right.lower_closed)
-    };
-    let (upper, upper_closed) = if left.upper < right.upper {
-        (left.upper, left.upper_closed)
-    } else if right.upper < left.upper {
-        (right.upper, right.upper_closed)
-    } else {
-        (left.upper, left.upper_closed && right.upper_closed)
-    };
-    Interval::new(lower, upper, lower_closed, upper_closed)
 }

@@ -3,6 +3,7 @@ mod tests;
 
 use std::collections::BTreeSet;
 
+use crate::evaluation::maximal_cliques::maximal_cliques;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, Operator,
 };
@@ -151,95 +152,19 @@ pub fn compute_max_additive_subsets(
     patterns: &PatternCollection,
     are_additive: &NumericVariableAdditivity,
 ) -> Vec<Vec<usize>> {
-    let mut compatibility_graph = vec![Vec::new(); patterns.len()];
-
-    for left in 0..patterns.len() {
-        for right in (left + 1)..patterns.len() {
-            if are_patterns_additive(
-                &patterns.as_slice()[left],
-                &patterns.as_slice()[right],
-                are_additive,
-            ) {
-                compatibility_graph[left].push(right);
-                compatibility_graph[right].push(left);
-            }
-        }
-    }
-
-    let mut maximal_cliques = Vec::new();
-    bron_kerbosch(
-        &compatibility_graph,
-        &mut Vec::new(),
-        (0..patterns.len()).collect(),
-        Vec::new(),
-        &mut maximal_cliques,
-    );
+    let maximal_cliques = maximal_cliques(patterns.len(), |left, right| {
+        are_patterns_additive(
+            &patterns.as_slice()[left],
+            &patterns.as_slice()[right],
+            are_additive,
+        )
+    });
 
     let mut nondominated = prune_dominated_subsets(patterns, &maximal_cliques);
     if nondominated.is_empty() && !patterns.is_empty() {
         nondominated = (0..patterns.len()).map(|index| vec![index]).collect();
     }
     nondominated
-}
-
-fn bron_kerbosch(
-    graph: &[Vec<usize>],
-    current: &mut Vec<usize>,
-    candidates: Vec<usize>,
-    excluded: Vec<usize>,
-    maximal_cliques: &mut Vec<Vec<usize>>,
-) {
-    if candidates.is_empty() && excluded.is_empty() {
-        let mut clique = current.clone();
-        clique.sort_unstable();
-        maximal_cliques.push(clique);
-        return;
-    }
-
-    let pivot = candidates
-        .iter()
-        .chain(excluded.iter())
-        .copied()
-        .max_by_key(|&vertex| graph[vertex].len());
-    let pivot_neighbors: BTreeSet<_> = pivot
-        .map(|vertex| graph[vertex].iter().copied().collect())
-        .unwrap_or_default();
-
-    let mut remaining_candidates = candidates.clone();
-    let mut local_excluded = excluded;
-    let vertices: Vec<_> = candidates
-        .iter()
-        .copied()
-        .filter(|candidate| !pivot_neighbors.contains(candidate))
-        .collect();
-
-    for vertex in vertices {
-        current.push(vertex);
-
-        let neighbors: BTreeSet<_> = graph[vertex].iter().copied().collect();
-        let next_candidates = remaining_candidates
-            .iter()
-            .copied()
-            .filter(|candidate| neighbors.contains(candidate))
-            .collect();
-        let next_excluded = local_excluded
-            .iter()
-            .copied()
-            .filter(|candidate| neighbors.contains(candidate))
-            .collect();
-
-        bron_kerbosch(
-            graph,
-            current,
-            next_candidates,
-            next_excluded,
-            maximal_cliques,
-        );
-        current.pop();
-
-        remaining_candidates.retain(|candidate| *candidate != vertex);
-        local_excluded.push(vertex);
-    }
 }
 
 fn prune_dominated_subsets(

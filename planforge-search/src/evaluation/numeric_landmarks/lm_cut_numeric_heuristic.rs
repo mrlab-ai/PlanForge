@@ -6,12 +6,12 @@ use std::env;
 use std::fmt;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use planforge_sas::state_registry::StateID;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::state_value_cache::StateValueCache;
 
 use super::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use crate::evaluation::abstraction_collections::cost_partitioning::LmCutResidualOperatorCostPartition;
@@ -88,7 +88,7 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     config: LmCutNumericConfig,
     landmark_generator: RefCell<LandmarkCutLandmarks<'task>>,
     prop_scratch: RefCell<Vec<usize>>,
-    state_value_cache: RefCell<Vec<Option<f64>>>,
+    state_value_cache: RefCell<StateValueCache>,
 }
 
 impl<'task> LandmarkCutNumericHeuristic<'task> {
@@ -140,23 +140,8 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
                 ),
             ),
             prop_scratch: RefCell::new(Vec::new()),
-            state_value_cache: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(StateValueCache::default()),
         })
-    }
-
-    fn cached_state_value(&self, state_id: StateID) -> Option<f64> {
-        self.state_value_cache
-            .borrow()
-            .get(state_id)
-            .and_then(|value| *value)
-    }
-
-    fn cache_state_value(&self, state_id: StateID, value: f64) {
-        let mut cache = self.state_value_cache.borrow_mut();
-        if cache.len() <= state_id {
-            cache.resize(state_id + 1, None);
-        }
-        cache[state_id] = Some(value);
     }
 
     fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
@@ -177,7 +162,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.cached_state_value(state_id) {
+        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
             return Ok(value);
         }
 
@@ -201,7 +186,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             .fill_state(registry, &mut propositional_values);
 
         if self.is_goal_state(&propositional_values) {
-            self.cache_state_value(state_id, 0.0);
+            self.state_value_cache.borrow_mut().insert(state_id, 0.0);
             return Ok(0.0);
         }
 
@@ -277,7 +262,9 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             total_cost >= 0.0,
             "lmcutnumeric returned negative heuristic value"
         );
-        self.cache_state_value(state_id, total_cost);
+        self.state_value_cache
+            .borrow_mut()
+            .insert(state_id, total_cost);
         Ok(total_cost)
     }
 

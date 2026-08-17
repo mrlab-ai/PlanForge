@@ -9,10 +9,12 @@ pub mod domain_abstractions;
 pub mod evaluator;
 pub mod ff_heuristic;
 pub mod heuristic;
+pub(crate) mod maximal_cliques;
 pub mod numeric_landmarks;
 #[cfg(feature = "cplex")]
 pub mod numeric_potentials;
 pub mod pattern_databases;
+pub(crate) mod state_value_cache;
 pub use evaluator::{EvaluationError, EvaluationState};
 pub use heuristic::Heuristic;
 

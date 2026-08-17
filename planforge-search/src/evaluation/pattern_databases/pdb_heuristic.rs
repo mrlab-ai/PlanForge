@@ -2,9 +2,10 @@ use std::cell::RefCell;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::state_value_cache::StateValueCache;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use planforge_sas::state_registry::{StateID, StateRegistry};
+use planforge_sas::state_registry::StateRegistry;
 
 use super::pattern_database::PatternDatabase;
 use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
@@ -15,7 +16,7 @@ use super::validate_restricted_task;
 pub struct GreedyNumericPdbHeuristic<'task> {
     name: String,
     pdb: PatternDatabase<'task>,
-    state_value_cache: RefCell<Vec<Option<f64>>>,
+    state_value_cache: RefCell<StateValueCache>,
 }
 
 impl<'task> GreedyNumericPdbHeuristic<'task> {
@@ -36,23 +37,8 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
         Ok(Self {
             name: "greedy_numeric_pdb".to_string(),
             pdb,
-            state_value_cache: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(StateValueCache::default()),
         })
-    }
-
-    fn cached_state_value(&self, state_id: StateID) -> Option<f64> {
-        self.state_value_cache
-            .borrow()
-            .get(state_id)
-            .and_then(|value| *value)
-    }
-
-    fn cache_state_value(&self, state_id: StateID, value: f64) {
-        let mut cache = self.state_value_cache.borrow_mut();
-        if cache.len() <= state_id {
-            cache.resize(state_id + 1, None);
-        }
-        cache[state_id] = Some(value);
     }
 
     fn require_registry<'s, 't>(
@@ -78,12 +64,12 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.cached_state_value(state_id) {
+        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
             return Ok(value);
         }
 
         if eval_state.is_goal() {
-            self.cache_state_value(state_id, 0.0);
+            self.state_value_cache.borrow_mut().insert(state_id, 0.0);
             return Ok(0.0);
         }
 
@@ -93,7 +79,9 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
             .lookup_or_fallback_from_concrete_state(eval_state.state(), registry)
             .map_err(EvaluationError::ComputationFailed)?;
         let heuristic_value = heuristic_value.max(self.pdb.min_operator_cost());
-        self.cache_state_value(state_id, heuristic_value);
+        self.state_value_cache
+            .borrow_mut()
+            .insert(state_id, heuristic_value);
         Ok(heuristic_value)
     }
 

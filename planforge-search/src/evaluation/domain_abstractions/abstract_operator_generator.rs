@@ -216,7 +216,7 @@ fn compute_signature_hash(
 type SignatureMap = HashMap<
     u64,
     Vec<u32>,
-    std::hash::BuildHasherDefault<planforge_sas::state_registry::IdentityU64Hasher>,
+    std::hash::BuildHasherDefault<planforge_sas::utils::hashing::IdentityU64Hasher>,
 >;
 
 struct AbstractOperatorFinalizer {

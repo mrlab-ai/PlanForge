@@ -43,6 +43,7 @@ use tracing::info;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::state_value_cache::StateValueCache;
 
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::domain_abstraction_heuristic::{
@@ -65,7 +66,7 @@ pub struct PostHocOptimizationHeuristic {
     /// side is uniformly 1.
     constraints: Vec<Vec<usize>>,
     lp_model: RefCell<Option<LpModel>>,
-    state_value_cache: RefCell<Vec<Option<f64>>>,
+    state_value_cache: RefCell<StateValueCache>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
     diagnostics_logged: RefCell<bool>,
 }
@@ -119,7 +120,7 @@ impl PostHocOptimizationHeuristic {
             heuristics,
             constraints,
             lp_model: RefCell::new(lp_model),
-            state_value_cache: RefCell::new(Vec::new()),
+            state_value_cache: RefCell::new(StateValueCache::default()),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
             diagnostics_logged: RefCell::new(false),
         })
@@ -127,21 +128,6 @@ impl PostHocOptimizationHeuristic {
 
     pub fn heuristics(&self) -> &[DomainAbstractionHeuristic] {
         &self.heuristics
-    }
-
-    fn cached_state_value(&self, state_id: usize) -> Option<f64> {
-        self.state_value_cache
-            .borrow()
-            .get(state_id)
-            .and_then(|value| *value)
-    }
-
-    fn cache_state_value(&self, state_id: usize, value: f64) {
-        let mut cache = self.state_value_cache.borrow_mut();
-        if cache.len() <= state_id {
-            cache.resize(state_id + 1, None);
-        }
-        cache[state_id] = Some(value);
     }
 
     fn evaluate_lp(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
@@ -315,12 +301,12 @@ impl Heuristic for PostHocOptimizationHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let state_id = eval_state.state().get_id();
-        if let Some(value) = self.cached_state_value(state_id) {
+        if let Some(value) = self.state_value_cache.borrow().get(state_id) {
             return Ok(value);
         }
 
         let value = self.evaluate_lp(eval_state)?;
-        self.cache_state_value(state_id, value);
+        self.state_value_cache.borrow_mut().insert(state_id, value);
         Ok(value)
     }
 

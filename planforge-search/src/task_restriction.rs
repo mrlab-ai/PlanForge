@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable,
@@ -196,7 +196,9 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
     }
 
     let initial_numeric = task.get_initial_numeric_state_values().to_vec();
-    let assignment_lookup = build_assignment_lookup(task);
+    let assignment_lookup = task
+        .assignment_axiom_lookup()
+        .map_err(|error| anyhow!("invalid assignment axiom layout: {error}"))?;
     let mut linearizer = Linearizer {
         task,
         assignment_lookup,
@@ -264,7 +266,9 @@ pub fn build_icaps26_restricted_task(
     let num_original_numeric = task.numeric_variables().len();
     let mut linearizer = Linearizer {
         task,
-        assignment_lookup: build_assignment_lookup(task),
+        assignment_lookup: task
+            .assignment_axiom_lookup()
+            .map_err(|error| anyhow!("invalid assignment axiom layout: {error}"))?,
         initial_numeric: &initial_numeric,
         memo: vec![None; num_original_numeric],
         visiting: vec![false; num_original_numeric],
@@ -986,16 +990,6 @@ impl Linearizer<'_> {
         self.memo[numeric_var_id] = Some(expr.clone());
         Ok(expr)
     }
-}
-
-fn build_assignment_lookup(task: &dyn AbstractNumericTask) -> Vec<Option<usize>> {
-    let mut lookup = vec![None; task.numeric_variables().len()];
-    for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
-        if axiom.get_affected_var_id() < lookup.len() {
-            lookup[axiom.get_affected_var_id()] = Some(axiom_id);
-        }
-    }
-    lookup
 }
 
 fn approx_eq(lhs: f64, rhs: f64) -> bool {

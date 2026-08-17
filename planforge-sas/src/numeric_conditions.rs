@@ -637,7 +637,7 @@ impl NumericConditions {
         assignment_axioms: &[AssignmentAxiom],
     ) -> Result<Self, NumericConditionError> {
         let num_numeric_vars = numeric_variables.len();
-        let definitions = assignment_axiom_by_target(num_numeric_vars, assignment_axioms)?;
+        let definitions = assignment_axiom_lookup(num_numeric_vars, assignment_axioms)?;
 
         let mut conditions = Vec::with_capacity(comparison_axioms.len());
         let mut by_prop_var = vec![None; num_propositional_vars];
@@ -800,7 +800,7 @@ impl NumericConditions {
 }
 
 /// Maps each numeric variable to the assignment axiom defining it, if any.
-fn assignment_axiom_by_target(
+pub fn assignment_axiom_lookup(
     num_numeric_vars: usize,
     assignment_axioms: &[AssignmentAxiom],
 ) -> Result<Vec<Option<usize>>, NumericConditionError> {

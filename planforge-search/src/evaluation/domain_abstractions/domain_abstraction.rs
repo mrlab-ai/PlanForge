@@ -119,7 +119,7 @@ impl NumericPartitions {
 
         let mut out: Vec<usize> = Vec::new();
         for (target_id, &target_interval) in targets.iter().enumerate() {
-            if intervals_overlap(result_interval, target_interval) {
+            if result_interval.intersects(&target_interval) {
                 out.push(target_id);
             }
         }
@@ -168,22 +168,4 @@ fn compute_equispaced(
         .iter()
         .map(|parts| EquispacedPartitioning::detect(parts))
         .collect()
-}
-
-fn intervals_overlap(a: Interval, b: Interval) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-
-    // Check a.max < b.min
-    if (a.upper < b.lower) || (a.upper == b.lower && (!a.upper_closed || !b.lower_closed)) {
-        return false;
-    }
-
-    // Check b.max < a.min
-    if (b.upper < a.lower) || (b.upper == a.lower && (!b.upper_closed || !a.lower_closed)) {
-        return false;
-    }
-
-    true
 }

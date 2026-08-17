@@ -499,7 +499,7 @@ impl<'task> ProjectedTask<'task> {
                         numeric_type,
                     });
                 }
-                push_projected_base_numeric_var(
+                push_unique_mapping(
                     numeric_var_id,
                     &mut projected_num_var_to_original,
                     &mut original_num_var_to_projected,
@@ -547,7 +547,7 @@ impl<'task> ProjectedTask<'task> {
         while closure_index < projected_num_var_to_original.len() {
             let target_var_id = projected_num_var_to_original[closure_index];
             for &source_var_id in &numeric_effect_sources_by_target[target_var_id] {
-                push_projected_base_numeric_var(
+                push_unique_mapping(
                     source_var_id,
                     &mut projected_num_var_to_original,
                     &mut original_num_var_to_projected,
@@ -1607,17 +1607,6 @@ fn push_unique_mapping(
     }
 }
 
-fn push_projected_base_numeric_var(
-    original_id: usize,
-    projected_to_original: &mut Vec<usize>,
-    original_to_projected: &mut [Option<usize>],
-) {
-    if original_to_projected[original_id].is_none() {
-        original_to_projected[original_id] = Some(projected_to_original.len());
-        projected_to_original.push(original_id);
-    }
-}
-
 fn push_unique_projected_id(projected_id: usize, ids: &mut Vec<usize>) {
     if !ids.contains(&projected_id) {
         ids.push(projected_id);
@@ -1640,7 +1629,7 @@ fn include_restricted_comparison_operands(
             &NumericType::Derived,
             "restricted task validation excludes derived comparison operands"
         );
-        push_projected_base_numeric_var(
+        push_unique_mapping(
             numeric_var_id,
             projected_num_var_to_original,
             original_num_var_to_projected,
