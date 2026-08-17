@@ -112,6 +112,15 @@ fn reduce_costs_rejects_significant_underflow() {
 }
 
 #[test]
+fn reduce_costs_rejects_non_finite_saturated_costs() {
+    let mut remaining = vec![1.0];
+
+    let error = reduce_costs(&mut remaining, &[f64::NEG_INFINITY]).unwrap_err();
+
+    assert!(error.to_string().contains("must be finite"));
+}
+
+#[test]
 fn regional_conflict_scoring_accepts_transition_free_components() {
     let task = independent_goals_task();
     let mut cartesian = cartesian_abstraction(&task);

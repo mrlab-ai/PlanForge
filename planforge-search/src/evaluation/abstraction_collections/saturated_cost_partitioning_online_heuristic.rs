@@ -129,6 +129,26 @@ impl fmt::Display for Saturator {
     }
 }
 
+impl Saturator {
+    fn cap_sequence(
+        self,
+        current_state_id: Option<usize>,
+    ) -> impl Iterator<Item = (&'static str, Option<usize>)> {
+        let (steps, len) = match self {
+            Self::All => ([("all", None), ("all", None)], 1),
+            Self::Perim => ([("perim", current_state_id), ("all", None)], 1),
+            Self::Perimstar => (
+                [
+                    ("perimstar/perim", current_state_id),
+                    ("perimstar/all", None),
+                ],
+                2,
+            ),
+        };
+        steps.into_iter().take(len)
+    }
+}
+
 impl crate::config::FromOptionValue for Saturator {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {
@@ -436,6 +456,25 @@ struct ComponentSaturation<'a, 'task> {
     combine_labels: bool,
     cost_space: SaturationCostSpace,
     current_state_id: Option<usize>,
+}
+
+struct SaturationStepContext<'a> {
+    component_id: usize,
+    current_state_id: Option<usize>,
+    abstract_state_ids: &'a [Option<usize>],
+    saturator: Saturator,
+    step_prefix: &'a str,
+}
+
+struct ComponentStepContext<'a, 'task> {
+    component_id: usize,
+    component: &'a AbstractionComponent<'task>,
+    task: &'a dyn AbstractNumericTask,
+    abstract_state_ids: &'a [Option<usize>],
+    deadline: Option<Instant>,
+    cost_space: SaturationCostSpace,
+    saturator: Saturator,
+    step_prefix: &'a str,
 }
 
 impl ComponentSaturation<'_, '_> {
@@ -1217,6 +1256,217 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             config,
             task,
             Some(sampling_task),
+        )
+    }
+
+    fn add_saturation_steps<R, Build, Reduce, Log>(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        residual: &mut R,
+        context: SaturationStepContext<'_>,
+        mut build: Build,
+        mut reduce: Reduce,
+        mut log: Log,
+    ) -> Result<bool, EvaluationError>
+    where
+        R: ?Sized,
+        Build: FnMut(&R, Option<usize>) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError>,
+        Reduce: FnMut(&mut R, &SaturatedCosts) -> Result<bool, EvaluationError>,
+        Log: FnMut(&str, &[f64], &SaturatedCosts),
+    {
+        let SaturationStepContext {
+            component_id,
+            current_state_id,
+            abstract_state_ids,
+            saturator,
+            step_prefix,
+        } = context;
+        if saturator != Saturator::All && current_state_id.is_none() {
+            return Err(EvaluationError::InvalidState(format!(
+                "missing abstract state id for PERIM component {component_id}"
+            )));
+        }
+        for (phase, cap_state_id) in saturator.cap_sequence(current_state_id) {
+            let step = format!("{step_prefix} {phase}");
+            let (distances, saturated) = build(residual, cap_state_id)?;
+            log(&step, &distances, &saturated);
+            if should_skip_zero_current_table(
+                self.config.diversify,
+                &step,
+                component_id,
+                &distances,
+                abstract_state_ids,
+            ) {
+                return Ok(true);
+            }
+            if !reduce(residual, &saturated)? {
+                return Ok(false);
+            }
+            cp.add_h_values(component_id, distances);
+        }
+        Ok(true)
+    }
+
+    fn add_label_component_step(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        remaining_costs: &mut [f64],
+        context: ComponentStepContext<'_, '_>,
+    ) -> Result<bool, EvaluationError> {
+        let ComponentStepContext {
+            component_id,
+            component,
+            task,
+            abstract_state_ids,
+            deadline,
+            step_prefix,
+            ..
+        } = context;
+        let current_state_id = abstract_state_ids.get(component_id).copied().flatten();
+        let protocol = ComponentSaturation {
+            component,
+            task,
+            combine_labels: self.config.combine_labels,
+            cost_space: SaturationCostSpace::Label,
+            current_state_id,
+        };
+        self.add_saturation_steps(
+            cp,
+            remaining_costs,
+            SaturationStepContext {
+                component_id,
+                current_state_id,
+                abstract_state_ids,
+                saturator: self.config.saturator,
+                step_prefix,
+            },
+            |costs, cap_state_id| {
+                let residual = TransitionResidualCosts::from_operator_costs(costs);
+                protocol.saturate(&residual, component_id, cap_state_id, deadline)
+            },
+            |costs, saturated| {
+                let SaturatedCosts::Uniform(saturated) = saturated else {
+                    unreachable!("label saturation must return uniform operator costs")
+                };
+                reduce_costs(costs, saturated)?;
+                Ok(true)
+            },
+            |step, distances, saturated| {
+                let SaturatedCosts::Uniform(saturated) = saturated else {
+                    unreachable!("label saturation must return uniform operator costs")
+                };
+                log_label_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    saturated,
+                    abstract_state_ids,
+                );
+            },
+        )
+    }
+
+    fn add_transition_component_step(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        remaining_costs: &mut TransitionResidualCosts,
+        context: ComponentStepContext<'_, '_>,
+    ) -> Result<bool, EvaluationError> {
+        let ComponentStepContext {
+            component_id,
+            component,
+            task,
+            abstract_state_ids,
+            deadline,
+            cost_space,
+            saturator,
+            step_prefix,
+        } = context;
+        let current_state_id = abstract_state_ids.get(component_id).copied().flatten();
+        let protocol = ComponentSaturation {
+            component,
+            task,
+            combine_labels: self.config.combine_labels,
+            cost_space,
+            current_state_id,
+        };
+        let footprints = match component {
+            AbstractionComponent::Domain(heuristic) => heuristic
+                .abstraction()
+                .abstract_operator_footprints
+                .as_slice(),
+            AbstractionComponent::Cartesian(heuristic) => heuristic
+                .abstraction()
+                .abstract_operator_footprints
+                .as_slice(),
+            AbstractionComponent::PatternDatabase(_) => &[],
+        };
+        self.add_saturation_steps(
+            cp,
+            remaining_costs,
+            SaturationStepContext {
+                component_id,
+                current_state_id,
+                abstract_state_ids,
+                saturator,
+                step_prefix,
+            },
+            |residual, cap_state_id| {
+                protocol.saturate(residual, component_id, cap_state_id, deadline)
+            },
+            |residual, saturated| match saturated {
+                SaturatedCosts::Uniform(costs) => {
+                    residual
+                        .reduce_operator_costs_uniform(costs)
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to reduce uniform residual costs for component {component_id}: {error:#}"
+                            ))
+                        })?;
+                    Ok(true)
+                }
+                SaturatedCosts::AbstractOperator(costs) => Self::reduce_abstract_operator_costs(
+                    residual,
+                    component_id,
+                    footprints,
+                    costs,
+                    deadline,
+                    &format!(
+                        "failed to reduce abstract-operator residual costs for component {component_id}"
+                    ),
+                ),
+                SaturatedCosts::Regional(allocation) => Self::reduce_regional_allocation(
+                    residual,
+                    allocation,
+                    deadline,
+                    &format!(
+                        "failed to reduce regional residual costs for component {component_id}"
+                    ),
+                ),
+            },
+            |step, distances, saturated| match saturated {
+                SaturatedCosts::Uniform(costs) => log_transition_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    costs,
+                    abstract_state_ids,
+                ),
+                SaturatedCosts::AbstractOperator(costs) => log_transition_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    &costs.operator_costs,
+                    abstract_state_ids,
+                ),
+                SaturatedCosts::Regional(allocation) => log_transition_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    &regional_allocation_amounts(allocation),
+                    abstract_state_ids,
+                ),
+            },
         )
     }
 
@@ -2630,326 +2880,68 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     self.config.residual_sweeps
                 );
             }
-            for &pos in order {
+            for &component_id in order {
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     break;
                 }
-                let component = components.get(pos).ok_or_else(|| {
-                    EvaluationError::ComputationFailed(format!(
-                        "regional SCP order references missing component {pos}"
+                let component = components.get(component_id).ok_or_else(|| {
+                    EvaluationError::InvalidState(format!(
+                        "regional SCP order references missing component {component_id}"
                     ))
                 })?;
-                match component {
-                    AbstractionComponent::Domain(heuristic) => {
-                        let abstraction = heuristic.abstraction();
-                        debug!(
-                            "scp_online: abstract-operator CP step abstraction {pos}, abstract_states={}, standalone_h={}, metadata={}",
-                            abstraction_state_count(abstraction),
-                            standalone_current_h.get(pos).copied().unwrap_or(0.0),
-                            abstraction_metadata_summary(abstraction),
-                        );
-                        log_abstract_operator_footprint_summary(
-                            pos,
-                            &abstraction.abstract_operator_footprints,
-                        );
-                        let abstraction_task = abstraction.task_for_factory(task);
-                        let transition_system = match abstraction
-                            .regional_transition_system(abstraction_task, deadline)
-                        {
-                            Ok(system) => system,
-                            Err(error) if Self::is_online_deadline_error(&error) => {
-                                info!(
-                                    "scp_online: region SCP abstraction {pos} stopped while building its transition system (deadline)"
-                                );
-                                break;
-                            }
-                            Err(error) => {
-                                return Err(EvaluationError::ComputationFailed(format!(
-                                    "failed to build domain region-SCP transition system: {error:#}"
-                                )));
-                            }
-                        };
-                        match saturator {
-                            Saturator::All => {
-                                self.log_abstract_operator_label_diagnostic(
-                                    abstraction,
-                                    abstraction_task,
-                                    pos,
-                                    abstract_state_ids,
-                                    &remaining_costs,
-                                )?;
-                                let protocol = ComponentSaturation {
-                                    component,
-                                    task,
-                                    combine_labels: self.config.combine_labels,
-                                    cost_space: SaturationCostSpace::Regional,
-                                    current_state_id: abstract_state_ids
-                                        .get(pos)
-                                        .copied()
-                                        .flatten(),
-                                };
-                                let result =
-                                    protocol.saturate(&remaining_costs, pos, None, deadline);
-                                let (distances, allocation) = match result {
-                                    Ok((distances, SaturatedCosts::Regional(allocation))) => {
-                                        (distances, allocation)
-                                    }
-                                    Ok(_) => unreachable!(
-                                        "domain regional saturation must return a regional allocation"
-                                    ),
-                                    Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator all abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => return Err(error),
-                                };
-                                log_transition_table_summary(
-                                    "all",
-                                    pos,
-                                    &distances,
-                                    &regional_allocation_amounts(&allocation),
-                                    abstract_state_ids,
-                                );
-                                if should_skip_zero_current_table(
-                                    self.config.diversify,
-                                    "all",
-                                    pos,
-                                    &distances,
-                                    abstract_state_ids,
-                                ) {
-                                    continue;
-                                }
-                                if !Self::reduce_regional_allocation(
-                                    &mut remaining_costs,
-                                    &allocation,
-                                    deadline,
-                                    "failed to reduce precise regional residual costs",
-                                )? {
-                                    info!(
-                                        "scp_online: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
-                                    );
-                                    break;
-                                }
-                                cp.add_h_values(pos, distances);
-                                log_transition_residual_summary(&remaining_costs);
-                            }
-                            Saturator::Perim => {
-                                let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                                self.log_abstract_operator_label_diagnostic(
-                                    abstraction,
-                                    abstraction_task,
-                                    pos,
-                                    abstract_state_ids,
-                                    &remaining_costs,
-                                )?;
-                                let (table, allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
-                                    cap_state_id,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator perim abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator PERIM table: {error:#}"
-                                    )));
-                                    }
-                                };
-                                log_transition_table_summary(
-                                    "perim",
-                                    pos,
-                                    &table.distances,
-                                    &regional_allocation_amounts(&allocation),
-                                    abstract_state_ids,
-                                );
-                                if should_skip_zero_current_table(
-                                    self.config.diversify,
-                                    "perim",
-                                    pos,
-                                    &table.distances,
-                                    abstract_state_ids,
-                                ) {
-                                    continue;
-                                }
-                                if !Self::reduce_regional_allocation(
-                                    &mut remaining_costs,
-                                    &allocation,
-                                    deadline,
-                                    "failed to reduce precise regional PERIM residual costs",
-                                )? {
-                                    info!(
-                                        "scp_online: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
-                                    );
-                                    break;
-                                }
-                                cp.add_h_values(pos, table.distances);
-                                log_transition_residual_summary(&remaining_costs);
-                            }
-                            Saturator::Perimstar => {
-                                let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                                self.log_abstract_operator_label_diagnostic(
-                                    abstraction,
-                                    abstraction_task,
-                                    pos,
-                                    abstract_state_ids,
-                                    &remaining_costs,
-                                )?;
-                                let (perim_table, perim_allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
-                                    cap_state_id,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator perimstar/perim abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator Perim step for Perimstar: {error:#}"
-                                    )));
-                                    }
-                                };
-                                log_transition_table_summary(
-                                    "perimstar/perim",
-                                    pos,
-                                    &perim_table.distances,
-                                    &regional_allocation_amounts(&perim_allocation),
-                                    abstract_state_ids,
-                                );
-                                if should_skip_zero_current_table(
-                                    self.config.diversify,
-                                    "perimstar/perim",
-                                    pos,
-                                    &perim_table.distances,
-                                    abstract_state_ids,
-                                ) {
-                                    continue;
-                                }
-                                if !Self::reduce_regional_allocation(
-                                    &mut remaining_costs,
-                                    &perim_allocation,
-                                    deadline,
-                                    "failed to reduce precise regional Perim residual costs",
-                                )? {
-                                    info!(
-                                        "scp_online: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
-                                    );
-                                    break;
-                                }
-                                cp.add_h_values(pos, perim_table.distances);
-                                log_transition_residual_summary(&remaining_costs);
+                if let AbstractionComponent::Domain(heuristic) = component {
+                    let abstraction = heuristic.abstraction();
+                    debug!(
+                        "scp_online: abstract-operator CP step abstraction {component_id}, abstract_states={}, standalone_h={}, metadata={}",
+                        abstraction_state_count(abstraction),
+                        standalone_current_h
+                            .get(component_id)
+                            .copied()
+                            .unwrap_or(0.0),
+                        abstraction_metadata_summary(abstraction),
+                    );
+                    log_abstract_operator_footprint_summary(
+                        component_id,
+                        &abstraction.abstract_operator_footprints,
+                    );
+                    self.log_abstract_operator_label_diagnostic(
+                        abstraction,
+                        abstraction.task_for_factory(task),
+                        component_id,
+                        abstract_state_ids,
+                        &remaining_costs,
+                    )?;
+                }
 
-                                let (all_table, all_allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                            &abstraction.abstract_operator_footprints,
-                                            &remaining_costs,
-                                            pos,
-                                    None,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator perimstar/all abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator All step for Perimstar: {error:#}"
-                                    )));
-                                    }
-                                };
-                                log_transition_table_summary(
-                                    "perimstar/all",
-                                    pos,
-                                    &all_table.distances,
-                                    &regional_allocation_amounts(&all_allocation),
-                                    abstract_state_ids,
-                                );
-                                if should_skip_zero_current_table(
-                                    self.config.diversify,
-                                    "perimstar/all",
-                                    pos,
-                                    &all_table.distances,
-                                    abstract_state_ids,
-                                ) {
-                                    continue;
-                                }
-                                if !Self::reduce_regional_allocation(
-                                    &mut remaining_costs,
-                                    &all_allocation,
-                                    deadline,
-                                    "failed to reduce precise regional All residual costs",
-                                )? {
-                                    info!(
-                                        "scp_online: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
-                                    );
-                                    break;
-                                }
-                                cp.add_h_values(pos, all_table.distances);
-                                log_transition_residual_summary(&remaining_costs);
-                            }
-                        }
-                    }
-                    AbstractionComponent::Cartesian(heuristic) => {
-                        let result = self.add_transition_cartesian_step(
-                            &mut cp,
-                            &mut remaining_costs,
-                            pos,
-                            heuristic.abstraction(),
-                            abstract_state_ids,
-                            deadline,
+                let result = self.add_transition_component_step(
+                    &mut cp,
+                    &mut remaining_costs,
+                    ComponentStepContext {
+                        component_id,
+                        component,
+                        task,
+                        abstract_state_ids,
+                        deadline,
+                        cost_space: SaturationCostSpace::Regional,
+                        saturator,
+                        step_prefix: "abstract-operator",
+                    },
+                );
+                match result {
+                    Ok(true) => log_transition_residual_summary(&remaining_costs),
+                    Ok(false) => {
+                        info!(
+                            "scp_online: abstract-operator component {component_id} stopped while reducing residual costs (deadline)"
                         );
-                        match result {
-                            Ok(true) => {}
-                            Ok(false) => {
-                                info!(
-                                    "scp_online: Cartesian abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
-                                );
-                                break;
-                            }
-                            Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                                info!(
-                                    "scp_online: Cartesian abstract-operator abstraction {pos} stopped while computing table (deadline)"
-                                );
-                                break;
-                            }
-                            Err(error) => return Err(error),
-                        }
+                        break;
                     }
-                    AbstractionComponent::PatternDatabase(pdb) => {
-                        self.add_transition_pdb_step(
-                            &mut cp,
-                            &mut remaining_costs,
-                            pos,
-                            order,
-                            abstract_state_ids,
-                            pdb,
-                        )?;
+                    Err(error) if Self::is_online_deadline_error_eval(&error) => {
+                        info!(
+                            "scp_online: abstract-operator component {component_id} stopped while computing table (deadline)"
+                        );
+                        break;
                     }
+                    Err(error) => return Err(error),
                 }
             }
         }
@@ -2992,216 +2984,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    fn add_transition_cartesian_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut TransitionResidualCosts,
-        pos: usize,
-        abstraction: &CartesianAbstraction,
-        abstract_state_ids: &[Option<usize>],
-        deadline: Option<Instant>,
-    ) -> Result<bool, EvaluationError> {
-        let cap_state_id = abstract_state_ids
-            .get(pos)
-            .copied()
-            .flatten()
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing Cartesian abstract state id for abstract-operator CP component {pos}"
-                ))
-            })?;
-
-        let build = |residual_costs: &TransitionResidualCosts, cap| {
-            build_explicit_regional_cost_partitioning_table(
-                &abstraction.transition_system,
-                &abstraction.abstract_operator_footprints,
-                residual_costs,
-                pos,
-                cap,
-                deadline,
-            )
-            .map_err(|error| {
-                Self::construction_error(
-                    &format!(
-                        "failed to compute Cartesian abstract-operator CP table for component {pos}"
-                    ),
-                    error,
-                )
-            })
-        };
-        let reduce = |residual_costs: &mut TransitionResidualCosts,
-                      tcf: &AbstractOperatorCostFunction| {
-            Self::reduce_abstract_operator_costs(
-                residual_costs,
-                pos,
-                &abstraction.abstract_operator_footprints,
-                tcf,
-                deadline,
-                &format!(
-                    "failed to reduce Cartesian abstract-operator residual costs for component {pos}"
-                ),
-            )
-        };
-
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, tcf) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator all",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, distances);
-                }
-            }
-            Saturator::Perim => {
-                let (distances, tcf) = build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator perim",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, distances);
-                }
-            }
-            Saturator::Perimstar => {
-                let (perim_distances, perim_tcf) = build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator perimstar/perim",
-                    pos,
-                    &perim_distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &perim_tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, perim_distances);
-                }
-                let (all_distances, all_tcf) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator perimstar/all",
-                    pos,
-                    &all_distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &all_tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, all_distances);
-                }
-            }
-        }
-        Ok(true)
-    }
-
-    fn add_transition_pdb_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut TransitionResidualCosts,
-        pos: usize,
-        _order: &[usize],
-        abstract_state_ids: &[Option<usize>],
-        pdb: &PatternDatabase<'_>,
-    ) -> Result<(), EvaluationError> {
-        let mut remaining_operator_costs = remaining_costs.operator_costs_for_label_cp();
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table(&remaining_operator_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB SCP table {pos}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, distances);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&saturated)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB residual costs: {error:#}"
-                        ))
-                    })?;
-            }
-            Saturator::Perim => {
-                let h_cap = Self::pdb_current_h_cap(
-                    pdb,
-                    &remaining_operator_costs,
-                    pos,
-                    abstract_state_ids,
-                )?;
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table_capped(&remaining_operator_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB PERIM table {pos}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, distances);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&saturated)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB PERIM residual costs: {error:#}"
-                        ))
-                    })?;
-            }
-            Saturator::Perimstar => {
-                let h_cap = Self::pdb_current_h_cap(
-                    pdb,
-                    &remaining_operator_costs,
-                    pos,
-                    abstract_state_ids,
-                )?;
-                let (perim_dists, perim_sat) = pdb
-                    .build_cost_partitioned_distance_table_capped(&remaining_operator_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB Perim step for Perimstar {pos}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, perim_dists);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&perim_sat)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB Perim residual costs: {error:#}"
-                        ))
-                    })?;
-
-                remaining_operator_costs = remaining_costs.operator_costs_for_label_cp();
-                let (all_dists, all_sat) = pdb
-                    .build_cost_partitioned_distance_table(&remaining_operator_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB All step for Perimstar {pos}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, all_dists);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&all_sat)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB All residual costs: {error:#}"
-                        ))
-                    })?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn build_label_cp(
         &self,
         collection: PartitionedCollection<'_, '_>,
@@ -3216,199 +2998,40 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             ..
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs: Vec<f64> = original_costs.to_vec();
+        let mut remaining_costs = original_costs.to_vec();
 
-        for &pos in order {
+        for &component_id in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            let component = components.get(pos).ok_or_else(|| {
-                EvaluationError::ComputationFailed(format!(
-                    "label SCP order references missing component {pos}"
+            let component = components.get(component_id).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "label SCP order references missing component {component_id}"
                 ))
             })?;
-            match component {
-                AbstractionComponent::Domain(heuristic) => {
-                    let abstraction = heuristic.abstraction();
-                    debug!(
-                        "scp_online: label CP step abstraction {pos}, abstract_states={}",
-                        abstraction_state_count(abstraction)
+            match self.add_label_component_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
+                    abstract_state_ids,
+                    deadline,
+                    cost_space: SaturationCostSpace::Label,
+                    saturator: self.config.saturator,
+                    step_prefix: "label",
+                },
+            ) {
+                Ok(true) => {}
+                Ok(false) => unreachable!("label residual reduction has no deadline"),
+                Err(error) if Self::is_online_deadline_error_eval(&error) => {
+                    info!(
+                        "scp_online: label component {component_id} stopped while computing table (deadline)"
                     );
-                    match self.config.saturator {
-                        Saturator::All => {
-                            let residual =
-                                TransitionResidualCosts::from_operator_costs(&remaining_costs);
-                            let protocol = ComponentSaturation {
-                                component,
-                                task,
-                                combine_labels: self.config.combine_labels,
-                                cost_space: SaturationCostSpace::Label,
-                                current_state_id: abstract_state_ids.get(pos).copied().flatten(),
-                            };
-                            let result = protocol.saturate(&residual, pos, None, deadline);
-                            let (distances, saturated) = match result {
-                                Ok((distances, SaturatedCosts::Uniform(saturated))) => {
-                                    (distances, saturated)
-                                }
-                                Ok(_) => unreachable!(
-                                    "label saturation must return uniform operator costs"
-                                ),
-                                Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                                    info!(
-                                        "scp_online: label all abstraction {pos} stopped while computing table (deadline)"
-                                    );
-                                    break;
-                                }
-                                Err(error) => return Err(error),
-                            };
-                            log_label_table_summary(
-                                "all",
-                                pos,
-                                &distances,
-                                &saturated,
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "label all",
-                                pos,
-                                &distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            cp.add_h_values(pos, distances);
-                            reduce_costs(&mut remaining_costs, &saturated)?;
-                        }
-                        Saturator::Perim => {
-                            let abstraction_task = abstraction.task_for_factory(task);
-                            let h_cap = Self::domain_current_h_cap(
-                                abstraction,
-                                abstraction_task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                pos,
-                                abstract_state_ids,
-                            )?;
-                            let (distances, saturated) = Self::compute_domain_perim_entry(
-                                abstraction,
-                                abstraction_task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                h_cap,
-                            )?;
-                            log_label_table_summary(
-                                "perim",
-                                pos,
-                                &distances,
-                                &saturated,
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "label perim",
-                                pos,
-                                &distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            cp.add_h_values(pos, distances);
-                            reduce_costs(&mut remaining_costs, &saturated)?;
-                        }
-                        Saturator::Perimstar => {
-                            let abstraction_task = abstraction.task_for_factory(task);
-                            let h_cap = Self::domain_current_h_cap(
-                                abstraction,
-                                abstraction_task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                pos,
-                                abstract_state_ids,
-                            )?;
-                            let (perim_distances, perim_saturated) =
-                                Self::compute_domain_perim_entry(
-                                    abstraction,
-                                    abstraction_task,
-                                    self.config.combine_labels,
-                                    &remaining_costs,
-                                    h_cap,
-                                )?;
-                            log_label_table_summary(
-                                "perimstar/perim",
-                                pos,
-                                &perim_distances,
-                                &perim_saturated,
-                                abstract_state_ids,
-                            );
-                            if !should_skip_zero_current_table(
-                                self.config.diversify,
-                                "label perimstar/perim",
-                                pos,
-                                &perim_distances,
-                                abstract_state_ids,
-                            ) {
-                                cp.add_h_values(pos, perim_distances);
-                                reduce_costs(&mut remaining_costs, &perim_saturated)?;
-                            }
-
-                            let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
-                                abstraction,
-                                abstraction_task,
-                                self.config.combine_labels,
-                                &remaining_costs,
-                                deadline,
-                            )?;
-                            log_label_table_summary(
-                                "perimstar/all",
-                                pos,
-                                &all_distances,
-                                &all_saturated,
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "label perimstar/all",
-                                pos,
-                                &all_distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            cp.add_h_values(pos, all_distances);
-                            reduce_costs(&mut remaining_costs, &all_saturated)?;
-                        }
-                    }
+                    break;
                 }
-                AbstractionComponent::Cartesian(heuristic) => {
-                    let result = self.add_label_cartesian_step(
-                        &mut cp,
-                        &mut remaining_costs,
-                        pos,
-                        heuristic.abstraction(),
-                        abstract_state_ids,
-                        deadline,
-                    );
-                    match result {
-                        Ok(()) => {}
-                        Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                            info!(
-                                "scp_online: Cartesian label abstraction {pos} stopped while computing table (deadline)"
-                            );
-                            break;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                AbstractionComponent::PatternDatabase(pdb) => {
-                    self.add_label_pdb_step(
-                        &mut cp,
-                        &mut remaining_costs,
-                        pos,
-                        abstract_state_ids,
-                        pdb,
-                    )?;
-                }
+                Err(error) => return Err(error),
             }
         }
 
@@ -3429,153 +3052,37 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             ..
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs: Vec<f64> = original_costs.to_vec();
+        let mut remaining_costs = original_costs.to_vec();
 
-        for &pos in order {
+        for &component_id in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            let component = components.get(pos).ok_or_else(|| {
+            let component = components.get(component_id).ok_or_else(|| {
                 EvaluationError::InvalidState(format!(
-                    "fillSCP order references missing component {pos}"
+                    "fillSCP order references missing component {component_id}"
                 ))
             })?;
-            let abstraction = match component {
-                AbstractionComponent::Domain(heuristic) => heuristic.abstraction(),
-                AbstractionComponent::Cartesian(heuristic) => {
-                    self.add_label_cartesian_step(
-                        &mut cp,
-                        &mut remaining_costs,
-                        pos,
-                        heuristic.abstraction(),
-                        abstract_state_ids,
-                        deadline,
-                    )?;
-                    continue;
-                }
-                AbstractionComponent::PatternDatabase(_) => {
-                    return Err(EvaluationError::InvalidState(format!(
-                        "fillSCP order references unsupported PDB component {pos}"
-                    )));
-                }
-            };
-            debug!(
-                "fillSCP: label CP step abstraction {pos}, abstract_states={}",
-                abstraction_state_count(abstraction)
-            );
-            match self.config.saturator {
-                Saturator::All => {
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let (distances, saturated) = Self::compute_domain_cp_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        deadline,
-                    )?;
-                    log_label_table_summary(
-                        "fillSCP/all",
-                        pos,
-                        &distances,
-                        &saturated,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label all",
-                        pos,
-                        &distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(&mut remaining_costs, &saturated)?;
-                }
-                Saturator::Perim => {
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let h_cap = Self::domain_current_h_cap(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        pos,
-                        abstract_state_ids,
-                    )?;
-                    let (distances, saturated) = Self::compute_domain_perim_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        h_cap,
-                    )?;
-                    log_label_table_summary(
-                        "fillSCP/perim",
-                        pos,
-                        &distances,
-                        &saturated,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label perim",
-                        pos,
-                        &distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(&mut remaining_costs, &saturated)?;
-                }
-                Saturator::Perimstar => {
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let h_cap = Self::domain_current_h_cap(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        pos,
-                        abstract_state_ids,
-                    )?;
-                    let (perim_distances, perim_saturated) = Self::compute_domain_perim_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        h_cap,
-                    )?;
-                    if !should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label perimstar/perim",
-                        pos,
-                        &perim_distances,
-                        abstract_state_ids,
-                    ) {
-                        cp.add_h_values(pos, perim_distances);
-                        reduce_costs(&mut remaining_costs, &perim_saturated)?;
-                    }
-
-                    let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        deadline,
-                    )?;
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label perimstar/all",
-                        pos,
-                        &all_distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    cp.add_h_values(pos, all_distances);
-                    reduce_costs(&mut remaining_costs, &all_saturated)?;
-                }
+            if matches!(component, AbstractionComponent::PatternDatabase(_)) {
+                return Err(EvaluationError::InvalidState(format!(
+                    "fillSCP order references unsupported PDB component {component_id}"
+                )));
             }
+            let completed = self.add_label_component_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
+                    abstract_state_ids,
+                    deadline,
+                    cost_space: SaturationCostSpace::Label,
+                    saturator: self.config.saturator,
+                    step_prefix: "fillSCP label",
+                },
+            )?;
+            assert!(completed, "label residual reduction has no deadline");
         }
 
         Ok((cp, remaining_costs))
@@ -3605,235 +3112,40 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
 
-        for &pos in order {
+        for &component_id in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            let component = components.get(pos).ok_or_else(|| {
+            let component = components.get(component_id).ok_or_else(|| {
                 EvaluationError::InvalidState(format!(
-                    "fillSCP abstract-operator order references missing component {pos}"
+                    "fillSCP abstract-operator order references missing component {component_id}"
                 ))
             })?;
-            let abstraction = match component {
-                AbstractionComponent::Domain(heuristic) => heuristic.abstraction(),
-                AbstractionComponent::Cartesian(heuristic) => {
-                    self.add_transition_cartesian_step(
-                        &mut cp,
-                        &mut remaining_costs,
-                        pos,
-                        heuristic.abstraction(),
-                        abstract_state_ids,
-                        deadline,
-                    )?;
-                    continue;
-                }
-                AbstractionComponent::PatternDatabase(_) => {
-                    return Err(EvaluationError::InvalidState(format!(
-                        "fillSCP abstract-operator order references unsupported PDB component {pos}"
-                    )));
-                }
-            };
-            debug!(
-                "fillSCP: abstract-operator CP step abstraction {pos}, abstract_states={}, metadata={}",
-                abstraction_state_count(abstraction),
-                abstraction_metadata_summary(abstraction),
-            );
-            log_abstract_operator_footprint_summary(pos, &abstraction.abstract_operator_footprints);
-            let abstraction_task = abstraction.task_for_factory(task);
-            match saturator {
-                Saturator::All => {
-                    let protocol = ComponentSaturation {
-                        component,
-                        task,
-                        combine_labels: self.config.combine_labels,
-                        cost_space: SaturationCostSpace::AbstractOperator,
-                        current_state_id: abstract_state_ids.get(pos).copied().flatten(),
-                    };
-                    let (distances, saturated) =
-                        protocol.saturate(&remaining_costs, pos, None, deadline)?;
-                    let SaturatedCosts::AbstractOperator(tcf) = saturated else {
-                        unreachable!(
-                            "domain abstract-operator saturation must return abstract-operator costs"
-                        )
-                    };
-                    log_transition_table_summary(
-                        "fillSCP/all",
-                        pos,
-                        &distances,
-                        &tcf.operator_costs,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator all",
-                        pos,
-                        &distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    if !Self::reduce_abstract_operator_costs(
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction.abstract_operator_footprints,
-                        &tcf,
-                        deadline,
-                        "failed to reduce fillSCP abstract-operator residual costs",
-                    )? {
-                        info!(
-                            "fillSCP: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    cp.add_h_values(pos, distances);
-                    log_transition_residual_summary(&remaining_costs);
-                }
-                Saturator::Perim => {
-                    let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                    let (table, tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: cap_state_id,
-                                cap_state_id,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator PERIM table: {error:#}"
-                            ))
-                        })?;
-                    log_transition_table_summary(
-                        "fillSCP/perim",
-                        pos,
-                        &table.distances,
-                        &tcf.operator_costs,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator perim",
-                        pos,
-                        &table.distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    if !Self::reduce_abstract_operator_costs(
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction.abstract_operator_footprints,
-                        &tcf,
-                        deadline,
-                        "failed to reduce fillSCP abstract-operator PERIM residual costs",
-                    )? {
-                        info!(
-                            "fillSCP: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    cp.add_h_values(pos, table.distances);
-                    log_transition_residual_summary(&remaining_costs);
-                }
-                Saturator::Perimstar => {
-                    let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                    let (perim_table, perim_tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: cap_state_id,
-                                cap_state_id,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator Perim step for Perimstar: {error:#}"
-                            ))
-                        })?;
-                    if !should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator perimstar/perim",
-                        pos,
-                        &perim_table.distances,
-                        abstract_state_ids,
-                    ) {
-                        if !Self::reduce_abstract_operator_costs(
-                            &mut remaining_costs,
-                            pos,
-                            &abstraction.abstract_operator_footprints,
-                            &perim_tcf,
-                            deadline,
-                            "failed to reduce fillSCP abstract-operator Perim residual costs",
-                        )? {
-                            info!(
-                                "fillSCP: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
-                            );
-                            break;
-                        }
-                        cp.add_h_values(pos, perim_table.distances);
-                        log_transition_residual_summary(&remaining_costs);
-                    }
-
-                    let (all_table, all_tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: cap_state_id,
-                                cap_state_id: None,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator All step for Perimstar: {error:#}"
-                            ))
-                        })?;
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator perimstar/all",
-                        pos,
-                        &all_table.distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    if !Self::reduce_abstract_operator_costs(
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction.abstract_operator_footprints,
-                        &all_tcf,
-                        deadline,
-                        "failed to reduce fillSCP abstract-operator All residual costs",
-                    )? {
-                        info!(
-                            "fillSCP: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    cp.add_h_values(pos, all_table.distances);
-                    log_transition_residual_summary(&remaining_costs);
-                }
+            if matches!(component, AbstractionComponent::PatternDatabase(_)) {
+                return Err(EvaluationError::InvalidState(format!(
+                    "fillSCP abstract-operator order references unsupported PDB component {component_id}"
+                )));
             }
+            if !self.add_transition_component_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
+                    abstract_state_ids,
+                    deadline,
+                    cost_space: SaturationCostSpace::AbstractOperator,
+                    saturator,
+                    step_prefix: "fillSCP abstract-operator",
+                },
+            )? {
+                info!(
+                    "fillSCP: abstract-operator component {component_id} stopped while reducing residual costs (deadline)"
+                );
+                break;
+            }
+            log_transition_residual_summary(&remaining_costs);
         }
 
         let residual_partitions = remaining_costs.operator_cost_partitions_for_lmcut(4, 4);
@@ -3842,189 +3154,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             remaining_costs.operator_costs_for_label_cp(),
             residual_partitions,
         ))
-    }
-
-    fn add_label_cartesian_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut [f64],
-        pos: usize,
-        abstraction: &CartesianAbstraction,
-        abstract_state_ids: &[Option<usize>],
-        deadline: Option<Instant>,
-    ) -> Result<(), EvaluationError> {
-        let cap_state_id = abstract_state_ids
-            .get(pos)
-            .copied()
-            .flatten()
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing Cartesian abstract state id for CP component {pos}"
-                ))
-            })?;
-        let build = |costs: &[f64], cap| {
-            build_explicit_label_cost_partitioning_table(
-                &abstraction.transition_system,
-                costs,
-                cap,
-                deadline,
-            )
-            .map_err(|error| {
-                Self::construction_error(
-                    &format!("failed to compute Cartesian label CP table for component {pos}"),
-                    error,
-                )
-            })
-        };
-
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, saturated) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label all",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(remaining_costs, &saturated)?;
-                }
-            }
-            Saturator::Perim => {
-                let (distances, saturated) = build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label perim",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(remaining_costs, &saturated)?;
-                }
-            }
-            Saturator::Perimstar => {
-                let (perim_distances, perim_saturated) =
-                    build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label perimstar/perim",
-                    pos,
-                    &perim_distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, perim_distances);
-                    reduce_costs(remaining_costs, &perim_saturated)?;
-                }
-                let (all_distances, all_saturated) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label perimstar/all",
-                    pos,
-                    &all_distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, all_distances);
-                    reduce_costs(remaining_costs, &all_saturated)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn add_label_pdb_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut [f64],
-        pos: usize,
-        abstract_state_ids: &[Option<usize>],
-        pdb: &PatternDatabase<'_>,
-    ) -> Result<(), EvaluationError> {
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table(remaining_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB SCP table {pos}: {error}"
-                        ))
-                    })?;
-                if should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb all",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    return Ok(());
-                }
-                cp.add_h_values(pos, distances);
-                reduce_costs(remaining_costs, &saturated)?;
-            }
-            Saturator::Perim => {
-                let h_cap = Self::pdb_current_h_cap(pdb, remaining_costs, pos, abstract_state_ids)?;
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table_capped(remaining_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB PERIM table {pos}: {error}"
-                        ))
-                    })?;
-                if should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb perim",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    return Ok(());
-                }
-                cp.add_h_values(pos, distances);
-                reduce_costs(remaining_costs, &saturated)?;
-            }
-            Saturator::Perimstar => {
-                let h_cap = Self::pdb_current_h_cap(pdb, remaining_costs, pos, abstract_state_ids)?;
-                let (perim_dists, perim_sat) = pdb
-                    .build_cost_partitioned_distance_table_capped(remaining_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB Perim step for Perimstar {pos}: {error}"
-                        ))
-                    })?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb perimstar/perim",
-                    pos,
-                    &perim_dists,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, perim_dists);
-                    reduce_costs(remaining_costs, &perim_sat)?;
-                }
-
-                let (all_dists, all_sat) = pdb
-                    .build_cost_partitioned_distance_table(remaining_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB All step for Perimstar {pos}: {error}"
-                        ))
-                    })?;
-                if should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb perimstar/all",
-                    pos,
-                    &all_dists,
-                    abstract_state_ids,
-                ) {
-                    return Ok(());
-                }
-                cp.add_h_values(pos, all_dists);
-                reduce_costs(remaining_costs, &all_sat)?;
-            }
-        }
-
-        Ok(())
     }
 
     fn retain_cp(
@@ -4090,78 +3219,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
     }
 
-    fn domain_current_h_cap(
-        abstraction: &DomainAbstraction,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        remaining_costs: &[f64],
-        component_id: usize,
-        abstract_state_ids: &[Option<usize>],
-    ) -> Result<f64, EvaluationError> {
-        let state_id = abstract_state_ids
-            .get(component_id)
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "domain component {component_id} has no state-ID slot"
-                ))
-            })?
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "domain component {component_id} has no exact abstract state ID"
-                ))
-            })?;
-        let table = abstraction
-            .factory
-            .build_goal_distances_for_goals(
-                task,
-                combine_labels,
-                remaining_costs,
-                &abstraction.distance_table.goal_facts,
-            )
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute current h cap for domain component {component_id}: {error:#}"
-                ))
-            })?;
-        table.distances.get(state_id).copied().ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "domain component {component_id} state ID {state_id} is out of bounds for {} states",
-                table.distances.len()
-            ))
-        })
-    }
-
-    fn pdb_current_h_cap(
-        pdb: &PatternDatabase<'_>,
-        remaining_costs: &[f64],
-        component_id: usize,
-        abstract_state_ids: &[Option<usize>],
-    ) -> Result<f64, EvaluationError> {
-        let state_id = *abstract_state_ids.get(component_id).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "PDB component {component_id} has no state-ID slot"
-            ))
-        })?;
-        let Some(state_id) = state_id else {
-            // A truncated PDB need not contain the exact projected state. Its
-            // standalone fallback remains admissible, but there is no finite
-            // state-specific perimeter cap to apply.
-            return Ok(f64::INFINITY);
-        };
-        let distances = pdb.build_goal_distances(remaining_costs).map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to compute current h cap for PDB component {component_id}: {error}"
-            ))
-        })?;
-        distances.get(state_id).copied().ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "PDB component {component_id} state ID {state_id} is out of bounds for {} states",
-                distances.len()
-            ))
-        })
-    }
-
-    /// Build a single SCP for one domain abstraction using its own factory.
     fn compute_domain_cp_entry(
         abstraction: &DomainAbstraction,
         task: &dyn AbstractNumericTask,
@@ -4681,12 +3738,12 @@ fn standalone_envelope_value(state: &ScpOnlineState, abstract_state_ids: &[Optio
         .map(|(abstraction_id, distances)| {
             // A miss contributes nothing, for every kind of abstraction.
             //
-            // This used to be infinity for everything below `pdb_offset`, on the
-            // reading that a domain abstraction covers every concrete state, so a
-            // state it has no entry for cannot reach the goal. That reading is
-            // wrong here: when the online path is not rebuilding a partitioning
-            // it computes abstract state ids only for the abstractions in
-            // `required_lookup_ids`, so every other one is legitimately absent.
+            // This used to be infinity for a prefix of component kinds, on the
+            // reading that a domain abstraction covers every concrete state, so
+            // a state it has no entry for cannot reach the goal. That reading is
+            // wrong here: when the online path is not rebuilding a partitioning,
+            // it computes abstract state ids only for abstractions selected by
+            // `required_mask`, so every other one is legitimately absent.
             // Absent then meant infinite, the maximum swallowed every finite
             // estimate, and the search recorded a solvable state as a dead end.
             //
@@ -5429,7 +4486,9 @@ fn reduce_costs(
         .enumerate()
     {
         if !s.is_finite() {
-            continue;
+            return Err(EvaluationError::ComputationFailed(format!(
+                "saturated cost for operator {op_id} must be finite"
+            )));
         }
         if *s <= 1e-9 {
             continue;
