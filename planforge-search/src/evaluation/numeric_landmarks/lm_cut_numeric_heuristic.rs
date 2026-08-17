@@ -2,12 +2,10 @@
 mod tests;
 
 use std::cell::RefCell;
-use std::env;
 use std::fmt;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -88,6 +86,7 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     config: LmCutNumericConfig,
     landmark_generator: RefCell<LandmarkCutLandmarks<'task>>,
     prop_scratch: RefCell<Vec<usize>>,
+    numeric_scratch: RefCell<Vec<f64>>,
     state_value_cache: RefCell<StateValueCache>,
 }
 
@@ -140,6 +139,7 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
                 ),
             ),
             prop_scratch: RefCell::new(Vec::new()),
+            numeric_scratch: RefCell::new(Vec::new()),
             state_value_cache: RefCell::new(StateValueCache::default()),
         })
     }
@@ -172,7 +172,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             )
         })?;
         let state_buffer_len = eval_state.state().buffer(registry).len();
-        let mut numeric_values = Vec::new();
+        let mut numeric_values = self.numeric_scratch.borrow_mut();
         registry
             .fill_numeric_vars(eval_state.state(), &mut numeric_values)
             .map_err(|err| {
@@ -190,69 +190,11 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             return Ok(0.0);
         }
 
-        let debug_state_id = env::var("LMCUT_DEBUG_STATE_ID")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok());
-        let debug_state = debug_state_id == Some(state_id);
-
-        let generator_result = if debug_state {
-            let (dead_end, total_cost, landmarks) = self
-                .landmark_generator
-                .borrow_mut()
-                .compute_landmarks(
-                    &propositional_values,
-                    state_buffer_len,
-                    &numeric_values,
-                    true,
-                )
-                .map_err(EvaluationError::ComputationFailed)?;
-            (dead_end, total_cost, Some(landmarks))
-        } else {
-            let (dead_end, total_cost) = self
-                .landmark_generator
-                .borrow_mut()
-                .compute_landmark_cost(
-                    &propositional_values,
-                    state_buffer_len,
-                    &numeric_values,
-                    false,
-                )
-                .map_err(EvaluationError::ComputationFailed)?;
-            (dead_end, total_cost, None)
-        };
-        let (dead_end, total_cost, landmarks) = generator_result;
-
-        if debug_state {
-            let generator = self.landmark_generator.borrow();
-            for (iteration, landmark) in landmarks.unwrap_or_default().iter().enumerate() {
-                let details = landmark
-                    .iter()
-                    .map(|(multiplier, operator_id)| {
-                        let operator_name = generator
-                            .relaxed_operators()
-                            .iter()
-                            .find(|operator| {
-                                operator.original_op_id_1 == Some(*operator_id)
-                                    || operator.original_op_id_2 == Some(*operator_id)
-                            })
-                            .map(|operator| operator.name.as_str())
-                            .unwrap_or("<unknown>");
-                        format!("op={} mult={}", operator_name, multiplier)
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" | ");
-                debug!(
-                    "LMCUT_DEBUG_STATE state_id={} iteration={} landmark=[{}]",
-                    state_id,
-                    iteration + 1,
-                    details,
-                );
-            }
-            debug!(
-                "LMCUT_DEBUG_STATE state_id={} total_cost={}",
-                state_id, total_cost
-            );
-        }
+        let (dead_end, total_cost) = self
+            .landmark_generator
+            .borrow_mut()
+            .compute_landmark_cost(&propositional_values, state_buffer_len, &numeric_values)
+            .map_err(EvaluationError::ComputationFailed)?;
 
         if dead_end {
             return Ok(f64::INFINITY);

@@ -573,12 +573,11 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
             .unwrap_or_else(|e| {
                 panic!("failed to unpack Plant Watering state at step {step}: {e:?}")
             });
-        let (dead_end, total_cost, _cuts) = landmarks
-            .compute_landmarks(
+        let (dead_end, total_cost) = landmarks
+            .compute_landmark_cost(
                 &propositional_values,
                 state.buffer(&registry).len(),
                 &numeric_values,
-                false,
             )
             .unwrap_or_else(|e| panic!("LM-cut evaluation failed at step {step}: {e}"));
 

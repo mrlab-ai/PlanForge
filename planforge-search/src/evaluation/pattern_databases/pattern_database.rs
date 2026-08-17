@@ -432,7 +432,6 @@ impl<'task> LmcutInnerHeuristic<'task> {
             propositional,
             state_buffer_len,
             numeric,
-            false,
         )?;
         Ok(InnerHeuristicResult { dead_end, value })
     }
