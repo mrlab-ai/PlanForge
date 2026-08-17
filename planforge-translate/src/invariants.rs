@@ -359,7 +359,8 @@ impl Invariant {
         &self,
         balance_checker: &BalanceChecker,
         enqueue_func: &mut dyn FnMut(Invariant),
-    ) -> bool {
+        deadline: std::time::Duration,
+    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
         // The actions are collected in a fixed order, and each is checked at
         // most once. Which action's check fails first decides which refined
         // candidates are enqueued, so drawing them from a hash set would make
@@ -378,18 +379,22 @@ impl Invariant {
         }
         for action_idx in actions_to_check.into_vec() {
             let heavy_action = balance_checker.get_heavy_action(action_idx);
-            if self.operator_too_heavy(heavy_action) {
-                return false;
+            if self.operator_too_heavy(heavy_action, deadline)? {
+                return Ok(false);
             }
             let action = &balance_checker.actions[action_idx];
-            if self.operator_unbalanced(action, enqueue_func) {
-                return false;
+            if self.operator_unbalanced(action, enqueue_func, deadline)? {
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 
-    pub fn operator_too_heavy(&self, h_action: &Action) -> bool {
+    pub fn operator_too_heavy(
+        &self,
+        h_action: &Action,
+        deadline: std::time::Duration,
+    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
         let add_effects: Vec<&Effect> = h_action
             .effects
             .iter()
@@ -399,7 +404,7 @@ impl Invariant {
         let inv_vars = find_unique_variables(h_action, self);
 
         if add_effects.len() <= 1 {
-            return false;
+            return Ok(false);
         }
 
         for combo in add_effects.iter().combinations(2) {
@@ -427,18 +432,19 @@ impl Invariant {
             ];
             ensure_conjunction_sat(&mut system, &parts);
 
-            if system.is_solvable() {
-                return true;
+            if system.is_solvable(deadline)? {
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 
     pub fn operator_unbalanced(
         &self,
         action: &Action,
         enqueue_func: &mut dyn FnMut(Invariant),
-    ) -> bool {
+        deadline: std::time::Duration,
+    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
         let inv_vars = find_unique_variables(action, self);
         let (add_effects, del_effects): (Vec<&Effect>, Vec<&Effect>) = action
             .effects
@@ -446,9 +452,19 @@ impl Invariant {
             .filter(|eff| self.covers(&eff.peffect).is_some())
             .partition(|eff| self.covers(&eff.peffect) == Some(false));
 
-        add_effects.iter().any(|add_effect| {
-            self.add_effect_unbalanced(action, add_effect, &del_effects, &inv_vars, enqueue_func)
-        })
+        for add_effect in add_effects {
+            if self.add_effect_unbalanced(
+                action,
+                add_effect,
+                &del_effects,
+                &inv_vars,
+                enqueue_func,
+                deadline,
+            )? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether the effect is negated, or `None` if the invariant has no part for
@@ -471,7 +487,8 @@ impl Invariant {
         del_effects: &[&Effect],
         inv_vars: &[String],
         enqueue_func: &mut dyn FnMut(Invariant),
-    ) -> bool {
+        deadline: std::time::Duration,
+    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
         // What must hold for the action to be applicable and to actually
         // produce the add effect, indexed by predicate. The atom must not
         // already be true, or the effect produces nothing.
@@ -521,51 +538,49 @@ impl Invariant {
         }
 
         for del_effect in del_effects {
-            if self.balances(
+            let Some(balance_system) =
+                self.balance_system(add_effect, del_effect, &produced_by_pred)
+            else {
+                continue;
+            };
+            if self.balance_system_is_solvable(
+                balance_system,
                 del_effect,
-                add_effect,
-                &produced_by_pred,
                 &add_cover,
                 &param_system,
                 inv_vars,
-            ) {
-                return false;
+                deadline,
+            )? {
+                return Ok(false);
             }
         }
 
         self.refine_candidate(add_effect, action, enqueue_func);
-        true
+        Ok(true)
     }
 
-    /// Whether `del_effect` is guaranteed to consume the atom that `add_effect`
-    /// produces, in every application in which the add effect threatens the
-    /// invariant.
+    /// Whether the constraints proving that `del_effect` consumes the atom
+    /// produced by the current add effect are solvable.
     ///
     /// `add_cover` fixes the invariant parameters to the add effect's
     /// arguments, and `param_system` keeps the action parameters and the add
     /// effect's quantified variables unrestricted; both only depend on the add
     /// effect and are therefore computed once by the caller.
-    fn balances(
+    fn balance_system_is_solvable(
         &self,
+        balance_system: ConstraintSystem,
         del_effect: &Effect,
-        add_effect: &Effect,
-        produced_by_pred: &HashMap<&str, Vec<&Condition>>,
         add_cover: &Assignment,
         param_system: &ConstraintSystem,
         inv_vars: &[String],
-    ) -> bool {
-        let Some(balance_system) = self.balance_system(add_effect, del_effect, produced_by_pred)
-        else {
-            // No production by the add effect can imply a consumption.
-            return false;
-        };
-
+        deadline: std::time::Duration,
+    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
         let mut system = ConstraintSystem::new();
         system.add_assignment(add_cover.clone());
         ensure_cover(&mut system, &del_effect.peffect, self, inv_vars);
         system.extend(&balance_system);
         system.extend(param_system);
-        system.is_solvable()
+        system.is_solvable(deadline)
     }
 
     /// A system that is solvable if the conjunction in `produced_by_pred`
@@ -752,7 +767,9 @@ mod tests {
     }
 
     fn is_unbalanced(action: &Action) -> bool {
-        no_object_is_p_and_q().operator_unbalanced(action, &mut |_: Invariant| {})
+        no_object_is_p_and_q()
+            .operator_unbalanced(action, &mut |_: Invariant| {}, std::time::Duration::MAX)
+            .unwrap()
     }
 
     /// `a(?p)` adds `P(?p)` but deletes `Q(?p)` only where `R(?p)` holds, while
@@ -806,5 +823,21 @@ mod tests {
             ],
         );
         assert!(is_unbalanced(&action));
+    }
+
+    #[test]
+    fn expired_deadline_interrupts_one_candidate_balance_check() {
+        let action = action(
+            &[],
+            Condition::Truth,
+            vec![
+                Effect::new(vec![], Condition::Truth, atom("P", &["a"])),
+                Effect::new(vec![], Condition::Truth, atom("P", &["b"])),
+            ],
+        );
+        assert_eq!(
+            no_object_is_p_and_q().operator_too_heavy(&action, std::time::Duration::ZERO),
+            Err(tools::CpuTimeDeadlineExceeded)
+        );
     }
 }

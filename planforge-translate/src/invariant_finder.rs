@@ -184,12 +184,12 @@ fn find_invariants(
 
     let balance_checker = build_balance_checker(task, reachable_action_params);
 
-    let start_time = tools::process_cpu_time();
+    let deadline = tools::process_cpu_time()
+        + std::time::Duration::from_secs(options::INVARIANT_GENERATION_MAX_TIME);
     let mut result = vec![];
 
     while let Some(candidate) = candidates.pop_front() {
-        let spent = tools::process_cpu_time() - start_time;
-        if spent.as_secs() > options::INVARIANT_GENERATION_MAX_TIME {
+        if tools::process_cpu_time() >= deadline {
             info!("Time limit reached, aborting invariant generation");
             return result;
         }
@@ -201,8 +201,13 @@ fn find_invariants(
             }
         };
 
-        if candidate.check_balance(&balance_checker, &mut enqueue_func) {
-            result.push(candidate);
+        match candidate.check_balance(&balance_checker, &mut enqueue_func, deadline) {
+            Ok(true) => result.push(candidate),
+            Ok(false) => {}
+            Err(tools::CpuTimeDeadlineExceeded) => {
+                info!("Time limit reached, aborting invariant generation");
+                return result;
+            }
         }
     }
 

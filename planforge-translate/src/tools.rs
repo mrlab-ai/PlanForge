@@ -121,32 +121,64 @@ pub fn for_each_product<'a, T>(
     lists: &'a [Vec<T>],
     visit: &mut impl FnMut(&[&'a T]) -> bool,
 ) -> bool {
+    for_each_product_inner(lists, None, visit).expect("a product without a deadline cannot expire")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuTimeDeadlineExceeded;
+
+/// The deadline-aware form of [`for_each_product`].
+pub fn for_each_product_before<'a, T>(
+    lists: &'a [Vec<T>],
+    deadline: Duration,
+    visit: &mut impl FnMut(&[&'a T]) -> bool,
+) -> Result<bool, CpuTimeDeadlineExceeded> {
+    for_each_product_inner(lists, Some(deadline), visit)
+}
+
+fn for_each_product_inner<'a, T>(
+    lists: &'a [Vec<T>],
+    deadline: Option<Duration>,
+    visit: &mut impl FnMut(&[&'a T]) -> bool,
+) -> Result<bool, CpuTimeDeadlineExceeded> {
     fn recurse<'a, T>(
         lists: &'a [Vec<T>],
         depth: usize,
         selection: &mut Vec<&'a T>,
+        deadline: Option<Duration>,
         visit: &mut impl FnMut(&[&'a T]) -> bool,
-    ) -> bool {
+    ) -> Result<bool, CpuTimeDeadlineExceeded> {
+        if deadline.is_some_and(|limit| process_cpu_time() >= limit) {
+            return Err(CpuTimeDeadlineExceeded);
+        }
         if depth == lists.len() {
-            return visit(selection);
+            return Ok(visit(selection));
         }
         for item in &lists[depth] {
             selection.push(item);
-            let keep_going = recurse(lists, depth + 1, selection, visit);
+            let keep_going = recurse(lists, depth + 1, selection, deadline, visit)?;
             selection.pop();
             if !keep_going {
-                return false;
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 
-    recurse(lists, 0, &mut Vec::with_capacity(lists.len()), visit)
+    recurse(
+        lists,
+        0,
+        &mut Vec::with_capacity(lists.len()),
+        deadline,
+        visit,
+    )
 }
 
 #[cfg(test)]
 mod product_tests {
-    use super::for_each_product;
+    use std::time::Duration;
+
+    use super::{for_each_product, for_each_product_before};
 
     #[test]
     fn empty_product_has_one_empty_combination() {
@@ -168,5 +200,19 @@ mod product_tests {
             combinations.len() < 2
         }));
         assert_eq!(combinations, [(&1, &10), (&1, &20)]);
+    }
+
+    #[test]
+    fn expired_deadline_interrupts_before_the_first_combination() {
+        let lists = vec![vec![1, 2], vec![10, 20]];
+        let mut visited = 0;
+        assert!(
+            for_each_product_before(&lists, Duration::ZERO, &mut |_| {
+                visited += 1;
+                true
+            })
+            .is_err()
+        );
+        assert_eq!(visited, 0);
     }
 }

@@ -161,30 +161,40 @@ impl ConstraintSystem {
         self.not_constant.extend_from_slice(&other.not_constant);
     }
 
-    pub fn is_solvable(&self) -> bool {
+    fn combination_is_satisfying<'a>(
+        &self,
+        assignments: &[&'a Assignment],
+        equalities: &mut Vec<(&'a str, &'a str)>,
+    ) -> bool {
+        equalities.clear();
+        equalities.extend(assignments.iter().flat_map(|assignment| {
+            assignment
+                .equalities
+                .iter()
+                .map(|(left, right)| (left.as_str(), right.as_str()))
+        }));
+        let Some(representative) = compute_representatives(equalities.iter().copied()) else {
+            return false;
+        };
+        self.not_constant
+            .iter()
+            .all(|term| class_of(&representative, term).starts_with('?'))
+            && self
+                .neg_clauses
+                .iter()
+                .all(|clause| clause.is_satisfied_by(&representative))
+    }
+
+    pub fn is_solvable(
+        &self,
+        deadline: std::time::Duration,
+    ) -> Result<bool, tools::CpuTimeDeadlineExceeded> {
         let mut equalities = Vec::new();
-        let completed =
-            tools::for_each_product(&self.combinatorial_assignments, &mut |assignments| {
-                equalities.clear();
-                equalities.extend(assignments.iter().flat_map(|assignment| {
-                    assignment
-                        .equalities
-                        .iter()
-                        .map(|(left, right)| (left.as_str(), right.as_str()))
-                }));
-                let Some(representative) = compute_representatives(equalities.iter().copied())
-                else {
-                    return true;
-                };
-                !(self
-                    .not_constant
-                    .iter()
-                    .all(|term| class_of(&representative, term).starts_with('?'))
-                    && self
-                        .neg_clauses
-                        .iter()
-                        .all(|clause| clause.is_satisfied_by(&representative)))
-            });
-        !completed
+        let completed = tools::for_each_product_before(
+            &self.combinatorial_assignments,
+            deadline,
+            &mut |assignments| !self.combination_is_satisfying(assignments, &mut equalities),
+        )?;
+        Ok(!completed)
     }
 }
