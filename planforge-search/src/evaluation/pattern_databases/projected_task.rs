@@ -1398,6 +1398,10 @@ impl AbstractNumericTask for ProjectedTask<'_> {
         &self.metric
     }
 
+    fn goals(&self) -> &[ExplicitFact] {
+        &self.goals
+    }
+
     fn get_num_variables(&self) -> usize {
         self.variables.len()
     }

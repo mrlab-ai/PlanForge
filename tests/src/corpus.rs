@@ -144,7 +144,7 @@ impl SearchRun {
 /// `None` means the search terminated without a plan.
 pub fn blind_astar_run(task: &NumericRootTask) -> Option<SearchRun> {
     let registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(Arc::new(task), registry, None, None, None);
+    let mut search = AStarSearch::new(task, registry, None, None, None);
     let result = search.search().expect("blind A* search failed");
 
     match (&result.status, &result.plan) {

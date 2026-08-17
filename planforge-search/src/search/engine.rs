@@ -14,10 +14,9 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
-use planforge_sas::numeric_task::{ExplicitFact, Operator, TaskRef};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::env;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -158,7 +157,9 @@ struct SearchEvaluation {
 }
 
 pub struct AStarSearch<'a> {
-    task: TaskRef<'a>,
+    task: &'a dyn AbstractNumericTask,
+    operators: &'a [Operator],
+    goals: &'a [ExplicitFact],
     state_registry: StateRegistry<'a>,
     successor_generator: SuccessorTree,
 
@@ -191,7 +192,7 @@ pub struct AStarSearch<'a> {
 impl<'a> AStarSearch<'a> {
     /// Create a new A* search instance.
     pub fn new(
-        task: TaskRef<'a>,
+        task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
@@ -211,7 +212,7 @@ impl<'a> AStarSearch<'a> {
     /// Create A* with optional pop-time re-evaluation for monotonically
     /// strengthening dynamic heuristics (`mpd` in Fast Downward).
     pub fn new_with_mpd(
-        task: TaskRef<'a>,
+        task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
@@ -235,7 +236,7 @@ impl<'a> AStarSearch<'a> {
     /// and not admissible, but it solves many tasks far faster than A* with
     /// the same heuristic.
     pub fn new_gbfs(
-        task: TaskRef<'a>,
+        task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
@@ -265,7 +266,7 @@ impl<'a> AStarSearch<'a> {
     /// that the slow heuristic is only evaluated on states A* actually
     /// considers expanding, not on every state generated.
     pub fn new_fast_slow(
-        task: TaskRef<'a>,
+        task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
         heuristic_fast: Box<dyn Heuristic + 'a>,
         heuristic_slow: Box<dyn Heuristic + 'a>,
@@ -286,7 +287,7 @@ impl<'a> AStarSearch<'a> {
     }
 
     fn with_policy(
-        task: TaskRef<'a>,
+        task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
         heuristic: Option<Box<dyn Heuristic + 'a>>,
         time_limit: Option<Duration>,
@@ -294,13 +295,13 @@ impl<'a> AStarSearch<'a> {
         policy: SearchPolicy<'a>,
         mpd: bool,
     ) -> Self {
-        let successor_generator = SuccessorTree::new(&*task);
+        let successor_generator = SuccessorTree::new(task);
 
         // Build initial state early so numeric constants are initialized in the registry.
         // Required to derive a correct min_action_cost under metric.
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
-        let operator_costs = compute_effective_operator_costs(&*task);
+        let operator_costs = compute_effective_operator_costs(task);
 
         // Determine `min_action_cost`.
         let min_action_cost = operator_costs
@@ -337,6 +338,8 @@ impl<'a> AStarSearch<'a> {
         );
         Self {
             task,
+            operators: task.get_operators(),
+            goals: task.goals(),
             state_registry,
             successor_generator,
             open_list: DualQueueOpenList::new(use_preferred_first),
@@ -488,8 +491,7 @@ impl<'a> AStarSearch<'a> {
 
     /// Check if the given state satisfies all goal conditions.
     fn is_goal_state(&self, state: &ConcreteState) -> bool {
-        for i in 0..self.task.get_num_goals() {
-            let goal_fact = self.task.get_goal_fact(i);
+        for goal_fact in self.goals {
             if !self.state_satisfies_fact(state, goal_fact) {
                 return false;
             }
@@ -503,15 +505,19 @@ impl<'a> AStarSearch<'a> {
     }
 
     /// Evaluate a state for A* without materializing named evaluator results.
-    fn evaluate_state(&self, state: &ConcreteState, g_value: f64) -> Result<SearchEvaluation> {
+    fn evaluate_state(
+        &self,
+        state: &ConcreteState,
+        g_value: f64,
+        is_goal: bool,
+    ) -> Result<SearchEvaluation> {
         let mut eval_state = EvaluationState::new_with_registry(
             state,
             g_value,
             false,
-            &*self.task,
+            self.task,
             &self.state_registry,
         );
-        let is_goal = self.is_goal_state(state);
         eval_state.set_is_goal(is_goal);
 
         let evaluation = match self.heuristic.compute_heuristic(&eval_state) {
@@ -590,12 +596,14 @@ impl<'a> AStarSearch<'a> {
             return Ok(false);
         }
 
-        let evaluation = self.evaluate_state(state, entry.g_value).with_context(|| {
-            format!(
-                "pop-time heuristic re-evaluation failed for state {}",
-                entry.state_id()
-            )
-        })?;
+        let evaluation = self
+            .evaluate_state(state, entry.g_value, self.space.is_goal(entry.state_id()))
+            .with_context(|| {
+                format!(
+                    "pop-time heuristic re-evaluation failed for state {}",
+                    entry.state_id()
+                )
+            })?;
         self.stats.evaluations += 1;
         self.record_heuristic_revision(entry.state_id(), evaluation.heuristic_revision);
 
@@ -645,10 +653,10 @@ impl<'a> AStarSearch<'a> {
             state,
             entry.g_value,
             false,
-            &*self.task,
+            self.task,
             &self.state_registry,
         );
-        eval_state.set_is_goal(self.is_goal_state(state));
+        eval_state.set_is_goal(self.space.is_goal(entry.state_id()));
         let slow_h = match slow.compute_heuristic(&eval_state) {
             Ok(h) => h,
             Err(EvaluationError::DeadEnd { .. }) => f64::INFINITY,
@@ -662,20 +670,11 @@ impl<'a> AStarSearch<'a> {
         if slow_h.is_infinite() && slow_h.is_sign_positive() {
             // h_s reports a dead end. Mark state and drop the entry.
             self.stats.dead_ends = self.stats.dead_ends.saturating_add(1);
-            if self.space.contains_node(entry.state_id()) {
-                self.space.mark_dead_end(entry.state_id());
-            } else {
-                self.space.set_node(
-                    entry.state_id(),
-                    SearchNodeInfo {
-                        parent_state: None,
-                        parent_operator_id: None,
-                        g_value: entry.g_value,
-                        is_dead_end: true,
-                        is_closed: false,
-                    },
-                );
-            }
+            assert!(
+                self.space.contains_node(entry.state_id()),
+                "open-list entry must have a search node"
+            );
+            self.space.mark_dead_end(entry.state_id());
             return Ok(());
         }
         let combined_h = entry.h_value.into_inner().max(slow_h);
@@ -713,8 +712,9 @@ impl<'a> AStarSearch<'a> {
             .unwrap_or_else(|| self.state_registry.get_initial_state());
 
         // Add initial state to open list
+        let initial_is_goal = self.is_goal_state(&initial_state);
         let initial_evaluation = self
-            .evaluate_state(&initial_state, 0.0)
+            .evaluate_state(&initial_state, 0.0, initial_is_goal)
             .context("initial state evaluation failed")?;
         self.stats.nodes_evaluated += 1;
         self.stats.evaluations += 1;
@@ -762,6 +762,7 @@ impl<'a> AStarSearch<'a> {
             g_value: 0.0,
             is_dead_end: initial_evaluation.is_dead_end,
             is_closed: false,
+            is_goal: initial_is_goal,
         };
         self.space.set_node(initial_state.get_id(), initial_info);
         Ok(())
@@ -786,9 +787,9 @@ impl<'a> AStarSearch<'a> {
 
         self.maybe_print_f_layer(entry, &start_time);
         self.trace_expanded(entry, state_id);
-        self.close_expanded_node(entry, state_id);
+        self.close_expanded_node(state_id);
 
-        if self.is_goal_state(&state) {
+        if self.space.is_goal(state_id) {
             return Ok(SearchStatus::Solved(state_id));
         }
 
@@ -816,15 +817,17 @@ impl<'a> AStarSearch<'a> {
             .lookup_state(state_id)
             .map_err(|error| anyhow!("open list references missing state {state_id}: {error:?}"))?;
 
-        if let Some(info) = self.space.node(state_id) {
-            if info.is_closed {
-                return Ok(PoppedNode::Skipped);
-            }
-            // A cheaper path to this state was found after the entry was
-            // queued, so the entry describes a path we no longer take.
-            if info.g_value < entry.g_value {
-                return Ok(PoppedNode::Skipped);
-            }
+        let info = self
+            .space
+            .node(state_id)
+            .expect("open-list entry must have a search node");
+        if info.is_closed {
+            return Ok(PoppedNode::Skipped);
+        }
+        // A cheaper path to this state was found after the entry was
+        // queued, so the entry describes a path we no longer take.
+        if info.g_value < entry.g_value {
+            return Ok(PoppedNode::Skipped);
         }
 
         if self.reevaluate_stale_entry(entry, &state)? {
@@ -847,24 +850,14 @@ impl<'a> AStarSearch<'a> {
         Ok(PoppedNode::Expand(entry, state))
     }
 
-    /// Close the node the search is about to expand, creating it if the open
-    /// list reached it without a search-space entry, and count the expansion.
+    /// Close the node the search is about to expand and count the expansion.
     #[inline]
-    fn close_expanded_node(&mut self, entry: OpenEntry, state_id: StateID) {
-        if self.space.contains_node(state_id) {
-            self.space.mark_closed(state_id);
-        } else {
-            self.space.set_node(
-                state_id,
-                SearchNodeInfo {
-                    parent_state: None,
-                    parent_operator_id: None,
-                    g_value: entry.g_value,
-                    is_dead_end: false,
-                    is_closed: true,
-                },
-            );
-        }
+    fn close_expanded_node(&mut self, state_id: StateID) {
+        assert!(
+            self.space.contains_node(state_id),
+            "expanded open-list entry must have a search node"
+        );
+        self.space.mark_closed(state_id);
         self.stats.nodes_expanded += 1;
     }
 
@@ -913,13 +906,10 @@ impl<'a> AStarSearch<'a> {
             ));
         }
 
-        // Clone the task handle so `operators` borrows the local `Arc`
-        // rather than `self` (the loop body needs `&mut self`).
-        let task = Arc::clone(&self.task);
-        let operators = task.get_operators();
         for &op_id in applicable_operators.iter() {
             let operator_id = op_id as usize;
-            let operator = operators
+            let operator = self
+                .operators
                 .get(operator_id)
                 .expect("successor generator returned an invalid operator id");
             let (succ_state, metric_op_cost) = self
@@ -974,8 +964,7 @@ impl<'a> AStarSearch<'a> {
             metric_op_cost,
         } = applied;
         let succ_state_id = succ_state.get_id();
-        let new_g_value =
-            parent.g_value + self.operator_cost(operator_id, operator, metric_op_cost);
+        let new_g_value = parent.g_value + self.operator_cost(operator_id, metric_op_cost);
 
         // Count every successfully constructed successor state.
         self.stats.nodes_generated += 1;
@@ -1000,8 +989,9 @@ impl<'a> AStarSearch<'a> {
             .preferred_operator_range
             .is_some_and(|range| self.space.preferred_contains(range, op_id));
 
+        let is_goal = self.is_goal_state(succ_state);
         let evaluation = self
-            .evaluate_state(succ_state, new_g_value)
+            .evaluate_state(succ_state, new_g_value, is_goal)
             .with_context(|| {
                 format!(
                     "heuristic evaluation failed for successor state {succ_state_id} generated by operator {operator_id} ({})",
@@ -1043,6 +1033,7 @@ impl<'a> AStarSearch<'a> {
                 g_value: new_g_value,
                 is_dead_end: evaluation.is_dead_end,
                 is_closed: false,
+                is_goal,
             },
         );
 
@@ -1066,15 +1057,11 @@ impl<'a> AStarSearch<'a> {
     /// Cost charged for applying `operator`: the task metric when the search
     /// optimises it, otherwise the configured (unit or per-operator) cost.
     #[inline]
-    fn operator_cost(&self, operator_id: usize, operator: &Operator, metric_op_cost: f64) -> f64 {
+    fn operator_cost(&self, operator_id: usize, metric_op_cost: f64) -> f64 {
         if self.config.use_metric {
             metric_op_cost
         } else {
-            self.config
-                .operator_costs
-                .get(operator_id)
-                .copied()
-                .unwrap_or(operator.cost() as f64)
+            self.config.operator_costs[operator_id]
         }
     }
 
@@ -1100,7 +1087,7 @@ impl<'a> AStarSearch<'a> {
         match status {
             SearchStatus::Solved(goal_state_id) => {
                 // Use the goal state ID returned from step()
-                let plan = self.space.extract_plan(goal_state_id, &*self.task);
+                let plan = self.space.extract_plan(goal_state_id, self.task);
                 let solution_cost = self.space.node(goal_state_id).map(|info| info.g_value);
 
                 debug_assert!(

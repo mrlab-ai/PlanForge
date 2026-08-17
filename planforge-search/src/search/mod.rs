@@ -125,5 +125,12 @@ pub(crate) fn current_memory_kb() -> u64 {
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn current_memory_kb() -> u64 {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            "resident-memory measurement is unsupported on this platform; in-process memory \
+             limits cannot be enforced"
+        );
+    });
     0
 }

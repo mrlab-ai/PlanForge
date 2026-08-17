@@ -30,8 +30,8 @@ impl Heuristic for GoalCountHeuristic {
         Ok(unsatisfied as f64)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -49,7 +49,7 @@ fn run(path: &str) {
         .expect("goal-count should evaluate the initial state");
     let heuristic = Box::new(heuristic);
     let mut search = AStarSearch::new(
-        task.clone(),
+        &*task,
         registry,
         Some(heuristic),
         Some(Duration::from_secs(5)),

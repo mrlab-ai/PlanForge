@@ -208,7 +208,7 @@ pub fn solve_task_with_state_storage(
         SearchSpec::Astar(heuristic, mpd) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
             let mut search = AStarSearch::new_with_mpd(
-                task.clone(),
+                &*task,
                 state_registry,
                 heuristic_override,
                 time_limit,
@@ -223,7 +223,7 @@ pub fn solve_task_with_state_storage(
         SearchSpec::Gbfs(heuristic) => {
             let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
             let mut search = AStarSearch::new_gbfs(
-                task.clone(),
+                &*task,
                 state_registry,
                 heuristic_override,
                 time_limit,
@@ -271,7 +271,7 @@ pub fn solve_task_with_state_storage(
             let slow_h = build_heuristic_from_spec(slow_spec, task_ref, task.clone())?
                 .unwrap_or_else(make_blind);
             let mut search = AStarSearch::new_fast_slow(
-                task.clone(),
+                &*task,
                 state_registry,
                 fast_h,
                 slow_h,

@@ -344,7 +344,7 @@ fn astar_solution<'task>(
     what: &str,
 ) -> Solution {
     let registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(Arc::new(task), registry, Some(heuristic), None, None);
+    let mut search = AStarSearch::new(task, registry, Some(heuristic), None, None);
     let result = search
         .search()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));

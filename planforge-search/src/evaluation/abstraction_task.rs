@@ -98,6 +98,10 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.get_operators()
     }
 
+    fn goals(&self) -> &[ExplicitFact] {
+        std::slice::from_ref(&self.goal)
+    }
+
     fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
         self.base.get_operator_cost(index, is_axiom)
     }

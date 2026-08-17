@@ -169,8 +169,8 @@ impl Heuristic for PyHeuristic {
         }
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -434,21 +434,9 @@ impl Task {
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
         let mut search = if greedy {
-            AStarSearch::new_gbfs(
-                self.task.clone(),
-                registry,
-                Some(heur),
-                time_limit,
-                max_memory,
-            )
+            AStarSearch::new_gbfs(&*self.task, registry, Some(heur), time_limit, max_memory)
         } else {
-            AStarSearch::new(
-                self.task.clone(),
-                registry,
-                Some(heur),
-                time_limit,
-                max_memory,
-            )
+            AStarSearch::new(&*self.task, registry, Some(heur), time_limit, max_memory)
         };
         let result = search
             .search()

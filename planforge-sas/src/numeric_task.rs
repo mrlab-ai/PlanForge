@@ -73,6 +73,7 @@ pub trait AbstractNumericTask: Send + Sync {
     fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask);
 
     fn get_num_axioms(&self) -> usize;
+    fn goals(&self) -> &[ExplicitFact];
     fn get_num_goals(&self) -> usize;
     fn get_goal_fact(&self, index: usize) -> &ExplicitFact;
 
@@ -301,6 +302,9 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     }
     fn get_num_axioms(&self) -> usize {
         (**self).get_num_axioms()
+    }
+    fn goals(&self) -> &[ExplicitFact] {
+        (**self).goals()
     }
     fn get_num_goals(&self) -> usize {
         (**self).get_num_goals()
@@ -1339,6 +1343,10 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn get_operators(&self) -> &Vec<Operator> {
         &self.operators
+    }
+
+    fn goals(&self) -> &[ExplicitFact] {
+        &self.goals
     }
 
     fn axioms(&self) -> &Vec<PropositionalAxiom> {

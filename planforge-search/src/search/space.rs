@@ -10,12 +10,14 @@ pub(crate) struct SearchNodeInfo {
     pub(crate) g_value: f64,
     pub(crate) is_dead_end: bool,
     pub(crate) is_closed: bool,
+    pub(crate) is_goal: bool,
 }
 
 const NO_COMPACT_ID: u32 = u32::MAX;
 const NODE_PRESENT: u8 = 1 << 0;
 const NODE_DEAD_END: u8 = 1 << 1;
 const NODE_CLOSED: u8 = 1 << 2;
+const NODE_GOAL: u8 = 1 << 3;
 const NO_PREFERRED_RANGE: (u32, u32) = (u32::MAX, 0);
 
 /// Per-state search bookkeeping: the node table (parents, g-values,
@@ -56,6 +58,7 @@ impl SearchSpace {
             g_value: self.g_values[state_id],
             is_dead_end: status & NODE_DEAD_END != 0,
             is_closed: status & NODE_CLOSED != 0,
+            is_goal: status & NODE_GOAL != 0,
         })
     }
 
@@ -89,6 +92,18 @@ impl SearchSpace {
         *status |= NODE_CLOSED;
     }
 
+    pub(crate) fn is_goal(&self, state_id: StateID) -> bool {
+        let status = self
+            .node_status
+            .get(state_id)
+            .unwrap_or_else(|| panic!("missing search node for state {state_id}"));
+        assert!(
+            status & NODE_PRESENT != 0,
+            "missing search node for state {state_id}"
+        );
+        status & NODE_GOAL != 0
+    }
+
     pub(crate) fn set_node(&mut self, state_id: StateID, info: SearchNodeInfo) {
         if state_id >= self.node_status.len() {
             let new_len = state_id
@@ -105,7 +120,8 @@ impl SearchSpace {
         self.g_values[state_id] = info.g_value;
         self.node_status[state_id] = NODE_PRESENT
             | if info.is_dead_end { NODE_DEAD_END } else { 0 }
-            | if info.is_closed { NODE_CLOSED } else { 0 };
+            | if info.is_closed { NODE_CLOSED } else { 0 }
+            | if info.is_goal { NODE_GOAL } else { 0 };
     }
 
     pub(crate) fn store_preferred(&mut self, state_id: StateID, ids: &[u32]) {
@@ -198,6 +214,7 @@ mod tests {
                 g_value: 4.5,
                 is_dead_end: false,
                 is_closed: false,
+                is_goal: true,
             },
         );
 
@@ -207,6 +224,8 @@ mod tests {
         assert_eq!(node.g_value, 4.5);
         assert!(!node.is_dead_end);
         assert!(!node.is_closed);
+        assert!(node.is_goal);
+        assert!(space.is_goal(7));
 
         space.mark_dead_end(7);
         space.mark_closed(7);
