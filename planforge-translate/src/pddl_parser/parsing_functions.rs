@@ -810,7 +810,13 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
             ":metric" => {
                 // (:metric minimize (func))
                 let direction = section[1].as_atom();
-                let dir_symbol = if direction == "minimize" { "<" } else { ">" };
+                let dir_symbol = match direction {
+                    "minimize" => "<",
+                    "maximize" => ">",
+                    unknown => panic!(
+                        "unrecognized metric direction `{unknown}`, expected `minimize` or `maximize`"
+                    ),
+                };
                 let metric_expr = parse_expression(&section[2]);
                 let metric_pne = match metric_expr {
                     FunctionalExpression::PrimitiveNumericExpression(pne) => pne,
@@ -833,5 +839,43 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
         num_init,
         goal,
         metric,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_task_pddl;
+    use crate::pddl_parser::lisp_parser::parse_nested_list_string;
+    use std::collections::HashMap;
+
+    fn parse_problem(problem: &str) -> crate::pddl::tasks::ProblemDefinition {
+        let form = parse_nested_list_string(problem).expect("test problem is valid S-expression");
+        let type_dict = HashMap::from([("object".to_string(), vec!["object".to_string()])]);
+        parse_task_pddl(form.as_list(), &type_dict)
+    }
+
+    #[test]
+    #[should_panic(expected = "unrecognized metric direction `minimise`")]
+    fn rejects_unrecognized_metric_direction() {
+        parse_problem(
+            "(define (problem bad-direction)
+                (:domain metric-test)
+                (:init (= (total-cost) 0))
+                (:goal (and))
+                (:metric minimise (total-cost)))",
+        );
+    }
+
+    #[test]
+    fn accepts_maximize_metric_direction() {
+        let problem = parse_problem(
+            "(define (problem maximize-direction)
+                (:domain metric-test)
+                (:init (= (total-cost) 0))
+                (:goal (and))
+                (:metric maximize (total-cost)))",
+        );
+
+        assert_eq!(problem.metric.expect("metric was parsed").0, ">");
     }
 }
