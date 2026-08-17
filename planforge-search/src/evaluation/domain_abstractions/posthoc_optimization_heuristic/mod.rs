@@ -324,8 +324,8 @@ impl Heuristic for PostHocOptimizationHeuristic {
         Ok(value)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 

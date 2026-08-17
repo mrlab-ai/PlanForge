@@ -1,12 +1,6 @@
 //! Base trait for heuristic evaluators.
-//!
-//! This module provides the heuristic trait that specializes the general
-//! `Evaluator` trait for heuristic functions.
 
-#[cfg(test)]
-mod tests;
-
-use crate::evaluation::evaluator::{EvaluationError, EvaluationState, Evaluator};
+use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use planforge_sas::numeric_task::Operator;
 use planforge_sas::state_registry::ConcreteState;
 
@@ -14,7 +8,7 @@ use planforge_sas::state_registry::ConcreteState;
 ///
 /// This replaces the C++ Heuristic class with a clean trait-based design.
 /// Heuristics are specialized evaluators that estimate the cost to reach the goal.
-pub trait Heuristic: Evaluator {
+pub trait Heuristic {
     /// Compute the heuristic value for the given state.
     ///
     /// This is the core method that sub-classes must implement.
@@ -59,16 +53,7 @@ pub trait Heuristic: Evaluator {
     }
 
     /// Get the name of this heuristic (it allows custom names).
-    fn heuristic_name(&self) -> String {
-        // Default implementation uses the type name.
-        format!(
-            "heuristic_{}",
-            std::any::type_name::<Self>()
-                .split("::")
-                .last()
-                .unwrap_or("unknown")
-        )
-    }
+    fn heuristic_name(&self) -> &str;
 
     /// Called when a new state is reached during search.
     ///
@@ -128,52 +113,6 @@ pub enum CostType {
     Max,
 }
 
-/// Automatic implementation of `Evaluator` for all Heuristics.
-impl<H: Heuristic> Evaluator for H {
-    fn name(&self) -> String {
-        self.heuristic_name()
-    }
-
-    fn evaluate_state(
-        &self,
-        eval_state: &mut EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let heuristic_name = self.name();
-
-        // Check if already computed.
-        if let Some(value) = eval_state
-            .result()
-            .get_heuristic_value_optional(&heuristic_name)
-        {
-            return Ok(value);
-        }
-
-        // Compute the heuristic value (heuristic can inspect goal flag).
-        let h_value = self.compute_heuristic(eval_state)?;
-
-        // Update the evaluation state.
-        eval_state
-            .result_mut()
-            .set_heuristic_value(heuristic_name, h_value);
-
-        // Check for dead ends.
-        if h_value.is_infinite() && h_value.is_sign_positive() {
-            if Heuristic::dead_ends_are_reliable(self) {
-                eval_state.result_mut().set_reliable_dead_end();
-            }
-            return Err(EvaluationError::DeadEnd {
-                reliable: Heuristic::dead_ends_are_reliable(self),
-            });
-        }
-
-        Ok(h_value)
-    }
-
-    fn dead_ends_are_reliable(&self) -> bool {
-        Heuristic::dead_ends_are_reliable(self)
-    }
-}
-
 /// A heuristic that returns `0` for goal states and `min_action_cost` for
 /// non-goal states.
 /// This implements the classical blind search heuristic behavior.
@@ -214,7 +153,7 @@ impl Heuristic for BlindHeuristic {
         })
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }

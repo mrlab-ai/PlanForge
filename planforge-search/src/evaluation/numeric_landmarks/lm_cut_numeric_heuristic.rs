@@ -281,8 +281,8 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
         Ok(total_cost)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 
     fn dead_ends_are_reliable(&self) -> bool {

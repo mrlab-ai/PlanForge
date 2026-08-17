@@ -1616,7 +1616,7 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         self.last_helpful_action_ids.borrow().clone()
     }
 
-    fn heuristic_name(&self) -> String {
-        "ff".to_string()
+    fn heuristic_name(&self) -> &str {
+        "ff"
     }
 }

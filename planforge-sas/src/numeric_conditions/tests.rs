@@ -201,26 +201,6 @@ fn lhs_minus_rhs_interval_shifts_the_comparison_to_zero() {
 }
 
 #[test]
-fn lazy_evaluation_agrees_with_bottom_up() {
-    let conditions = shared_subexpression_conditions();
-    let condition = conditions.get(0).unwrap();
-    let inputs = [1.0, 2.0, 0.0, 0.0];
-
-    let mut lazy = condition.lazy_evaluator::<f64>();
-    assert_eq!(lazy.evaluate(&inputs), condition.evaluate_point(&inputs));
-    // The memo answers repeated probes without re-walking the sub-DAG.
-    assert_eq!(lazy.node_value(condition.left_root(), &inputs), 6.0);
-    assert_eq!(lazy.node_value(condition.left_root(), &inputs), 6.0);
-
-    let other_inputs = [1.0, 0.0, 0.0, 0.0];
-    lazy.reset();
-    assert_eq!(
-        lazy.evaluate(&other_inputs),
-        condition.evaluate_point(&other_inputs)
-    );
-}
-
-#[test]
 fn build_rejects_cyclic_assignment_axioms() {
     // d1 = d1 + x0
     let numeric_variables = vec![

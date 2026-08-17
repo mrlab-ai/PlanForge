@@ -1,4 +1,3 @@
-use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
@@ -59,52 +58,7 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
         false
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
-    }
-}
-
-/// Compatibility wrapper for callers that construct a max heuristic from
-/// domain abstractions only.
-pub struct MaxDomainAbstractionHeuristic {
-    inner: MaxAbstractionHeuristic<'static>,
-}
-
-impl MaxDomainAbstractionHeuristic {
-    pub fn new(name: Option<String>, abstractions: Vec<DomainAbstraction>) -> Self {
-        let components = abstractions
-            .into_iter()
-            .enumerate()
-            .map(|(index, abstraction)| {
-                AbstractionComponent::domain(
-                    Some(format!("multi_domain_abstraction_{index}")),
-                    abstraction,
-                )
-            })
-            .collect();
-        Self {
-            inner: MaxAbstractionHeuristic::new(
-                name.or_else(|| Some("multi_domain_abstractions".to_string())),
-                components,
-            )
-            .expect("domain abstraction collection for max heuristic must not be empty"),
-        }
-    }
-}
-
-impl Heuristic for MaxDomainAbstractionHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        self.inner.compute_heuristic(eval_state)
-    }
-
-    fn proves_initial_state_optimal(&self) -> bool {
-        self.inner.proves_initial_state_optimal()
-    }
-
-    fn heuristic_name(&self) -> String {
-        self.inner.heuristic_name()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }

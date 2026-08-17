@@ -97,8 +97,8 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
         Ok(heuristic_value)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -111,7 +111,8 @@ mod tests {
     };
     use planforge_sas::state_registry::StateRegistry;
 
-    use crate::evaluation::evaluator::{EvaluationState, Evaluator};
+    use crate::evaluation::evaluator::EvaluationState;
+    use crate::evaluation::heuristic::Heuristic;
     use crate::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 
     use super::GreedyNumericPdbHeuristic;
@@ -168,7 +169,7 @@ mod tests {
             EvaluationState::new_with_registry(&initial_state, 0.0, false, &task, &state_registry);
         eval_state.set_is_goal(true);
         let value = heuristic
-            .evaluate_state(&mut eval_state)
+            .compute_heuristic(&eval_state)
             .expect("goal evaluation should succeed");
 
         assert_eq!(value, 0.0);

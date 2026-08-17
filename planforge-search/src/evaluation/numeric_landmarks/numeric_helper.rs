@@ -57,29 +57,6 @@ impl LinearNumericCondition {
         }
         net
     }
-
-    pub(crate) fn dominates(&self, other: &Self, precision: f64) -> bool {
-        assert_eq!(self.coefficients.len(), other.coefficients.len());
-        let mut ratio: f64 = 0.0;
-        for (&rhs, &lhs) in self.coefficients.iter().zip(other.coefficients.iter()) {
-            if lhs.abs() < precision {
-                if rhs.abs() >= precision {
-                    return false;
-                }
-            } else {
-                if ratio.abs() < precision {
-                    ratio = rhs / lhs;
-                }
-                if ratio < precision {
-                    return false;
-                }
-                if ((rhs / lhs) - ratio).abs() >= precision {
-                    return false;
-                }
-            }
-        }
-        (self.constant.abs() - (ratio * other.constant).abs()) >= -precision
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -99,18 +76,13 @@ pub(crate) struct NumericTaskHelper {
     goal_models: Vec<HelperPreconditionLists>,
     numeric_goal_helper_vars: BTreeSet<usize>,
     action_models: Vec<HelperActionModel>,
-    condition_achievers: Vec<Vec<usize>>,
     numeric_variable_lower_bounds: Vec<f64>,
     numeric_variable_upper_bounds: Vec<f64>,
-    condition_small_m: Vec<f64>,
     condition_epsilons: Vec<f64>,
-    dominance_conditions: Vec<Vec<bool>>,
     proposition_ids_by_var_value: Vec<Vec<usize>>,
     proposition_facts: Vec<ExplicitFact>,
     proposition_var_ids: Vec<usize>,
-    proposition_add_action_ids: Vec<Vec<usize>>,
     proposition_names: Vec<String>,
-    mutex_action_ids: Vec<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -179,7 +151,6 @@ pub(crate) struct HelperActionModel {
     pub(crate) conditional_numeric_effects: Vec<HelperConditionalNumericEffect>,
     pub(crate) conditional_assignment_effects: Vec<HelperConditionalAssignmentEffect>,
     pub(crate) linear_effects: Vec<HelperLinearEffect>,
-    pub(crate) possible_add_condition_ids: Vec<usize>,
     pub(crate) cost: f64,
     pub(crate) linear_cost: bool,
     pub(crate) cost_coefficients: Vec<f64>,
@@ -206,7 +177,6 @@ impl NumericTaskHelper {
             precision,
             default_epsilon,
             separate_constant_assignment,
-            false,
             true,
         )
     }
@@ -243,7 +213,6 @@ impl NumericTaskHelper {
             helper.build_actions(task, &[], precision, false);
             helper.build_propositions(task);
             helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
-            helper.calculate_small_m(precision, 9_999_999.0);
             helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
         }
         helper
@@ -255,7 +224,6 @@ impl NumericTaskHelper {
         precision: f64,
         default_epsilon: f64,
         separate_constant_assignment: bool,
-        build_mutex_and_dominance: bool,
         build_bound_metadata: bool,
     ) -> Self {
         let mut helper = Self {
@@ -284,22 +252,11 @@ impl NumericTaskHelper {
             separate_constant_assignment,
         );
         helper.build_propositions(task);
-        if build_mutex_and_dominance {
-            helper.build_mutex_actions(task);
-        }
         if build_bound_metadata {
             helper.calculates_bounds_numeric_variables(task, precision, 9_999_999.0);
-            helper.calculate_small_m(precision, 9_999_999.0);
         }
         helper.calculate_epsilons(task.get_operators().len(), precision, default_epsilon);
-        if build_mutex_and_dominance {
-            helper.calculate_dominance(precision);
-        }
         helper
-    }
-
-    pub(crate) fn action_models(&self) -> &[HelperActionModel] {
-        self.action_models.as_slice()
     }
 
     pub(crate) fn action_model(&self, action_id: usize) -> Option<&HelperActionModel> {
@@ -445,25 +402,8 @@ impl NumericTaskHelper {
         Ok(effects)
     }
 
-    pub(crate) fn get_achievers(&self, condition_id: usize) -> Option<&[usize]> {
-        self.condition_achievers
-            .get(condition_id)
-            .map(Vec::as_slice)
-    }
-
-    pub(crate) fn get_small_m(&self, condition_id: usize) -> Option<f64> {
-        self.condition_small_m.get(condition_id).copied()
-    }
-
     pub(crate) fn get_epsilon(&self, condition_id: usize) -> Option<f64> {
         self.condition_epsilons.get(condition_id).copied()
-    }
-
-    pub(crate) fn get_dominance(&self, left_id: usize, right_id: usize) -> Option<bool> {
-        self.dominance_conditions
-            .get(left_id)
-            .and_then(|row| row.get(right_id))
-            .copied()
     }
 
     pub(crate) fn local_numeric_var_id(&self, task_numeric_var_id: usize) -> Option<usize> {
@@ -488,20 +428,10 @@ impl NumericTaskHelper {
         self.proposition_var_ids.get(proposition_id).copied()
     }
 
-    pub(crate) fn get_add_actions(&self, proposition_id: usize) -> Option<&[usize]> {
-        self.proposition_add_action_ids
-            .get(proposition_id)
-            .map(Vec::as_slice)
-    }
-
     pub(crate) fn get_proposition_name(&self, proposition_id: usize) -> Option<&str> {
         self.proposition_names
             .get(proposition_id)
             .map(String::as_str)
-    }
-
-    pub(crate) fn get_mutex_actions(&self, action_id: usize) -> Option<&[usize]> {
-        self.mutex_action_ids.get(action_id).map(Vec::as_slice)
     }
 
     pub(crate) fn comparison_axiom_id_for_var(&self, variable_id: usize) -> Option<usize> {
@@ -703,24 +633,6 @@ impl NumericTaskHelper {
             .iter()
             .map(|condition| base_condition.add(condition))
             .collect()
-    }
-
-    pub(crate) fn pairwise_combined_conditions(
-        &self,
-        conditions: &[LinearNumericCondition],
-        precision: f64,
-    ) -> Vec<LinearNumericCondition> {
-        let mut combined_conditions = Vec::new();
-        for left_index in 0..conditions.len() {
-            for right_index in (left_index + 1)..conditions.len() {
-                let combined = conditions[left_index].add(&conditions[right_index]);
-                if combined.is_empty(precision) {
-                    continue;
-                }
-                combined_conditions.push(combined);
-            }
-        }
-        combined_conditions
     }
 
     pub(crate) fn preconditions_for_assignment_effect(
@@ -1001,7 +913,6 @@ impl NumericTaskHelper {
             let action_model = self.build_axiom_action(axiom, precision);
             self.action_models.push(action_model);
         }
-        self.build_possible_add_lists();
     }
 
     fn build_propositions(&mut self, task: &dyn AbstractNumericTask) {
@@ -1024,57 +935,6 @@ impl NumericTaskHelper {
                     .push(task.get_fact_name(&fact).to_string());
             }
             self.proposition_ids_by_var_value.push(ids);
-        }
-
-        self.proposition_add_action_ids = vec![Vec::new(); self.proposition_facts.len()];
-        for (action_id, action_model) in self.action_models.iter().enumerate() {
-            for fact in action_model.add_facts.iter().chain(
-                action_model
-                    .conditional_fact_effects
-                    .iter()
-                    .map(|effect| &effect.add_fact),
-            ) {
-                if let Some(proposition_id) = self.get_proposition(fact.var(), fact.value()) {
-                    self.proposition_add_action_ids[proposition_id].push(action_id);
-                }
-            }
-        }
-    }
-
-    fn build_mutex_actions(&mut self, task: &dyn AbstractNumericTask) {
-        let operators = task.get_operators();
-        let num_variables = task.get_num_variables();
-        self.mutex_action_ids = vec![Vec::new(); operators.len()];
-        for (op_id, operator) in operators.iter().enumerate() {
-            let mut precondition = vec![None; num_variables];
-            let mut postcondition = vec![None; num_variables];
-            for condition in operator.preconditions() {
-                precondition[condition.var()] = Some(condition.value());
-            }
-            for effect in operator.effects() {
-                postcondition[effect.var_id()] = Some(effect.value());
-            }
-
-            for (other_op_id, other_operator) in operators.iter().enumerate() {
-                if op_id == other_op_id {
-                    continue;
-                }
-                let mut is_mutex = false;
-                for effect in other_operator.effects() {
-                    let var_id = effect.var_id();
-                    let post = effect.value();
-                    if (precondition[var_id].is_some() && precondition[var_id].unwrap() != post)
-                        || postcondition[var_id].is_none()
-                        || postcondition[var_id].unwrap() != post
-                    {
-                        is_mutex = true;
-                        break;
-                    }
-                }
-                if is_mutex {
-                    self.mutex_action_ids[op_id].push(other_op_id);
-                }
-            }
         }
     }
 
@@ -1296,28 +1156,6 @@ impl NumericTaskHelper {
         });
     }
 
-    fn build_possible_add_lists(&mut self) {
-        self.condition_achievers = vec![Vec::new(); self.normalized_conditions.len()];
-        for (action_id, action_model) in self.action_models.iter_mut().enumerate() {
-            action_model.possible_add_condition_ids.clear();
-            for (condition_id, condition) in self.normalized_conditions.iter().enumerate() {
-                let cumulative_effect = self
-                    .numeric_variable_ids
-                    .iter()
-                    .enumerate()
-                    .map(|(local_var_id, &task_var_id)| {
-                        condition.coefficients[task_var_id]
-                            * action_model.simple_effects[local_var_id]
-                    })
-                    .sum::<f64>();
-                if cumulative_effect > 0.0 {
-                    action_model.possible_add_condition_ids.push(condition_id);
-                    self.condition_achievers[condition_id].push(action_id);
-                }
-            }
-        }
-    }
-
     fn calculates_bounds_numeric_variables(
         &mut self,
         task: &dyn AbstractNumericTask,
@@ -1387,34 +1225,6 @@ impl NumericTaskHelper {
         }
     }
 
-    fn calculate_small_m(&mut self, precision: f64, infinity: f64) {
-        self.condition_small_m = vec![-infinity; self.normalized_conditions.len()];
-        for (condition_id, condition) in self.normalized_conditions.iter().enumerate() {
-            let mut lower_bound = condition.constant;
-            for (local_var_id, &task_var_id) in self.numeric_variable_ids.iter().enumerate() {
-                let coefficient = condition.coefficients[task_var_id];
-                if coefficient >= precision {
-                    let variable_lb = self.numeric_variable_lower_bounds[local_var_id];
-                    if variable_lb > -infinity {
-                        lower_bound += coefficient * variable_lb;
-                    } else {
-                        lower_bound = -infinity;
-                        break;
-                    }
-                } else if coefficient <= -precision {
-                    let variable_ub = self.numeric_variable_upper_bounds[local_var_id];
-                    if variable_ub < infinity {
-                        lower_bound += coefficient * variable_ub;
-                    } else {
-                        lower_bound = -infinity;
-                        break;
-                    }
-                }
-            }
-            self.condition_small_m[condition_id] = lower_bound;
-        }
-    }
-
     fn calculate_epsilons(&mut self, num_operators: usize, precision: f64, default_epsilon: f64) {
         self.condition_epsilons = vec![0.0; self.normalized_conditions.len()];
         for (condition_id, condition) in self.normalized_conditions.iter().enumerate() {
@@ -1459,25 +1269,6 @@ impl NumericTaskHelper {
             } else {
                 min_epsilon.max(default_epsilon)
             };
-        }
-    }
-
-    fn calculate_dominance(&mut self, precision: f64) {
-        let size = self.normalized_conditions.len();
-        self.dominance_conditions = vec![vec![false; size]; size];
-        for left_id in 0..size {
-            for right_id in left_id..size {
-                if self.normalized_conditions[left_id]
-                    .dominates(&self.normalized_conditions[right_id], precision)
-                {
-                    self.dominance_conditions[left_id][right_id] = true;
-                }
-                if self.normalized_conditions[right_id]
-                    .dominates(&self.normalized_conditions[left_id], precision)
-                {
-                    self.dominance_conditions[right_id][left_id] = true;
-                }
-            }
         }
     }
 

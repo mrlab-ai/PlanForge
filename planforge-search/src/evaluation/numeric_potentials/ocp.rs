@@ -297,7 +297,7 @@ impl Heuristic for PotentialAbstractionOcpHeuristic {
         true
     }
 
-    fn heuristic_name(&self) -> String {
-        "pot_da_ocp".into()
+    fn heuristic_name(&self) -> &str {
+        "pot_da_ocp"
     }
 }

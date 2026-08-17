@@ -192,35 +192,6 @@ fn test_generate_immediate_successor_of_init_state() {
         .get_successor_state(&initial_state, op)
         .expect("Failed to get successor state");
     assert_eq!(successor.get_state(&state_registry), [1, 5]);
-    assert_eq!(state_registry.get_numeric_indices(), [Some(0), Some(0)]);
-}
-
-#[test]
-fn test_per_state_info_subscription() {
-    let task = get_root_task();
-    let state_registry = StateRegistry::for_task(Arc::new(&task));
-
-    // Create a PerStateInformation instance
-    let mut custom_per_state_info =
-        planforge_sas::utils::per_state_info::PerStateInformation::<i32>::new();
-
-    // Subscribe it to the registry
-    state_registry.subscribe_per_state_info(&mut custom_per_state_info);
-
-    // Verify subscription
-    assert!(custom_per_state_info.is_subscribed_to(state_registry.id()));
-
-    // Test unsubscription
-    state_registry.unsubscribe_per_state_info(&mut custom_per_state_info);
-    assert!(!custom_per_state_info.is_subscribed_to(state_registry.id()));
-
-    // Re-subscribe for cleanup test
-    state_registry.subscribe_per_state_info(&mut custom_per_state_info);
-    assert!(custom_per_state_info.is_subscribed_to(state_registry.id()));
-
-    // Manually cleanup (simulating registry destruction)
-    custom_per_state_info.cleanup_registry(state_registry.id());
-    assert!(!custom_per_state_info.is_subscribed_to(state_registry.id()));
 }
 
 #[test]
@@ -262,12 +233,5 @@ fn test_duplicate_successor_should_not_generate_new_id() {
         successor1.get_id(),
         successor2.get_id(),
         "Generating the same successor twice should yield the same state ID"
-    );
-
-    // Ensure only two unique states exist (initial + 1 successor)
-    assert_eq!(
-        state_registry.get_state_data_pool().len(),
-        2,
-        "There should be exactly 2 unique states in the pool: initial + 1 successor"
     );
 }

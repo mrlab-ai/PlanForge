@@ -87,7 +87,7 @@ fn test_compute_effective_operator_costs_plus_constants() {
     assert!((d0 - 0.5).abs() < 1e-12);
     assert!((d1 - 0.002).abs() < 1e-12);
 
-    let operator_costs = compute_effective_operator_costs(&*task, &state_registry, &initial_state);
+    let operator_costs = compute_effective_operator_costs(&*task);
     assert_eq!(operator_costs.len(), 2);
     assert!((operator_costs[0] - 0.5).abs() < 1e-12);
     assert!((operator_costs[1] - 0.002).abs() < 1e-12);
@@ -147,6 +147,10 @@ impl Heuristic for FailingHeuristic {
         Err(EvaluationError::ComputationFailed(
             "construction deadline".to_string(),
         ))
+    }
+
+    fn heuristic_name(&self) -> &str {
+        "failing"
     }
 }
 
@@ -210,6 +214,10 @@ impl Heuristic for RevisionControlledHeuristic {
 
     fn reevaluate_on_every_pop(&self) -> bool {
         self.reevaluate_on_every_pop
+    }
+
+    fn heuristic_name(&self) -> &str {
+        "revision_controlled"
     }
 }
 

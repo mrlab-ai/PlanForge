@@ -740,8 +740,8 @@ impl Heuristic for FillScpHeuristic<'_> {
         Ok(cp_h + lmcut_h)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 
     fn dead_ends_are_reliable(&self) -> bool {
@@ -5087,8 +5087,8 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
         Ok(max_h)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 

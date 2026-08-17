@@ -5762,8 +5762,8 @@ impl Heuristic for CartesianAbstractionHeuristic {
                 .permits_initial_optimality_proof()
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 

@@ -300,8 +300,7 @@ impl<'a> AStarSearch<'a> {
         // Required to derive a correct min_action_cost under metric.
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
-        let operator_costs =
-            compute_effective_operator_costs(&*task, &state_registry, &initial_state);
+        let operator_costs = compute_effective_operator_costs(&*task);
 
         // Determine `min_action_cost`.
         let min_action_cost = operator_costs
@@ -319,7 +318,7 @@ impl<'a> AStarSearch<'a> {
         let heuristic = heuristic.unwrap_or_else(|| {
             Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
         });
-        let heuristic_name = heuristic.name();
+        let heuristic_name = heuristic.heuristic_name().to_string();
         let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();
 
         let use_metric = task.metric().use_metric();
@@ -544,7 +543,7 @@ impl<'a> AStarSearch<'a> {
                 if !reliable {
                     debug!(
                         "pruning state on an unreliable dead-end report from {}",
-                        self.heuristic.name()
+                        self.heuristic.heuristic_name()
                     );
                 }
                 SearchEvaluation {
@@ -660,7 +659,6 @@ impl<'a> AStarSearch<'a> {
                 ));
             }
         };
-        drop(eval_state);
         if slow_h.is_infinite() && slow_h.is_sign_positive() {
             // h_s reports a dead end. Mark state and drop the entry.
             self.stats.dead_ends = self.stats.dead_ends.saturating_add(1);

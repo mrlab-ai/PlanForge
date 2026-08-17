@@ -69,8 +69,8 @@ impl Heuristic for ConstantHeuristic {
         })
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 

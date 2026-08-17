@@ -1053,17 +1053,6 @@ impl Operator {
         &self.name
     }
 
-    pub fn conditions_met(&self, state: &Vec<&ExplicitFact>) -> bool {
-        for precondition in &self.preconditions {
-            if !state.iter().any(|fact| {
-                fact.var() == precondition.var() && fact.value() == precondition.value()
-            }) {
-                return false;
-            }
-        }
-        true
-    }
-
     pub fn effects(&self) -> &Vec<Effect> {
         &self.effects
     }
@@ -1093,8 +1082,6 @@ pub struct NumericRootTask {
     state: Vec<usize>,
     numeric_state: Vec<f64>,
     operators: Vec<Operator>,
-    abstract_propositional_var_ids: Vec<usize>,
-    abstract_numeric_var_ids: Vec<usize>,
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -1147,8 +1134,6 @@ impl NumericRootTask {
             assignment_axioms,
             global_constraint,
         } = parts;
-        let abstract_propositional_var_ids = (0..state.len()).collect();
-        let abstract_numeric_var_ids = (0..numeric_state.len()).collect();
         let numeric_conditions = Arc::new(
             NumericConditions::build(
                 variables.len(),
@@ -1169,8 +1154,6 @@ impl NumericRootTask {
             state,
             numeric_state,
             operators,
-            abstract_propositional_var_ids,
-            abstract_numeric_var_ids,
             axioms,
             comparison_axioms,
             assignment_axioms,
@@ -1597,24 +1580,6 @@ fn finish_axiom_closure(
     }
 
     Ok(())
-}
-
-#[allow(unused)]
-fn facts_hold_values(propositional: &[usize], facts: &[ExplicitFact]) -> bool {
-    facts
-        .iter()
-        .all(|fact| propositional.get(fact.var()).copied() == Some(fact.value()))
-}
-
-#[allow(unused)]
-fn assignment_effect_holds_values(propositional: &[usize], effect: &AssignmentEffect) -> bool {
-    !effect.is_conditional() || facts_hold_values(propositional, effect.conditions())
-}
-
-#[allow(unused)]
-fn overwrite_vec<T: Copy>(dst: &mut Vec<T>, src: &[T]) {
-    dst.clear();
-    dst.extend_from_slice(src);
 }
 
 /// Lives here rather than in `crate::tests` because it has to plant a

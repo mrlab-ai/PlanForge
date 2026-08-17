@@ -308,7 +308,7 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
         Ok(heuristic_value)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }

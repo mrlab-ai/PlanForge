@@ -540,8 +540,8 @@ impl Heuristic for NumericPotentialHeuristic {
         true
     }
 
-    fn heuristic_name(&self) -> String {
-        "numeric_potential".to_string()
+    fn heuristic_name(&self) -> &str {
+        "numeric_potential"
     }
 
     fn revision(&self) -> u64 {

@@ -69,7 +69,7 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_genera
     DomainAbstraction, DomainAbstractionGenerator,
 };
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
-use planforge_search::evaluation::evaluator::{EvaluationState, Evaluator};
+use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 use planforge_search::task_restriction::build_restricted_task;
@@ -417,7 +417,7 @@ fn scp_online_initial_h_for_collection(
     );
     eval.set_is_goal(false);
     heuristic
-        .evaluate_state(&mut eval)
+        .compute_heuristic(&eval)
         .expect("scp_online initial evaluation should succeed")
 }
 

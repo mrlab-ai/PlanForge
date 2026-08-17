@@ -13,19 +13,7 @@
 //! [`AbstractNumericTask::numeric_conditions`]. Nothing else in the codebase
 //! rebuilds the "propositional variable -> comparison axiom" mapping.
 //!
-//! # Evaluation
-//!
-//! Two orders, with different trade-offs:
-//!
-//! * **Bottom-up** ([`NumericCondition::evaluate`]) is the default: a
-//!   post-order walk that computes children before parents. Successor
-//!   generation, abstraction construction and flaw search all use it.
-//! * **Lazy top-down** ([`LazyConditionEvaluator`]) is opt-in. It computes
-//!   node values on demand and memoises them, so a heuristic that probes
-//!   individual nodes of a large condition does not walk the sub-DAGs it
-//!   never asks about. It is never the default.
-//!
-//! Both orders are generic over the value domain via [`ConditionDomain`], so
+//! Evaluation is generic over the value domain via [`ConditionDomain`], so
 //! concrete states (`f64`) and abstract states ([`Interval`]) share one
 //! implementation.
 
@@ -531,71 +519,6 @@ impl NumericCondition {
     #[inline]
     pub fn admits_false(&self, intervals: &[Interval]) -> bool {
         self.evaluate_interval(intervals) != Some(true)
-    }
-
-    /// Start a demand-driven evaluation of this condition; see
-    /// [`LazyConditionEvaluator`].
-    pub fn lazy_evaluator<T: ConditionDomain>(&self) -> LazyConditionEvaluator<'_, T> {
-        LazyConditionEvaluator::new(self)
-    }
-}
-
-/// Demand-driven evaluation with per-node memoisation.
-///
-/// Opt-in, for heuristics that ask about individual nodes of a condition: a
-/// node is computed the first time it is requested and cached until
-/// [`Self::reset`]. Successor generation and abstraction construction use the
-/// bottom-up methods on [`NumericCondition`] instead — this is never the
-/// default.
-pub struct LazyConditionEvaluator<'a, T: ConditionDomain> {
-    condition: &'a NumericCondition,
-    memo: Vec<Option<T>>,
-}
-
-impl<'a, T: ConditionDomain> LazyConditionEvaluator<'a, T> {
-    pub fn new(condition: &'a NumericCondition) -> Self {
-        Self {
-            condition,
-            memo: vec![None; condition.nodes.len()],
-        }
-    }
-
-    /// Drop all cached node values; call before evaluating over new inputs.
-    pub fn reset(&mut self) {
-        self.memo.fill(None);
-    }
-
-    pub fn condition(&self) -> &'a NumericCondition {
-        self.condition
-    }
-
-    /// Value of one node, computing only the sub-DAG it depends on.
-    pub fn node_value(&mut self, node_id: NodeId, inputs: &[T]) -> T {
-        if let Some(value) = self.memo[node_id] {
-            return value;
-        }
-        let value = match self.condition.nodes[node_id] {
-            ConditionNode::Leaf { numeric_var_id } => inputs[numeric_var_id],
-            ConditionNode::Arith {
-                op,
-                left,
-                right,
-                result_numeric_var_id,
-                ..
-            } => {
-                let lhs = self.node_value(left, inputs);
-                let rhs = self.node_value(right, inputs);
-                T::combine(op, lhs, rhs, result_numeric_var_id, inputs)
-            }
-        };
-        self.memo[node_id] = Some(value);
-        value
-    }
-
-    pub fn evaluate(&mut self, inputs: &[T]) -> T::Verdict {
-        let lhs = self.node_value(self.condition.left_root, inputs);
-        let rhs = self.node_value(self.condition.right_root, inputs);
-        T::compare(self.condition.op, lhs, rhs)
     }
 }
 

@@ -7,7 +7,6 @@ use std::collections::{BTreeSet, HashSet};
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::{debug, info};
 
-use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
@@ -221,56 +220,8 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
         false
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
-    }
-}
-
-/// Compatibility wrapper for domain-abstraction-only callers.
-pub struct CanonicalDomainAbstractionHeuristic {
-    inner: CanonicalAbstractionHeuristic<'static>,
-}
-
-impl CanonicalDomainAbstractionHeuristic {
-    pub fn new(
-        name: Option<String>,
-        task: &dyn AbstractNumericTask,
-        abstractions: Vec<DomainAbstraction>,
-    ) -> Result<Self, String> {
-        let components = abstractions
-            .into_iter()
-            .enumerate()
-            .map(|(index, abstraction)| {
-                AbstractionComponent::domain(
-                    Some(format!("canonical_domain_abstraction_{index}")),
-                    abstraction,
-                )
-            })
-            .collect();
-        Ok(Self {
-            inner: CanonicalAbstractionHeuristic::new(
-                name.or_else(|| Some("canonical_domain_abstractions".to_string())),
-                task,
-                components,
-            )?,
-        })
-    }
-}
-
-impl Heuristic for CanonicalDomainAbstractionHeuristic {
-    fn compute_heuristic(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        self.inner.compute_heuristic(eval_state)
-    }
-
-    fn proves_initial_state_optimal(&self) -> bool {
-        self.inner.proves_initial_state_optimal()
-    }
-
-    fn heuristic_name(&self) -> String {
-        self.inner.heuristic_name()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }
 

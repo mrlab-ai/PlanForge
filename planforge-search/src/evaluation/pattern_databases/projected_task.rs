@@ -1120,42 +1120,6 @@ impl<'task> ProjectedTask<'task> {
             .collect()
     }
 
-    pub fn project_pattern_concrete_state_values_into(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        pattern_prop_values: &mut Vec<usize>,
-        pattern_numeric_values: &mut Vec<f64>,
-        numeric_value_cache: &mut Vec<Option<f64>>,
-    ) -> Result<(), String> {
-        numeric_value_cache.clear();
-        numeric_value_cache.resize(self.base.numeric_variables().len(), None);
-
-        pattern_prop_values.clear();
-        pattern_prop_values.reserve(self.pattern_regular_projected_ids.len());
-        for &projected_var_id in &self.pattern_regular_projected_ids {
-            let original_var_id = self.projected_var_to_original[projected_var_id];
-            pattern_prop_values.push(
-                registry
-                    .get_propositional_var_value(state, original_var_id)
-                    .map_err(|err| format!("{err:?}"))?,
-            );
-        }
-
-        pattern_numeric_values.clear();
-        pattern_numeric_values.reserve(self.pattern_numeric_projected_ids.len());
-        for &projected_numeric_id in &self.pattern_numeric_projected_ids {
-            pattern_numeric_values.push(self.projected_numeric_value_from_concrete_state(
-                projected_numeric_id,
-                state,
-                registry,
-                numeric_value_cache,
-            )?);
-        }
-
-        Ok(())
-    }
-
     pub fn pack_pattern_concrete_state_values_into(
         &self,
         state: &ConcreteState,
@@ -1190,38 +1154,6 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                packer.pack_double(self.projected_numeric_value_from_concrete_state(
-                    projected_numeric_id,
-                    state,
-                    registry,
-                    numeric_value_cache,
-                )?),
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn pack_pattern_numeric_concrete_state_values_into(
-        &self,
-        state: &ConcreteState,
-        registry: &StateRegistry<'_>,
-        packer: &IntDoublePacker,
-        packed_values: &mut Vec<u64>,
-        numeric_value_cache: &mut Vec<Option<f64>>,
-    ) -> Result<(), String> {
-        numeric_value_cache.clear();
-        numeric_value_cache.resize(self.base.numeric_variables().len(), None);
-
-        packed_values.clear();
-        packed_values.resize(packer.num_bins(), 0);
-
-        for (numeric_index, &projected_numeric_id) in
-            self.pattern_numeric_projected_ids.iter().enumerate()
-        {
-            packer.set(
-                packed_values,
-                numeric_index + 1,
                 packer.pack_double(self.projected_numeric_value_from_concrete_state(
                     projected_numeric_id,
                     state,

@@ -63,8 +63,7 @@ impl<'task> CheckAdmissibleHeuristic<'task> {
             ))
         });
         Ok(Self {
-            // The blanket `Evaluator` impl memoizes by name, so the wrapper
-            // must not answer to the name of the heuristic it wraps.
+            // Keep the wrapper distinct from the heuristic it checks in diagnostics.
             name: format!("check_admissible_{}", inner.heuristic_name()),
             inner,
             oracle: RefCell::new(oracle),
@@ -119,8 +118,8 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
         Ok(h_value)
     }
 
-    fn heuristic_name(&self) -> String {
-        self.name.clone()
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 
     fn proves_initial_state_optimal(&self) -> bool {
@@ -183,8 +182,8 @@ impl<'task> GoalDistanceOracle<'task> {
         let mut registry = StateRegistry::for_task(task.clone());
         // Creating the initial state is what fixes the registry's numeric
         // layout (constant values and packed slots); `copy_state_in` needs it.
-        let initial_state = registry.get_initial_state();
-        let operator_costs = compute_effective_operator_costs(&*task, &registry, &initial_state);
+        registry.get_initial_state();
+        let operator_costs = compute_effective_operator_costs(&*task);
         let min_action_cost = minimum_action_cost(&operator_costs)?;
         let successor_generator = SuccessorTree::new(&*task);
         Ok(Self {

@@ -543,10 +543,6 @@ impl DomainAbstractionFactory {
         })
     }
 
-    pub fn cached_operator_costs(&self) -> &Arc<[f64]> {
-        &self.cached_operator_costs
-    }
-
     pub fn partitions(&self) -> &NumericPartitions {
         &self.partitions
     }

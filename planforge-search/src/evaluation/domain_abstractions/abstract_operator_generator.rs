@@ -1685,25 +1685,15 @@ fn comparison_preconditions_admit_combo(
     // unrefined comparison vars, letting operator combos that violate
     // comparison-axiom preconditions through and inflating operator counts
     // relative to numeric-FD.
-    let precondition_required: HashMap<usize, usize> = op_preconditions
+    let precondition_required: HashMap<usize, &ExplicitFact> = op_preconditions
         .iter()
         .filter(|p| conditions.is_condition_var(p.var()))
-        .map(|p| (p.var(), p.value()))
+        .map(|p| (p.var(), p))
         .collect();
 
-    for tree in conditions.iter() {
-        let var_id = tree.prop_var_id();
-        let Some(&required_concrete) = precondition_required.get(&var_id) else {
-            continue;
-        };
-        match ConditionValue::from_usize(required_concrete) {
-            Some(ConditionValue::True) if !tree.admits_true(source_inputs) => return false,
-            Some(ConditionValue::False) if !tree.admits_false(source_inputs) => return false,
-            _ => {}
-        }
-    }
-
-    true
+    !precondition_required
+        .values()
+        .any(|precondition| conditions.precondition_is_contradicted(precondition, source_inputs))
 }
 
 fn compute_hash_multipliers(

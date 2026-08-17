@@ -23,7 +23,6 @@ use crate::axioms::AxiomEvaluator;
 use crate::numeric_task::{AssignmentEffect, AssignmentOperation, ExplicitFact, Operator, TaskRef};
 use crate::utils::errors::{InvalidIndex, StateInsertError, StateNotFoundError};
 use crate::utils::float_tolerance;
-use crate::utils::per_state_info::PerStateInformation;
 use crate::utils::segmented_vector2::SegmentedArrayVector;
 use crate::{numeric_task::NumericType, utils::int_packer::IntDoublePacker};
 use hashbrown::HashTable;
@@ -256,51 +255,6 @@ impl ConcreteState {
     /// Get a reference to the underlying buffer for this state.
     pub fn buffer<'a>(&self, state_registry: &'a StateRegistry) -> &'a [u64] {
         state_registry.get_buffer(self.pool_offset)
-    }
-
-    /// Return the number of propositional variables in this state.
-    pub fn len(&self, state_registry: &StateRegistry) -> usize {
-        state_registry.global_state_packer.numeric_slot_offset()
-    }
-
-    /// Return `true` if the state has no variables (should never happen in practice).
-    pub fn is_empty(&self, state_registry: &StateRegistry) -> bool {
-        self.len(state_registry) == 0
-    }
-
-    /// Create a debug representation of this state with variable values.
-    pub fn debug_with_registry(&self, registry: &StateRegistry) -> String {
-        let task = &registry.task;
-        let num_variables = registry.global_state_packer.numeric_slot_offset();
-        let num_regular_numeric_vars = task
-            .numeric_variables()
-            .iter()
-            .filter(|v| v.get_type() == &NumericType::Regular)
-            .count();
-
-        let buffer = self.buffer(registry);
-        let state_packer = &registry.global_state_packer;
-
-        let mut result = format!("ConcreteState with {} bins\n", buffer.len());
-
-        // Add propositional variables.
-        for i in 0..num_variables {
-            let value = state_packer.get(buffer, i);
-            result.push_str(&format!("Var {}: {}\n", i, value));
-        }
-
-        // Add numeric variables.
-        for i in 0..num_regular_numeric_vars {
-            let numeric_var_id = i + num_variables;
-            let packed_value = state_packer.get(buffer, numeric_var_id);
-            let numeric_value = registry.unpack_regular_numeric(packed_value);
-            result.push_str(&format!(
-                "Numeric Var {}: {}\n",
-                numeric_var_id, numeric_value
-            ));
-        }
-
-        result
     }
 }
 
@@ -672,69 +626,13 @@ impl<'a> StateRegistry<'a> {
         self.id
     }
 
-    pub fn get_state_data_pool(&self) -> &DataStorage {
-        &self.state_data_pool
-    }
-
-    pub fn get_numeric_indices(&self) -> &[Option<usize>] {
-        &self.numeric_indices
-    }
-
     pub fn uses_compact_numeric_values(&self) -> bool {
         self.compact_numeric_values.is_some()
-    }
-
-    /// Return the value of a numeric constant variable, if available.
-    ///
-    /// Constant values are initialized when the initial state is created.
-    pub fn get_numeric_constant_value(&self, numeric_var_id: usize) -> Option<f64> {
-        if numeric_var_id >= self.task.numeric_variables().len() {
-            return None;
-        }
-        if self.task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Constant {
-            return None;
-        }
-
-        let constant_index = *self.numeric_indices.get(numeric_var_id)?;
-        if let Some(index) = constant_index {
-            self.numeric_constants.get(index).copied()
-        } else {
-            None
-        }
     }
 
     /// Return the total number of distinct states registered in this registry.
     pub fn num_registered_states(&self) -> usize {
         self.state_data_pool.len()
-    }
-
-    /// Subscribe to another registry (placeholder for future functionality).
-    pub fn subscribe(&mut self, _registry: &StateRegistry) {
-        todo!("Registry subscription not yet implemented")
-    }
-
-    /// Subscribe a `PerStateInformation` instance to this registry.
-    ///
-    /// When this registry is dropped, it will notify the subscribed `PerStateInformation`
-    /// instances to clean up their data. This follows the C++ Fast Downward pattern
-    /// where `PerStateInformation` instances register themselves with
-    /// `StateRegistry` instances.
-    ///
-    /// Note: In Rust, we can't hold mutable references to the `PerStateInformation`,
-    /// so this method just ensures the `PerStateInformation` knows about this registry.
-    pub fn subscribe_per_state_info<T>(&self, per_state_info: &mut PerStateInformation<T>)
-    where
-        T: Clone + Default,
-    {
-        per_state_info.subscribe(self.id);
-    }
-
-    /// Unsubscribes a PerStateInformation instance from this registry.
-    pub fn unsubscribe_per_state_info<T>(&self, per_state_info: &mut PerStateInformation<T>)
-    where
-        T: Clone + Default,
-    {
-        per_state_info.unsubscribe(self.id);
     }
 
     /// Get the buffer at the specified index.
@@ -1855,32 +1753,6 @@ impl<'a> StateRegistry<'a> {
                 self.evaluate_metric(&numeric_vals)
             }
         }
-    }
-
-    /// Compute the transition cost between two states based on the metric fluent.
-    /// If a metric is defined, the cost is the absolute change according to min/max:
-    /// - For minimizing metrics, cost = max(0, new - old).
-    /// - For maximizing metrics, cost = max(0, old - new).
-    ///
-    /// If no metric is defined, returns 1.0 as a default unit cost.
-    pub fn transition_cost(
-        &self,
-        predecessor: &ConcreteState,
-        successor: &ConcreteState,
-    ) -> Result<f64, InvalidIndex> {
-        if !self.task.metric().use_metric() {
-            return Ok(1.0);
-        }
-
-        let old_metric = self.metric_value_for_state(predecessor)?;
-        let new_metric = self.metric_value_for_state(successor)?;
-        let is_min = self.task.metric().is_min();
-        let delta = if is_min {
-            new_metric - old_metric
-        } else {
-            old_metric - new_metric
-        };
-        Ok(delta.max(0.0))
     }
 
     /// Determine which cost information to keep when states are deduplicated.
