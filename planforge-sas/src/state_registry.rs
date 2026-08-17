@@ -26,7 +26,7 @@ use crate::utils::errors::{
 };
 use crate::utils::float_tolerance;
 use crate::utils::segmented_vector::SegmentedArrayVector;
-use crate::{numeric_task::NumericType, utils::int_packer::IntDoublePacker};
+use crate::{numeric_task::NumericType, utils::state_packer::StatePacker};
 use hashbrown::HashTable;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -137,9 +137,6 @@ impl DenseCostInformation {
     }
 }
 
-/// Type alias for the state packer used throughout the system.
-type StatePacker = IntDoublePacker;
-
 /// Type alias for state identifiers.
 pub type StateID = usize;
 
@@ -160,7 +157,7 @@ pub struct ConcreteState {
 /// aliasing problem of a `(StateID, &StateRegistry)` state handle.
 #[derive(Clone, Copy)]
 pub struct ConcreteStateView<'a> {
-    packer: &'a IntDoublePacker,
+    packer: &'a StatePacker,
     prop: &'a [u64],
     backing: ConcreteStateViewBacking<'a>,
 }
@@ -183,7 +180,7 @@ enum ConcreteStateViewBacking<'a> {
 }
 
 impl<'a> ConcreteStateView<'a> {
-    pub fn from_decoded(packer: &'a IntDoublePacker, prop: &'a [u64], numeric: &'a [f64]) -> Self {
+    pub fn from_decoded(packer: &'a StatePacker, prop: &'a [u64], numeric: &'a [f64]) -> Self {
         Self {
             packer,
             prop,
@@ -193,7 +190,7 @@ impl<'a> ConcreteStateView<'a> {
 }
 
 impl<'a> ConcreteStateView<'a> {
-    pub fn packer(self) -> &'a IntDoublePacker {
+    pub fn packer(self) -> &'a StatePacker {
         self.packer
     }
 

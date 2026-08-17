@@ -10,7 +10,7 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::int_packer::IntDoublePacker;
+use planforge_sas::utils::state_packer::StatePacker;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -283,7 +283,7 @@ impl CompactNumericDistanceIndex {
     }
 }
 
-fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> IntDoublePacker {
+fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> StatePacker {
     let mut ranges = Vec::with_capacity(
         task.pattern_regular_projected_ids().len() + task.pattern_numeric_projected_ids().len(),
     );
@@ -294,7 +294,7 @@ fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> IntDoublePacker {
         u64::MAX,
         task.pattern_numeric_projected_ids().len(),
     ));
-    IntDoublePacker::new(&ranges)
+    StatePacker::new(&ranges)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -404,7 +404,7 @@ impl<'task> LmcutInnerHeuristic<'task> {
             landmark_generator: LandmarkCutLandmarks::new(task, LmCutNumericConfig::default()),
             propositional_scratch: Vec::new(),
             numeric_scratch: Vec::new(),
-            default_state_buffer_len: IntDoublePacker::from_abstract_task(task).num_bins(),
+            default_state_buffer_len: StatePacker::from_abstract_task(task).num_bins(),
         }
     }
 
@@ -451,7 +451,7 @@ pub struct PatternDatabase<'task> {
     full_prop_hash_multipliers: Vec<usize>,
     compact_prop_hash_multipliers: Vec<usize>,
     compact_prop_distances: Vec<f64>,
-    pattern_lookup_packer: IntDoublePacker,
+    pattern_lookup_packer: StatePacker,
     compact_numeric_registry: CompactNumericDistanceIndex,
     state_dependent_numeric_projected_ids: Vec<usize>,
     failed_lookup_cache: RefCell<HashMap<u64, f64>>,

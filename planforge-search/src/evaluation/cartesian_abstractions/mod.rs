@@ -25,7 +25,7 @@ use planforge_sas::numeric_task::{
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::int_packer::IntDoublePacker;
+use planforge_sas::utils::state_packer::StatePacker;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 use tracing::{debug, info};
@@ -56,7 +56,7 @@ use icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use planforge_sas::utils::interval::Interval;
 
 #[inline]
-fn fact_is_hold(fact: &ExplicitFact, packer: &IntDoublePacker, buffer: &[u64]) -> bool {
+fn fact_is_hold(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bool {
     fact.is_hold(
         planforge_sas::state_registry::ConcreteStateView::from_decoded(packer, buffer, &[]),
     )
@@ -1695,7 +1695,7 @@ impl<'task> CartesianSemantics<'task> {
         Ok(true)
     }
 
-    fn concrete_prop_values(&self, packer: &IntDoublePacker, packed: &[u64], out: &mut Vec<usize>) {
+    fn concrete_prop_values(&self, packer: &StatePacker, packed: &[u64], out: &mut Vec<usize>) {
         out.clear();
         out.extend(
             (0..self.task.get_num_variables()).map(|var_id| packer.get(packed, var_id) as usize),
@@ -3260,7 +3260,7 @@ fn approximately_equal(left: f64, right: f64) -> bool {
 
 fn concrete_is_goal(
     semantics: &CartesianSemantics<'_>,
-    state_packer: &IntDoublePacker,
+    state_packer: &StatePacker,
     propositions: &[u64],
 ) -> bool {
     (0..semantics.task.get_num_goals()).all(|goal_id| {
@@ -3563,7 +3563,7 @@ fn replay_optimal_abstract_trace(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
-    state_packer: &Arc<IntDoublePacker>,
+    state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &CartesianConcreteState,
     selected_plan: Option<&[TransitionKey]>,
@@ -4320,7 +4320,7 @@ fn replay_entire_optimal_abstract_trace(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
-    state_packer: &Arc<IntDoublePacker>,
+    state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &CartesianConcreteState,
 ) -> Result<PlanCheck> {
@@ -4457,7 +4457,7 @@ fn replay_entire_optimal_abstract_trace(
 
 fn validate_concrete_plan(
     semantics: &CartesianSemantics<'_>,
-    state_packer: &Arc<IntDoublePacker>,
+    state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &CartesianConcreteState,
     plan: &ConcretePlan,

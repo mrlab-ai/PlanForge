@@ -5,7 +5,7 @@ use anyhow::{Result, ensure};
 use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::{AssignmentOperation, Operator};
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::int_packer::IntDoublePacker;
+use planforge_sas::utils::state_packer::StatePacker;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -52,7 +52,7 @@ impl crate::config::FromOptionValue for FlawKind {
 pub fn progress_concrete_state(
     op: &Operator,
     axiom_evaluator: &AxiomEvaluator,
-    packer: &IntDoublePacker,
+    packer: &StatePacker,
     prop_state: &mut [u64],
     numeric_state: &mut [f64],
 ) -> Result<()> {

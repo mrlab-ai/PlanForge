@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::utils::int_packer::IntDoublePacker;
+use planforge_sas::utils::state_packer::StatePacker;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
@@ -780,13 +780,13 @@ fn wildcard_plan_is_real(
 }
 
 #[allow(dead_code)]
-fn is_applicable(buffer: &[u64], packer: &IntDoublePacker, op: &Operator) -> bool {
+fn is_applicable(buffer: &[u64], packer: &StatePacker, op: &Operator) -> bool {
     op.preconditions()
         .iter()
         .all(|pre| pre.is_hold(ConcreteStateView::from_decoded(packer, buffer, &[])))
 }
 
-fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &IntDoublePacker) -> bool {
+fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &StatePacker) -> bool {
     sorted_goal_facts(task)
         .iter()
         .all(|goal_fact| goal_fact.is_hold(ConcreteStateView::from_decoded(packer, buffer, &[])))

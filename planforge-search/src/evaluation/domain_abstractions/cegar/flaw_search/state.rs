@@ -4,7 +4,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
 use planforge_sas::utils::errors::{AxiomEvalError, InvalidIndex};
 use planforge_sas::{
-    axioms::AxiomEvaluator, numeric_task::Operator, utils::int_packer::IntDoublePacker,
+    axioms::AxiomEvaluator, numeric_task::Operator, utils::state_packer::StatePacker,
 };
 
 use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
@@ -329,7 +329,7 @@ impl<'a> FlawSearchState<'a> {
 
 pub fn get_initial_flaw_search_state<'a>(
     task: &dyn AbstractNumericTask,
-    state_packer: &IntDoublePacker,
+    state_packer: &StatePacker,
     axiom_evaluator: &AxiomEvaluator,
     domain_mapping: &'a DomainMapping,
 ) -> Result<FlawSearchState<'a>> {

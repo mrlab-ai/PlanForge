@@ -374,7 +374,7 @@ fn trace_variable_scope(
 
 fn fmt_concrete_props(
     task: &dyn AbstractNumericTask,
-    packer: &IntDoublePacker,
+    packer: &StatePacker,
     buffer: &[u64],
     var_ids: &[usize],
     max_items: usize,

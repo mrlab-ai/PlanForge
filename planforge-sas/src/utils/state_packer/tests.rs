@@ -1,8 +1,8 @@
 use super::*;
 
-fn setup() -> IntDoublePacker {
+fn setup() -> StatePacker {
     let ranges = vec![100, 200, 300, 400, 500, u64::MAX];
-    IntDoublePacker::new(&ranges)
+    StatePacker::new(&ranges)
 }
 
 #[test]
@@ -47,7 +47,7 @@ fn pack_double_canonicalizes_close_values() {
 
 #[test]
 fn packer_handles_single_value_domains() {
-    let packer = IntDoublePacker::new(&[1, u64::MAX]);
+    let packer = StatePacker::new(&[1, u64::MAX]);
     let mut buffer = vec![0; packer.num_bins()];
 
     packer.set(&mut buffer, 0, 0);

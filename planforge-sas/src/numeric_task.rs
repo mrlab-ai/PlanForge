@@ -20,11 +20,11 @@ use crate::numeric_conditions::{
 use crate::numeric_parser::parse_numeric_sas_output;
 use crate::state_registry::ConcreteStateView;
 use crate::utils::errors::AssignmentAxiomError;
-use crate::utils::int_packer::IntDoublePacker;
 use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, linearize_numeric_var,
     linearize_operator_assignment_effects,
 };
+use crate::utils::state_packer::StatePacker;
 use std::{collections::HashSet, fmt, sync::Arc};
 
 /// A planning task the search can read.
@@ -1761,17 +1761,17 @@ fn evaluate_state_with_axiom_closure(
     )
 }
 
-fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> IntDoublePacker {
+fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> StatePacker {
     let ranges: Vec<u64> = task
         .variables()
         .iter()
         .map(|variable| variable.domain_size() as u64)
         .collect();
-    IntDoublePacker::new(&ranges)
+    StatePacker::new(&ranges)
 }
 
 fn finish_axiom_closure(
-    packer: &IntDoublePacker,
+    packer: &StatePacker,
     propositional: &mut [usize],
     numeric: &mut [f64],
     packed: &mut [u64],

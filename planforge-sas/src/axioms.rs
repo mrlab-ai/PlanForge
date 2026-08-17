@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::numeric_task::{AbstractNumericTask, ExplicitFact, TaskRef};
 use crate::utils::errors::{AssignmentAxiomError, AxiomEvalError, InvalidIndex, WrongAxiomLayer};
-use crate::utils::int_packer::IntDoublePacker;
+use crate::utils::state_packer::StatePacker;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropositionalAxiom {
@@ -382,7 +382,7 @@ fn build_compiled_axiom_evaluator_data(
 #[allow(unused)]
 pub struct AxiomEvaluator<'a> {
     pub numeric_task: TaskRef<'a>,
-    state_packer: Arc<IntDoublePacker>,
+    state_packer: Arc<StatePacker>,
     axiom_literals: Vec<Vec<AxiomLiteral>>,
     rules: Vec<AxiomRule>,
     comparison_axiom_layer: Option<usize>,
@@ -414,7 +414,7 @@ thread_local! {
 }
 
 impl<'a> AxiomEvaluator<'a> {
-    pub fn new(numeric_task: TaskRef<'a>, state_packer: Arc<IntDoublePacker>) -> Self {
+    pub fn new(numeric_task: TaskRef<'a>, state_packer: Arc<StatePacker>) -> Self {
         let compiled = build_compiled_axiom_evaluator_data(&*numeric_task);
 
         AxiomEvaluator {

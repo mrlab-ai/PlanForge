@@ -82,8 +82,7 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
         assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
         global_constraint: ExplicitFact::condition(0, ConditionValue::True.as_usize()),
     }));
-    let state_packer =
-        std::sync::Arc::new(IntDoublePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
+    let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
     let axiom_evaluator = AxiomEvaluator::new(problem, state_packer.clone());
     let mut buffer = vec![0; state_packer.num_bins()];
     state_packer.set(&mut buffer, 0, ConditionValue::False.as_usize() as u64);
@@ -111,7 +110,7 @@ fn test_axiom_evaluator_creation() {
         domain_sizes.push(u64::MAX);
     }
 
-    let state_packer = std::sync::Arc::new(IntDoublePacker::new(&domain_sizes));
+    let state_packer = std::sync::Arc::new(StatePacker::new(&domain_sizes));
     let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
 
     // The task's initial state is already closed under its axioms: var0 is
@@ -147,7 +146,7 @@ fn test_example1_axiom_evaluation() {
         domain_sizes.push(u64::MAX);
     }
 
-    let state_packer = std::sync::Arc::new(IntDoublePacker::new(&domain_sizes));
+    let state_packer = std::sync::Arc::new(StatePacker::new(&domain_sizes));
     let axiom_evaluator = AxiomEvaluator::new(problem.clone(), state_packer);
 
     // Verify axiom structure is set up correctly.

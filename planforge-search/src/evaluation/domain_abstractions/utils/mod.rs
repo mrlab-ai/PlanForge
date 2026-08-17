@@ -6,7 +6,7 @@ use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::int_packer::IntDoublePacker;
+use planforge_sas::utils::state_packer::StatePacker;
 use tracing::debug;
 
 use super::cegar::flaw_search::Flaw;
@@ -67,17 +67,17 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     Ok((domain_mapping, domain_sizes))
 }
 
-pub(crate) fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
+pub(crate) fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> StatePacker {
     let mut domain_sizes: Vec<u64> = Vec::with_capacity(task.variables().len());
     for var in task.variables().iter() {
         domain_sizes.push(var.domain_size() as u64);
     }
-    IntDoublePacker::new(&domain_sizes)
+    StatePacker::new(&domain_sizes)
 }
 
 pub(crate) fn set_initial_prop_values(
     task: &dyn AbstractNumericTask,
-    packer: &IntDoublePacker,
+    packer: &StatePacker,
     buffer: &mut [u64],
 ) {
     let init = task.get_initial_propositional_state_values();
@@ -88,7 +88,7 @@ pub(crate) fn set_initial_prop_values(
 
 pub(crate) fn get_initial_state(
     task: &dyn AbstractNumericTask,
-    state_packer: &IntDoublePacker,
+    state_packer: &StatePacker,
     axiom_evaluator: &AxiomEvaluator,
 ) -> Result<(Vec<u64>, Vec<f64>)> {
     let mut buffer = vec![0u64; state_packer.num_bins()];

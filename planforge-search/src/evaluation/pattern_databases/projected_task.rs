@@ -13,7 +13,7 @@ use planforge_sas::numeric_task::{
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::int_packer::IntDoublePacker;
+use planforge_sas::utils::state_packer::StatePacker;
 
 use crate::evaluation::validate_abstractable_goal;
 use crate::task_restriction::validate_restricted_task;
@@ -178,7 +178,7 @@ pub struct ProjectedTask<'task> {
     operators: Vec<Operator>,
     operator_costs: Vec<f64>,
     base_operator_ids: Vec<usize>,
-    propositional_packer: Arc<IntDoublePacker>,
+    propositional_packer: Arc<StatePacker>,
     initial_packed_propositional: Vec<u64>,
     operator_effect_facts: Vec<Vec<ExplicitFact>>,
     goals: Vec<ExplicitFact>,
@@ -352,7 +352,7 @@ impl PatternLookupProjection {
         &self,
         propositional_values: &[usize],
         source_numeric_values: &[f64],
-        packer: &IntDoublePacker,
+        packer: &StatePacker,
         packed_values: &mut Vec<u64>,
     ) -> Result<(), String> {
         if propositional_values.len() < self.base_propositional_len {
@@ -878,7 +878,7 @@ impl<'task> ProjectedTask<'task> {
         &self,
         propositional_values: &[usize],
         source_numeric_values: &[f64],
-        packer: &IntDoublePacker,
+        packer: &StatePacker,
         packed_values: &mut Vec<u64>,
     ) -> Result<(), String> {
         if propositional_values.len() < self.base.variables().len() {
@@ -930,7 +930,7 @@ impl<'task> ProjectedTask<'task> {
     pub fn pack_pattern_numeric_state_values_from_source_numeric_into(
         &self,
         source_numeric_values: &[f64],
-        packer: &IntDoublePacker,
+        packer: &StatePacker,
         packed_values: &mut Vec<u64>,
     ) -> Result<(), String> {
         if source_numeric_values.len() < self.base.numeric_variables().len() {
@@ -1082,7 +1082,7 @@ impl<'task> ProjectedTask<'task> {
         Ok(packed)
     }
 
-    pub fn propositional_packer(&self) -> &IntDoublePacker {
+    pub fn propositional_packer(&self) -> &StatePacker {
         &self.propositional_packer
     }
 
@@ -1203,18 +1203,16 @@ impl<'task> ProjectedTask<'task> {
 }
 
 #[allow(unused)]
-fn projected_propositional_packer(task: &dyn AbstractNumericTask) -> IntDoublePacker {
+fn projected_propositional_packer(task: &dyn AbstractNumericTask) -> StatePacker {
     projected_propositional_packer_from_variables(task.variables())
 }
 
-fn projected_propositional_packer_from_variables(
-    variables: &[ExplicitVariable],
-) -> IntDoublePacker {
+fn projected_propositional_packer_from_variables(variables: &[ExplicitVariable]) -> StatePacker {
     let ranges: Vec<u64> = variables
         .iter()
         .map(|variable| variable.domain_size() as u64)
         .collect();
-    IntDoublePacker::new(&ranges)
+    StatePacker::new(&ranges)
 }
 
 impl AbstractNumericTask for ProjectedTask<'_> {

@@ -84,7 +84,7 @@ impl VariableInfo {
 }
 
 #[derive(Clone)]
-pub struct IntDoublePacker {
+pub struct StatePacker {
     var_infos: Vec<VariableInfo>,
     num_bins: usize,
     /// First slot of the regular-numeric section of the buffer.
@@ -97,7 +97,7 @@ pub struct IntDoublePacker {
     numeric_slot_offset: usize,
 }
 
-impl IntDoublePacker {
+impl StatePacker {
     /// Packer for `ranges` alone, with no regular-numeric section.
     pub fn new(ranges: &[u64]) -> Self {
         Self::with_numeric_slot_offset(ranges, ranges.len())
@@ -109,7 +109,7 @@ impl IntDoublePacker {
             "numeric section starts at slot {numeric_slot_offset}, past the {} packed slots",
             ranges.len()
         );
-        let mut packer = IntDoublePacker {
+        let mut packer = StatePacker {
             var_infos: vec![],
             num_bins: 0,
             numeric_slot_offset,
@@ -142,7 +142,7 @@ impl IntDoublePacker {
                 domain_sizes.push(numeric_range);
             }
         }
-        IntDoublePacker::with_numeric_slot_offset(&domain_sizes, numeric_slot_offset)
+        StatePacker::with_numeric_slot_offset(&domain_sizes, numeric_slot_offset)
     }
 
     pub fn num_bins(&self) -> usize {
