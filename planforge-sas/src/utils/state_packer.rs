@@ -28,7 +28,6 @@ fn get_bit_mask(from: u64, to: u64) -> u64 {
 struct VariableInfo {
     bin_index: usize,
     shift: u64,
-    bit_size: u64,
     value_mask: u64,
 }
 
@@ -42,15 +41,19 @@ impl VariableInfo {
         Self {
             bin_index,
             shift,
-            bit_size,
             value_mask: get_bit_mask(0, bit_size),
         }
     }
 
     #[inline]
+    fn is_straddling(&self) -> bool {
+        self.value_mask > (u64::MAX >> self.shift)
+    }
+
+    #[inline]
     fn get(&self, buffer: &[u64]) -> u64 {
         let low = buffer[self.bin_index] >> self.shift;
-        if self.shift + self.bit_size > BITS_PER_BIN {
+        if self.is_straddling() {
             self.get_straddling(buffer, low)
         } else {
             low & self.value_mask
@@ -74,12 +77,12 @@ impl VariableInfo {
             value & self.value_mask,
             value,
             "value {value} does not fit the {} packed bits",
-            self.bit_size
+            self.value_mask.count_ones()
         );
         let first_mask = self.value_mask << self.shift;
         let first_bin = buffer[self.bin_index];
         buffer[self.bin_index] = (first_bin & !first_mask) | (value << self.shift);
-        if self.shift + self.bit_size > BITS_PER_BIN {
+        if self.is_straddling() {
             self.set_straddling_high(buffer, value);
         }
     }
@@ -95,7 +98,7 @@ impl VariableInfo {
 
     fn add_to_mask(&self, mask: &mut [u64]) {
         mask[self.bin_index] |= self.value_mask << self.shift;
-        if self.shift + self.bit_size > BITS_PER_BIN {
+        if self.is_straddling() {
             let first_bit_count = BITS_PER_BIN - self.shift;
             mask[self.bin_index + 1] |= self.value_mask >> first_bit_count;
         }

@@ -69,7 +69,7 @@ fn values_straddle_word_boundaries_without_padding() {
         assert_eq!(packer.get(&buffer, var), value);
     }
 
-    assert!(packer.var_infos[1].shift + packer.var_infos[1].bit_size > BITS_PER_BIN);
+    assert!(packer.var_infos[1].is_straddling());
 }
 
 #[test]
@@ -90,5 +90,5 @@ fn full_width_values_keep_the_single_word_fast_path() {
 
     assert_eq!(packer.var_infos[1].bin_index, 0);
     assert_eq!(packer.var_infos[1].shift, 0);
-    assert_eq!(packer.var_infos[1].bit_size, BITS_PER_BIN);
+    assert!(!packer.var_infos[1].is_straddling());
 }
