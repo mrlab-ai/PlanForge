@@ -533,6 +533,21 @@ mod tests {
     }
 
     #[test]
+    fn blocks_eight_has_the_expected_complete_state_space() {
+        let graph = enumerate_state_space(
+            pddl_task("strips-pddl-files/blocks-8-0", "probBLOCKS-8-0.pddl"),
+            EnumerationLimits {
+                max_states: 700_000,
+                max_transitions: 2_100_000,
+                max_time: Duration::from_secs(30),
+            },
+        )
+        .unwrap();
+        assert_eq!(graph.num_states(), 695_417);
+        assert_eq!(graph.h_star[0], 18.0);
+    }
+
+    #[test]
     fn unreachable_goal_states_are_exact_dead_ends() {
         let graph = enumerate_state_space(
             pddl_task("adl/unreachable-goal", "problem.pddl"),

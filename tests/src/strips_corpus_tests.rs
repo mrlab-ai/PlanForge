@@ -26,6 +26,7 @@ use crate::corpus::{
 const STRIPS_OPTIMA: &[(&str, f64, u64)] = &[
     ("blocks-4-0/probBLOCKS-4-0.pddl", 6.0, 6),
     ("blocks-5-0/probBLOCKS-5-0.pddl", 12.0, 12),
+    ("blocks-8-0/probBLOCKS-8-0.pddl", 18.0, 18),
     ("blocks-minimal/probBLOCKS-2-reverse.pddl", 4.0, 4),
     ("blocks-minimal/probBLOCKS-3-preserve-middle.pddl", 8.0, 8),
     ("blocks-minimal/probBLOCKS-3-reverse.pddl", 6.0, 6),

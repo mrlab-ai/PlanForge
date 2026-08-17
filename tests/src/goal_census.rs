@@ -141,6 +141,7 @@ const SEPARATE_CORPUS: &[&str] = &["sailing-simple"];
 const STRIPS: &[Row] = &[
     ("blocks-4-0", "probBLOCKS-4-0.pddl", 3, 0, 0),
     ("blocks-5-0", "probBLOCKS-5-0.pddl", 4, 0, 0),
+    ("blocks-8-0", "probBLOCKS-8-0.pddl", 7, 0, 0),
     ("blocks-minimal", "probBLOCKS-2-reverse.pddl", 1, 0, 0),
     (
         "blocks-minimal",
