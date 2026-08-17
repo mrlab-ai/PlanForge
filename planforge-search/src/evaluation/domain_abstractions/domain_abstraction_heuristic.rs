@@ -2,7 +2,6 @@
 mod tests;
 
 use std::cell::RefCell;
-use std::sync::OnceLock;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -14,11 +13,6 @@ use super::abstraction_numeric_var;
 use super::domain_abstraction_generator::DomainAbstraction;
 use super::utils;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
-
-fn fast_hash_enabled() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    *CACHE.get_or_init(|| std::env::var_os("DA_NO_FAST_HASH").is_none())
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct DomainAbstractionLookupScratch {
@@ -75,16 +69,8 @@ pub(crate) fn compute_collection_abstract_state_ids(
         );
     }
 
-    let has_required_domains = !scratch.required_domain_ids.is_empty();
-    // The registry's axiom evaluator has already materialized every comparison
-    // axiom's truth value into `scratch.prop[affected_var_id]`. In that case
-    // we can read those bits directly and skip the per-state `NumericCondition`
-    // walks entirely. `DA_NO_FAST_HASH=1` disables this for A/B benchmarking.
-    let prop_has_resolved_comparisons = has_required_domains && fast_hash_enabled();
-
     scratch.comparisons.clear();
-    if !prop_has_resolved_comparisons
-        && scratch.required_domain_ids.len() > 1
+    if scratch.required_domain_ids.len() > 1
         && let Some(&first_id) = scratch.required_domain_ids.first()
     {
         heuristics[first_id].fill_comparison_values_from_projected_state_values(
@@ -102,7 +88,6 @@ pub(crate) fn compute_collection_abstract_state_ids(
                 &scratch.prop,
                 &scratch.numeric,
                 &scratch.comparisons,
-                prop_has_resolved_comparisons,
             )?);
         }
     } else if let Some(required_ids) = required_ids {
@@ -115,7 +100,6 @@ pub(crate) fn compute_collection_abstract_state_ids(
                 &scratch.prop,
                 &scratch.numeric,
                 &scratch.comparisons,
-                prop_has_resolved_comparisons,
             )?);
         }
     }
@@ -128,13 +112,11 @@ fn hash_with_shared_values(
     prop_values: &[usize],
     numeric_values: &[f64],
     comparison_values: &[Option<usize>],
-    prop_has_resolved_comparisons: bool,
 ) -> Result<usize, EvaluationError> {
     heuristic.compute_abstract_hash_from_projected_state_values_inner(
         prop_values,
         numeric_values,
         Some(comparison_values),
-        prop_has_resolved_comparisons,
     )
 }
 
@@ -337,13 +319,7 @@ impl DomainAbstractionHeuristic {
             .map_err(|e| {
                 EvaluationError::ComputationFailed(format!("failed to read numeric vars: {e:?}"))
             })?;
-        // The registry's buffer already holds correct comparison-axiom-derived
-        // bits in `prop`; they were materialized when the state was
-        // registered. We can skip the per-evaluation re-evaluation of
-        // `NumericCondition`s entirely.
-        // Set DA_NO_FAST_HASH=1 to disable for A/B benchmarking.
-        let prop_has_resolved_comparisons = fast_hash_enabled();
-        self.compute_abstract_hash_inner(&prop, &numeric, None, prop_has_resolved_comparisons)
+        self.compute_abstract_hash_inner(&prop, &numeric, None)
     }
 
     fn compute_abstract_hash_from_state_values(
@@ -355,7 +331,7 @@ impl DomainAbstractionHeuristic {
         // Conservative path used by external callers: assume `prop_values`
         // does not yet have comparison-axiom-derived bits resolved, so we
         // still consult the comparison trees on the numeric values.
-        self.compute_abstract_hash_inner(prop_values, numeric, comparison_values, false)
+        self.compute_abstract_hash_inner(prop_values, numeric, comparison_values)
     }
 
     fn compute_abstract_hash_inner(
@@ -363,7 +339,6 @@ impl DomainAbstractionHeuristic {
         prop_values: &[usize],
         numeric: &[f64],
         comparison_values: Option<&[Option<usize>]>,
-        prop_has_resolved_comparisons: bool,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
 
@@ -378,7 +353,6 @@ impl DomainAbstractionHeuristic {
             prop_values,
             numeric,
             comparison_values,
-            prop_has_resolved_comparisons,
         )
     }
 
@@ -392,7 +366,6 @@ impl DomainAbstractionHeuristic {
             prop_values,
             numeric_values,
             comparison_values,
-            false,
         )
     }
 
@@ -401,7 +374,6 @@ impl DomainAbstractionHeuristic {
         prop_values: &[usize],
         numeric_values: &[f64],
         comparison_values: Option<&[Option<usize>]>,
-        prop_has_resolved_comparisons: bool,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
         let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
@@ -437,7 +409,6 @@ impl DomainAbstractionHeuristic {
         }
 
         let mut prop_index: usize = 0;
-        let _ = prop_has_resolved_comparisons;
         for &var in &self.active_prop_vars {
             let concrete_val = resolved_propositional_value(
                 var,
