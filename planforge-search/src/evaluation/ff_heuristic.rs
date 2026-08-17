@@ -177,6 +177,7 @@ struct ScratchBuffers {
     /// Ineligible ops are skipped throughout the BFS and ignored as
     /// achievers during relaxed-plan extraction.
     op_eligible: Vec<bool>,
+    numeric_raw: Vec<f64>,
     numeric: Vec<NumericRange>,
     axiom_first_layer: Vec<i32>,
     /// Reusable Vec for "numeric vars dirtied during the current
@@ -209,6 +210,7 @@ impl ScratchBuffers {
             seen: vec![false; num_facts],
             in_plan: vec![false; num_ops],
             op_eligible: vec![true; num_ops],
+            numeric_raw: Vec::with_capacity(num_numeric),
             numeric: vec![NumericRange::singleton(0.0); num_numeric],
             axiom_first_layer: vec![-1; num_axioms],
             dirty_vars_scratch: Vec::new(),
@@ -228,7 +230,9 @@ impl ScratchBuffers {
             *v = -1;
         }
         self.queue.clear();
-        self.goals_at_layer.clear();
+        for goals in &mut self.goals_at_layer {
+            goals.clear();
+        }
         for v in &mut self.seen {
             *v = false;
         }
@@ -266,8 +270,9 @@ type StateDependentPrecond = (usize, usize);
 /// namespaces silently dropped legitimate propositional facts in earlier
 /// versions.
 struct FactUniverse {
-    /// `id_by_var_value[var][value]`, `None` outside the universe.
-    id_by_var_value: Vec<Vec<Option<FactId>>>,
+    /// Flat `FactId` table, with one offset per propositional variable.
+    fact_id_by_var_value: Vec<Option<FactId>>,
+    fact_id_offsets: Vec<usize>,
     var_value: Vec<(usize, usize)>,
     /// `to_axiom[fid]` is `Some(axiom_idx)` iff `fid` is a comparison axiom's
     /// TRUE fact.
@@ -277,20 +282,25 @@ struct FactUniverse {
 
 impl FactUniverse {
     fn build(task: &dyn AbstractNumericTask) -> Result<Self, String> {
-        let mut id_by_var_value: Vec<Vec<Option<FactId>>> = task
-            .variables()
-            .iter()
-            .map(|variable| vec![None; variable.domain_size()])
-            .collect();
+        let mut fact_id_offsets = Vec::with_capacity(task.variables().len());
+        let mut flat_len = 0usize;
+        for variable in task.variables() {
+            fact_id_offsets.push(flat_len);
+            flat_len = flat_len
+                .checked_add(variable.domain_size())
+                .ok_or_else(|| "FF fact table size overflow".to_string())?;
+        }
+        let mut fact_id_by_var_value = vec![None; flat_len];
         let mut var_value: Vec<(usize, usize)> = Vec::new();
         let mut to_axiom: Vec<Option<AxiomIdx>> = Vec::new();
 
-        for (var_id, values) in id_by_var_value.iter_mut().enumerate() {
+        for (var_id, variable) in task.variables().iter().enumerate() {
             if task.numeric_conditions().is_condition_var(var_id) {
                 continue;
             }
-            for (value, fact_id) in values.iter_mut().enumerate() {
-                *fact_id = Some(var_value.len());
+            let offset = fact_id_offsets[var_id];
+            for value in 0..variable.domain_size() {
+                fact_id_by_var_value[offset + value] = Some(var_value.len());
                 var_value.push((var_id, value));
                 to_axiom.push(None);
             }
@@ -300,13 +310,21 @@ impl FactUniverse {
         let mut descs = Vec::with_capacity(comparison_axioms.len());
         for (axiom_idx, axiom) in comparison_axioms.iter().enumerate() {
             let affected = axiom.get_affected_var_id();
-            let row = id_by_var_value.get_mut(affected).ok_or_else(|| {
+            let &offset = fact_id_offsets.get(affected).ok_or_else(|| {
                 format!("comparison axiom {axiom_idx} affects out-of-range variable {affected}")
             })?;
             let true_value = ConditionValue::True.as_usize();
-            let slot = row.get_mut(true_value).ok_or_else(|| {
-                format!("comparison axiom {axiom_idx} affected variable has no TRUE value")
-            })?;
+            let domain_size = task.variables()[affected].domain_size();
+            if true_value >= domain_size {
+                return Err(format!(
+                    "comparison axiom {axiom_idx} affected variable has no TRUE value"
+                ));
+            }
+            let slot = fact_id_by_var_value
+                .get_mut(offset + true_value)
+                .ok_or_else(|| {
+                    format!("comparison axiom {axiom_idx} affected variable has no TRUE value")
+                })?;
             let fid = var_value.len();
             *slot = Some(fid);
             var_value.push((affected, true_value));
@@ -320,7 +338,8 @@ impl FactUniverse {
         }
 
         Ok(Self {
-            id_by_var_value,
+            fact_id_by_var_value,
+            fact_id_offsets,
             var_value,
             to_axiom,
             comparison_axioms: descs,
@@ -333,7 +352,20 @@ impl FactUniverse {
 
     #[inline]
     fn fact_id(&self, fact: &ExplicitFact) -> Option<FactId> {
-        *self.id_by_var_value.get(fact.var())?.get(fact.value())?
+        self.fact_id_for_value(fact.var(), fact.value())
+    }
+
+    #[inline]
+    fn fact_id_for_value(&self, var: usize, value: usize) -> Option<FactId> {
+        let &offset = self.fact_id_offsets.get(var)?;
+        let end = self
+            .fact_id_offsets
+            .get(var + 1)
+            .copied()
+            .unwrap_or(self.fact_id_by_var_value.len());
+        (value < end - offset)
+            .then(|| self.fact_id_by_var_value[offset + value])
+            .flatten()
     }
 
     /// Split `conditions` into the facts the relaxation represents and the
@@ -846,7 +878,7 @@ pub struct FfHeuristic<'task> {
     /// FF universe (e.g. comparison-axiom FALSE). Checked at evaluation
     /// time against the live state; if any fails the operator is excluded
     /// from the RPG for that state. Not silently dropped.
-    op_state_deps: Vec<Vec<StateDependentPrecond>>,
+    state_dep_ops: Vec<(usize, Box<[StateDependentPrecond]>)>,
     /// Per-operator propositional add-effects.
     op_effects: Vec<Vec<FactId>>,
     /// Per-operator monotonic numeric effects.
@@ -867,7 +899,8 @@ pub struct FfHeuristic<'task> {
     achievers: Vec<Vec<OpId>>,
     /// For each fact id, the operators that have it as a precondition.
     consumers: Vec<Vec<OpId>>,
-    fact_var_value: Vec<(usize, usize)>,
+    fact_id_by_var_value: Vec<Option<FactId>>,
+    fact_id_offsets: Vec<usize>,
     /// `fact_to_axiom[fid]` is `Some(axiom_idx)` iff this fact represents
     /// a comparison-axiom TRUE value; `None` for ordinary prop facts.
     fact_to_axiom: Vec<Option<AxiomIdx>>,
@@ -880,7 +913,6 @@ pub struct FfHeuristic<'task> {
     /// RHS mentions it. Lets `fire_operator` re-evaluate only the affected
     /// comparison axioms after a numeric update.
     axioms_touching_var: Vec<Vec<AxiomIdx>>,
-    num_facts: usize,
     num_numeric: usize,
     scratch: RefCell<ScratchBuffers>,
     /// Cache of the task-operator indices of helpful actions for the most
@@ -928,11 +960,19 @@ impl<'task> FfHeuristic<'task> {
         let consumers = build_consumer_index(&operators, num_facts);
 
         let num_comparison_axioms = universe.comparison_axioms.len();
+        let state_dep_ops = operators
+            .state_deps
+            .into_iter()
+            .enumerate()
+            .filter_map(|(op_id, deps)| {
+                (!deps.is_empty()).then(|| (op_id, deps.into_boxed_slice()))
+            })
+            .collect();
         Ok(Self {
             task,
             op_task_idx: operators.task_idx,
             op_preconditions: operators.preconditions,
-            op_state_deps: operators.state_deps,
+            state_dep_ops,
             op_effects: operators.effects,
             op_numeric_effects: operators.numeric_effects,
             op_cost: operators.cost,
@@ -940,12 +980,12 @@ impl<'task> FfHeuristic<'task> {
             goal_facts,
             achievers,
             consumers,
-            fact_var_value: universe.var_value,
+            fact_id_by_var_value: universe.fact_id_by_var_value,
+            fact_id_offsets: universe.fact_id_offsets,
             fact_to_axiom: universe.to_axiom,
             comparison_axioms: universe.comparison_axioms,
             assignment_axioms,
             axioms_touching_var,
-            num_facts,
             num_numeric,
             scratch: RefCell::new(ScratchBuffers::new(
                 num_facts,
@@ -957,28 +997,33 @@ impl<'task> FfHeuristic<'task> {
         })
     }
 
-    fn initial_numeric_state(
+    fn fill_initial_numeric_state(
         &self,
         eval_state: &EvaluationState<'_, '_>,
         registry: &StateRegistry<'_>,
-    ) -> Result<Vec<NumericRange>, EvaluationError> {
-        let mut buffer: Vec<f64> = Vec::new();
+        raw: &mut Vec<f64>,
+        ranges: &mut Vec<NumericRange>,
+    ) -> Result<(), EvaluationError> {
         registry
-            .fill_numeric_vars(eval_state.state(), &mut buffer)
+            .fill_numeric_vars(eval_state.state(), raw)
             .map_err(|err| {
                 EvaluationError::ComputationFailed(format!(
                     "FF heuristic failed to read numeric state: {err:?}"
                 ))
             })?;
-        if buffer.len() != self.num_numeric {
+        if raw.len() != self.num_numeric {
             return Err(EvaluationError::ComputationFailed(format!(
                 "FF heuristic: numeric-state length ({}) disagrees with task numeric-variable \
                  count ({})",
-                buffer.len(),
+                raw.len(),
                 self.num_numeric
             )));
         }
-        Ok(buffer.into_iter().map(NumericRange::singleton).collect())
+        ranges.resize(self.num_numeric, NumericRange::singleton(0.0));
+        for (range, &value) in ranges.iter_mut().zip(raw.iter()) {
+            *range = NumericRange::singleton(value);
+        }
+        Ok(())
     }
 
     /// Propagate updated bounds through all assignment axioms until fixed
@@ -1147,17 +1192,19 @@ impl<'task> FfHeuristic<'task> {
             .op_eligible
             .resize(self.op_preconditions.len(), true);
         let live_state = eval_state.state();
-        for (op_id, deps) in self.op_state_deps.iter().enumerate() {
-            if deps.is_empty() {
-                continue;
-            }
+        for (op_id, deps) in &self.state_dep_ops {
             let eligible = deps.iter().all(|&(var, value)| {
                 ExplicitFact::propositional(var, value).is_hold(live_state, registry)
             });
-            scratch.op_eligible[op_id] = eligible;
+            scratch.op_eligible[*op_id] = eligible;
         }
 
-        scratch.numeric = self.initial_numeric_state(eval_state, registry)?;
+        self.fill_initial_numeric_state(
+            eval_state,
+            registry,
+            &mut scratch.numeric_raw,
+            &mut scratch.numeric,
+        )?;
         // The initial state already evaluates derived numerics correctly,
         // but `fill_numeric_vars` returns singleton ranges for them. Run
         // assignment-axiom propagation once so any wider-than-singleton
@@ -1180,16 +1227,22 @@ impl<'task> FfHeuristic<'task> {
         // into the resulting Vec — saves O(num_facts) bound-checked
         // `state_packer.get` calls per evaluation.
         live_state.fill_state(registry, &mut scratch.prop_state_values);
-        for fid in 0..self.num_facts {
-            if self.fact_to_axiom[fid].is_some() {
+        for (var, &value) in scratch.prop_state_values.iter().enumerate() {
+            let Some(&offset) = self.fact_id_offsets.get(var) else {
+                break;
+            };
+            let end = self
+                .fact_id_offsets
+                .get(var + 1)
+                .copied()
+                .unwrap_or(self.fact_id_by_var_value.len());
+            if value >= end - offset {
                 continue;
             }
-            let (var, value) = self.fact_var_value[fid];
-            if scratch
-                .prop_state_values
-                .get(var)
-                .is_some_and(|v| *v == value)
-            {
+            let Some(fid) = self.fact_id_by_var_value[offset + value] else {
+                continue;
+            };
+            if self.fact_to_axiom[fid].is_none() {
                 scratch.fact_first_layer[fid] = 0;
                 scratch.queue.push_back(fid);
             }
@@ -1207,15 +1260,12 @@ impl<'task> FfHeuristic<'task> {
         }
 
         // Reset per-op remaining-precondition counters.
+        scratch.op_remaining_preconditions.clear();
         scratch
             .op_remaining_preconditions
-            .resize(self.op_preconditions.len(), 0);
+            .reserve(self.op_preconditions.len());
         for (op_id, prec) in self.op_preconditions.iter().enumerate() {
-            scratch.op_remaining_preconditions[op_id] = prec.len() as i32;
-        }
-        // Empty-precondition operators fire at layer 0 — provided their
-        // state-dependent preconditions allow it.
-        for (op_id, prec) in self.op_preconditions.iter().enumerate() {
+            scratch.op_remaining_preconditions.push(prec.len() as i32);
             if prec.is_empty() && scratch.op_eligible[op_id] {
                 self.fire_operator(op_id, 0, scratch);
             }
@@ -1359,10 +1409,13 @@ impl<'task> FfHeuristic<'task> {
         if max_layer < 0 {
             return 0.0;
         }
-        scratch.goals_at_layer.clear();
-        scratch
-            .goals_at_layer
-            .resize((max_layer + 1) as usize, Vec::new());
+        let needed_layers = (max_layer + 1) as usize;
+        for goals in &mut scratch.goals_at_layer {
+            goals.clear();
+        }
+        while scratch.goals_at_layer.len() < needed_layers {
+            scratch.goals_at_layer.push(Vec::new());
+        }
         for v in &mut scratch.seen {
             *v = false;
         }
@@ -1384,8 +1437,11 @@ impl<'task> FfHeuristic<'task> {
 
         let mut plan_cost = 0.0;
         for layer in (1..=max_layer).rev() {
-            let goals_here = std::mem::take(&mut scratch.goals_at_layer[layer as usize]);
-            for fid in goals_here {
+            let layer_index = layer as usize;
+            let mut goal_index = 0;
+            while goal_index < scratch.goals_at_layer[layer_index].len() {
+                let fid = scratch.goals_at_layer[layer_index][goal_index];
+                goal_index += 1;
                 // `fire_operator` writes effects at `op_first_layer` — i.e.
                 // operator and effect share a layer in this single-counter
                 // convention (an op whose last precondition is at fact
@@ -1457,6 +1513,7 @@ impl<'task> FfHeuristic<'task> {
                         scratch.seen[pre_fid] = true;
                         continue;
                     }
+                    debug_assert!(pre_layer < layer);
                     scratch.seen[pre_fid] = true;
                     if (pre_layer as usize) < scratch.goals_at_layer.len() {
                         scratch.goals_at_layer[pre_layer as usize].push(pre_fid);
