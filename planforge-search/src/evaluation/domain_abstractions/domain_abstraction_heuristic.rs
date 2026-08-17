@@ -42,11 +42,7 @@ pub(crate) fn compute_collection_abstract_state_ids(
     scratch: &mut DomainAbstractionLookupScratch,
 ) -> Result<(), EvaluationError> {
     let state = eval_state.state();
-    let registry = eval_state.state_registry().ok_or_else(|| {
-        EvaluationError::InvalidState(
-            "domain abstraction lookup requires state registry".to_string(),
-        )
-    })?;
+    let registry = eval_state.state_registry();
     state.fill_state(registry, &mut scratch.prop);
     registry
         .fill_numeric_vars(state, &mut scratch.numeric)
@@ -289,11 +285,7 @@ impl DomainAbstractionHeuristic {
                 "DomainAbstractionHeuristic requires task in EvaluationState".to_string(),
             )
         })?;
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "DomainAbstractionHeuristic requires StateRegistry in EvaluationState".to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         Ok((task, registry))
     }
 

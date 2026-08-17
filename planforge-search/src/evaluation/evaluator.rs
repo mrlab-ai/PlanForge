@@ -41,35 +41,26 @@ impl std::error::Error for EvaluationError {}
 pub struct EvaluationState<'state, 'task> {
     backing_state: &'state ConcreteState,
     task: Option<&'task dyn AbstractNumericTask>,
-    state_registry: Option<&'state StateRegistry<'task>>,
+    state_registry: &'state StateRegistry<'task>,
     is_goal: bool,
 }
 
 impl<'state, 'task> EvaluationState<'state, 'task> {
-    pub fn new(state: &'state ConcreteState, _g_value: f64, _is_preferred: bool) -> Self {
-        Self {
-            backing_state: state,
-            task: None,
-            state_registry: None,
-            is_goal: false,
-        }
-    }
-
-    /// Create a new evaluation state with access to task and state registry.
-    ///
-    /// Heuristics that need to inspect the concrete state's variable values
-    /// should require these to be present.
-    pub fn new_with_registry(
+    /// Create an evaluation state with its mandatory decoding context.
+    pub fn new(
         state: &'state ConcreteState,
         g_value: f64,
         is_preferred: bool,
         task: &'task dyn AbstractNumericTask,
         state_registry: &'state StateRegistry<'task>,
     ) -> Self {
-        let mut s = Self::new(state, g_value, is_preferred);
-        s.task = Some(task);
-        s.state_registry = Some(state_registry);
-        s
+        let _ = (g_value, is_preferred);
+        Self {
+            backing_state: state,
+            task: Some(task),
+            state_registry,
+            is_goal: false,
+        }
     }
 
     /// Borrowed concrete state being evaluated.
@@ -82,8 +73,8 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
         self.task
     }
 
-    /// State registry reference, if provided.
-    pub fn state_registry(&self) -> Option<&'state StateRegistry<'task>> {
+    /// State registry used to decode the concrete state.
+    pub fn state_registry(&self) -> &'state StateRegistry<'task> {
         self.state_registry
     }
 

@@ -509,7 +509,7 @@ fn ocp_retains_stuttering_action_constraints() {
     .unwrap();
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
-    let eval_state = EvaluationState::new_with_registry(&initial, 0.0, false, &*task, &registry);
+    let eval_state = EvaluationState::new(&initial, 0.0, false, &*task, &registry);
     let value = heuristic.compute_heuristic(&eval_state).unwrap();
     assert!(
         (value - 2.0).abs() < 1e-7,
@@ -635,8 +635,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
         NumericPotentialHeuristic::from_config(&*task, task.clone(), online_config).unwrap();
     let mut online_registry = StateRegistry::for_task(task.clone());
     let online_initial = online_registry.get_initial_state();
-    let eval_state =
-        EvaluationState::new_with_registry(&online_initial, 0.0, false, &*task, &online_registry);
+    let eval_state = EvaluationState::new(&online_initial, 0.0, false, &*task, &online_registry);
     assert!(
         (heuristic.compute_heuristic(&eval_state).unwrap() - 3.0).abs() < 1e-7,
         "online reoptimization must not conflict with evaluation scratch borrows"

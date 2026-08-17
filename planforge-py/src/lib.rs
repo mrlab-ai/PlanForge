@@ -149,9 +149,7 @@ impl Heuristic for PyHeuristic {
         if self.error.borrow().is_some() {
             return Ok(0.0);
         }
-        let registry = eval_state
-            .state_registry()
-            .expect("python heuristic needs the state registry");
+        let registry = eval_state.state_registry();
         let snapshot = State::snapshot(eval_state.state(), registry);
         let value = Python::with_gil(|py| -> PyResult<f64> {
             let state_obj = Py::new(py, snapshot)?;

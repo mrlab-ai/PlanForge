@@ -268,9 +268,7 @@ impl Heuristic for PotentialAbstractionOcpHeuristic {
         if self.dead_end_certified {
             return Ok(f64::INFINITY);
         }
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState("pot_da_ocp requires a state registry".into())
-        })?;
+        let registry = eval_state.state_registry();
         let potential = self
             .potential
             .value(

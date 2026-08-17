@@ -78,12 +78,7 @@ impl<'task> CheckAdmissibleHeuristic<'task> {
             return Ok(distance);
         }
 
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "`check_admissible` needs the search's state registry to read the state it verifies"
-                    .to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         let distance = self
             .oracle
             .borrow_mut()

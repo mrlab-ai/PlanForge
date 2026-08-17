@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::fmt;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use planforge_sas::state_registry::StateRegistry;
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -241,23 +240,6 @@ impl<'task> CanonicalNumericPdbHeuristic<'task> {
             state_value_cache: RefCell::new(StateValueCache::default()),
         }
     }
-
-    fn require_registry<'s, 't>(
-        eval_state: &'s EvaluationState<'s, 't>,
-    ) -> Result<&'s StateRegistry<'t>, EvaluationError> {
-        eval_state.task().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "CanonicalNumericPdbHeuristic requires task in EvaluationState".to_string(),
-            )
-        })?;
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "CanonicalNumericPdbHeuristic requires StateRegistry in EvaluationState"
-                    .to_string(),
-            )
-        })?;
-        Ok(registry)
-    }
 }
 
 impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
@@ -270,7 +252,7 @@ impl Heuristic for CanonicalNumericPdbHeuristic<'_> {
             return Ok(value);
         }
 
-        let registry = Self::require_registry(eval_state)?;
+        let registry = eval_state.state_registry();
         let mut pdb_value_cache = self.pdb_value_cache.borrow_mut();
         let mut propositional_values = self.prop_scratch.borrow_mut();
         let mut numeric_values = self.numeric_scratch.borrow_mut();

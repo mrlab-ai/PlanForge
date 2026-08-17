@@ -5684,11 +5684,7 @@ impl CartesianAbstractionHeuristic {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<usize, EvaluationError> {
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "Cartesian abstraction lookup requires state registry".to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         let mut prop = self.prop_scratch.borrow_mut();
         eval_state.state().fill_state(registry, &mut prop);
         let mut numeric = self.numeric_scratch.borrow_mut();

@@ -1874,11 +1874,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ids.clear();
         ids.resize(components.len(), None);
 
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "SCP abstraction lookup requires state registry".to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         let mut scratch = self.lookup_scratch.borrow_mut();
         eval_state.state().fill_state(registry, &mut scratch.prop);
         registry
@@ -2522,8 +2518,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let eval_state =
-            EvaluationState::new_with_registry(concrete_state, 0.0, false, task, registry);
+        let eval_state = EvaluationState::new(concrete_state, 0.0, false, task, registry);
         self.compute_abstract_state_ids_into(&eval_state, None, ids)?;
         Ok(())
     }

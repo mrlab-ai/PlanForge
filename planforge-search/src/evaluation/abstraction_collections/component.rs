@@ -45,11 +45,7 @@ impl ComponentStateValues {
         &mut self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<(), EvaluationError> {
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "abstraction component lookup requires state registry".to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         eval_state
             .state()
             .fill_state(registry, &mut self.propositional);
@@ -156,9 +152,7 @@ impl<'task> AbstractionComponent<'task> {
             Self::Domain(heuristic) => heuristic.abstract_state_hash(eval_state).map(Some),
             Self::Cartesian(heuristic) => heuristic.abstract_state_id(eval_state).map(Some),
             Self::PatternDatabase(pdb) => {
-                let registry = eval_state.state_registry().ok_or_else(|| {
-                    EvaluationError::InvalidState("PDB lookup requires state registry".to_string())
-                })?;
+                let registry = eval_state.state_registry();
                 pdb.abstract_state_id_from_concrete_state(eval_state.state(), registry)
                     .map_err(EvaluationError::ComputationFailed)
             }

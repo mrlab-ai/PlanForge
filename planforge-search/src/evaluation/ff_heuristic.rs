@@ -1614,11 +1614,7 @@ impl<'task> Heuristic for FfHeuristic<'task> {
             self.last_helpful_action_ids.borrow_mut().clear();
             return Ok(0.0);
         }
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::ComputationFailed(
-                "FF heuristic requires StateRegistry-backed EvaluationState".to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         let mut scratch = self.scratch.borrow_mut();
         scratch.reset();
         let goal_layer = self.build_rpg(eval_state, registry, &mut scratch)?;

@@ -5,7 +5,6 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::state_value_cache::StateValueCache;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use planforge_sas::state_registry::StateRegistry;
 
 use super::pattern_database::PatternDatabase;
 use super::pattern_generator_greedy::{GreedyPatternGeneratorConfig, generate_greedy_pattern};
@@ -40,22 +39,6 @@ impl<'task> GreedyNumericPdbHeuristic<'task> {
             state_value_cache: RefCell::new(StateValueCache::default()),
         })
     }
-
-    fn require_registry<'s, 't>(
-        eval_state: &'s EvaluationState<'s, 't>,
-    ) -> Result<&'s StateRegistry<'t>, EvaluationError> {
-        eval_state.task().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "GreedyNumericPdbHeuristic requires task in EvaluationState".to_string(),
-            )
-        })?;
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "GreedyNumericPdbHeuristic requires StateRegistry in EvaluationState".to_string(),
-            )
-        })?;
-        Ok(registry)
-    }
 }
 
 impl Heuristic for GreedyNumericPdbHeuristic<'_> {
@@ -73,7 +56,7 @@ impl Heuristic for GreedyNumericPdbHeuristic<'_> {
             return Ok(0.0);
         }
 
-        let registry = Self::require_registry(eval_state)?;
+        let registry = eval_state.state_registry();
         let heuristic_value = self
             .pdb
             .lookup_or_fallback_from_concrete_state(eval_state.state(), registry)
@@ -154,7 +137,7 @@ mod tests {
         .expect("greedy numeric PDB should build for simple goal task");
 
         let mut eval_state =
-            EvaluationState::new_with_registry(&initial_state, 0.0, false, &task, &state_registry);
+            EvaluationState::new(&initial_state, 0.0, false, &task, &state_registry);
         eval_state.set_is_goal(true);
         let value = heuristic
             .compute_heuristic(&eval_state)

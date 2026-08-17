@@ -17,9 +17,7 @@ impl Heuristic for GoalCountHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let task = eval_state.task().expect("goal-count needs the task");
-        let registry = eval_state
-            .state_registry()
-            .expect("goal-count needs the registry");
+        let registry = eval_state.state_registry();
         let state = eval_state.state();
         let mut unsatisfied = 0usize;
         for i in 0..task.get_num_goals() {
@@ -42,8 +40,7 @@ fn run(path: &str) {
     let heuristic = GoalCountHeuristic {
         name: "goal_count".to_string(),
     };
-    let initial_eval =
-        EvaluationState::new_with_registry(&initial_state, 0.0, false, &*task, &registry);
+    let initial_eval = EvaluationState::new(&initial_state, 0.0, false, &*task, &registry);
     let initial_h = heuristic
         .compute_heuristic(&initial_eval)
         .expect("goal-count should evaluate the initial state");

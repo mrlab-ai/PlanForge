@@ -166,11 +166,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
             return Ok(value);
         }
 
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "LandmarkCutNumericHeuristic requires StateRegistry in EvaluationState".to_string(),
-            )
-        })?;
+        let registry = eval_state.state_registry();
         let state_buffer_len = eval_state.state().buffer(registry).len();
         let mut numeric_values = self.numeric_scratch.borrow_mut();
         registry

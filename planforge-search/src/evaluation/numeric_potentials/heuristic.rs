@@ -464,9 +464,7 @@ impl Heuristic for NumericPotentialHeuristic {
         if self.dead_end_certified {
             return Ok(f64::INFINITY);
         }
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState("numeric_potential requires a state registry".to_string())
-        })?;
+        let registry = eval_state.state_registry();
         let mut prop_scratch = self.prop_scratch.borrow_mut();
         let mut numeric_scratch = self.numeric_scratch.borrow_mut();
         for (ray_id, ray) in self.rays.borrow().iter().enumerate() {
@@ -584,9 +582,7 @@ impl NumericPotentialHeuristic {
         if !should_solve {
             return Ok(envelope_value);
         }
-        let registry = eval_state.state_registry().ok_or_else(|| {
-            EvaluationError::InvalidState("numeric_potential requires a state registry".to_string())
-        })?;
+        let registry = eval_state.state_registry();
         let outcome = self
             .online_optimizer
             .borrow_mut()

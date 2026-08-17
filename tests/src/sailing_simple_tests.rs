@@ -403,7 +403,7 @@ fn scp_online_initial_h_for_collection(
 
     let mut state_registry = StateRegistry::for_task(Arc::new(task));
     let initial = state_registry.get_initial_state();
-    let mut eval = EvaluationState::new_with_registry(
+    let mut eval = EvaluationState::new(
         &initial,
         0.0,
         false,
