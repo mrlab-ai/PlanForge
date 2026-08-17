@@ -124,12 +124,13 @@ const DERIVED_PREDICATES: &[Row] = &[
     ("recursive-closure", "problem.pddl", 2, 0, 0),
 ];
 
-/// Both numeric-condition fixtures put their comparison in a *precondition* and
-/// keep a propositional goal, which is why the benchmarks above are what covers a
-/// numeric goal end to end.
+/// The numeric-condition fixtures keep a propositional goal. The first two put
+/// a comparison in a precondition; the metric fixture instead exercises a
+/// compound numeric objective.
 const NUMERIC_CONDITIONS: &[Row] = &[
     ("conditional-numeric-effect", "problem.pddl", 1, 0, 0),
     ("strict-comparison", "problem.pddl", 1, 0, 0),
+    ("weighted-sum-metric", "problem.pddl", 1, 0, 0),
 ];
 
 /// Censused as a corpus of its own, the way `sailing_simple_tests` treats it, even

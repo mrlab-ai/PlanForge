@@ -144,7 +144,7 @@ pub struct ProblemDefinition {
     pub init: Vec<Atom>,
     pub num_init: Vec<FunctionAssignment>,
     pub goal: Condition,
-    pub metric: Option<(String, PrimitiveNumericExpression)>,
+    pub metric: Option<(String, FunctionalExpression)>,
 }
 
 impl Task {
@@ -172,10 +172,12 @@ impl Task {
                 "number".to_string(),
             ));
         }
-        let metric = problem.metric.unwrap_or_else(|| {
+        let metric_expression = problem.metric.unwrap_or_else(|| {
             (
                 "<".to_string(),
-                PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                FunctionalExpression::PrimitiveNumericExpression(
+                    PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
+                ),
             )
         });
 
@@ -185,6 +187,10 @@ impl Task {
                 .function_symbols
                 .insert(function.name.clone());
         }
+        let metric = (
+            metric_expression.0,
+            function_administrator.get_derived_function(&metric_expression.1),
+        );
 
         Task {
             types: domain.types,

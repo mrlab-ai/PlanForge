@@ -25,6 +25,7 @@ use crate::numeric_corpus_tests::assert_axiom_layering_contract;
 const FIXTURE_OPTIMA: &[(&str, f64, u64)] = &[
     ("conditional-numeric-effect", 3.0, 3),
     ("strict-comparison", 2.0, 2),
+    ("weighted-sum-metric", 2.0, 1),
 ];
 
 fn fixtures_root() -> PathBuf {

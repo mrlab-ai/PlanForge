@@ -784,7 +784,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
     let mut init: Vec<Atom> = vec![];
     let mut num_init: Vec<FunctionAssignment> = vec![];
     let mut goal = Condition::Truth;
-    let mut metric: Option<(String, PrimitiveNumericExpression)> = None;
+    let mut metric: Option<(String, FunctionalExpression)> = None;
 
     for item in &items[2..] {
         let section = item.as_list();
@@ -843,12 +843,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
                         "unrecognized metric direction `{unknown}`, expected `minimize` or `maximize`"
                     ),
                 };
-                let metric_expr = parse_expression(&section[2]);
-                let metric_pne = match metric_expr {
-                    FunctionalExpression::PrimitiveNumericExpression(pne) => pne,
-                    _ => panic!("compound metric expressions are not supported"),
-                };
-                metric = Some((dir_symbol.to_string(), metric_pne));
+                metric = Some((dir_symbol.to_string(), parse_expression(&section[2])));
             }
             ":constraints" | ":length" | ":situation" | ":expansion" => {
                 panic!("problem section {tag} is valid PDDL but not supported")
@@ -869,6 +864,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
 #[cfg(test)]
 mod tests {
     use super::{parse_action, parse_domain_pddl, parse_task_pddl};
+    use crate::pddl::f_expression::FunctionalExpression;
     use crate::pddl_parser::lisp_parser::parse_nested_list_string;
     use std::collections::HashMap;
 
@@ -995,15 +991,20 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "compound metric expressions are not supported")]
-    fn rejects_compound_metric_expression() {
-        parse_problem(
+    fn accepts_compound_metric_expression() {
+        let problem = parse_problem(
             "(define (problem compound-metric)
                 (:domain metric-test)
                 (:init (= (fuel) 1) (= (time) 2))
                 (:goal (and))
                 (:metric minimize (+ (fuel) (time))))",
         );
+
+        assert!(matches!(
+            problem.metric,
+            Some((direction, FunctionalExpression::ArithmeticExpression(_)))
+                if direction == "<"
+        ));
     }
 
     fn parse_domain(domain: &str) {

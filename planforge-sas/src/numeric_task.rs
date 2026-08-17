@@ -1286,11 +1286,13 @@ impl NumericRootTask {
                         self.numeric_variables.len()
                     )
                 });
-            assert_eq!(
+            assert!(
+                matches!(
+                    metric_var.get_type(),
+                    NumericType::Cost | NumericType::Derived
+                ),
+                "metric variable {metric_var_id} has type {:?}, expected Cost or Derived",
                 metric_var.get_type(),
-                &NumericType::Cost,
-                "metric variable {metric_var_id} has type {:?}, expected Cost",
-                metric_var.get_type()
             );
         }
 
@@ -1872,8 +1874,8 @@ mod root_task_invariants {
     }
 
     #[test]
-    #[should_panic(expected = "metric variable 0 has type Regular, expected Cost")]
-    fn rejects_non_cost_metric_variable() {
+    #[should_panic(expected = "metric variable 0 has type Regular, expected Cost or Derived")]
+    fn rejects_regular_metric_variable() {
         let mut parts = valid_parts();
         parts.numeric_variables[0] =
             NumericVariable::new("fuel".to_string(), NumericType::Regular, None);
