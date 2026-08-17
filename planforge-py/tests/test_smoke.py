@@ -39,12 +39,12 @@ def test_unparseable_spec_raises_specerror():
         planforge.solve(sas_text="x", search="astar(")
 
 
-def test_unknown_heuristic_raises_planforge_error():
+def test_unknown_heuristic_raises_specerror():
     import pytest
 
-    # A well-formed spec naming an unknown heuristic parses fine; the failure
-    # surfaces later from heuristic construction as a PlanforgeError.
-    with pytest.raises(planforge.PlanforgeError):
+    # Registered names are part of search-spec validation, so an unknown name
+    # is rejected before heuristic construction.
+    with pytest.raises(planforge.SpecError):
         planforge.solve(sas="tests/assets/numeric_sas/example2.sas", search="astar(nope())")
 
 
@@ -86,6 +86,17 @@ def test_task_reuse_and_exploration():
     # state value identity is stable
     assert task.initial_state() == s0
     assert hash(task.initial_state()) == hash(s0)
+    assert s0.value(0) == s0.values[0]
+    applicable = task.applicable_operators(s0)
+    assert applicable
+    op = applicable[0]
+    assert isinstance(op.id, int)
+    assert isinstance(op.preconditions, list)
+    assert isinstance(op.effects, list)
+    applied = task.apply(s0, op)
+    applied_with_cost, transition_cost = task.apply_with_cost(s0, op)
+    assert applied == applied_with_cost
+    assert isinstance(transition_cost, float)
     # reuse the task for a full solve (no re-parse)
     r = task.solve("gbfs(ff())", max_time=60.0)
     assert r.status in {"solved", "unsolvable", "timeout", "memory_limit"}
@@ -106,6 +117,33 @@ def test_state_from_other_task_rejected():
     s = a.initial_state()
     with pytest.raises(ValueError):
         b.successors(s)
+    with pytest.raises(ValueError):
+        b.apply(b.initial_state(), a.applicable_operators(s)[0])
+
+
+def test_operator_relaxation_and_numeric_effect_data_are_exposed():
+    task = planforge.Task.from_pddl(
+        "tests/assets/numeric-pddl-files/fn-counters-small_instances/domain.pddl",
+        "tests/assets/numeric-pddl-files/fn-counters-small_instances/problem_2.pddl",
+    )
+    state = task.initial_state()
+    assert len(task.variable_domain_sizes) == task.num_variables
+    assert len(task.numeric_variable_names) == task.num_numeric_variables
+    assert len(task.numeric_variable_types) == task.num_numeric_variables
+    if task.num_numeric_variables:
+        assert state.numeric_value(0) == state.numeric_values[0]
+
+    operators = task.operators()
+    assert any(operator.numeric_effects for operator in operators)
+    numeric_effect = next(
+        effect
+        for operator in operators
+        for effect in operator.numeric_effects
+    )
+    assert numeric_effect.operation in {
+        "assign", "increase", "decrease", "scale_up", "scale_down"
+    }
+    assert isinstance(numeric_effect.conditions, list)
 
 
 def test_search_with_python_heuristic():

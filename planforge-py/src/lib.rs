@@ -5,10 +5,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyFileNotFoundError, PyValueError};
+use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueError};
 use pyo3::prelude::*;
 
-use planforge_sas::numeric_task::{NumericRootTask, Operator, TaskRef};
+use planforge_sas::numeric_task::{
+    AssignmentOperation, Effect, NumericRootTask, NumericType, Operator, TaskRef,
+};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
 use planforge_search::search::{AStarSearch, SearchEngine, SearchResult, SearchStatus};
@@ -30,16 +32,137 @@ enum SolveError {
     FileNotFound(String),
 }
 
-#[pyclass(name = "Operator", frozen, get_all)]
+type PyFact = (usize, usize);
+
+#[derive(Clone)]
+struct EffectData {
+    conditions: Vec<PyFact>,
+    variable: usize,
+    precondition_value: Option<usize>,
+    value: usize,
+}
+
+#[pyclass(name = "Effect", frozen, get_all)]
+struct PyEffect {
+    conditions: Vec<PyFact>,
+    variable: usize,
+    precondition_value: Option<usize>,
+    value: usize,
+}
+
+#[pymethods]
+impl PyEffect {
+    fn __repr__(&self) -> String {
+        format!(
+            "Effect(variable={}, value={}, precondition_value={:?}, conditions={:?})",
+            self.variable, self.value, self.precondition_value, self.conditions
+        )
+    }
+}
+
+#[derive(Clone)]
+struct NumericEffectData {
+    conditions: Vec<PyFact>,
+    affected_variable: usize,
+    operation: String,
+    source_variable: usize,
+    conditional: bool,
+}
+
+#[pyclass(name = "NumericEffect", frozen, get_all)]
+struct PyNumericEffect {
+    conditions: Vec<PyFact>,
+    affected_variable: usize,
+    operation: String,
+    source_variable: usize,
+    conditional: bool,
+}
+
+#[pymethods]
+impl PyNumericEffect {
+    fn __repr__(&self) -> String {
+        format!(
+            "NumericEffect(affected_variable={}, operation={:?}, source_variable={}, conditions={:?})",
+            self.affected_variable, self.operation, self.source_variable, self.conditions
+        )
+    }
+}
+
+#[pyclass(name = "Operator", frozen)]
 struct PyOperator {
+    id: Option<usize>,
     name: String,
     cost: f64,
+    preconditions: Vec<PyFact>,
+    effects: Vec<EffectData>,
+    numeric_effects: Vec<NumericEffectData>,
+    task_id: Option<usize>,
 }
 
 #[pymethods]
 impl PyOperator {
+    #[getter]
+    fn id(&self) -> Option<usize> {
+        self.id
+    }
+
+    #[getter]
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[getter]
+    fn cost(&self) -> f64 {
+        self.cost
+    }
+
+    #[getter]
+    fn preconditions(&self) -> Vec<PyFact> {
+        self.preconditions.clone()
+    }
+
+    #[getter]
+    fn effects(&self, py: Python<'_>) -> PyResult<Vec<Py<PyEffect>>> {
+        self.effects
+            .iter()
+            .map(|effect| {
+                Py::new(
+                    py,
+                    PyEffect {
+                        conditions: effect.conditions.clone(),
+                        variable: effect.variable,
+                        precondition_value: effect.precondition_value,
+                        value: effect.value,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[getter]
+    fn numeric_effects(&self, py: Python<'_>) -> PyResult<Vec<Py<PyNumericEffect>>> {
+        self.numeric_effects
+            .iter()
+            .map(|effect| {
+                Py::new(
+                    py,
+                    PyNumericEffect {
+                        conditions: effect.conditions.clone(),
+                        affected_variable: effect.affected_variable,
+                        operation: effect.operation.clone(),
+                        source_variable: effect.source_variable,
+                        conditional: effect.conditional,
+                    },
+                )
+            })
+            .collect()
+    }
+
     fn __repr__(&self) -> String {
-        format!("Operator({:?}, cost={})", self.name, self.cost)
+        match self.id {
+            Some(id) => format!("Operator(id={id}, {:?}, cost={})", self.name, self.cost),
+            None => format!("Operator({:?}, cost={})", self.name, self.cost),
+        }
     }
 }
 
@@ -93,6 +216,26 @@ struct State {
 
 #[pymethods]
 impl State {
+    /// Read one finite-domain variable without copying the complete snapshot.
+    fn value(&self, variable: usize) -> PyResult<usize> {
+        self.values.get(variable).copied().ok_or_else(|| {
+            PyIndexError::new_err(format!(
+                "propositional variable {variable} is out of bounds for {} values",
+                self.values.len()
+            ))
+        })
+    }
+
+    /// Read one numeric variable without copying the complete snapshot.
+    fn numeric_value(&self, variable: usize) -> PyResult<f64> {
+        self.numeric_values.get(variable).copied().ok_or_else(|| {
+            PyIndexError::new_err(format!(
+                "numeric variable {variable} is out of bounds for {} values",
+                self.numeric_values.len()
+            ))
+        })
+    }
+
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
 
@@ -147,7 +290,9 @@ impl Heuristic for PyHeuristic {
     ) -> Result<f64, EvaluationError> {
         // If a previous call already failed, stop doing work.
         if self.error.borrow().is_some() {
-            return Ok(0.0);
+            return Err(EvaluationError::ComputationFailed(
+                "Python heuristic callback previously failed".to_string(),
+            ));
         }
         let registry = eval_state.state_registry();
         let snapshot = State::snapshot(eval_state.state(), registry);
@@ -159,10 +304,12 @@ impl Heuristic for PyHeuristic {
         match value {
             Ok(h) => Ok(h),
             Err(err) => {
-                // Capture the first error; return 0.0 so the (finite) search
-                // still terminates, then `search_with_heuristic` re-raises it.
+                // Capture the first error and abort the Rust search immediately;
+                // `search_with_heuristic` re-raises the original Python error.
                 *self.error.borrow_mut() = Some(err);
-                Ok(0.0)
+                Err(EvaluationError::ComputationFailed(
+                    "Python heuristic callback failed".to_string(),
+                ))
             }
         }
     }
@@ -215,6 +362,70 @@ fn restrict_numeric_task(
         Some(restricted_task) => Ok(restricted_task.into_task()),
         None => Ok(task),
     }
+}
+
+fn fact_to_py(fact: &planforge_sas::numeric_task::ExplicitFact) -> PyFact {
+    (fact.var(), fact.value())
+}
+
+fn operation_name(operation: &AssignmentOperation) -> &'static str {
+    match operation {
+        AssignmentOperation::Assign => "assign",
+        AssignmentOperation::Plus => "increase",
+        AssignmentOperation::Minus => "decrease",
+        AssignmentOperation::Times => "scale_up",
+        AssignmentOperation::Divide => "scale_down",
+    }
+}
+
+fn numeric_type_name(numeric_type: &NumericType) -> &'static str {
+    match numeric_type {
+        NumericType::Constant => "constant",
+        NumericType::Derived => "derived",
+        NumericType::Cost => "cost",
+        NumericType::Regular => "regular",
+    }
+}
+
+fn effect_data(effect: &Effect) -> EffectData {
+    EffectData {
+        conditions: effect.conditions().iter().map(fact_to_py).collect(),
+        variable: effect.var_id(),
+        precondition_value: effect.precondition_value(),
+        value: effect.value(),
+    }
+}
+
+fn operator_to_py(
+    py: Python<'_>,
+    operator: &Operator,
+    id: Option<usize>,
+    task_id: Option<usize>,
+    cost: f64,
+) -> PyResult<Py<PyOperator>> {
+    let numeric_effects = operator
+        .assignment_effects()
+        .iter()
+        .map(|effect| NumericEffectData {
+            conditions: effect.conditions().iter().map(fact_to_py).collect(),
+            affected_variable: effect.affected_var_id(),
+            operation: operation_name(effect.operation()).to_string(),
+            source_variable: effect.var_id(),
+            conditional: effect.is_conditional(),
+        })
+        .collect();
+    Py::new(
+        py,
+        PyOperator {
+            id,
+            name: operator.name().to_string(),
+            cost,
+            preconditions: operator.preconditions().iter().map(fact_to_py).collect(),
+            effects: operator.effects().iter().map(effect_data).collect(),
+            numeric_effects,
+            task_id,
+        },
+    )
 }
 
 #[pymethods]
@@ -307,21 +518,50 @@ impl Task {
     }
 
     #[getter]
+    fn variable_domain_sizes(&self) -> Vec<usize> {
+        self.task
+            .variables()
+            .iter()
+            .map(|variable| variable.domain_size())
+            .collect()
+    }
+
+    #[getter]
+    fn numeric_variable_names(&self) -> Vec<String> {
+        self.task
+            .numeric_variables()
+            .iter()
+            .map(|variable| variable.name().to_string())
+            .collect()
+    }
+
+    #[getter]
+    fn numeric_variable_types(&self) -> Vec<String> {
+        self.task
+            .numeric_variables()
+            .iter()
+            .map(|variable| numeric_type_name(variable.get_type()).to_string())
+            .collect()
+    }
+
+    #[getter]
     fn registered_states(&self) -> usize {
         self.registry.borrow().num_registered_states()
     }
 
     fn operators(&self, py: Python<'_>) -> Vec<Py<PyOperator>> {
+        let task_id = self.registry.borrow().id();
         self.task
             .get_operators()
             .iter()
-            .map(|op| {
-                Py::new(
+            .enumerate()
+            .map(|(operator_id, operator)| {
+                operator_to_py(
                     py,
-                    PyOperator {
-                        name: op.name().to_string(),
-                        cost: op.cost() as f64,
-                    },
+                    operator,
+                    Some(operator_id),
+                    Some(task_id),
+                    self.task.abstract_operator_cost(operator_id),
                 )
                 .expect("creating a Python Operator should not fail")
             })
@@ -348,6 +588,51 @@ impl Task {
         Ok(all)
     }
 
+    /// Return every operator applicable in `state`.
+    ///
+    /// This is the Python-driven prototyping path: crossing the FFI boundary
+    /// once per expansion is deliberate. Pure Rust search never calls it.
+    fn applicable_operators(&self, py: Python<'_>, state: &State) -> PyResult<Vec<Py<PyOperator>>> {
+        let reg = self.registry.borrow();
+        let cstate = self.lookup(state, &reg)?;
+        let ids = self.applicable_operator_ids(&cstate, &reg);
+        let task_id = reg.id();
+        ids.into_iter()
+            .map(|operator_id| {
+                let operator_id = operator_id as usize;
+                let operator = self
+                    .task
+                    .get_operators()
+                    .get(operator_id)
+                    .unwrap_or_else(|| {
+                        panic!("successor generator returned invalid operator id {operator_id}")
+                    });
+                operator_to_py(
+                    py,
+                    operator,
+                    Some(operator_id),
+                    Some(task_id),
+                    self.task.abstract_operator_cost(operator_id),
+                )
+            })
+            .collect()
+    }
+
+    /// Apply an applicable operator, including numeric effects and axiom closure.
+    fn apply(&self, state: &State, operator: PyRef<'_, PyOperator>) -> PyResult<State> {
+        self.apply_operator_snapshot(state, &operator)
+            .map(|(successor, _cost)| successor)
+    }
+
+    /// Apply an operator and also return its state-dependent transition cost.
+    fn apply_with_cost(
+        &self,
+        state: &State,
+        operator: PyRef<'_, PyOperator>,
+    ) -> PyResult<(State, f64)> {
+        self.apply_operator_snapshot(state, &operator)
+    }
+
     /// (operator, successor_state, transition_cost) for every applicable operator.
     fn successors(
         &self,
@@ -356,15 +641,16 @@ impl Task {
     ) -> PyResult<Vec<(Py<PyOperator>, State, f64)>> {
         let mut reg = self.registry.borrow_mut();
         let cstate = self.lookup(state, &reg)?;
-        let mut vals = Vec::new();
-        cstate.fill_state(&reg, &mut vals);
-        let mut ids: Vec<u32> = Vec::new();
-        self.succ.get_applicable_operators(&vals, &mut ids);
+        let ids = self.applicable_operator_ids(&cstate, &reg);
         let operators = self.task.get_operators();
+        let task_id = reg.id();
         let mut out = Vec::with_capacity(ids.len());
         let (mut b1, mut b2) = (Vec::new(), Vec::new());
         for op_id in ids {
-            let op = &operators[op_id as usize];
+            let operator_id = op_id as usize;
+            let op = operators.get(operator_id).unwrap_or_else(|| {
+                panic!("successor generator returned invalid operator id {operator_id}")
+            });
             let (succ, cost) = reg
                 .get_successor_state_with_buffers_and_cost(&cstate, op, &mut b1, &mut b2)
                 .map_err(|e| {
@@ -373,12 +659,12 @@ impl Task {
                         op.name()
                     ))
                 })?;
-            let py_op = Py::new(
+            let py_op = operator_to_py(
                 py,
-                PyOperator {
-                    name: op.name().to_string(),
-                    cost: op.cost() as f64,
-                },
+                op,
+                Some(operator_id),
+                Some(task_id),
+                self.task.abstract_operator_cost(operator_id),
             )?;
             let snap = State::snapshot(&succ, &reg);
             out.push((py_op, snap, cost));
@@ -436,11 +722,12 @@ impl Task {
                 .search()
         } else {
             AStarSearch::new(&*self.task, registry, Some(heur), time_limit, max_memory).search()
-        }
-        .map_err(|error| PlanforgeError::new_err(format!("search failed: {error:#}")))?;
+        };
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);
         }
+        let result =
+            result.map_err(|error| PlanforgeError::new_err(format!("search failed: {error:#}")))?;
         Ok(search_result_to_py(py, result))
     }
 }
@@ -464,6 +751,65 @@ impl Task {
         }
         reg.lookup_state(state.state_id)
             .map_err(|e| PlanforgeError::new_err(format!("state lookup failed: {e:?}")))
+    }
+
+    fn applicable_operator_ids(&self, state: &ConcreteState, registry: &StateRegistry) -> Vec<u32> {
+        let mut values = Vec::new();
+        state.fill_state(registry, &mut values);
+        let mut ids = Vec::new();
+        self.succ.get_applicable_operators(&values, &mut ids);
+        ids
+    }
+
+    fn validate_operator(&self, operator: &PyOperator, task_id: usize) -> PyResult<usize> {
+        if operator.task_id != Some(task_id) {
+            return Err(PyValueError::new_err(
+                "Operator does not belong to this Task",
+            ));
+        }
+        let operator_id = operator.id.ok_or_else(|| {
+            PyValueError::new_err("plan-result Operator cannot be applied to a Task")
+        })?;
+        if operator_id >= self.task.get_operators().len() {
+            return Err(PyValueError::new_err(format!(
+                "operator id {operator_id} is out of bounds for {} operators",
+                self.task.get_operators().len()
+            )));
+        }
+        Ok(operator_id)
+    }
+
+    fn apply_operator_snapshot(
+        &self,
+        state: &State,
+        operator: &PyOperator,
+    ) -> PyResult<(State, f64)> {
+        let mut registry = self.registry.borrow_mut();
+        let concrete = self.lookup(state, &registry)?;
+        let operator_id = self.validate_operator(operator, registry.id())?;
+        let applicable = self.applicable_operator_ids(&concrete, &registry);
+        if !applicable.contains(&(operator_id as u32)) {
+            return Err(PyValueError::new_err(format!(
+                "operator {} ({}) is not applicable in this state",
+                operator_id, operator.name
+            )));
+        }
+        let rust_operator = &self.task.get_operators()[operator_id];
+        let (mut numeric_buffer, mut cost_buffer) = (Vec::new(), Vec::new());
+        let (successor, cost) = registry
+            .get_successor_state_with_buffers_and_cost(
+                &concrete,
+                rust_operator,
+                &mut numeric_buffer,
+                &mut cost_buffer,
+            )
+            .map_err(|error| {
+                PlanforgeError::new_err(format!(
+                    "successor generation failed for {}: {error:?}",
+                    rust_operator.name()
+                ))
+            })?;
+        Ok((State::snapshot(&successor, &registry), cost))
     }
 }
 
@@ -567,14 +913,8 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
         operators
             .iter()
             .map(|operator: &Operator| {
-                Py::new(
-                    py,
-                    PyOperator {
-                        name: operator.name().to_string(),
-                        cost: operator.cost() as f64,
-                    },
-                )
-                .expect("creating a Python Operator should not fail")
+                operator_to_py(py, operator, None, None, operator.cost() as f64)
+                    .expect("creating a Python Operator should not fail")
             })
             .collect()
     });
@@ -599,6 +939,8 @@ fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyOperator>()?;
+    m.add_class::<PyEffect>()?;
+    m.add_class::<PyNumericEffect>()?;
     m.add_class::<Task>()?;
     m.add_class::<State>()?;
     let py = m.py();
