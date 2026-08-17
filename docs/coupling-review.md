@@ -102,6 +102,50 @@ Not every semantic change requires all 23 edits, but a new operation does becaus
 
 Do not replace `NumericRootTaskParts` or `EvaluationState` with a larger context, split `AbstractNumericTask` speculatively, introduce dynamic dispatch in the open-list/node path, or rearrange parity-critical numeric-landmark code merely to reduce graph counts.
 
+## After the de-coupling pass
+
+The measurements below were repeated after commits `f734e07`, `65b8686`,
+`b4ef7cf`, and `0e53b2a`, using the same production-module and distinct-import
+method as above.
+
+| Measure | Before | After |
+|---|---:|---:|
+| `planforge-sas` import edges | 48 | 46 |
+| `planforge-sas` modules in its cyclic SCC | 9 | 8 |
+| `DomainAbstractionFactory` public representation fields | 4 | 0 |
+| Direct `factory.{domain_mapping,domain_sizes,partitions,numeric_domain_sizes}` accesses | 45 | 0 |
+| Named factory accessor calls | 40 | 81 |
+| `EvaluationState::new` parameters | 5 | 3 |
+| `StateRegistry` production parameters | 22 | 22 |
+
+Removing `NumericConditions::from_task` eliminated the direct
+`numeric_conditions -> numeric_task` edge. Moving the state-dependent fact and
+effect operations to `state_registry` also removed that module from the SCC.
+This did not make `planforge-sas` a DAG: an indirect path remains through
+`numeric_task -> numeric_conditions -> axioms -> numeric_task`, and the current
+SCC is `axioms`, `numeric_conditions`, `numeric_parser`, `numeric_task`,
+`sas_format`, `utils::interval`, `utils::linear_effects`, and
+`utils::state_packer`. Breaking that larger semantic SCC would require a wider
+split of task, axiom, parser, interval, and packing types; it is not the cheap
+value-type extraction the direct edge appeared to be. The other crates' module,
+edge, and SCC totals are unchanged because the remaining fixes alter access
+boundaries rather than imports.
+
+`DomainAbstractionFactory` now owns its four coordinated representation fields.
+All external reads use its accessors, and CEGAR obtains the four mutable pieces
+only through the crate-private `refinement_parts` boundary. There is no dynamic
+dispatch and no per-node cost. `EvaluationState` still provides the common
+heuristic boundary, but it no longer accepts the unused `g_value` and
+`is_preferred` arguments or represents its always-present task as an `Option`.
+
+The two configuration types intentionally remain public-field option DTOs:
+making one field private would prevent downstream struct-update construction
+and force a wholesale builder API. Instead, the coupled mutations now have one
+named implementation each: `ScpOnlineConfig::cap_construction_time` updates all
+three SCP phase limits, while the multiple-CEGAR config owns its two-level time
+cap and internal footprint policy. Generating accessors for every ordinary
+option was judged churn without a reduction in algorithmic coupling.
+
 ## Appendix: module in-degree and out-degree
 
 ### `planforge-sas`
