@@ -360,6 +360,14 @@ pub struct StateRegistry<'a> {
     /// Iterating this avoids per-call vtable dispatch through `task.numeric_variables()`
     /// in hot paths like `fill_numeric_vars`.
     numeric_var_types: Vec<NumericType>,
+    /// Initial numeric row with immutable constants in place and every
+    /// state-dependent or derived entry zeroed. Numeric-state materialization
+    /// copies this row before filling the two state-dependent layouts below.
+    numeric_template: Vec<f64>,
+    /// `(numeric variable id, packed-state slot)` for regular variables.
+    regular_numeric_slots: Vec<(usize, usize)>,
+    /// `(numeric variable id, dense cost-row slot)` for cost variables.
+    cost_numeric_indices: Vec<(usize, usize)>,
     /// Cached count returned by `count_cost_variables`. Constant for the task.
     cost_variable_count: usize,
     /// Cached `task.metric().var_id()` and the metric variable's type when set.
@@ -484,6 +492,34 @@ impl<'a> StateRegistry<'a> {
 
         let numeric_var_types: Vec<NumericType> =
             numeric_vars.iter().map(|var| *var.get_type()).collect();
+        let initial_numeric_values = task.get_initial_numeric_state_values();
+        assert_eq!(
+            initial_numeric_values.len(),
+            numeric_var_types.len(),
+            "initial numeric state must contain one value per numeric variable"
+        );
+        let mut numeric_template = vec![0.0; number_numeric_vars];
+        let mut regular_numeric_slots = Vec::new();
+        let mut cost_numeric_indices = Vec::new();
+        let mut next_regular_slot = global_state_packer.numeric_slot_offset();
+        let mut next_cost_index = 0;
+        for (numeric_var_id, &ty) in numeric_var_types.iter().enumerate() {
+            match ty {
+                NumericType::Constant => {
+                    numeric_template[numeric_var_id] =
+                        float_tolerance::canonicalize(initial_numeric_values[numeric_var_id]);
+                }
+                NumericType::Regular => {
+                    regular_numeric_slots.push((numeric_var_id, next_regular_slot));
+                    next_regular_slot += 1;
+                }
+                NumericType::Cost => {
+                    cost_numeric_indices.push((numeric_var_id, next_cost_index));
+                    next_cost_index += 1;
+                }
+                NumericType::Derived => {}
+            }
+        }
         let cost_variable_count = numeric_var_types
             .iter()
             .filter(|&&ty| ty == NumericType::Cost)
@@ -545,6 +581,9 @@ impl<'a> StateRegistry<'a> {
             axiom_evaluator,
             cost_info: RefCell::new(DenseCostInformation::new(cost_variable_count)),
             numeric_var_types,
+            numeric_template,
+            regular_numeric_slots,
+            cost_numeric_indices,
             cost_variable_count,
             metric_var,
             metric_use_metric,
@@ -1093,9 +1132,9 @@ impl<'a> StateRegistry<'a> {
             ctx.parent_cost.resize(expected_cost_vars, 0.0);
         }
         ctx.parent_metric = if self.metric_use_metric {
-            self.metric_value_for_state(parent)
+            self.evaluate_metric(&ctx.parent_numeric)
                 .map_err(|e| StateInsertError {
-                    message: format!("Failed to read metric for parent state: {e:?}"),
+                    message: format!("Failed to evaluate metric for parent state: {e:?}"),
                 })?
         } else {
             0.0
@@ -1418,7 +1457,8 @@ impl<'a> StateRegistry<'a> {
         state: &ConcreteState,
         output: &mut Vec<f64>,
     ) -> Result<(), InvalidIndex> {
-        output.resize(self.numeric_var_types.len(), 0.0);
+        output.resize(self.numeric_template.len(), 0.0);
+        output.copy_from_slice(&self.numeric_template);
 
         let buffer = state.buffer(self);
 
@@ -1426,21 +1466,12 @@ impl<'a> StateRegistry<'a> {
         let cost_info_borrow = self.cost_info.borrow();
         let cost_variables = cost_info_borrow.get(state.get_id());
 
-        // Fill in values by variable type. Iterate the cached layout to avoid
-        // a vtable dispatch through `task.numeric_variables()` per element.
-        for (i, ty) in self.numeric_var_types.iter().enumerate() {
-            output[i] = match ty {
-                NumericType::Cost => cost_variables[self.cost_index(i)],
-                NumericType::Constant => self.numeric_constants[self.numeric_indices[i].unwrap()],
-                NumericType::Regular => self.unpack_regular_numeric(
-                    self.global_state_packer
-                        .get(buffer, self.numeric_indices[i].unwrap()),
-                ),
-                NumericType::Derived => {
-                    // Derived variables are computed by axioms.
-                    0.0
-                }
-            };
+        for &(out_idx, packed_slot) in &self.regular_numeric_slots {
+            output[out_idx] =
+                self.unpack_regular_numeric(self.global_state_packer.get(buffer, packed_slot));
+        }
+        for &(out_idx, cost_idx) in &self.cost_numeric_indices {
+            output[out_idx] = cost_variables[cost_idx];
         }
 
         if self.axiom_evaluator.has_numeric_axioms() {
