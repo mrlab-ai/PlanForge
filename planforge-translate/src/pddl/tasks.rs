@@ -274,6 +274,7 @@ impl Task {
 pub struct DerivedFunctionAdministrator {
     pub function_symbols: HashSet<String>,
     derived_functions: HashMap<DerivedFunctionKey, NumericAxiom>,
+    derived_functions_by_name: HashMap<String, DerivedFunctionKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -294,6 +295,7 @@ impl DerivedFunctionAdministrator {
         DerivedFunctionAdministrator {
             function_symbols: HashSet::new(),
             derived_functions: HashMap::new(),
+            derived_functions_by_name: HashMap::new(),
         }
     }
 
@@ -308,9 +310,9 @@ impl DerivedFunctionAdministrator {
     /// this once per instance of every action, which is why it does not go
     /// through [`Self::get_all_axioms`] and its copy of the whole table.
     pub fn axiom_named(&self, name: &str) -> Option<&NumericAxiom> {
-        self.derived_functions
-            .values()
-            .find(|axiom| axiom.name == name)
+        self.derived_functions_by_name
+            .get(name)
+            .and_then(|key| self.derived_functions.get(key))
     }
 
     fn get_default_variables(&self, nr: usize) -> Vec<TypedObject> {
@@ -347,41 +349,34 @@ impl DerivedFunctionAdministrator {
             return pne.clone();
         }
 
-        let args = match expression {
-            FunctionalExpression::NumericConstant(_) => vec![],
+        let mut subexpressions: Vec<PrimitiveNumericExpression> = match expression {
+            FunctionalExpression::NumericConstant(_) => Vec::new(),
             FunctionalExpression::AdditiveInverse(ai) => {
-                self.get_derived_function(&ai.parts[0]).args
+                vec![self.get_derived_function(&ai.parts[0])]
             }
-            FunctionalExpression::ArithmeticExpression(ae) => {
-                let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
-                    .parts
-                    .iter()
-                    .map(|part| self.get_derived_function(part))
-                    .collect();
-                if ae.op == "+" || ae.op == "*" {
-                    sort_commutative_operands(&mut subexpressions);
-                }
-                subexpressions.into_iter().flat_map(|df| df.args).collect()
-            }
+            FunctionalExpression::ArithmeticExpression(ae) => ae
+                .parts
+                .iter()
+                .map(|part| self.get_derived_function(part))
+                .collect(),
             FunctionalExpression::PrimitiveNumericExpression(_) => unreachable!(),
         };
+        if matches!(expression, FunctionalExpression::ArithmeticExpression(ae) if ae.op == "+" || ae.op == "*")
+        {
+            sort_commutative_operands(&mut subexpressions);
+        }
+        let args: Vec<String> = subexpressions
+            .iter()
+            .flat_map(|derived| derived.args.iter().cloned())
+            .collect();
 
         let key = match expression {
             FunctionalExpression::NumericConstant(nc) => DerivedFunctionKey::Constant(nc.clone()),
-            FunctionalExpression::AdditiveInverse(ai) => {
-                let subexp = self.get_derived_function(&ai.parts[0]);
-                DerivedFunctionKey::AdditiveInverse(subexp.symbol.clone())
+            FunctionalExpression::AdditiveInverse(_) => {
+                DerivedFunctionKey::AdditiveInverse(subexpressions[0].symbol.clone())
             }
             FunctionalExpression::ArithmeticExpression(ae) => {
-                let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
-                    .parts
-                    .iter()
-                    .map(|part| self.get_derived_function(part))
-                    .collect();
-                if ae.op == "+" || ae.op == "*" {
-                    subexpressions.sort_by_cached_key(PrimitiveNumericExpression::to_string);
-                }
-                DerivedFunctionKey::Arithmetic(ae.op.clone(), subexpressions)
+                DerivedFunctionKey::Arithmetic(ae.op.clone(), subexpressions.clone())
             }
             FunctionalExpression::PrimitiveNumericExpression(_) => unreachable!(),
         };
@@ -390,47 +385,25 @@ impl DerivedFunctionAdministrator {
             return PrimitiveNumericExpression::with_type(axiom.name.clone(), args, 'D');
         }
 
-        let (name, args, op, parts) = match expression {
-            FunctionalExpression::NumericConstant(nc) => {
-                let symbol = self.symbol_from_key(&key);
-                (
-                    symbol,
-                    vec![],
-                    String::new(),
-                    vec![FunctionalExpression::NumericConstant(nc.clone())],
-                )
-            }
-            FunctionalExpression::AdditiveInverse(ai) => {
-                let subexp = self.get_derived_function(&ai.parts[0]);
-                let args = subexp.args.clone();
+        let name = self.symbol_from_key(&key);
+        let (op, parts) = match expression {
+            FunctionalExpression::NumericConstant(nc) => (
+                String::new(),
+                vec![FunctionalExpression::NumericConstant(nc.clone())],
+            ),
+            FunctionalExpression::AdditiveInverse(_) => {
+                let subexpression = &subexpressions[0];
                 let default_args = self.get_default_variables(args.len());
                 let rewritten = FunctionalExpression::PrimitiveNumericExpression(
                     PrimitiveNumericExpression::with_type(
-                        subexp.symbol.clone(),
+                        subexpression.symbol.clone(),
                         default_args.iter().map(|p| p.name.clone()).collect(),
                         'D',
                     ),
                 );
-                (
-                    self.symbol_from_key(&key),
-                    args,
-                    "-".to_string(),
-                    vec![rewritten],
-                )
+                ("-".to_string(), vec![rewritten])
             }
             FunctionalExpression::ArithmeticExpression(ae) => {
-                let mut subexpressions: Vec<PrimitiveNumericExpression> = ae
-                    .parts
-                    .iter()
-                    .map(|part| self.get_derived_function(part))
-                    .collect();
-                if ae.op == "+" || ae.op == "*" {
-                    sort_commutative_operands(&mut subexpressions);
-                }
-                let args: Vec<String> = subexpressions
-                    .iter()
-                    .flat_map(|df| df.args.clone())
-                    .collect();
                 let default_args = self.get_default_variables(args.len());
                 let mut arg_index = 0;
                 let mut rewritten_parts = vec![];
@@ -445,12 +418,7 @@ impl DerivedFunctionAdministrator {
                     ));
                     arg_index = end;
                 }
-                (
-                    self.symbol_from_key(&key),
-                    args,
-                    ae.op.clone(),
-                    rewritten_parts,
-                )
+                (ae.op.clone(), rewritten_parts)
             }
             FunctionalExpression::PrimitiveNumericExpression(_) => unreachable!(),
         };
@@ -458,6 +426,12 @@ impl DerivedFunctionAdministrator {
         let parameters = self.get_default_variables(args.len());
         let axiom = NumericAxiom::new(name.clone(), parameters, op, parts);
         self.function_symbols.insert(name.clone());
+        assert!(
+            self.derived_functions_by_name
+                .insert(name.clone(), key.clone())
+                .is_none(),
+            "two derived expressions generated the same symbol {name}"
+        );
         self.derived_functions.insert(key, axiom);
         PrimitiveNumericExpression::with_type(name, args, 'D')
     }

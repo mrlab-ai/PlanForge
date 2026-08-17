@@ -6,6 +6,7 @@ use super::f_expression::{
     FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
 };
 use super::pddl_types::TypedObject;
+use crate::tools::OrderedSet;
 
 #[derive(Debug, Clone)]
 pub struct Action {
@@ -97,7 +98,7 @@ impl Action {
         var_mapping: &super::tasks::VarMapping,
         tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-        new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
+        new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
     ) -> Option<PropositionalAction> {
         let super::tasks::GroundingTables {
             fluent_functions,
@@ -235,9 +236,7 @@ impl Action {
                     task_function_admin,
                     new_constant_axioms,
                 );
-                if !new_constant_axioms.contains(&instantiated_axiom) {
-                    new_constant_axioms.push(instantiated_axiom);
-                }
+                new_constant_axioms.insert(instantiated_axiom);
             }
             Some(FunctionAssignment::new(
                 "+".to_string(),
@@ -279,7 +278,7 @@ impl Condition {
         var_mapping: &super::tasks::VarMapping,
         tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-        new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
+        new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
     ) -> Option<Vec<Condition>> {
         let super::tasks::GroundingTables {
             init_facts,

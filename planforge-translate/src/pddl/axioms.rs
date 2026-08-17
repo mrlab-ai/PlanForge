@@ -6,6 +6,7 @@ use super::f_expression::{
     FunctionalExpression, PrimitiveNumericExpression, instantiate_expression,
 };
 use super::pddl_types::TypedObject;
+use crate::tools::OrderedSet;
 
 /// Represents a derived predicate axiom.
 #[derive(Debug, Clone)]
@@ -65,7 +66,7 @@ impl Axiom {
         var_mapping: &super::tasks::VarMapping,
         tables: &super::tasks::GroundingTables,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-        new_constant_axioms: &mut Vec<InstantiatedNumericAxiom>,
+        new_constant_axioms: &mut OrderedSet<InstantiatedNumericAxiom>,
     ) -> Option<PropositionalAxiom> {
         // Build the effect atom
         let effect = Atom::new(
@@ -145,7 +146,7 @@ impl NumericAxiom {
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
         init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-        new_constant_axioms: &mut Vec<InstantiatedNumericAxiom>,
+        new_constant_axioms: &mut OrderedSet<InstantiatedNumericAxiom>,
     ) -> InstantiatedNumericAxiom {
         let effect = PrimitiveNumericExpression::with_type(
             self.name.clone(),

@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
+use crate::tools::OrderedSet;
+
 /// Root enum for functional expressions
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FunctionalExpression {
@@ -162,7 +164,7 @@ impl FunctionAssignment {
         fluent_functions: &HashSet<PrimitiveNumericExpression>,
         init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
         task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-        new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
+        new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
     ) -> FunctionAssignment {
         let new_fluent = self.fluent.substituted(var_mapping);
         let new_expr = instantiate_expression(
@@ -332,7 +334,7 @@ pub fn instantiate_expression(
     fluent_functions: &HashSet<PrimitiveNumericExpression>,
     init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
     task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
-    new_constant_axioms: &mut Vec<super::axioms::InstantiatedNumericAxiom>,
+    new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
 ) -> FunctionalExpression {
     match expr {
         FunctionalExpression::NumericConstant(_) => expr.clone(),
@@ -352,9 +354,7 @@ pub fn instantiate_expression(
                             task_function_admin,
                             new_constant_axioms,
                         );
-                        if !new_constant_axioms.contains(&instantiated_axiom) {
-                            new_constant_axioms.push(instantiated_axiom);
-                        }
+                        new_constant_axioms.insert(instantiated_axiom);
                     }
                     FunctionalExpression::PrimitiveNumericExpression(derived)
                 } else {

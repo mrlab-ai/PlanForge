@@ -254,7 +254,8 @@ pub fn explore(task: &Task) -> ExploreResult {
     // Step 6: Instantiate actions
     let mut task_function_admin = task.function_administrator.clone();
     let mut grounded_ops: Vec<PropositionalAction> = vec![];
-    let mut new_constant_numeric_axioms: Vec<InstantiatedNumericAxiom> = vec![];
+    let mut new_constant_numeric_axioms: OrderedSet<InstantiatedNumericAxiom> =
+        OrderedSet::default();
 
     // The mapping is rebuilt for every instance and borrows the names it maps,
     // so one buffer serves all of them.
@@ -384,12 +385,23 @@ pub fn explore(task: &Task) -> ExploreResult {
     }
 
     let used_derived = used_derived.into_vec();
+    let mut used_derived_by_symbol: HashMap<&str, Vec<&PrimitiveNumericExpression>> =
+        HashMap::new();
+    for expression in &used_derived {
+        used_derived_by_symbol
+            .entry(&expression.symbol)
+            .or_default()
+            .push(expression);
+    }
     for axiom in numeric_axioms_by_name.values() {
         let head = axiom.get_head();
-        for used in used_derived
+        let matching_arity = used_derived_by_symbol
+            .get(head.symbol.as_str())
+            .map_or(&[][..], Vec::as_slice)
             .iter()
-            .filter(|p| p.symbol == head.symbol && p.args.len() == axiom.parameters.len())
-        {
+            .copied()
+            .filter(|expression| expression.args.len() == axiom.parameters.len());
+        for used in matching_arity {
             var_mapping.clear();
             for (parameter, value) in axiom.parameters.iter().zip(used.args.iter()) {
                 var_mapping.bind(&parameter.name, value);
@@ -404,7 +416,7 @@ pub fn explore(task: &Task) -> ExploreResult {
             numeric_axioms.insert(instantiated);
         }
     }
-    for axiom in new_constant_numeric_axioms {
+    for axiom in new_constant_numeric_axioms.into_vec() {
         numeric_axioms.insert(axiom);
     }
 
