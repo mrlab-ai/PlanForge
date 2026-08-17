@@ -1,3 +1,18 @@
+//! The immutable root planning task and its four variable-id spaces.
+//!
+//! Task propositional ids index [`NumericRootTask::variables`]. Numeric-condition
+//! ids use that same index range but are tagged as [`FactNamespace::Condition`]
+//! so callers cannot confuse a comparison verdict with an ordinary proposition.
+//! Task numeric ids independently index [`NumericRootTask::numeric_variables`].
+//! Domain abstractions have a fourth, private combined space, tagged
+//! [`FactNamespace::NumericVariable`], whose values are partition ids rather
+//! than task-domain values.
+//!
+//! Axiom layers are stratified across those spaces: derived numeric assignment
+//! axioms run first, all numeric comparisons occupy the next layer, and
+//! propositional axioms occupy higher layers. [`NumericRootTask::new`] checks
+//! these representation and layer invariants once before publishing a task.
+
 use crate::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
 use crate::numeric_conditions::{
     ConditionValue, NumericConditionError, NumericConditions, assignment_axiom_lookup,
@@ -1239,8 +1254,110 @@ impl NumericRootTask {
             .iter()
             .map(|operator| metric_operator_cost_from_initial_values(&task, operator))
             .collect();
+        task.assert_invariants();
         debug_assert_fact_namespaces(&task);
         task
+    }
+
+    /// Assert the cross-field contracts every task consumer relies on.
+    fn assert_invariants(&self) {
+        assert_eq!(
+            self.state.len(),
+            self.variables.len(),
+            "initial propositional state has {} values for {} variables",
+            self.state.len(),
+            self.variables.len()
+        );
+        assert_eq!(
+            self.numeric_state.len(),
+            self.numeric_variables.len(),
+            "initial numeric state has {} values for {} variables",
+            self.numeric_state.len(),
+            self.numeric_variables.len()
+        );
+
+        if let Some(metric_var_id) = self.metric.var_id() {
+            let metric_var = self
+                .numeric_variables
+                .get(metric_var_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "metric variable {metric_var_id} is out of bounds for {} numeric variables",
+                        self.numeric_variables.len()
+                    )
+                });
+            assert_eq!(
+                metric_var.get_type(),
+                &NumericType::Cost,
+                "metric variable {metric_var_id} has type {:?}, expected Cost",
+                metric_var.get_type()
+            );
+        }
+
+        let assert_task_fact = |fact: &ExplicitFact, origin: &str| {
+            let variable = self.variables.get(fact.var()).unwrap_or_else(|| {
+                panic!(
+                    "{origin} fact names variable {}, past the task's {} propositional variables",
+                    fact.var(),
+                    self.variables.len()
+                )
+            });
+            assert!(
+                fact.value() < variable.domain_size(),
+                "{origin} fact value {} is outside variable {}'s domain of size {}",
+                fact.value(),
+                fact.var(),
+                variable.domain_size()
+            );
+        };
+        for goal in &self.goals {
+            assert_task_fact(goal, "goal");
+        }
+        for fact in self.mutexes.iter().flatten() {
+            assert_task_fact(fact, "mutex");
+        }
+        assert_task_fact(&self.global_constraint, "global constraint");
+
+        if !self.comparison_axioms.is_empty() {
+            let last_arithmetic_layer = self
+                .numeric_variables
+                .iter()
+                .filter_map(NumericVariable::axiom_layer)
+                .max();
+            let expected_comparison_layer = last_arithmetic_layer.map_or(0, |layer| layer + 1);
+            let mut comparison_layer = None;
+            for (axiom_id, axiom) in self.comparison_axioms.iter().enumerate() {
+                let head = axiom.get_affected_var_id();
+                let layer = self.variables[head].axiom_layer().unwrap_or_else(|| {
+                    panic!("comparison axiom {axiom_id} writes non-derived variable {head}")
+                });
+                if let Some(previous) = comparison_layer {
+                    assert_eq!(
+                        layer, previous,
+                        "comparison axioms occupy both layer {previous} and layer {layer}"
+                    );
+                } else {
+                    comparison_layer = Some(layer);
+                }
+            }
+            let comparison_layer = comparison_layer.unwrap();
+            assert_eq!(
+                comparison_layer,
+                expected_comparison_layer,
+                "comparison axiom layer {comparison_layer} must directly follow arithmetic layer {}",
+                last_arithmetic_layer.map_or_else(|| "none".to_string(), |layer| layer.to_string())
+            );
+            let first_derived_propositional_layer = self
+                .variables
+                .iter()
+                .filter_map(ExplicitVariable::axiom_layer)
+                .min()
+                .expect("a comparison axiom has a derived propositional head");
+            assert_eq!(
+                first_derived_propositional_layer, comparison_layer,
+                "comparison axiom layer {comparison_layer} must be the first derived propositional layer, got {first_derived_propositional_layer}"
+            );
+        }
     }
 
     /// Tag every fact the task stores with the namespace of its variable.
@@ -1691,5 +1808,133 @@ mod namespace_assertion {
         let mut task = crate::tests::get_root_task();
         task.goals[0] = ExplicitFact::propositional(3, 0);
         assert_fact_namespaces(&task);
+    }
+}
+
+#[cfg(test)]
+mod root_task_invariants {
+    use super::*;
+    use crate::axioms::CalOperator;
+
+    fn valid_parts() -> NumericRootTaskParts {
+        NumericRootTaskParts {
+            version: 4,
+            metric: Metric::new(true, Some(0)),
+            variables: vec![ExplicitVariable::new(
+                2,
+                "location".to_string(),
+                vec!["here".to_string(), "there".to_string()],
+                None,
+                0,
+            )],
+            numeric_variables: vec![NumericVariable::new(
+                "total-cost".to_string(),
+                NumericType::Cost,
+                None,
+            )],
+            goals: vec![ExplicitFact::propositional(0, 1)],
+            mutexes: vec![vec![
+                ExplicitFact::propositional(0, 0),
+                ExplicitFact::propositional(0, 1),
+            ]],
+            state: vec![0],
+            numeric_state: vec![0.0],
+            operators: Vec::new(),
+            axioms: Vec::new(),
+            comparison_axioms: Vec::new(),
+            assignment_axioms: Vec::new(),
+            global_constraint: ExplicitFact::propositional(0, 0),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "initial propositional state has 0 values for 1 variables")]
+    fn rejects_short_propositional_initial_state() {
+        let mut parts = valid_parts();
+        parts.state.clear();
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(expected = "initial numeric state has 0 values for 1 variables")]
+    fn rejects_short_numeric_initial_state() {
+        let mut parts = valid_parts();
+        parts.numeric_state.clear();
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(expected = "metric variable 1 is out of bounds for 1 numeric variables")]
+    fn rejects_out_of_range_metric_variable() {
+        let mut parts = valid_parts();
+        parts.metric = Metric::new(true, Some(1));
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(expected = "metric variable 0 has type Regular, expected Cost")]
+    fn rejects_non_cost_metric_variable() {
+        let mut parts = valid_parts();
+        parts.numeric_variables[0] =
+            NumericVariable::new("fuel".to_string(), NumericType::Regular, None);
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(expected = "goal fact value 2 is outside variable 0's domain of size 2")]
+    fn rejects_out_of_range_goal_value() {
+        let mut parts = valid_parts();
+        parts.goals[0] = ExplicitFact::propositional(0, 2);
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(expected = "mutex fact value 2 is outside variable 0's domain of size 2")]
+    fn rejects_out_of_range_mutex_value() {
+        let mut parts = valid_parts();
+        parts.mutexes[0][0] = ExplicitFact::propositional(0, 2);
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "global constraint fact value 2 is outside variable 0's domain of size 2"
+    )]
+    fn rejects_out_of_range_global_constraint_value() {
+        let mut parts = valid_parts();
+        parts.global_constraint = ExplicitFact::propositional(0, 2);
+        NumericRootTask::new(parts);
+    }
+
+    #[test]
+    #[should_panic(expected = "comparison axiom layer 2 must directly follow arithmetic layer 0")]
+    fn rejects_a_gap_between_arithmetic_and_comparison_layers() {
+        let mut parts = valid_parts();
+        parts.variables[0] = ExplicitVariable::new(
+            ConditionValue::DOMAIN_SIZE,
+            "sum-exceeds-left".to_string(),
+            vec![
+                "sum-exceeds-left".to_string(),
+                "not-sum-exceeds-left".to_string(),
+            ],
+            Some(2),
+            ConditionValue::False.as_usize(),
+        );
+        parts.numeric_variables = vec![
+            NumericVariable::new("left".to_string(), NumericType::Constant, None),
+            NumericVariable::new("right".to_string(), NumericType::Constant, None),
+            NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
+            NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
+        ];
+        parts.metric = Metric::new(true, Some(3));
+        parts.numeric_state = vec![2.0, 3.0, 0.0, 0.0];
+        parts.assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+        parts.comparison_axioms = vec![ComparisonAxiom::new(
+            0,
+            2,
+            0,
+            crate::axioms::ComparisonOperator::GreaterThan,
+        )];
+        NumericRootTask::new(parts);
     }
 }

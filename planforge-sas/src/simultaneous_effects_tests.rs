@@ -187,7 +187,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
 fn metric_cost_reads_parent_values_across_effects() {
     // `metric_operator_cost_from_initial_values` replays the same effects on a
     // plain value vector; it must agree with the search path.
-    let task = task_with_effects(vec![plus(Y, ONE), plus(X, Y)], Some(X));
+    let task = task_with_effects(vec![plus(Y, ONE), plus(COST, Y)], Some(COST));
 
     let delta = crate::numeric_task::metric_operator_cost_from_initial_values(
         &task,
@@ -200,9 +200,9 @@ fn metric_cost_reads_parent_values_across_effects() {
 #[test]
 #[should_panic(expected = "negative metric cost")]
 fn negative_metric_cost_is_rejected_at_task_construction() {
-    let decrease = AssignmentEffect::new(X, AssignmentOperation::Minus, ONE, false, vec![]);
+    let decrease = AssignmentEffect::new(COST, AssignmentOperation::Minus, ONE, false, vec![]);
 
-    let _task = task_with_effects(vec![decrease], Some(X));
+    let _task = task_with_effects(vec![decrease], Some(COST));
 }
 
 /// PDDL grounding produces operators like mprime's `drink ?n ?n`, whose two

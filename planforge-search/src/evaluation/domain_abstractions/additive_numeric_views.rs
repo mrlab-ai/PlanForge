@@ -371,11 +371,15 @@ fn constant_effect_delta(task: &dyn AbstractNumericTask, effect: &AssignmentEffe
 mod tests {
     use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
     use planforge_sas::numeric_task::{
-        AssignmentEffect, AssignmentOperation, ExplicitFact, Metric, NumericRootTask,
-        NumericRootTaskParts, NumericType, NumericVariable, Operator,
+        AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric,
+        NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
     };
 
     use super::*;
+
+    fn global_constraint_variable() -> ExplicitVariable {
+        ExplicitVariable::new(1, "global-constraint".into(), vec!["true".into()], None, 0)
+    }
 
     fn affine_sum_task(operation: AssignmentOperation) -> NumericRootTask {
         let numeric_variables = vec![
@@ -394,11 +398,11 @@ mod tests {
         NumericRootTask::new(NumericRootTaskParts {
             version: 4,
             metric: Metric::new(true, None),
-            variables: vec![],
+            variables: vec![global_constraint_variable()],
             numeric_variables,
             goals: vec![],
             mutexes: vec![],
-            state: vec![],
+            state: vec![0],
             numeric_state: vec![0.0, 0.0, 0.0, 1.0],
             operators: vec![operator],
             axioms: vec![],
@@ -435,11 +439,11 @@ mod tests {
         let task = NumericRootTask::new(NumericRootTaskParts {
             version: 4,
             metric: Metric::new(true, Some(1)),
-            variables: vec![],
+            variables: vec![global_constraint_variable()],
             numeric_variables,
             goals: vec![],
             mutexes: vec![],
-            state: vec![],
+            state: vec![0],
             numeric_state: vec![0.0, 0.0, 0.0],
             operators: vec![],
             axioms: vec![],

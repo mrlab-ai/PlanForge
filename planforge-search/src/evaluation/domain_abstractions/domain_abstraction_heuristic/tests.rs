@@ -18,7 +18,7 @@ fn comparison_task() -> NumericRootTask {
                 ConditionValue::DOMAIN_SIZE,
                 "cmp".into(),
                 vec!["true".into(), "false".into()],
-                None,
+                Some(0),
                 ConditionValue::False.as_usize(),
             ),
             ExplicitVariable::new(2, "p".into(), vec!["p".into(), "not-p".into()], None, 0),

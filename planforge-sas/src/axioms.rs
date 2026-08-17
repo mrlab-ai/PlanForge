@@ -314,10 +314,6 @@ fn build_compiled_axiom_evaluator_data(
     if first_propositional_axiom_layer.is_some() && numeric_task.get_num_cmp_axioms() > 0 {
         comparison_axiom_layer = first_propositional_axiom_layer;
         first_propositional_axiom_layer = first_propositional_axiom_layer.map(|x| x + 1);
-        debug_assert_eq!(
-            comparison_axiom_layer.unwrap(),
-            last_arithmetic_axiom_layer.map(|x| x + 1).unwrap_or(0)
-        );
     }
 
     for var in numeric_task.variables().iter() {

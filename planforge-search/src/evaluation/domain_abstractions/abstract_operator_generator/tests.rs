@@ -13,6 +13,10 @@ use planforge_sas::utils::interval::Interval;
 /// effect plus its progression and regression preconditions.
 type AbstractOperatorSignature = (i32, Vec<ExplicitFact>, Vec<ExplicitFact>);
 
+fn global_constraint_variable() -> ExplicitVariable {
+    ExplicitVariable::new(1, "global-constraint".into(), vec!["true".into()], None, 0)
+}
+
 #[test]
 fn propositional_effect_without_precondition_preserves_sibling_branches() {
     let variables = vec![
@@ -236,7 +240,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
 
 #[test]
 fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition() {
-    let variables: Vec<ExplicitVariable> = vec![];
+    let variables = vec![global_constraint_variable()];
 
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, None),
@@ -264,7 +268,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![0.0, 1.0],
         operators: vec![op.clone()],
         axioms: vec![],
@@ -301,8 +305,8 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
     .unwrap();
 
     let identity_transition = transitions.iter().find(|trans| {
-        trans.source_partition_facts == vec![ExplicitFact::propositional(0, 0)]
-            && trans.target_partition_facts == vec![ExplicitFact::propositional(0, 0)]
+        trans.source_partition_facts == vec![ExplicitFact::numeric_variable(1, 0)]
+            && trans.target_partition_facts == vec![ExplicitFact::numeric_variable(1, 0)]
     });
     assert!(identity_transition.is_some());
     assert_eq!(identity_transition.unwrap().changed_numeric_vars, vec![0]);
@@ -340,11 +344,11 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![],
+        variables: vec![global_constraint_variable()],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![3.0, 1.0, 5.0, 4.0, -1.0],
         operators: vec![op.clone()],
         axioms: vec![],
@@ -382,28 +386,28 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     assert!(transitions.iter().any(|trans| {
         trans
             .source_partition_facts
-            .contains(&ExplicitFact::propositional(0, 0))
+            .contains(&ExplicitFact::numeric_variable(1, 0))
             && trans
                 .target_partition_facts
-                .contains(&ExplicitFact::propositional(0, 1))
+                .contains(&ExplicitFact::numeric_variable(1, 1))
     }));
     assert!(transitions.iter().all(|trans| {
         trans
             .source_partition_facts
             .iter()
-            .any(|fact| fact.var() == 3)
+            .any(|fact| fact.var() == 4)
             && trans
                 .target_partition_facts
                 .iter()
-                .any(|fact| fact.var() == 3)
+                .any(|fact| fact.var() == 4)
             && trans
                 .source_partition_facts
                 .iter()
-                .any(|fact| fact.var() == 4)
+                .any(|fact| fact.var() == 5)
             && trans
                 .target_partition_facts
                 .iter()
-                .any(|fact| fact.var() == 4)
+                .any(|fact| fact.var() == 5)
             && trans.changed_numeric_vars == vec![0, 3, 4]
     }));
 }
@@ -549,7 +553,7 @@ fn derived_comparison_precondition_clears_the_old_value() {
 
 #[test]
 fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
-    let variables: Vec<ExplicitVariable> = vec![];
+    let variables = vec![global_constraint_variable()];
     let numeric_variables = vec![
         NumericVariable::new("fuel-used".into(), NumericType::Cost, None),
         NumericVariable::new("c5".into(), NumericType::Constant, None),
@@ -576,7 +580,7 @@ fn metric_tasks_use_metric_delta_for_abstract_operator_cost() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![0.0, 5.0],
         operators: vec![op],
         axioms: vec![],
@@ -788,7 +792,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![],
+        variables: vec![global_constraint_variable()],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("c0".into(), NumericType::Constant, None),
@@ -797,7 +801,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![5.0, 0.0, 0.0, 0.0],
         operators: vec![],
         axioms: vec![],
@@ -832,7 +836,7 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
 
 #[test]
 fn duplicate_assignment_effects_are_rejected() {
-    let variables: Vec<ExplicitVariable> = vec![];
+    let variables = vec![global_constraint_variable()];
 
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -858,7 +862,7 @@ fn duplicate_assignment_effects_are_rejected() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![0.0, 1.0, 2.0],
         operators: vec![op],
         axioms: vec![],
@@ -1021,7 +1025,7 @@ fn conditional_assignment_effect_branches() {
 
 #[test]
 fn variable_rhs_assignment_effect_is_rejected_for_parity() {
-    let variables: Vec<ExplicitVariable> = vec![];
+    let variables = vec![global_constraint_variable()];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
@@ -1048,7 +1052,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![0.0, 0.0],
         operators: vec![op],
         axioms: vec![],

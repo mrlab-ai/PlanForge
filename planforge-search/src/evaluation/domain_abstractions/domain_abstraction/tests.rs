@@ -9,12 +9,12 @@ use planforge_sas::numeric_task::{
 
 /// The propositional variable a comparison axiom writes: true or false,
 /// defaulting to false until the closure derives it.
-fn condition_variable(name: &str) -> ExplicitVariable {
+fn condition_variable(name: &str, layer: usize) -> ExplicitVariable {
     ExplicitVariable::new(
         ConditionValue::DOMAIN_SIZE,
         name.into(),
         vec!["true".into(), "false".into()],
-        None,
+        Some(layer),
         ConditionValue::False.as_usize(),
     )
 }
@@ -33,7 +33,7 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![condition_variable("x0 < c1")],
+        variables: vec![condition_variable("x0 < c1", 0)],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
@@ -76,7 +76,13 @@ fn reachable_partitions_overlaps_result_interval() {
     let dummy_task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![],
+        variables: vec![ExplicitVariable::new(
+            1,
+            "global-constraint".into(),
+            vec!["true".into()],
+            None,
+            0,
+        )],
         numeric_variables: vec![NumericVariable::new(
             "x0".into(),
             NumericType::Regular,
@@ -84,7 +90,7 @@ fn reachable_partitions_overlaps_result_interval() {
         )],
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![0.0],
         operators: vec![],
         axioms: vec![],
@@ -157,11 +163,17 @@ fn trivial_partitions_use_singletons_for_constants() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![],
+        variables: vec![ExplicitVariable::new(
+            1,
+            "global-constraint".into(),
+            vec!["true".into()],
+            None,
+            0,
+        )],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![0.0, 7.0],
         operators: vec![],
         axioms: vec![],
@@ -190,11 +202,17 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![],
+        variables: vec![ExplicitVariable::new(
+            1,
+            "global-constraint".into(),
+            vec!["true".into()],
+            None,
+            0,
+        )],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![],
+        state: vec![0],
         numeric_state: vec![9.450000000000001],
         operators: vec![],
         axioms: vec![],
@@ -216,7 +234,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     let numeric_variables = vec![
         NumericVariable::new("x0".into(), NumericType::Regular, None),
         NumericVariable::new("x1".into(), NumericType::Regular, None),
-        NumericVariable::new("d2".into(), NumericType::Derived, None),
+        NumericVariable::new("d2".into(), NumericType::Derived, Some(0)),
     ];
 
     // d2 = x0 + x1
@@ -228,7 +246,7 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
-        variables: vec![condition_variable("d2 == x0")],
+        variables: vec![condition_variable("d2 == x0", 1)],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
