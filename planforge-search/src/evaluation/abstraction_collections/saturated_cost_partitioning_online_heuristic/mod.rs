@@ -1963,7 +1963,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let eval_state = EvaluationState::new(concrete_state, 0.0, false, task, registry);
+        let eval_state = EvaluationState::new(concrete_state, task, registry);
         self.compute_abstract_state_ids_into(&eval_state, None, ids)?;
         Ok(())
     }
@@ -3336,11 +3336,7 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        let task = eval_state.task().ok_or_else(|| {
-            EvaluationError::InvalidState(
-                "SaturatedCostPartitioningOnlineHeuristic requires task".to_string(),
-            )
-        })?;
+        let task = eval_state.task();
         let build_cp = {
             let state = self.state.borrow();
             self.should_build_cp(&state)

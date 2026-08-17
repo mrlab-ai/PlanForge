@@ -134,7 +134,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     )
     .unwrap();
 
-    let eval_state = EvaluationState::new(&initial_state, 0.0, false, &task, &registry);
+    let eval_state = EvaluationState::new(&initial_state, &task, &registry);
     let value = heuristic.compute_heuristic(&eval_state).unwrap();
 
     assert_eq!(value, 5.0);
@@ -173,7 +173,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
     let task = simple_task();
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = registry.get_initial_state();
-    let eval_state = EvaluationState::new(&initial_state, 0.0, false, &task, &registry);
+    let eval_state = EvaluationState::new(&initial_state, &task, &registry);
 
     let max = MaxAbstractionHeuristic::new(None, mixed_components(&task)).unwrap();
     assert_eq!(max.compute_heuristic(&eval_state).unwrap(), 5.0);

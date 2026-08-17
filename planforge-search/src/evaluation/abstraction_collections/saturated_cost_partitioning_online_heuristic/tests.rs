@@ -100,7 +100,7 @@ fn evaluate_initial(
 ) -> Result<f64, EvaluationError> {
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(task));
     let initial_state = registry.get_initial_state();
-    let eval_state = EvaluationState::new(&initial_state, 0.0, false, task, &registry);
+    let eval_state = EvaluationState::new(&initial_state, task, &registry);
     heuristic.compute_heuristic(&eval_state)
 }
 

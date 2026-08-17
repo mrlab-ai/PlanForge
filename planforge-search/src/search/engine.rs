@@ -413,8 +413,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         g_value: f64,
         is_goal: bool,
     ) -> Result<SearchEvaluation> {
-        let mut eval_state =
-            EvaluationState::new(state, g_value, false, self.task, &self.state_registry);
+        let mut eval_state = EvaluationState::new(state, self.task, &self.state_registry);
         eval_state.set_is_goal(is_goal);
 
         let evaluation = match self.heuristic.compute_heuristic(&eval_state) {
@@ -546,8 +545,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         let Some(slow) = self.algorithm.slow_heuristic() else {
             unreachable!("slow evaluation requires the fast/slow search policy");
         };
-        let mut eval_state =
-            EvaluationState::new(state, entry.g_value, false, self.task, &self.state_registry);
+        let mut eval_state = EvaluationState::new(state, self.task, &self.state_registry);
         eval_state.set_is_goal(self.space.is_goal(entry.state_id()));
         let slow_h = match slow.compute_heuristic(&eval_state) {
             Ok(h) => h,

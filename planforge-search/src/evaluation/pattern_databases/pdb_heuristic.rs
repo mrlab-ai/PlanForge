@@ -146,8 +146,7 @@ mod tests {
         )
         .expect("greedy numeric PDB should build for simple goal task");
 
-        let mut eval_state =
-            EvaluationState::new(&initial_state, 0.0, false, &task, &state_registry);
+        let mut eval_state = EvaluationState::new(&initial_state, &task, &state_registry);
         eval_state.set_is_goal(true);
         let value = heuristic
             .compute_heuristic(&eval_state)

@@ -82,7 +82,7 @@ fn evaluate_initial_state(
         .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
-    let mut eval_state = EvaluationState::new(&initial_state, 0.0, false, &*task, &registry);
+    let mut eval_state = EvaluationState::new(&initial_state, &*task, &registry);
     eval_state.set_is_goal(false);
     heuristic.compute_heuristic(&eval_state)
 }

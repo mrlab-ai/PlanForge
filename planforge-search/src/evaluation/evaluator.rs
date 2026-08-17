@@ -40,7 +40,7 @@ impl std::error::Error for EvaluationError {}
 /// State and task context for a single heuristic evaluation.
 pub struct EvaluationState<'state, 'task> {
     backing_state: &'state ConcreteState,
-    task: Option<&'task dyn AbstractNumericTask>,
+    task: &'task dyn AbstractNumericTask,
     state_registry: &'state StateRegistry<'task>,
     is_goal: bool,
 }
@@ -49,15 +49,12 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
     /// Create an evaluation state with its mandatory decoding context.
     pub fn new(
         state: &'state ConcreteState,
-        g_value: f64,
-        is_preferred: bool,
         task: &'task dyn AbstractNumericTask,
         state_registry: &'state StateRegistry<'task>,
     ) -> Self {
-        let _ = (g_value, is_preferred);
         Self {
             backing_state: state,
-            task: Some(task),
+            task,
             state_registry,
             is_goal: false,
         }
@@ -68,8 +65,8 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
         self.backing_state
     }
 
-    /// Task reference, if provided.
-    pub fn task(&self) -> Option<&'task dyn AbstractNumericTask> {
+    /// Task whose state is being evaluated.
+    pub fn task(&self) -> &'task dyn AbstractNumericTask {
         self.task
     }
 
