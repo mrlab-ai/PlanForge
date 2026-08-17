@@ -815,10 +815,7 @@ fn parse_task_pddl(items: &[SExpr], type_dict: &HashMap<String, Vec<String>>) ->
                 let metric_expr = parse_expression(&section[2]);
                 let metric_pne = match metric_expr {
                     FunctionalExpression::PrimitiveNumericExpression(pne) => pne,
-                    _ => {
-                        // Complex metric expression - use total-cost as default
-                        PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I')
-                    }
+                    _ => panic!("compound metric expressions are not supported"),
                 };
                 metric = Some((dir_symbol.to_string(), metric_pne));
             }
@@ -912,5 +909,17 @@ mod tests {
         );
 
         assert_eq!(problem.metric.expect("metric was parsed").0, ">");
+    }
+
+    #[test]
+    #[should_panic(expected = "compound metric expressions are not supported")]
+    fn rejects_compound_metric_expression() {
+        parse_problem(
+            "(define (problem compound-metric)
+                (:domain metric-test)
+                (:init (= (fuel) 1) (= (time) 2))
+                (:goal (and))
+                (:metric minimize (+ (fuel) (time))))",
+        );
     }
 }
