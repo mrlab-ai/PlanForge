@@ -1,4 +1,3 @@
-use super::stats::TraceFlags;
 use planforge_sas::state_registry::ExpansionContext;
 use std::time::Duration;
 
@@ -7,7 +6,6 @@ pub(crate) struct SearchConfig {
     pub(crate) use_metric: bool,
     pub(crate) time_limit: Option<Duration>,
     pub(crate) max_memory_bytes: Option<u64>,
-    pub(crate) trace: TraceFlags,
 }
 
 #[derive(Default)]

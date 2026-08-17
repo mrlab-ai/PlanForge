@@ -2,7 +2,7 @@ use super::config::{ExpansionScratch, SearchConfig};
 use super::open_list::{DualQueueOpenList, OpenEntry};
 use super::policy::SearchPolicy;
 use super::space::{SearchNodeInfo, SearchSpace};
-use super::stats::{ProgressSnapshot, SearchCounters, SearchStats, TraceFlags};
+use super::stats::{ProgressSnapshot, SearchCounters, SearchStats};
 use super::{
     SearchEngine, SearchResult, SearchStatus, compute_effective_operator_costs, current_memory_kb,
     format_progress_value,
@@ -16,7 +16,6 @@ use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
-use std::env;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -30,15 +29,6 @@ enum PoppedNode {
     Skipped,
     /// The open list holds nothing more.
     Exhausted,
-}
-
-/// Trace flags one expansion reads, hoisted out of the successor loop.
-#[derive(Debug, Clone, Copy)]
-struct ExpansionTrace {
-    initial_successors: bool,
-    improved_duplicates: bool,
-    generated_states: bool,
-    evaluated_successors: bool,
 }
 
 /// The operator that produced one successor, in the three forms the search
@@ -58,93 +48,6 @@ struct ParentExpansion {
     /// Operators the heuristic called helpful in the parent, or `None` when
     /// the heuristic does not report preferred operators.
     preferred_operator_range: Option<(u32, u32)>,
-    trace: ExpansionTrace,
-}
-
-impl ParentExpansion {
-    #[inline]
-    fn trace_generated(&self, succ_state_id: StateID, operator: &Operator, new_g_value: f64) {
-        if !self.trace.generated_states {
-            return;
-        }
-        debug!(
-            "TRACE generated parent_sid={} succ_sid={} op={} g={}",
-            self.state_id,
-            succ_state_id,
-            operator.name(),
-            format_progress_value(new_g_value)
-        );
-    }
-
-    #[inline]
-    fn trace_evaluated_successor(
-        &self,
-        succ_state_id: StateID,
-        operator: &Operator,
-        new_g_value: f64,
-        evaluation: &SearchEvaluation,
-    ) {
-        if !self.trace.evaluated_successors {
-            return;
-        }
-        debug!(
-            "TRACE evaluated-successor parent_sid={} succ_sid={} op={} g={:.17} h={:.17} f={:.17} dead_end={}",
-            self.state_id,
-            succ_state_id,
-            operator.name(),
-            new_g_value,
-            evaluation.h_value,
-            evaluation.f_value,
-            evaluation.is_dead_end,
-        );
-    }
-
-    #[inline]
-    fn trace_improved_duplicate(
-        &self,
-        succ_state_id: StateID,
-        operator: &Operator,
-        old_g: Option<f64>,
-        new_g_value: f64,
-        evaluation: &SearchEvaluation,
-    ) {
-        if !self.trace.improved_duplicates {
-            return;
-        }
-        debug!(
-            "TRACE improved-duplicate sid={} op={} old_g={} new_g={} h={} dead_end={}",
-            succ_state_id,
-            operator.name(),
-            old_g
-                .map(format_progress_value)
-                .unwrap_or_else(|| "<missing>".to_string()),
-            format_progress_value(new_g_value),
-            format_progress_value(evaluation.h_value),
-            evaluation.is_dead_end,
-        );
-    }
-
-    #[inline]
-    fn trace_initial_successor(
-        &self,
-        succ_state_id: StateID,
-        operator: &Operator,
-        new_g_value: f64,
-        evaluation: &SearchEvaluation,
-    ) {
-        if !self.trace.initial_successors {
-            return;
-        }
-        debug!(
-            "TRACE initial-successor op={} g={} h={} f={} dead_end={} state_id={}",
-            operator.name(),
-            format_progress_value(new_g_value),
-            format_progress_value(evaluation.h_value),
-            format_progress_value(evaluation.f_value),
-            evaluation.is_dead_end,
-            succ_state_id
-        );
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -324,11 +227,7 @@ impl<'a> AStarSearch<'a> {
 
         let use_metric = task.metric().use_metric();
         // Dual-queue preferred-first ordering is the FF default for GBFS.
-        // The `PLANFORGE_NO_PREFERRED` environment variable forces it off
-        // for A/B benchmarking; it doesn't affect correctness, only the
-        // open-list pop order.
-        let use_preferred_first =
-            policy.is_gbfs() && env::var_os("PLANFORGE_NO_PREFERRED").is_none();
+        let use_preferred_first = policy.is_gbfs();
         let num_variables = task.variables().len();
         let num_numeric_variables = task.numeric_variables().len();
         info!(
@@ -352,7 +251,6 @@ impl<'a> AStarSearch<'a> {
                 use_metric,
                 time_limit,
                 max_memory_bytes,
-                trace: TraceFlags::from_environment(),
             },
             stats: SearchStats::default(),
             scratch: ExpansionScratch::with_capacity(num_variables, num_numeric_variables),
@@ -785,7 +683,6 @@ impl<'a> AStarSearch<'a> {
         let state_id = entry.state_id();
 
         self.maybe_print_f_layer(entry, &start_time);
-        self.trace_expanded(entry, state_id);
         self.close_expanded_node(state_id);
 
         if self.space.is_goal(state_id) {
@@ -879,13 +776,6 @@ impl<'a> AStarSearch<'a> {
             // node is reopened, in which case `evaluate_state` resnapshots.
             // It also reclaims the boxed slice's memory eagerly.
             preferred_operator_range: self.space.take_preferred(state_id),
-            trace: ExpansionTrace {
-                initial_successors: self.stats.nodes_expanded == 1
-                    && self.config.trace.initial_successors,
-                improved_duplicates: self.config.trace.improved_duplicates,
-                generated_states: self.config.trace.generated_states,
-                evaluated_successors: self.config.trace.evaluated_successors,
-            },
         };
 
         self.populate_applicable_operators(state);
@@ -967,14 +857,12 @@ impl<'a> AStarSearch<'a> {
 
         // Count every successfully constructed successor state.
         self.stats.nodes_generated += 1;
-        parent.trace_generated(succ_state_id, operator, new_g_value);
-
-        let (improved_duplicate, was_closed, old_g) = match self.space.node(succ_state_id) {
+        let (improved_duplicate, was_closed) = match self.space.node(succ_state_id) {
             // A dead end stays a dead end, and an at-least-as-good path is
             // already recorded — either way there is nothing to do.
             Some(info) if info.is_dead_end || info.g_value <= new_g_value => return Ok(()),
-            Some(info) => (true, info.is_closed, Some(info.g_value)),
-            None => (false, false, None),
+            Some(info) => (true, info.is_closed),
+            None => (false, false),
         };
         if was_closed {
             self.stats.nodes_reopened += 1;
@@ -1012,17 +900,6 @@ impl<'a> AStarSearch<'a> {
         self.space
             .store_preferred(succ_state_id, &self.scratch.preferred_ids);
 
-        parent.trace_evaluated_successor(succ_state_id, operator, new_g_value, &evaluation);
-        if improved_duplicate {
-            parent.trace_improved_duplicate(
-                succ_state_id,
-                operator,
-                old_g,
-                new_g_value,
-                &evaluation,
-            );
-        }
-
         // Record/update best `g`-value, parent pointers, and dead-end status.
         self.space.set_node(
             succ_state_id,
@@ -1036,7 +913,6 @@ impl<'a> AStarSearch<'a> {
             },
         );
 
-        parent.trace_initial_successor(succ_state_id, operator, new_g_value, &evaluation);
         if evaluation.is_dead_end {
             self.stats.dead_ends += 1;
             return Ok(());
@@ -1062,20 +938,6 @@ impl<'a> AStarSearch<'a> {
         } else {
             self.config.operator_costs[operator_id]
         }
-    }
-
-    #[inline]
-    fn trace_expanded(&self, entry: OpenEntry, state_id: StateID) {
-        if !self.config.trace.expanded_states {
-            return;
-        }
-        debug!(
-            "TRACE expanded sid={} g={:.17} h={:.17} f={:.17}",
-            state_id,
-            entry.g_value,
-            entry.h_value.into_inner(),
-            entry.f_value.into_inner()
-        );
     }
 
     pub fn finish(&mut self, status: SearchStatus) -> SearchResult {

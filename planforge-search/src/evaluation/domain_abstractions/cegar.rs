@@ -565,7 +565,7 @@ impl Cegar {
         let iteration = run.next_iteration;
         let stop_reason = run.stop_reason;
 
-        if config.debug || std::env::var_os("DA_DUMP_FINAL_ABSTRACTION").is_some() {
+        if config.debug {
             log_final_target_centered_abstraction(task, &factory);
         }
 
