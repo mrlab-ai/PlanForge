@@ -1,0 +1,35 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "planforge"
+requires-python = ">=3.10"
+description = "Python bindings for the PlanForge numeric planner"
+readme = "planforge-py/README.md"
+license = { text = "GPL-3.0" }
+authors = [
+    { name = "Markus Fritzsche", email = "fritzsma@gmail.com" },
+]
+keywords = ["automated-planning", "numeric-planning", "pddl", "search"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["numpy>=1.26"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://mrlab.ai/PlanForge/"
+Repository = "https://github.com/mrlab-ai/PlanForge"
+Issues = "https://github.com/mrlab-ai/PlanForge/issues"
+
+[tool.maturin]
+manifest-path = "planforge-py/Cargo.toml"
+python-source = "planforge-py/python"
+module-name = "planforge.planforge"
+features = ["pyo3/extension-module"]
+sdist-generator = "git"

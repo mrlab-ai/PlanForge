@@ -1,5 +1,26 @@
 # PlanForge Python API
 
+## Installation
+
+Once the distribution is published, the supported user installation is:
+
+```console
+pip install planforge
+```
+
+To build and install the same package from a checkout without installing
+`maturin` globally:
+
+```console
+uv venv .venv --python 3.13
+uvx maturin@1.7 build --release --locked \
+  --manifest-path planforge-py/Cargo.toml --out /tmp/planforge-wheels
+uv pip install --python .venv/bin/python /tmp/planforge-wheels/planforge-*.whl
+```
+
+The extension uses `abi3-py310`, so one wheel per operating-system and CPU
+target supports every CPython version from 3.10 onward.
+
 PlanForge exposes two deliberately different Python workflows.
 
 In the prototyping workflow, Python owns the search loop and calls
