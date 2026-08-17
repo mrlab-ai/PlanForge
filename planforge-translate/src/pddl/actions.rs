@@ -177,11 +177,11 @@ impl Action {
             if eff.parameters.is_empty() {
                 instantiate_binding(var_mapping);
             } else {
+                let mut bound = var_mapping.clone();
                 crate::instantiate::for_each_parameter_tuple(
                     &eff.parameters,
                     tables.objects_by_type,
                     &mut |objects| {
-                        let mut bound = var_mapping.clone();
                         for (parameter, object) in eff.parameters.iter().zip(objects) {
                             bound.bind(&parameter.name, object);
                         }

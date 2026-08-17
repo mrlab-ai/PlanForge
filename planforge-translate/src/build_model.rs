@@ -198,10 +198,11 @@ impl Rule {
                 matched,
             } => {
                 fill_key(key, &key_positions[index], args);
-                matched[index]
-                    .entry(key.as_slice().into())
-                    .or_default()
-                    .push(Rc::clone(args));
+                if let Some(matches) = matched[index].get_mut(key.as_slice()) {
+                    matches.push(Rc::clone(args));
+                } else {
+                    matched[index].insert(key.clone().into_boxed_slice(), vec![Rc::clone(args)]);
+                }
             }
             Body::Product { matched, unmatched } => {
                 if matched[index].is_empty() {

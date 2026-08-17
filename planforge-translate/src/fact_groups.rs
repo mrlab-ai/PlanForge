@@ -19,18 +19,49 @@ use super::symbols::ObjectId;
 /// found over the lifted task may name a fact that grounding proved
 /// unreachable, and keeping it would put a fact into a SAS variable's domain
 /// that no state ever holds.
-fn expand_group(group: &[Atom], task: &Task, reachable_facts: &HashSet<Atom>) -> Vec<Atom> {
+type CountedFactIndex = HashMap<Atom, Vec<Atom>>;
+
+fn index_counted_facts(task: &Task, reachable_facts: &HashSet<Atom>) -> CountedFactIndex {
+    let object_order: HashMap<&str, usize> = task
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| (object.name.as_str(), index))
+        .collect();
+    let mut index: CountedFactIndex = HashMap::new();
+    for fact in reachable_facts {
+        for counted_position in 0..fact.args.len() {
+            let mut counted_args = fact.args.clone();
+            counted_args[counted_position] = "?X".to_string();
+            index
+                .entry(Atom::new(fact.predicate.clone(), counted_args))
+                .or_default()
+                .push(fact.clone());
+        }
+    }
+    for (counted_fact, facts) in &mut index {
+        let counted_position = counted_fact
+            .args
+            .iter()
+            .position(|argument| argument == "?X")
+            .expect("a counted-fact index key contains its counted argument");
+        facts.sort_by_key(|fact| object_order[fact.args[counted_position].as_str()]);
+    }
+    index
+}
+
+fn expand_group(
+    group: &[Atom],
+    reachable_facts: &HashSet<Atom>,
+    counted_facts: &CountedFactIndex,
+) -> Vec<Atom> {
     let mut result = vec![];
     for fact in group {
         match fact.args.iter().position(|arg| arg == "?X") {
             Some(pos) => {
-                for object in &task.objects {
-                    let mut newargs = fact.args.clone();
-                    newargs[pos] = object.name.clone();
-                    let atom = Atom::new(fact.predicate.clone(), newargs);
-                    if reachable_facts.contains(&atom) {
-                        result.push(atom);
-                    }
+                debug_assert_eq!(fact.args[pos], "?X");
+                if let Some(matches) = counted_facts.get(fact) {
+                    result.extend(matches.iter().cloned());
                 }
             }
             None => {
@@ -48,9 +79,10 @@ fn instantiate_groups(
     task: &Task,
     reachable_facts: &HashSet<Atom>,
 ) -> Vec<Vec<Atom>> {
+    let counted_facts = index_counted_facts(task, reachable_facts);
     groups
         .iter()
-        .map(|g| expand_group(g, task, reachable_facts))
+        .map(|g| expand_group(g, reachable_facts, &counted_facts))
         .collect()
 }
 

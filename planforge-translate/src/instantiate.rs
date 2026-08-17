@@ -443,10 +443,10 @@ pub fn explore(task: &Task) -> ExploreResult {
 /// parameter varying fastest. The tuples are visited rather than collected:
 /// there is one per object combination, and an axiom with three parameters
 /// over a few hundred objects has more of them than fit in memory comfortably.
-pub(crate) fn for_each_parameter_tuple(
+pub(crate) fn for_each_parameter_tuple<'a>(
     parameters: &[TypedObject],
-    objects_by_type: &HashMap<String, Vec<String>>,
-    visit: &mut impl FnMut(&[String]),
+    objects_by_type: &'a HashMap<String, Vec<String>>,
+    visit: &mut impl FnMut(&[&'a str]),
 ) {
     let domains: Vec<&[String]> = parameters
         .iter()
@@ -467,7 +467,7 @@ pub(crate) fn for_each_parameter_tuple(
     }
 
     let mut cursor = vec![0usize; domains.len()];
-    let mut tuple: Vec<String> = domains.iter().map(|objects| objects[0].clone()).collect();
+    let mut tuple: Vec<&str> = domains.iter().map(|objects| objects[0].as_str()).collect();
     loop {
         visit(&tuple);
         let mut level = domains.len();
@@ -478,11 +478,11 @@ pub(crate) fn for_each_parameter_tuple(
             level -= 1;
             cursor[level] += 1;
             if cursor[level] < domains[level].len() {
-                tuple[level].clone_from(&domains[level][cursor[level]]);
+                tuple[level] = domains[level][cursor[level]].as_str();
                 break;
             }
             cursor[level] = 0;
-            tuple[level].clone_from(&domains[level][0]);
+            tuple[level] = domains[level][0].as_str();
         }
     }
 }

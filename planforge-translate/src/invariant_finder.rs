@@ -1,4 +1,3 @@
-use itertools::Itertools;
 /// Finds mutex invariants among ground atoms.
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -74,21 +73,16 @@ fn add_inequality_preconds(
         return action.clone();
     }
 
-    let mut inequal_params = vec![];
-    for combo in (0..action.parameters.len()).combinations(2) {
-        let pos1 = combo[0];
-        let pos2 = combo[1];
-        if let Some(params_list) = reachable_action_params.get(&action.name) {
-            let mut all_different = true;
-            for params in params_list {
-                if params[pos1] == params[pos2] {
-                    all_different = false;
-                    break;
-                }
-            }
-            if all_different {
-                inequal_params.push((pos1, pos2));
-            }
+    let Some(params_list) = reachable_action_params.get(&action.name) else {
+        return action.clone();
+    };
+    let mut inequal_params: Vec<(usize, usize)> = (0..action.parameters.len())
+        .flat_map(|left| ((left + 1)..action.parameters.len()).map(move |right| (left, right)))
+        .collect();
+    for params in params_list {
+        inequal_params.retain(|&(left, right)| params[left] != params[right]);
+        if inequal_params.is_empty() {
+            break;
         }
     }
 
