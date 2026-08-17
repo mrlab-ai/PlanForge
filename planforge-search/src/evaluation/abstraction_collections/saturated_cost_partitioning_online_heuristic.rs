@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -14,7 +14,6 @@ use tracing::{Level, debug, enabled, info};
 
 use crate::evaluation::cartesian_abstractions::{
     CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementDirection,
-    CartesianRefinementHierarchy,
 };
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -127,6 +126,26 @@ impl fmt::Display for Saturator {
             Saturator::Perim => write!(f, "perim"),
             Saturator::Perimstar => write!(f, "perimstar"),
         }
+    }
+}
+
+impl Saturator {
+    fn cap_sequence(
+        self,
+        current_state_id: Option<usize>,
+    ) -> impl Iterator<Item = (&'static str, Option<usize>)> {
+        let (steps, len) = match self {
+            Self::All => ([("all", None), ("all", None)], 1),
+            Self::Perim => ([("perim", current_state_id), ("all", None)], 1),
+            Self::Perimstar => (
+                [
+                    ("perimstar/perim", current_state_id),
+                    ("perimstar/all", None),
+                ],
+                2,
+            ),
+        };
+        steps.into_iter().take(len)
     }
 }
 
@@ -402,23 +421,235 @@ struct CandidateCostPartitions {
 }
 
 /// Everything a cost partitioning over this collection needs except the order
-/// it is built in: the task, the domain abstractions and how many leading
-/// positions of an order they occupy (the rest are Cartesian abstractions and
-/// PDBs), where one state lands in every abstraction of the collection and what
-/// each scores there standalone, and the original operator costs the partition
-/// divides up.
+/// it is built in: the task, its abstraction components, where one state lands
+/// in every component and what each scores there standalone, and the original
+/// operator costs the partition divides up.
 ///
 /// Diversification evaluates the same collection at a sample rather than at the
 /// state being expanded, which is `PartitionedCollection { abstract_state_ids,
 /// standalone_current_h, ..collection }`.
 #[derive(Clone, Copy)]
-struct PartitionedCollection<'a> {
+struct PartitionedCollection<'a, 'task> {
     task: &'a dyn AbstractNumericTask,
-    abstractions: &'a [DomainAbstraction],
+    components: &'a [AbstractionComponent<'task>],
     abstract_state_ids: &'a [Option<usize>],
     standalone_current_h: &'a [f64],
-    num_domain_abstractions: usize,
     original_costs: &'a [f64],
+}
+
+enum SaturatedCosts {
+    Uniform(Vec<f64>),
+    AbstractOperator(AbstractOperatorCostFunction),
+    Regional(RegionalCostAllocation),
+}
+
+#[derive(Clone, Copy)]
+enum SaturationCostSpace {
+    Label,
+    AbstractOperator,
+    Regional,
+}
+
+struct ComponentSaturation<'a, 'task> {
+    component: &'a AbstractionComponent<'task>,
+    task: &'a dyn AbstractNumericTask,
+    combine_labels: bool,
+    cost_space: SaturationCostSpace,
+    current_state_id: Option<usize>,
+}
+
+struct SaturationStepContext<'a> {
+    component_id: usize,
+    current_state_id: Option<usize>,
+    abstract_state_ids: &'a [Option<usize>],
+    saturator: Saturator,
+    step_prefix: &'a str,
+}
+
+struct ComponentStepContext<'a, 'task> {
+    component_id: usize,
+    component: &'a AbstractionComponent<'task>,
+    task: &'a dyn AbstractNumericTask,
+    abstract_state_ids: &'a [Option<usize>],
+    deadline: Option<Instant>,
+    cost_space: SaturationCostSpace,
+    saturator: Saturator,
+    step_prefix: &'a str,
+}
+
+impl ComponentSaturation<'_, '_> {
+    fn saturate(
+        &self,
+        residual: &TransitionResidualCosts,
+        component_id: usize,
+        cap_state_id: Option<usize>,
+        deadline: Option<Instant>,
+    ) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError> {
+        match (self.component, self.cost_space) {
+            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Label) => {
+                let abstraction = heuristic.abstraction();
+                let abstraction_task = abstraction.task_for_factory(self.task);
+                let operator_costs = residual.operator_costs_for_label_cp();
+                let (distances, saturated) = if let Some(state_id) = cap_state_id {
+                    let table = abstraction
+                        .factory
+                        .build_goal_distances_for_goals(
+                            abstraction_task,
+                            self.combine_labels,
+                            &operator_costs,
+                            &abstraction.distance_table.goal_facts,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute domain PERIM cap table: {error:#}"
+                            ))
+                        })?;
+                    let h_cap = table.distances.get(state_id).copied().ok_or_else(|| {
+                        EvaluationError::InvalidState(format!(
+                            "domain component {component_id} state id {state_id} out of bounds for {} states",
+                            table.distances.len()
+                        ))
+                    })?;
+                    SaturatedCostPartitioningOnlineHeuristic::compute_domain_perim_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.combine_labels,
+                        &operator_costs,
+                        h_cap,
+                    )?
+                } else {
+                    SaturatedCostPartitioningOnlineHeuristic::compute_domain_cp_entry(
+                        abstraction,
+                        abstraction_task,
+                        self.combine_labels,
+                        &operator_costs,
+                        deadline,
+                    )?
+                };
+                Ok((distances, SaturatedCosts::Uniform(saturated)))
+            }
+            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::AbstractOperator) => {
+                let abstraction = heuristic.abstraction();
+                let abstraction_task = abstraction.task_for_factory(self.task);
+                let (table, saturated) = abstraction
+                    .factory
+                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
+                        abstraction_task,
+                        abstraction.combine_labels,
+                        &abstraction.abstract_operators,
+                        &abstraction.abstract_operator_footprints,
+                        SaturationStep {
+                            residual_costs: residual,
+                            abstraction_id: component_id,
+                            current_state_id: self.current_state_id,
+                            cap_state_id,
+                        },
+                        deadline,
+                    )
+                    .map_err(|error| {
+                        SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                            "failed to compute domain abstract-operator saturation",
+                            error,
+                        )
+                    })?;
+                Ok((table.distances, SaturatedCosts::AbstractOperator(saturated)))
+            }
+            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Regional) => {
+                let abstraction = heuristic.abstraction();
+                let abstraction_task = abstraction.task_for_factory(self.task);
+                let transition_system = abstraction
+                    .regional_transition_system(abstraction_task, deadline)
+                    .map_err(|error| {
+                        SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                            "failed to build domain regional transition system",
+                            error,
+                        )
+                    })?;
+                let (table, saturated) = abstraction
+                    .factory
+                    .build_precise_regional_cost_partitioned_distance_table_with_deadline(
+                        &transition_system,
+                        &abstraction.abstract_operator_footprints,
+                        residual,
+                        component_id,
+                        cap_state_id,
+                        deadline,
+                    )
+                    .map_err(|error| {
+                        SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                            "failed to compute domain regional saturation",
+                            error,
+                        )
+                    })?;
+                Ok((table.distances, SaturatedCosts::Regional(saturated)))
+            }
+            (AbstractionComponent::Cartesian(heuristic), SaturationCostSpace::Label) => {
+                let (distances, saturated) = build_explicit_label_cost_partitioning_table(
+                    &heuristic.abstraction().transition_system,
+                    &residual.operator_costs_for_label_cp(),
+                    cap_state_id,
+                    deadline,
+                )
+                .map_err(|error| {
+                    SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                        &format!(
+                            "failed to compute Cartesian label saturation for component {component_id}"
+                        ),
+                        error,
+                    )
+                })?;
+                Ok((distances, SaturatedCosts::Uniform(saturated)))
+            }
+            (
+                AbstractionComponent::Cartesian(heuristic),
+                SaturationCostSpace::AbstractOperator | SaturationCostSpace::Regional,
+            ) => {
+                let abstraction = heuristic.abstraction();
+                let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
+                    &abstraction.transition_system,
+                    &abstraction.abstract_operator_footprints,
+                    residual,
+                    component_id,
+                    cap_state_id,
+                    deadline,
+                )
+                .map_err(|error| {
+                    SaturatedCostPartitioningOnlineHeuristic::construction_error(
+                        &format!(
+                            "failed to compute Cartesian regional saturation for component {component_id}"
+                        ),
+                        error,
+                    )
+                })?;
+                Ok((distances, SaturatedCosts::AbstractOperator(saturated)))
+            }
+            (AbstractionComponent::PatternDatabase(pdb), _) => {
+                let operator_costs = residual.operator_costs_for_label_cp();
+                let (distances, saturated) = if let Some(state_id) = cap_state_id {
+                    let cap_distances = pdb.build_goal_distances(&operator_costs).map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB PERIM cap table {component_id}: {error}"
+                        ))
+                    })?;
+                    let h_cap = cap_distances.get(state_id).copied().ok_or_else(|| {
+                        EvaluationError::InvalidState(format!(
+                            "PDB component {component_id} state id {state_id} out of bounds for {} states",
+                            cap_distances.len()
+                        ))
+                    })?;
+                    pdb.build_cost_partitioned_distance_table_capped(&operator_costs, h_cap)
+                } else {
+                    pdb.build_cost_partitioned_distance_table(&operator_costs)
+                }
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to compute PDB saturation {component_id}: {error}"
+                    ))
+                })?;
+                Ok((distances, SaturatedCosts::Uniform(saturated)))
+            }
+        }
+    }
 }
 
 impl CostPartitioningHeuristic {
@@ -485,11 +716,10 @@ struct ScpOnlineState {
     cp_heuristics: Vec<CostPartitioningHeuristic>,
     h_values_by_abstraction: Vec<Vec<f64>>,
     standalone_lookup_tables: Vec<LookupTable>,
-    pdb_offset: usize,
     stolen_costs_by_abstraction: Vec<f64>,
     rng: SmallRng,
     improvement_ended: bool,
-    required_lookup_ids: Vec<usize>,
+    required_mask: Vec<bool>,
     offline_sample_ids: Vec<Vec<Option<usize>>>,
 }
 
@@ -509,11 +739,10 @@ impl ScpOnlineState {
             cp_heuristics: Vec::new(),
             h_values_by_abstraction: Vec::new(),
             standalone_lookup_tables: Vec::new(),
-            pdb_offset: usize::MAX,
             stolen_costs_by_abstraction: Vec::new(),
             rng: SmallRng::seed_from_u64(seed),
             improvement_ended: false,
-            required_lookup_ids: Vec::new(),
+            required_mask: Vec::new(),
             offline_sample_ids: Vec::new(),
         }
     }
@@ -522,18 +751,12 @@ impl ScpOnlineState {
 pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
-    abstractions: RefCell<Option<Vec<DomainAbstraction>>>,
-    abstraction_heuristics: Vec<DomainAbstractionHeuristic>,
-    cartesian_abstractions: RefCell<Option<Vec<CartesianAbstraction>>>,
-    cartesian_hierarchies: Vec<CartesianRefinementHierarchy>,
-    pdbs: Vec<PatternDatabase<'task>>,
+    components: RefCell<Vec<AbstractionComponent<'task>>>,
     config: ScpOnlineConfig,
     original_operator_costs: Vec<f64>,
     state: RefCell<ScpOnlineState>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
     component_ids_scratch: RefCell<Vec<Option<usize>>>,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
     sampling_task: RefCell<Option<TaskRef<'task>>>,
 }
 
@@ -574,16 +797,19 @@ impl<'task> FillScpHeuristic<'task> {
             scp_config,
             task,
         )?;
-        let num_domain_abstractions = abstractions.len();
-        let mut abstract_state_ids: Vec<Option<usize>> = abstractions
+        let components = temp.components.borrow();
+        let abstract_state_ids = components
             .iter()
-            .map(|abstraction| Some(abstraction.distance_table.initial_state_hash))
-            .collect();
-        abstract_state_ids.extend(
-            cartesian_abstractions
-                .iter()
-                .map(|abstraction| Some(abstraction.transition_system.initial_state_hash)),
-        );
+            .map(|component| match component {
+                AbstractionComponent::Domain(heuristic) => {
+                    Some(heuristic.abstraction().distance_table.initial_state_hash)
+                }
+                AbstractionComponent::Cartesian(heuristic) => {
+                    Some(heuristic.abstraction().transition_system.initial_state_hash)
+                }
+                AbstractionComponent::PatternDatabase(_) => Some(0),
+            })
+            .collect::<Vec<_>>();
         let deadline = config
             .table_construction_max_time
             .is_finite()
@@ -596,21 +822,19 @@ impl<'task> FillScpHeuristic<'task> {
                 task,
                 &mut state,
                 &abstract_state_ids,
-                &abstractions,
-                num_domain_abstractions,
+                &components,
                 deadline,
             )?
         };
         let standalone_current_h = {
             let state = temp.state.borrow();
-            standalone_current_h_values(&state, &abstract_state_ids, num_domain_abstractions)
+            standalone_current_h_values(&state, &abstract_state_ids)
         };
         let collection = PartitionedCollection {
             task,
-            abstractions: &abstractions,
+            components: &components,
             abstract_state_ids: &abstract_state_ids,
             standalone_current_h: &standalone_current_h,
-            num_domain_abstractions,
             original_costs: &original_costs,
         };
         let (mut cp_heuristic, mut residual_costs, mut residual_partitions) =
@@ -777,7 +1001,36 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         sampling_task: Option<TaskRef<'task>>,
     ) -> Result<Self, EvaluationError> {
-        if abstractions.is_empty() && cartesian_abstractions.is_empty() && pdbs.is_empty() {
+        let mut components =
+            Vec::with_capacity(abstractions.len() + cartesian_abstractions.len() + pdbs.len());
+        components.extend(
+            abstractions
+                .into_iter()
+                .enumerate()
+                .map(|(index, abstraction)| {
+                    AbstractionComponent::domain(Some(format!("scp_online_{index}")), abstraction)
+                }),
+        );
+        components.extend(cartesian_abstractions.into_iter().enumerate().map(
+            |(index, abstraction)| {
+                AbstractionComponent::cartesian(
+                    Some(format!("scp_online_cartesian_{index}")),
+                    abstraction,
+                )
+            },
+        ));
+        components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
+        Self::new_from_components_and_sampling_task(name, components, config, task, sampling_task)
+    }
+
+    fn new_from_components_and_sampling_task(
+        name: Option<String>,
+        components: Vec<AbstractionComponent<'task>>,
+        config: ScpOnlineConfig,
+        task: &'task dyn AbstractNumericTask,
+        sampling_task: Option<TaskRef<'task>>,
+    ) -> Result<Self, EvaluationError> {
+        if components.is_empty() {
             return Err(EvaluationError::ComputationFailed(
                 "SCP requires at least one abstraction component".to_string(),
             ));
@@ -827,145 +1080,107 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 "SCP max_size must be greater than zero".to_string(),
             ));
         }
-        let abstraction_heuristics = abstractions
-            .iter()
-            .enumerate()
-            .map(|(index, abstraction)| {
-                DomainAbstractionHeuristic::new(
-                    Some(format!("scp_online_{index}")),
-                    abstraction.lookup_clone(),
-                )
-            })
-            .collect();
-        let cartesian_hierarchies = cartesian_abstractions
-            .iter()
-            .map(|abstraction| abstraction.hierarchy.clone())
-            .collect();
-
         let original_costs: Vec<f64> = task
             .get_operators()
             .iter()
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
 
-        let num_abstractions = abstractions.len();
-        let num_cartesian_abstractions = cartesian_abstractions.len();
-        let pdbs_count = pdbs.len();
-        let total_components = num_abstractions + num_cartesian_abstractions + pdbs_count;
-
-        let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(total_components);
+        let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());
         let mut saturated_costs_by_abstraction: Vec<Vec<f64>> =
-            Vec::with_capacity(total_components);
+            Vec::with_capacity(components.len());
         let mut debug_initial_h_values = Vec::new();
 
-        for (abstraction_id, abstraction) in abstractions.iter().enumerate() {
-            let abstraction_task = abstraction.task_for_factory(task);
-            let goal_facts = &abstraction.distance_table.goal_facts;
-            let table = abstraction
-                .factory
-                .build_goal_distances_for_goals(
-                    abstraction_task,
-                    config.combine_labels,
-                    &original_costs,
-                    goal_facts,
-                )
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to compute goal distances for order generator: {error:#}"
-                    ))
-                })?;
-            let (_, saturated) = abstraction
-                .factory
-                .build_cost_partitioned_distance_table_for_goals(
-                    abstraction_task,
-                    config.combine_labels,
-                    &original_costs,
-                    false,
-                    goal_facts,
-                )
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to compute saturated costs for order generator: {error:#}"
-                    ))
-                })?;
-            if config.collection_config.debug {
-                let initial_h = table
-                    .distances
-                    .get(table.initial_state_hash)
-                    .copied()
-                    .ok_or_else(|| {
-                        EvaluationError::InvalidState(format!(
-                            "domain abstraction initial state {} out of bounds for {} states",
-                            table.initial_state_hash,
-                            table.distances.len()
+        for (component_id, component) in components.iter().enumerate() {
+            let (distances, saturated, initial_state_id) = match component {
+                AbstractionComponent::Domain(heuristic) => {
+                    let abstraction = heuristic.abstraction();
+                    let abstraction_task = abstraction.task_for_factory(task);
+                    let goal_facts = &abstraction.distance_table.goal_facts;
+                    let table = abstraction
+                        .factory
+                        .build_goal_distances_for_goals(
+                            abstraction_task,
+                            config.combine_labels,
+                            &original_costs,
+                            goal_facts,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute goal distances for order generator: {error:#}"
+                            ))
+                        })?;
+                    let (_, saturated) = abstraction
+                        .factory
+                        .build_cost_partitioned_distance_table_for_goals(
+                            abstraction_task,
+                            config.combine_labels,
+                            &original_costs,
+                            false,
+                            goal_facts,
+                        )
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute saturated costs for order generator: {error:#}"
+                            ))
+                        })?;
+                    if config.collection_config.debug {
+                        info!(
+                            "scp_online debug: collection abstraction {component_id}: states={}, goal_facts={}",
+                            abstraction_state_count(abstraction),
+                            goal_facts.len()
+                        );
+                    }
+                    (table.distances, saturated, table.initial_state_hash)
+                }
+                AbstractionComponent::Cartesian(heuristic) => {
+                    let abstraction = heuristic.abstraction();
+                    let (distances, saturated) = build_explicit_label_cost_partitioning_table(
+                        &abstraction.transition_system,
+                        &original_costs,
+                        None,
+                        None,
+                    )
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute Cartesian order-generator table {component_id}: {error:#}"
                         ))
                     })?;
-                debug_initial_h_values.push(initial_h);
-                info!(
-                    "scp_online debug: collection abstraction {abstraction_id}: original_initial_h={initial_h}, states={}, goal_facts={}",
-                    abstraction_state_count(abstraction),
-                    goal_facts.len()
-                );
-            }
-            h_values.push(table.distances);
-            saturated_costs_by_abstraction.push(saturated);
-        }
-        for (cartesian_id, abstraction) in cartesian_abstractions.iter().enumerate() {
-            let (distances, saturated) = build_explicit_label_cost_partitioning_table(
-                &abstraction.transition_system,
-                &original_costs,
-                None,
-                None,
-            )
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute Cartesian order-generator table {cartesian_id}: {error:#}"
-                ))
-            })?;
-            if config.collection_config.debug {
-                let initial_h = distances
-                    .get(abstraction.transition_system.initial_state_hash)
-                    .copied()
-                    .ok_or_else(|| {
-                        EvaluationError::InvalidState(format!(
-                            "Cartesian initial state {} out of bounds for {} states",
-                            abstraction.transition_system.initial_state_hash,
-                            distances.len()
+                    (
+                        distances,
+                        saturated,
+                        abstraction.transition_system.initial_state_hash,
+                    )
+                }
+                AbstractionComponent::PatternDatabase(pdb) => {
+                    let distances = pdb.build_goal_distances(&original_costs).map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to compute PDB goal distances for order generator: {error}"
                         ))
                     })?;
-                debug_initial_h_values.push(initial_h);
-                info!(
-                    "scp_online debug: Cartesian abstraction {cartesian_id}: original_initial_h={initial_h}, states={}",
-                    abstraction.num_states()
-                );
-            }
-            h_values.push(distances);
-            saturated_costs_by_abstraction.push(saturated);
-        }
-
-        for (pdb_id, pdb) in pdbs.iter().enumerate() {
-            let distances = pdb.build_goal_distances(&original_costs).map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute PDB goal distances for order generator: {error}"
-                ))
-            })?;
-            let (_, saturated) = pdb
-                .build_cost_partitioned_distance_table(&original_costs)
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to compute PDB saturated costs for order generator: {error}"
-                    ))
-                })?;
+                    let (_, saturated) = pdb
+                        .build_cost_partitioned_distance_table(&original_costs)
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to compute PDB saturated costs for order generator: {error}"
+                            ))
+                        })?;
+                    (distances, saturated, 0)
+                }
+            };
             if config.collection_config.debug {
-                let initial_h = distances.first().copied().ok_or_else(|| {
+                let initial_h = distances.get(initial_state_id).copied().ok_or_else(|| {
                     EvaluationError::InvalidState(format!(
-                        "PDB {pdb_id} has no initial abstract state"
+                        "{} component {component_id} initial state {initial_state_id} out of bounds for {} states",
+                        component.kind(),
+                        distances.len()
                     ))
                 })?;
                 debug_initial_h_values.push(initial_h);
                 info!(
-                    "scp_online debug: PDB {pdb_id}: original_initial_h={initial_h}, states={}",
-                    pdb.num_states()
+                    "scp_online debug: {} component {component_id}: original_initial_h={initial_h}, states={}",
+                    component.kind(),
+                    component.num_states()
                 );
             }
             h_values.push(distances);
@@ -990,34 +1205,31 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .collect();
         if config.partitioning.uses_regions() {
             let regional_scores = compute_regional_conflict_scores(
-                &abstractions,
-                &cartesian_abstractions,
+                &components,
                 &saturated_costs_by_abstraction,
                 &original_costs,
             )?;
-            stolen_costs[..regional_scores.len()].copy_from_slice(&regional_scores);
+            for (component_id, score) in regional_scores.into_iter().enumerate() {
+                if let Some(score) = score {
+                    stolen_costs[component_id] = score;
+                }
+            }
         }
 
         let mut st = ScpOnlineState::new(config.random_seed);
         st.h_values_by_abstraction = h_values;
         st.stolen_costs_by_abstraction = stolen_costs;
-        st.pdb_offset = num_abstractions + num_cartesian_abstractions;
+        st.required_mask = vec![false; components.len()];
 
         Ok(Self {
             name: name.unwrap_or_else(|| "scp_online".to_string()),
             task,
-            abstractions: RefCell::new(Some(abstractions)),
-            abstraction_heuristics,
-            cartesian_abstractions: RefCell::new(Some(cartesian_abstractions)),
-            cartesian_hierarchies,
-            pdbs,
+            components: RefCell::new(components),
             config,
             original_operator_costs: original_costs,
             state: RefCell::new(st),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
             component_ids_scratch: RefCell::new(Vec::new()),
-            prop_scratch: RefCell::new(Vec::new()),
-            numeric_scratch: RefCell::new(Vec::new()),
             sampling_task: RefCell::new(sampling_task),
         })
     }
@@ -1028,28 +1240,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         config: ScpOnlineConfig,
         task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
-        let mut domain_abstractions = Vec::new();
-        let mut cartesian_abstractions = Vec::new();
-        let mut pdbs = Vec::new();
-        for component in components {
-            match component {
-                AbstractionComponent::Domain(heuristic) => {
-                    domain_abstractions.push((*heuristic).into_abstraction());
-                }
-                AbstractionComponent::Cartesian(heuristic) => {
-                    cartesian_abstractions.push((*heuristic).into_abstraction());
-                }
-                AbstractionComponent::PatternDatabase(pdb) => pdbs.push(*pdb),
-            }
-        }
-        Self::new_with_cartesian(
-            name,
-            domain_abstractions,
-            cartesian_abstractions,
-            pdbs,
-            config,
-            task,
-        )
+        Self::new_from_components_and_sampling_task(name, components, config, task, None)
     }
 
     pub fn from_components_with_sampling_task(
@@ -1059,56 +1250,224 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         sampling_task: TaskRef<'task>,
     ) -> Result<Self, EvaluationError> {
-        let mut domain_abstractions = Vec::new();
-        let mut cartesian_abstractions = Vec::new();
-        let mut pdbs = Vec::new();
-        for component in components {
-            match component {
-                AbstractionComponent::Domain(heuristic) => {
-                    domain_abstractions.push((*heuristic).into_abstraction());
-                }
-                AbstractionComponent::Cartesian(heuristic) => {
-                    cartesian_abstractions.push((*heuristic).into_abstraction());
-                }
-                AbstractionComponent::PatternDatabase(pdb) => pdbs.push(*pdb),
-            }
-        }
-        Self::new_with_cartesian_and_sampling_task(
+        Self::new_from_components_and_sampling_task(
             name,
-            domain_abstractions,
-            cartesian_abstractions,
-            pdbs,
+            components,
             config,
             task,
             Some(sampling_task),
         )
     }
 
-    fn cartesian_abstraction_for_component(
+    fn add_saturation_steps<R, Build, Reduce, Log>(
         &self,
-        component_id: usize,
-        num_domain_abstractions: usize,
-    ) -> Option<Ref<'_, CartesianAbstraction>> {
-        let index = component_id.checked_sub(num_domain_abstractions)?;
-        if index >= self.cartesian_hierarchies.len() {
-            return None;
+        cp: &mut CostPartitioningHeuristic,
+        residual: &mut R,
+        context: SaturationStepContext<'_>,
+        mut build: Build,
+        mut reduce: Reduce,
+        mut log: Log,
+    ) -> Result<bool, EvaluationError>
+    where
+        R: ?Sized,
+        Build: FnMut(&R, Option<usize>) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError>,
+        Reduce: FnMut(&mut R, &SaturatedCosts) -> Result<bool, EvaluationError>,
+        Log: FnMut(&str, &[f64], &SaturatedCosts),
+    {
+        let SaturationStepContext {
+            component_id,
+            current_state_id,
+            abstract_state_ids,
+            saturator,
+            step_prefix,
+        } = context;
+        if saturator != Saturator::All && current_state_id.is_none() {
+            return Err(EvaluationError::InvalidState(format!(
+                "missing abstract state id for PERIM component {component_id}"
+            )));
         }
-        Some(Ref::map(
-            self.cartesian_abstractions.borrow(),
-            |collection| {
-                collection
-                    .as_ref()
-                    .expect(
-                        "Cartesian abstractions were released while SCP construction was active",
-                    )
-                    .get(index)
-                    .expect("Cartesian abstraction component index must be valid")
-            },
-        ))
+        for (phase, cap_state_id) in saturator.cap_sequence(current_state_id) {
+            let step = format!("{step_prefix} {phase}");
+            let (distances, saturated) = build(residual, cap_state_id)?;
+            log(&step, &distances, &saturated);
+            if should_skip_zero_current_table(
+                self.config.diversify,
+                &step,
+                component_id,
+                &distances,
+                abstract_state_ids,
+            ) {
+                return Ok(true);
+            }
+            if !reduce(residual, &saturated)? {
+                return Ok(false);
+            }
+            cp.add_h_values(component_id, distances);
+        }
+        Ok(true)
     }
 
-    fn pdb_offset(&self, num_domain_abstractions: usize) -> usize {
-        num_domain_abstractions + self.cartesian_hierarchies.len()
+    fn add_label_component_step(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        remaining_costs: &mut [f64],
+        context: ComponentStepContext<'_, '_>,
+    ) -> Result<bool, EvaluationError> {
+        let ComponentStepContext {
+            component_id,
+            component,
+            task,
+            abstract_state_ids,
+            deadline,
+            step_prefix,
+            ..
+        } = context;
+        let current_state_id = abstract_state_ids.get(component_id).copied().flatten();
+        let protocol = ComponentSaturation {
+            component,
+            task,
+            combine_labels: self.config.combine_labels,
+            cost_space: SaturationCostSpace::Label,
+            current_state_id,
+        };
+        self.add_saturation_steps(
+            cp,
+            remaining_costs,
+            SaturationStepContext {
+                component_id,
+                current_state_id,
+                abstract_state_ids,
+                saturator: self.config.saturator,
+                step_prefix,
+            },
+            |costs, cap_state_id| {
+                let residual = TransitionResidualCosts::from_operator_costs(costs);
+                protocol.saturate(&residual, component_id, cap_state_id, deadline)
+            },
+            |costs, saturated| {
+                let SaturatedCosts::Uniform(saturated) = saturated else {
+                    unreachable!("label saturation must return uniform operator costs")
+                };
+                reduce_costs(costs, saturated)?;
+                Ok(true)
+            },
+            |step, distances, saturated| {
+                let SaturatedCosts::Uniform(saturated) = saturated else {
+                    unreachable!("label saturation must return uniform operator costs")
+                };
+                log_label_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    saturated,
+                    abstract_state_ids,
+                );
+            },
+        )
+    }
+
+    fn add_transition_component_step(
+        &self,
+        cp: &mut CostPartitioningHeuristic,
+        remaining_costs: &mut TransitionResidualCosts,
+        context: ComponentStepContext<'_, '_>,
+    ) -> Result<bool, EvaluationError> {
+        let ComponentStepContext {
+            component_id,
+            component,
+            task,
+            abstract_state_ids,
+            deadline,
+            cost_space,
+            saturator,
+            step_prefix,
+        } = context;
+        let current_state_id = abstract_state_ids.get(component_id).copied().flatten();
+        let protocol = ComponentSaturation {
+            component,
+            task,
+            combine_labels: self.config.combine_labels,
+            cost_space,
+            current_state_id,
+        };
+        let footprints = match component {
+            AbstractionComponent::Domain(heuristic) => heuristic
+                .abstraction()
+                .abstract_operator_footprints
+                .as_slice(),
+            AbstractionComponent::Cartesian(heuristic) => heuristic
+                .abstraction()
+                .abstract_operator_footprints
+                .as_slice(),
+            AbstractionComponent::PatternDatabase(_) => &[],
+        };
+        self.add_saturation_steps(
+            cp,
+            remaining_costs,
+            SaturationStepContext {
+                component_id,
+                current_state_id,
+                abstract_state_ids,
+                saturator,
+                step_prefix,
+            },
+            |residual, cap_state_id| {
+                protocol.saturate(residual, component_id, cap_state_id, deadline)
+            },
+            |residual, saturated| match saturated {
+                SaturatedCosts::Uniform(costs) => {
+                    residual
+                        .reduce_operator_costs_uniform(costs)
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to reduce uniform residual costs for component {component_id}: {error:#}"
+                            ))
+                        })?;
+                    Ok(true)
+                }
+                SaturatedCosts::AbstractOperator(costs) => Self::reduce_abstract_operator_costs(
+                    residual,
+                    component_id,
+                    footprints,
+                    costs,
+                    deadline,
+                    &format!(
+                        "failed to reduce abstract-operator residual costs for component {component_id}"
+                    ),
+                ),
+                SaturatedCosts::Regional(allocation) => Self::reduce_regional_allocation(
+                    residual,
+                    allocation,
+                    deadline,
+                    &format!(
+                        "failed to reduce regional residual costs for component {component_id}"
+                    ),
+                ),
+            },
+            |step, distances, saturated| match saturated {
+                SaturatedCosts::Uniform(costs) => log_transition_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    costs,
+                    abstract_state_ids,
+                ),
+                SaturatedCosts::AbstractOperator(costs) => log_transition_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    &costs.operator_costs,
+                    abstract_state_ids,
+                ),
+                SaturatedCosts::Regional(allocation) => log_transition_table_summary(
+                    step,
+                    component_id,
+                    distances,
+                    &regional_allocation_amounts(allocation),
+                    abstract_state_ids,
+                ),
+            },
+        )
     }
 
     fn compute_order_for_state(
@@ -1116,23 +1475,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
-        abstractions: &[DomainAbstraction],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         deadline: Option<Instant>,
     ) -> Result<Vec<usize>, EvaluationError> {
         let order = self.compute_state_dependent_order(
             task,
             state,
             abstract_state_ids,
-            abstractions,
-            num_domain_abstractions,
+            components,
             deadline,
         )?;
         if self.config.partitioning.uses_regions()
             && let Some(goal_cover_order) = self.cartesian_goal_cover_order(
                 &order,
-                num_domain_abstractions,
-                &standalone_current_h_values(state, abstract_state_ids, num_domain_abstractions),
+                components,
+                &standalone_current_h_values(state, abstract_state_ids),
                 true,
             )
         {
@@ -1152,8 +1509,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
-        abstractions: &[DomainAbstraction],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         deadline: Option<Instant>,
     ) -> Result<Vec<usize>, EvaluationError> {
         match self.config.order_generator {
@@ -1172,8 +1528,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 task,
                 state,
                 abstract_state_ids,
-                abstractions,
-                num_domain_abstractions,
+                components,
                 deadline,
             ),
             OrderGenerator::Diverse => Ok(Self::compute_greedy_order_for_state(
@@ -1189,8 +1544,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
-        abstractions: &[DomainAbstraction],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         deadline: Option<Instant>,
     ) -> Result<Vec<Vec<usize>>, EvaluationError> {
         if self.config.order_generator != OrderGenerator::Diverse {
@@ -1199,8 +1553,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     task,
                     state,
                     abstract_state_ids,
-                    abstractions,
-                    num_domain_abstractions,
+                    components,
                     deadline,
                 )
                 .map(|order| vec![order]);
@@ -1219,18 +1572,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn cartesian_goal_cover_order(
         &self,
         base_order: &[usize],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
         require_pure_cartesian_collection: bool,
     ) -> Option<Vec<usize>> {
-        let collection = self.cartesian_abstractions.borrow();
-        let collection = collection
-            .as_ref()
-            .expect("Cartesian abstractions were released while SCP order construction was active");
         cartesian_goal_cover_order(
             base_order,
-            num_domain_abstractions,
-            collection,
+            components,
             standalone_current_h,
             require_pure_cartesian_collection,
             GoalCoverOrderVariant::default(),
@@ -1240,21 +1588,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn compact_cartesian_goal_cover_orders(
         &self,
         base_order: &[usize],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
     ) -> Vec<(usize, Vec<usize>)> {
-        let collection = self.cartesian_abstractions.borrow();
-        let collection = collection
-            .as_ref()
-            .expect("Cartesian abstractions were released while SCP order construction was active");
         let mut variants_by_goal = HashMap::<usize, usize>::new();
-        for abstraction in collection {
+        for abstraction in components
+            .iter()
+            .filter_map(AbstractionComponent::as_cartesian)
+        {
             if let Some(goal_id) = abstraction.metadata.collection_goal_id {
                 *variants_by_goal.entry(goal_id).or_default() += 1;
             }
         }
-        let progressive_roots = collection
+        let progressive_roots = components
             .iter()
+            .filter_map(AbstractionComponent::as_cartesian)
             .any(|abstraction| abstraction.metadata.progressive_refinement_root);
         let goal_count = variants_by_goal
             .values()
@@ -1276,8 +1624,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .filter_map(|variant| {
                 let order = cartesian_goal_cover_order(
                     base_order,
-                    num_domain_abstractions,
-                    collection,
+                    components,
                     standalone_current_h,
                     false,
                     variant,
@@ -1285,7 +1632,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 let first_component = *order
                     .first()
                     .expect("compact goal-cover order must not be empty");
-                let goal_id = collection[first_component - num_domain_abstractions]
+                let goal_id = components[first_component]
+                    .as_cartesian()
+                    .expect("compact goal-cover order must start with a Cartesian component")
                     .metadata
                     .collection_goal_id
                     .expect("compact goal-cover order must start with its anchor goal");
@@ -1297,44 +1646,39 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn cartesian_specialist_goal_for_order(
         &self,
         order: &[usize],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
     ) -> Option<usize> {
-        if num_domain_abstractions != 0 {
-            return None;
-        }
-        let collection = self.cartesian_abstractions.borrow();
-        let collection = collection.as_ref()?;
-        if order.len() != collection.len()
+        if order.len() != components.len()
             || !order.iter().copied().all(|id| {
-                collection
+                components
                     .get(id)
+                    .and_then(AbstractionComponent::as_cartesian)
                     .is_some_and(|abstraction| abstraction.metadata.collection_goal_id.is_some())
             })
         {
             return None;
         }
-        if !collection[order[0]].metadata.progressive_refinement_root {
+        if !components[order[0]]
+            .as_cartesian()?
+            .metadata
+            .progressive_refinement_root
+        {
             return None;
         }
         order
             .first()
-            .and_then(|&id| collection[id].metadata.collection_goal_id)
+            .and_then(|&id| components[id].as_cartesian()?.metadata.collection_goal_id)
     }
 
     fn prefixed_cartesian_goal_cover_order(
         &self,
         base_order: &[usize],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
     ) -> Option<Vec<usize>> {
-        let collection = self.cartesian_abstractions.borrow();
-        let collection = collection
-            .as_ref()
-            .expect("Cartesian abstractions were released while SCP order construction was active");
         cartesian_goal_cover_order(
             base_order,
-            num_domain_abstractions,
-            collection,
+            components,
             standalone_current_h,
             false,
             GoalCoverOrderVariant {
@@ -1395,8 +1739,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
-        abstractions: &[DomainAbstraction],
-        num_domain_abstractions: usize,
+        components: &[AbstractionComponent<'_>],
         deadline: Option<Instant>,
     ) -> Result<Vec<usize>, EvaluationError> {
         if self.config.partitioning.uses_regions() {
@@ -1423,46 +1766,46 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     break;
                 }
-                let result = if pos < num_domain_abstractions {
-                    let abstraction = &abstractions[pos];
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    Self::compute_domain_cp_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        deadline,
-                    )
-                } else if let Some(abstraction) =
-                    self.cartesian_abstraction_for_component(pos, num_domain_abstractions)
-                {
-                    build_explicit_label_cost_partitioning_table(
-                        &abstraction.transition_system,
-                        &remaining_costs,
-                        None,
-                        deadline,
-                    )
-                    .map_err(|error| {
-                        Self::construction_error(
-                            &format!(
-                                "failed to compute Cartesian dynamic-order table for component {pos}"
-                            ),
-                            error,
+                let component = components.get(pos).ok_or_else(|| {
+                    EvaluationError::ComputationFailed(format!(
+                        "dynamic order requested missing component {pos}"
+                    ))
+                })?;
+                let result = match component {
+                    AbstractionComponent::Domain(heuristic) => {
+                        let abstraction = heuristic.abstraction();
+                        let abstraction_task = abstraction.task_for_factory(task);
+                        Self::compute_domain_cp_entry(
+                            abstraction,
+                            abstraction_task,
+                            self.config.combine_labels,
+                            &remaining_costs,
+                            deadline,
                         )
-                    })
-                } else {
-                    let pdb_id = pos - self.pdb_offset(num_domain_abstractions);
-                    let pdb = self.pdbs.get(pdb_id).ok_or_else(|| {
-                        EvaluationError::ComputationFailed(format!(
-                            "dynamic order requested missing PDB component {pdb_id}"
-                        ))
-                    })?;
-                    pdb.build_cost_partitioned_distance_table(&remaining_costs)
+                    }
+                    AbstractionComponent::Cartesian(heuristic) => {
+                        build_explicit_label_cost_partitioning_table(
+                            &heuristic.abstraction().transition_system,
+                            &remaining_costs,
+                            None,
+                            deadline,
+                        )
+                        .map_err(|error| {
+                            Self::construction_error(
+                                &format!(
+                                    "failed to compute Cartesian dynamic-order table for component {pos}"
+                                ),
+                                error,
+                            )
+                        })
+                    }
+                    AbstractionComponent::PatternDatabase(pdb) => pdb
+                        .build_cost_partitioned_distance_table(&remaining_costs)
                         .map_err(|error| {
                             EvaluationError::ComputationFailed(format!(
-                                "failed to compute PDB dynamic-order table {pdb_id}: {error}"
+                                "failed to compute PDB dynamic-order table {pos}: {error}"
                             ))
-                        })
+                        }),
                 };
                 let (distances, saturated) = match result {
                     Ok(entry) => entry,
@@ -1517,76 +1860,85 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn compute_abstract_state_ids_into(
         &self,
         eval_state: &EvaluationState<'_, '_>,
-        required_ids: Option<&[usize]>,
+        required_mask: Option<&[bool]>,
         ids: &mut Vec<Option<usize>>,
-    ) -> Result<usize, EvaluationError> {
-        let num_domain = self.abstraction_heuristics.len();
-        let num_cartesian = self.cartesian_hierarchies.len();
-        let pdb_offset = num_domain + num_cartesian;
-        let total_components = pdb_offset + self.pdbs.len();
+    ) -> Result<(), EvaluationError> {
+        let components = self.components.borrow();
+        if let Some(mask) = required_mask {
+            assert_eq!(
+                mask.len(),
+                components.len(),
+                "required component mask must match the abstraction collection"
+            );
+        }
         ids.clear();
-        ids.resize(total_components, None);
-        let needs_all = required_ids.is_none();
-        {
-            let mut scratch = self.lookup_scratch.borrow_mut();
-            compute_collection_abstract_state_ids(
-                &self.abstraction_heuristics,
-                eval_state,
-                required_ids,
-                &mut scratch,
-            )?;
-            for (id, abstract_id) in scratch.abstract_state_ids.iter().copied().enumerate() {
-                ids[id] = abstract_id;
-            }
-        }
+        ids.resize(components.len(), None);
 
-        let cartesian_required = !self.cartesian_hierarchies.is_empty()
-            && (needs_all
-                || required_ids.is_some_and(|ids| {
-                    ids.iter().any(|&id| (num_domain..pdb_offset).contains(&id))
-                }));
-        let pdb_required = !self.pdbs.is_empty()
-            && (needs_all
-                || required_ids.is_some_and(|ids| ids.iter().any(|&id| id >= pdb_offset)));
-        if cartesian_required || pdb_required {
-            let registry = eval_state.state_registry().ok_or_else(|| {
-                EvaluationError::InvalidState(
-                    "SCP Cartesian/PDB lookup requires state registry".to_string(),
-                )
+        let registry = eval_state.state_registry().ok_or_else(|| {
+            EvaluationError::InvalidState(
+                "SCP abstraction lookup requires state registry".to_string(),
+            )
+        })?;
+        let mut scratch = self.lookup_scratch.borrow_mut();
+        eval_state.state().fill_state(registry, &mut scratch.prop);
+        registry
+            .fill_numeric_vars(eval_state.state(), &mut scratch.numeric)
+            .map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to read numeric state: {error:?}"
+                ))
             })?;
-            let mut numeric = self.numeric_scratch.borrow_mut();
-            registry
-                .fill_numeric_vars(eval_state.state(), &mut numeric)
-                .map_err(|err| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to read numeric state: {err:?}"
-                    ))
-                })?;
-            let mut prop = self.prop_scratch.borrow_mut();
-            eval_state.state().fill_state(registry, &mut prop);
-
-            if cartesian_required {
-                for (cartesian_id, hierarchy) in self.cartesian_hierarchies.iter().enumerate() {
-                    let component_id = num_domain + cartesian_id;
-                    if needs_all || required_ids.is_some_and(|ids| ids.contains(&component_id)) {
-                        ids[component_id] =
-                            Some(hierarchy.map_state(&prop, &numeric).map_err(|error| {
-                                EvaluationError::ComputationFailed(error.to_string())
-                            })?);
-                    }
-                }
-            }
-            if pdb_required {
-                for (pdb_id, pdb) in self.pdbs.iter().enumerate() {
-                    let sid = pdb
-                        .abstract_state_id_from_source_state_values(&prop, &numeric)
-                        .map_err(EvaluationError::ComputationFailed)?;
-                    ids[pdb_offset + pdb_id] = sid;
-                }
-            }
+        scratch.required_domain_ids.clear();
+        scratch.required_domain_ids.extend(
+            components
+                .iter()
+                .enumerate()
+                .filter(|(id, component)| {
+                    required_mask.is_none_or(|mask| mask[*id])
+                        && matches!(component, AbstractionComponent::Domain(_))
+                })
+                .map(|(id, _)| id),
+        );
+        scratch.comparisons.clear();
+        if scratch.required_domain_ids.len() > 1 {
+            let first_id = scratch.required_domain_ids[0];
+            let AbstractionComponent::Domain(heuristic) = &components[first_id] else {
+                unreachable!("required domain component id must reference a domain abstraction")
+            };
+            let DomainAbstractionLookupScratch {
+                numeric,
+                comparisons,
+                ..
+            } = &mut *scratch;
+            heuristic.fill_comparison_values_from_projected_state_values(numeric, comparisons)?;
         }
 
-        Ok(num_domain)
+        for (component_id, component) in components.iter().enumerate() {
+            if required_mask.is_some_and(|mask| !mask[component_id]) {
+                continue;
+            }
+            ids[component_id] = match component {
+                AbstractionComponent::Domain(heuristic) => Some(
+                    heuristic.compute_abstract_hash_from_projected_state_values_inner(
+                        &scratch.prop,
+                        &scratch.numeric,
+                        Some(&scratch.comparisons),
+                    )?,
+                ),
+                AbstractionComponent::Cartesian(heuristic) => Some(
+                    heuristic
+                        .abstraction()
+                        .hierarchy
+                        .map_state(&scratch.prop, &scratch.numeric)
+                        .map_err(|error| EvaluationError::ComputationFailed(error.to_string()))?,
+                ),
+                AbstractionComponent::PatternDatabase(pdb) => pdb
+                    .abstract_state_id_from_source_state_values(&scratch.prop, &scratch.numeric)
+                    .map_err(EvaluationError::ComputationFailed)?,
+            };
+        }
+
+        Ok(())
     }
 
     fn compute_max_h(state: &ScpOnlineState, ids: &[Option<usize>]) -> f64 {
@@ -1613,7 +1965,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .max(retained_standalone)
     }
 
-    fn required_lookup_ids(state: &ScpOnlineState) -> Vec<usize> {
+    fn required_lookup_mask(state: &ScpOnlineState, component_count: usize) -> Vec<bool> {
         let mut ids: Vec<usize> = state
             .cp_heuristics
             .iter()
@@ -1627,10 +1979,16 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         );
         ids.sort_unstable();
         ids.dedup();
-        ids
+        let mut mask = vec![false; component_count];
+        for id in ids {
+            *mask
+                .get_mut(id)
+                .expect("retained lookup table must reference an existing component") = true;
+        }
+        mask
     }
 
-    fn retain_standalone_envelope(state: &mut ScpOnlineState) {
+    fn retain_standalone_envelope(state: &mut ScpOnlineState, component_count: usize) {
         assert!(
             state.standalone_lookup_tables.is_empty(),
             "standalone envelope must be retained exactly once"
@@ -1660,7 +2018,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 .saturating_mul(std::mem::size_of::<f64>())
                 / 1024,
         );
-        state.required_lookup_ids = Self::required_lookup_ids(state);
+        state.required_mask = Self::required_lookup_mask(state, component_count);
     }
 
     fn is_online_deadline_error(error: &anyhow::Error) -> bool {
@@ -1731,12 +2089,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn release_abstractions_if_finished(&self, state: &mut ScpOnlineState) {
         if !state.improve_heuristic && !state.improvement_ended {
-            let domain_released = self.abstractions.borrow_mut().take().is_some();
-            let cartesian_released = self.cartesian_abstractions.borrow_mut().take().is_some();
-            assert!(
-                domain_released || cartesian_released,
-                "SCP construction data must exist until improvement ends"
-            );
+            for component in self.components.borrow_mut().iter_mut() {
+                component.discard_transition_data();
+            }
             state.improvement_ended = true;
         }
     }
@@ -1753,19 +2108,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         state: &mut ScpOnlineState,
         abstract_state_ids: &[Option<usize>],
-        num_domain_abstractions: usize,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         if !self.should_build_cp(state) {
             return Ok(Vec::new());
         }
 
-        let abstractions_guard = self.abstractions.borrow();
-        let abstractions: &[DomainAbstraction] = match &*abstractions_guard {
-            Some(abs) => abs.as_slice(),
-            None => &[],
-        };
-        if abstractions.is_empty() && self.cartesian_hierarchies.is_empty() && self.pdbs.is_empty()
-        {
+        let components = self.components.borrow();
+        if components.is_empty() {
             return Ok(Vec::new());
         }
         let original_costs = self.original_operator_costs.as_slice();
@@ -1776,24 +2125,16 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .then(|| {
                 Instant::now() + Duration::from_secs_f64(self.config.table_construction_max_time)
             });
-        let standalone_current_h =
-            standalone_current_h_values(state, abstract_state_ids, num_domain_abstractions);
+        let standalone_current_h = standalone_current_h_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
             task,
-            abstractions,
+            components: &components,
             abstract_state_ids,
             standalone_current_h: &standalone_current_h,
-            num_domain_abstractions,
             original_costs,
         };
-        let mut order = self.compute_order_for_state(
-            task,
-            state,
-            abstract_state_ids,
-            abstractions,
-            num_domain_abstractions,
-            deadline,
-        )?;
+        let mut order =
+            self.compute_order_for_state(task, state, abstract_state_ids, &components, deadline)?;
         let mode = if self.config.partitioning.uses_regions() {
             "regional"
         } else {
@@ -1813,7 +2154,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             log_abstraction_candidate_report(
                 mode,
                 state,
-                abstractions,
+                &components,
                 &order,
                 abstract_state_ids,
                 self.config.scoring_function,
@@ -1892,16 +2233,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn build_offline_diversified_portfolio(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         state: &mut ScpOnlineState,
         initial_candidates: Vec<CostPartitioningHeuristic>,
         table_deadline: Option<Instant>,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let PartitionedCollection {
             task,
-            abstractions,
+            components,
             abstract_state_ids: initial_abstract_state_ids,
-            num_domain_abstractions,
             ..
         } = collection;
         assert!(!self.config.online);
@@ -2011,8 +2351,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 break;
             }
             let sample_ids = state.offline_sample_ids[sample_index].clone();
-            let standalone_h =
-                standalone_current_h_values(state, &sample_ids, num_domain_abstractions);
+            let standalone_h = standalone_current_h_values(state, &sample_ids);
             // The same collection, evaluated at this sample rather than at the
             // state the portfolio was seeded from.
             let sample_collection = PartitionedCollection {
@@ -2024,8 +2363,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 task,
                 state,
                 &sample_ids,
-                abstractions,
-                num_domain_abstractions,
+                components,
                 deadline,
             )?;
             for mut order in orders {
@@ -2192,7 +2530,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn build_best_label_cp_from_candidate_orders(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         incumbent_order: &mut Vec<usize>,
         baseline_deadline: Option<Instant>,
         optimization_max_time: f64,
@@ -2261,16 +2599,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn build_best_abstract_operator_cp_from_candidate_orders(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         incumbent_order: &mut Vec<usize>,
         baseline_deadline: Option<Instant>,
         optimization_max_time: f64,
     ) -> Result<CandidateCostPartitions, EvaluationError> {
         let PartitionedCollection {
-            abstractions,
+            components,
             abstract_state_ids,
             standalone_current_h,
-            num_domain_abstractions,
             ..
         } = collection;
         let mut best_order = incumbent_order.clone();
@@ -2281,7 +2618,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             self.config.saturator,
         )?;
         baseline.specialist_goal_id =
-            self.cartesian_specialist_goal_for_order(&best_order, num_domain_abstractions);
+            self.cartesian_specialist_goal_for_order(&best_order, components);
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
@@ -2295,7 +2632,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .then(|| {
                 self.candidate_abstract_operator_orders(
                     incumbent_order,
-                    abstractions,
+                    components,
                     standalone_current_h,
                 )
             })
@@ -2323,9 +2660,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 }
                 Err(error) => return Err(error),
             };
-            candidate_cp.specialist_goal_id = specialist_goal_id.or_else(|| {
-                self.cartesian_specialist_goal_for_order(&candidate, num_domain_abstractions)
-            });
+            candidate_cp.specialist_goal_id = specialist_goal_id
+                .or_else(|| self.cartesian_specialist_goal_for_order(&candidate, components));
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
             let candidate_index = partitions.len();
             partitions.push(candidate_cp);
@@ -2353,7 +2689,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn candidate_abstract_operator_orders(
         &self,
         base_order: &[usize],
-        abstractions: &[DomainAbstraction],
+        components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
     ) -> Vec<(Option<usize>, Vec<usize>)> {
         let mut orders = Vec::new();
@@ -2363,30 +2699,21 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         declaration_order.sort_unstable();
         orders.push((None, declaration_order));
 
-        if let Some(prefixed_goal_cover_order) = self.prefixed_cartesian_goal_cover_order(
-            base_order,
-            abstractions.len(),
-            standalone_current_h,
-        ) {
+        if let Some(prefixed_goal_cover_order) =
+            self.prefixed_cartesian_goal_cover_order(base_order, components, standalone_current_h)
+        {
             orders.push((None, prefixed_goal_cover_order));
         }
 
         orders.extend(
-            self.compact_cartesian_goal_cover_orders(
-                base_order,
-                abstractions.len(),
-                standalone_current_h,
-            )
-            .into_iter()
-            .map(|(goal_id, order)| (Some(goal_id), order)),
+            self.compact_cartesian_goal_cover_orders(base_order, components, standalone_current_h)
+                .into_iter()
+                .map(|(goal_id, order)| (Some(goal_id), order)),
         );
 
-        if let Some(goal_cover_order) = self.cartesian_goal_cover_order(
-            base_order,
-            abstractions.len(),
-            standalone_current_h,
-            false,
-        ) {
+        if let Some(goal_cover_order) =
+            self.cartesian_goal_cover_order(base_order, components, standalone_current_h, false)
+        {
             orders.push((None, goal_cover_order));
         }
 
@@ -2396,13 +2723,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         ));
 
         let mut by_collection = base_order.to_vec();
-        by_collection.sort_by_key(|&id| abstraction_collection_iteration(abstractions, id));
+        by_collection.sort_by_key(|&id| abstraction_collection_iteration(components, id));
         orders.push((None, by_collection));
 
         let mut progression_first = base_order.to_vec();
         progression_first.sort_by(|&left, &right| {
-            abstraction_is_target_centered(abstractions, left)
-                .cmp(&abstraction_is_target_centered(abstractions, right))
+            abstraction_is_target_centered(components, left)
+                .cmp(&abstraction_is_target_centered(components, right))
                 .then_with(|| {
                     standalone_current_h
                         .get(right)
@@ -2416,8 +2743,8 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
         let mut target_first = base_order.to_vec();
         target_first.sort_by(|&left, &right| {
-            abstraction_is_target_centered(abstractions, right)
-                .cmp(&abstraction_is_target_centered(abstractions, left))
+            abstraction_is_target_centered(components, right)
+                .cmp(&abstraction_is_target_centered(components, left))
                 .then_with(|| {
                     standalone_current_h
                         .get(right)
@@ -2456,7 +2783,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn optimize_order_with_hill_climbing(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         incumbent_order: &mut [usize],
         incumbent_cp: &mut CostPartitioningHeuristic,
         optimization_deadline: Option<Instant>,
@@ -2531,17 +2858,16 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn build_abstract_operator_cp(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         order: &[usize],
         deadline: Option<Instant>,
         saturator: Saturator,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let PartitionedCollection {
             task,
-            abstractions,
+            components,
             abstract_state_ids,
             standalone_current_h,
-            num_domain_abstractions,
             original_costs,
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
@@ -2554,315 +2880,68 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     self.config.residual_sweeps
                 );
             }
-            for &pos in order {
+            for &component_id in order {
                 if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     break;
                 }
-                if pos < num_domain_abstractions {
-                    let abstraction = &abstractions[pos];
+                let component = components.get(component_id).ok_or_else(|| {
+                    EvaluationError::InvalidState(format!(
+                        "regional SCP order references missing component {component_id}"
+                    ))
+                })?;
+                if let AbstractionComponent::Domain(heuristic) = component {
+                    let abstraction = heuristic.abstraction();
                     debug!(
-                        "scp_online: abstract-operator CP step abstraction {pos}, abstract_states={}, standalone_h={}, metadata={}",
+                        "scp_online: abstract-operator CP step abstraction {component_id}, abstract_states={}, standalone_h={}, metadata={}",
                         abstraction_state_count(abstraction),
-                        standalone_current_h.get(pos).copied().unwrap_or(0.0),
+                        standalone_current_h
+                            .get(component_id)
+                            .copied()
+                            .unwrap_or(0.0),
                         abstraction_metadata_summary(abstraction),
                     );
                     log_abstract_operator_footprint_summary(
-                        pos,
+                        component_id,
                         &abstraction.abstract_operator_footprints,
                     );
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let transition_system = match abstraction
-                        .regional_transition_system(abstraction_task, deadline)
-                    {
-                        Ok(system) => system,
-                        Err(error) if Self::is_online_deadline_error(&error) => {
-                            info!(
-                                "scp_online: region SCP abstraction {pos} stopped while building its transition system (deadline)"
-                            );
-                            break;
-                        }
-                        Err(error) => {
-                            return Err(EvaluationError::ComputationFailed(format!(
-                                "failed to build domain region-SCP transition system: {error:#}"
-                            )));
-                        }
-                    };
-                    match saturator {
-                        Saturator::All => {
-                            self.log_abstract_operator_label_diagnostic(
-                                abstraction,
-                                abstraction_task,
-                                pos,
-                                abstract_state_ids,
-                                &remaining_costs,
-                            )?;
-                            let (table, allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
-                                    None,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator all abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute regional SCP table: {error:#}"
-                                    )));
-                                    }
-                                };
-                            log_transition_table_summary(
-                                "all",
-                                pos,
-                                &table.distances,
-                                &regional_allocation_amounts(&allocation),
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "all",
-                                pos,
-                                &table.distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            if !Self::reduce_regional_allocation(
-                                &mut remaining_costs,
-                                &allocation,
-                                deadline,
-                                "failed to reduce precise regional residual costs",
-                            )? {
-                                info!(
-                                    "scp_online: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
-                                );
-                                break;
-                            }
-                            cp.add_h_values(pos, table.distances);
-                            log_transition_residual_summary(&remaining_costs);
-                        }
-                        Saturator::Perim => {
-                            let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                            self.log_abstract_operator_label_diagnostic(
-                                abstraction,
-                                abstraction_task,
-                                pos,
-                                abstract_state_ids,
-                                &remaining_costs,
-                            )?;
-                            let (table, allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
-                                    cap_state_id,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator perim abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator PERIM table: {error:#}"
-                                    )));
-                                    }
-                                };
-                            log_transition_table_summary(
-                                "perim",
-                                pos,
-                                &table.distances,
-                                &regional_allocation_amounts(&allocation),
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "perim",
-                                pos,
-                                &table.distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            if !Self::reduce_regional_allocation(
-                                &mut remaining_costs,
-                                &allocation,
-                                deadline,
-                                "failed to reduce precise regional PERIM residual costs",
-                            )? {
-                                info!(
-                                    "scp_online: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
-                                );
-                                break;
-                            }
-                            cp.add_h_values(pos, table.distances);
-                            log_transition_residual_summary(&remaining_costs);
-                        }
-                        Saturator::Perimstar => {
-                            let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                            self.log_abstract_operator_label_diagnostic(
-                                abstraction,
-                                abstraction_task,
-                                pos,
-                                abstract_state_ids,
-                                &remaining_costs,
-                            )?;
-                            let (perim_table, perim_allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                    &abstraction.abstract_operator_footprints,
-                                    &remaining_costs,
-                                    pos,
-                                    cap_state_id,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator perimstar/perim abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator Perim step for Perimstar: {error:#}"
-                                    )));
-                                    }
-                                };
-                            log_transition_table_summary(
-                                "perimstar/perim",
-                                pos,
-                                &perim_table.distances,
-                                &regional_allocation_amounts(&perim_allocation),
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "perimstar/perim",
-                                pos,
-                                &perim_table.distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            if !Self::reduce_regional_allocation(
-                                &mut remaining_costs,
-                                &perim_allocation,
-                                deadline,
-                                "failed to reduce precise regional Perim residual costs",
-                            )? {
-                                info!(
-                                    "scp_online: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
-                                );
-                                break;
-                            }
-                            cp.add_h_values(pos, perim_table.distances);
-                            log_transition_residual_summary(&remaining_costs);
+                    self.log_abstract_operator_label_diagnostic(
+                        abstraction,
+                        abstraction.task_for_factory(task),
+                        component_id,
+                        abstract_state_ids,
+                        &remaining_costs,
+                    )?;
+                }
 
-                            let (all_table, all_allocation) = match abstraction
-                                .factory
-                                .build_precise_regional_cost_partitioned_distance_table_with_deadline(
-                                    &transition_system,
-                                            &abstraction.abstract_operator_footprints,
-                                            &remaining_costs,
-                                            pos,
-                                    None,
-                                    deadline,
-                                ) {
-                                    Ok(result) => result,
-                                    Err(error) if Self::is_online_deadline_error(&error) => {
-                                        info!(
-                                            "scp_online: abstract-operator perimstar/all abstraction {pos} stopped while computing table (deadline)"
-                                        );
-                                        break;
-                                    }
-                                    Err(error) => {
-                                        return Err(EvaluationError::ComputationFailed(format!(
-                                        "failed to compute abstract-operator All step for Perimstar: {error:#}"
-                                    )));
-                                    }
-                                };
-                            log_transition_table_summary(
-                                "perimstar/all",
-                                pos,
-                                &all_table.distances,
-                                &regional_allocation_amounts(&all_allocation),
-                                abstract_state_ids,
-                            );
-                            if should_skip_zero_current_table(
-                                self.config.diversify,
-                                "perimstar/all",
-                                pos,
-                                &all_table.distances,
-                                abstract_state_ids,
-                            ) {
-                                continue;
-                            }
-                            if !Self::reduce_regional_allocation(
-                                &mut remaining_costs,
-                                &all_allocation,
-                                deadline,
-                                "failed to reduce precise regional All residual costs",
-                            )? {
-                                info!(
-                                    "scp_online: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
-                                );
-                                break;
-                            }
-                            cp.add_h_values(pos, all_table.distances);
-                            log_transition_residual_summary(&remaining_costs);
-                        }
-                    }
-                } else if let Some(abstraction) =
-                    self.cartesian_abstraction_for_component(pos, num_domain_abstractions)
-                {
-                    let result = self.add_transition_cartesian_step(
-                        &mut cp,
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction,
+                let result = self.add_transition_component_step(
+                    &mut cp,
+                    &mut remaining_costs,
+                    ComponentStepContext {
+                        component_id,
+                        component,
+                        task,
                         abstract_state_ids,
                         deadline,
-                    );
-                    match result {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            info!(
-                                "scp_online: Cartesian abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
-                            );
-                            break;
-                        }
-                        Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                            info!(
-                                "scp_online: Cartesian abstract-operator abstraction {pos} stopped while computing table (deadline)"
-                            );
-                            break;
-                        }
-                        Err(error) => return Err(error),
+                        cost_space: SaturationCostSpace::Regional,
+                        saturator,
+                        step_prefix: "abstract-operator",
+                    },
+                );
+                match result {
+                    Ok(true) => log_transition_residual_summary(&remaining_costs),
+                    Ok(false) => {
+                        info!(
+                            "scp_online: abstract-operator component {component_id} stopped while reducing residual costs (deadline)"
+                        );
+                        break;
                     }
-                } else {
-                    self.add_transition_pdb_step(
-                        &mut cp,
-                        &mut remaining_costs,
-                        pos,
-                        order,
-                        abstract_state_ids,
-                        self.pdb_offset(num_domain_abstractions),
-                    )?;
+                    Err(error) if Self::is_online_deadline_error_eval(&error) => {
+                        info!(
+                            "scp_online: abstract-operator component {component_id} stopped while computing table (deadline)"
+                        );
+                        break;
+                    }
+                    Err(error) => return Err(error),
                 }
             }
         }
@@ -2905,419 +2984,54 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    fn add_transition_cartesian_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut TransitionResidualCosts,
-        pos: usize,
-        abstraction: &CartesianAbstraction,
-        abstract_state_ids: &[Option<usize>],
-        deadline: Option<Instant>,
-    ) -> Result<bool, EvaluationError> {
-        let cap_state_id = abstract_state_ids
-            .get(pos)
-            .copied()
-            .flatten()
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing Cartesian abstract state id for abstract-operator CP component {pos}"
-                ))
-            })?;
-
-        let build = |residual_costs: &TransitionResidualCosts, cap| {
-            build_explicit_regional_cost_partitioning_table(
-                &abstraction.transition_system,
-                &abstraction.abstract_operator_footprints,
-                residual_costs,
-                pos,
-                cap,
-                deadline,
-            )
-            .map_err(|error| {
-                Self::construction_error(
-                    &format!(
-                        "failed to compute Cartesian abstract-operator CP table for component {pos}"
-                    ),
-                    error,
-                )
-            })
-        };
-        let reduce = |residual_costs: &mut TransitionResidualCosts,
-                      tcf: &AbstractOperatorCostFunction| {
-            Self::reduce_abstract_operator_costs(
-                residual_costs,
-                pos,
-                &abstraction.abstract_operator_footprints,
-                tcf,
-                deadline,
-                &format!(
-                    "failed to reduce Cartesian abstract-operator residual costs for component {pos}"
-                ),
-            )
-        };
-
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, tcf) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator all",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, distances);
-                }
-            }
-            Saturator::Perim => {
-                let (distances, tcf) = build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator perim",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, distances);
-                }
-            }
-            Saturator::Perimstar => {
-                let (perim_distances, perim_tcf) = build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator perimstar/perim",
-                    pos,
-                    &perim_distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &perim_tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, perim_distances);
-                }
-                let (all_distances, all_tcf) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian abstract-operator perimstar/all",
-                    pos,
-                    &all_distances,
-                    abstract_state_ids,
-                ) {
-                    if !reduce(remaining_costs, &all_tcf)? {
-                        return Ok(false);
-                    }
-                    cp.add_h_values(pos, all_distances);
-                }
-            }
-        }
-        Ok(true)
-    }
-
-    fn add_transition_pdb_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut TransitionResidualCosts,
-        pos: usize,
-        _order: &[usize],
-        abstract_state_ids: &[Option<usize>],
-        num_domain_abstractions: usize,
-    ) -> Result<(), EvaluationError> {
-        let pdb_id = pos.checked_sub(num_domain_abstractions).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "PDB component {pos} precedes PDB offset {num_domain_abstractions}"
-            ))
-        })?;
-        let pdb = self.pdbs.get(pdb_id).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "abstract-operator CP component {pos} references missing PDB {pdb_id}"
-            ))
-        })?;
-
-        let mut remaining_operator_costs = remaining_costs.operator_costs_for_label_cp();
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table(&remaining_operator_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB SCP table {pdb_id}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, distances);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&saturated)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB residual costs: {error:#}"
-                        ))
-                    })?;
-            }
-            Saturator::Perim => {
-                let h_cap = Self::pdb_current_h_cap(
-                    pdb,
-                    &remaining_operator_costs,
-                    pos,
-                    abstract_state_ids,
-                )?;
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table_capped(&remaining_operator_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB PERIM table {pdb_id}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, distances);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&saturated)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB PERIM residual costs: {error:#}"
-                        ))
-                    })?;
-            }
-            Saturator::Perimstar => {
-                let h_cap = Self::pdb_current_h_cap(
-                    pdb,
-                    &remaining_operator_costs,
-                    pos,
-                    abstract_state_ids,
-                )?;
-                let (perim_dists, perim_sat) = pdb
-                    .build_cost_partitioned_distance_table_capped(&remaining_operator_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB Perim step for Perimstar {pdb_id}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, perim_dists);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&perim_sat)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB Perim residual costs: {error:#}"
-                        ))
-                    })?;
-
-                remaining_operator_costs = remaining_costs.operator_costs_for_label_cp();
-                let (all_dists, all_sat) = pdb
-                    .build_cost_partitioned_distance_table(&remaining_operator_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB All step for Perimstar {pdb_id}: {error}"
-                        ))
-                    })?;
-                cp.add_h_values(pos, all_dists);
-                remaining_costs
-                    .reduce_operator_costs_uniform(&all_sat)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to reduce PDB All residual costs: {error:#}"
-                        ))
-                    })?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn build_label_cp(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         order: &[usize],
         deadline: Option<Instant>,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let PartitionedCollection {
             task,
-            abstractions,
+            components,
             abstract_state_ids,
-            num_domain_abstractions,
             original_costs,
             ..
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs: Vec<f64> = original_costs.to_vec();
+        let mut remaining_costs = original_costs.to_vec();
 
-        for &pos in order {
+        for &component_id in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            if pos < num_domain_abstractions {
-                let abstraction = &abstractions[pos];
-                debug!(
-                    "scp_online: label CP step abstraction {pos}, abstract_states={}",
-                    abstraction_state_count(abstraction)
-                );
-                match self.config.saturator {
-                    Saturator::All => {
-                        let abstraction_task = abstraction.task_for_factory(task);
-                        let (distances, saturated) = match Self::compute_domain_cp_entry(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            deadline,
-                        ) {
-                            Ok(entry) => entry,
-                            Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                                info!(
-                                    "scp_online: label all abstraction {pos} stopped while computing table (deadline)"
-                                );
-                                break;
-                            }
-                            Err(error) => return Err(error),
-                        };
-                        log_label_table_summary(
-                            "all",
-                            pos,
-                            &distances,
-                            &saturated,
-                            abstract_state_ids,
-                        );
-                        if should_skip_zero_current_table(
-                            self.config.diversify,
-                            "label all",
-                            pos,
-                            &distances,
-                            abstract_state_ids,
-                        ) {
-                            continue;
-                        }
-                        cp.add_h_values(pos, distances);
-                        reduce_costs(&mut remaining_costs, &saturated)?;
-                    }
-                    Saturator::Perim => {
-                        let abstraction_task = abstraction.task_for_factory(task);
-                        let h_cap = Self::domain_current_h_cap(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            pos,
-                            abstract_state_ids,
-                        )?;
-                        let (distances, saturated) = Self::compute_domain_perim_entry(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            h_cap,
-                        )?;
-                        log_label_table_summary(
-                            "perim",
-                            pos,
-                            &distances,
-                            &saturated,
-                            abstract_state_ids,
-                        );
-                        if should_skip_zero_current_table(
-                            self.config.diversify,
-                            "label perim",
-                            pos,
-                            &distances,
-                            abstract_state_ids,
-                        ) {
-                            continue;
-                        }
-                        cp.add_h_values(pos, distances);
-                        reduce_costs(&mut remaining_costs, &saturated)?;
-                    }
-                    Saturator::Perimstar => {
-                        let abstraction_task = abstraction.task_for_factory(task);
-                        let h_cap = Self::domain_current_h_cap(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            pos,
-                            abstract_state_ids,
-                        )?;
-                        let (perim_distances, perim_saturated) = Self::compute_domain_perim_entry(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            h_cap,
-                        )?;
-                        log_label_table_summary(
-                            "perimstar/perim",
-                            pos,
-                            &perim_distances,
-                            &perim_saturated,
-                            abstract_state_ids,
-                        );
-                        if !should_skip_zero_current_table(
-                            self.config.diversify,
-                            "label perimstar/perim",
-                            pos,
-                            &perim_distances,
-                            abstract_state_ids,
-                        ) {
-                            cp.add_h_values(pos, perim_distances);
-                            reduce_costs(&mut remaining_costs, &perim_saturated)?;
-                        }
-
-                        let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            deadline,
-                        )?;
-                        log_label_table_summary(
-                            "perimstar/all",
-                            pos,
-                            &all_distances,
-                            &all_saturated,
-                            abstract_state_ids,
-                        );
-                        if should_skip_zero_current_table(
-                            self.config.diversify,
-                            "label perimstar/all",
-                            pos,
-                            &all_distances,
-                            abstract_state_ids,
-                        ) {
-                            continue;
-                        }
-                        cp.add_h_values(pos, all_distances);
-                        reduce_costs(&mut remaining_costs, &all_saturated)?;
-                    }
-                }
-            } else if let Some(abstraction) =
-                self.cartesian_abstraction_for_component(pos, num_domain_abstractions)
-            {
-                let result = self.add_label_cartesian_step(
-                    &mut cp,
-                    &mut remaining_costs,
-                    pos,
-                    &abstraction,
+            let component = components.get(component_id).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "label SCP order references missing component {component_id}"
+                ))
+            })?;
+            match self.add_label_component_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
                     abstract_state_ids,
                     deadline,
-                );
-                match result {
-                    Ok(()) => {}
-                    Err(error) if Self::is_online_deadline_error_eval(&error) => {
-                        info!(
-                            "scp_online: Cartesian label abstraction {pos} stopped while computing table (deadline)"
-                        );
-                        break;
-                    }
-                    Err(error) => return Err(error),
+                    cost_space: SaturationCostSpace::Label,
+                    saturator: self.config.saturator,
+                    step_prefix: "label",
+                },
+            ) {
+                Ok(true) => {}
+                Ok(false) => unreachable!("label residual reduction has no deadline"),
+                Err(error) if Self::is_online_deadline_error_eval(&error) => {
+                    info!(
+                        "scp_online: label component {component_id} stopped while computing table (deadline)"
+                    );
+                    break;
                 }
-            } else {
-                self.add_label_pdb_step(
-                    &mut cp,
-                    &mut remaining_costs,
-                    pos,
-                    abstract_state_ids,
-                    self.pdb_offset(num_domain_abstractions),
-                )?;
+                Err(error) => return Err(error),
             }
         }
 
@@ -3326,161 +3040,49 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn build_label_fill_scp(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         order: &[usize],
         deadline: Option<Instant>,
     ) -> Result<(CostPartitioningHeuristic, Vec<f64>), EvaluationError> {
         let PartitionedCollection {
             task,
-            abstractions,
+            components,
             abstract_state_ids,
-            num_domain_abstractions,
             original_costs,
             ..
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs: Vec<f64> = original_costs.to_vec();
+        let mut remaining_costs = original_costs.to_vec();
 
-        for &pos in order {
+        for &component_id in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            if pos >= num_domain_abstractions {
-                let abstraction = self
-                    .cartesian_abstraction_for_component(pos, num_domain_abstractions)
-                    .ok_or_else(|| {
-                        EvaluationError::InvalidState(format!(
-                            "fillSCP order references unsupported component {pos}"
-                        ))
-                    })?;
-                self.add_label_cartesian_step(
-                    &mut cp,
-                    &mut remaining_costs,
-                    pos,
-                    &abstraction,
+            let component = components.get(component_id).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "fillSCP order references missing component {component_id}"
+                ))
+            })?;
+            if matches!(component, AbstractionComponent::PatternDatabase(_)) {
+                return Err(EvaluationError::InvalidState(format!(
+                    "fillSCP order references unsupported PDB component {component_id}"
+                )));
+            }
+            let completed = self.add_label_component_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
                     abstract_state_ids,
                     deadline,
-                )?;
-                continue;
-            }
-            let abstraction = &abstractions[pos];
-            debug!(
-                "fillSCP: label CP step abstraction {pos}, abstract_states={}",
-                abstraction_state_count(abstraction)
-            );
-            match self.config.saturator {
-                Saturator::All => {
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let (distances, saturated) = Self::compute_domain_cp_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        deadline,
-                    )?;
-                    log_label_table_summary(
-                        "fillSCP/all",
-                        pos,
-                        &distances,
-                        &saturated,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label all",
-                        pos,
-                        &distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(&mut remaining_costs, &saturated)?;
-                }
-                Saturator::Perim => {
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let h_cap = Self::domain_current_h_cap(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        pos,
-                        abstract_state_ids,
-                    )?;
-                    let (distances, saturated) = Self::compute_domain_perim_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        h_cap,
-                    )?;
-                    log_label_table_summary(
-                        "fillSCP/perim",
-                        pos,
-                        &distances,
-                        &saturated,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label perim",
-                        pos,
-                        &distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(&mut remaining_costs, &saturated)?;
-                }
-                Saturator::Perimstar => {
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let h_cap = Self::domain_current_h_cap(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        pos,
-                        abstract_state_ids,
-                    )?;
-                    let (perim_distances, perim_saturated) = Self::compute_domain_perim_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        h_cap,
-                    )?;
-                    if !should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label perimstar/perim",
-                        pos,
-                        &perim_distances,
-                        abstract_state_ids,
-                    ) {
-                        cp.add_h_values(pos, perim_distances);
-                        reduce_costs(&mut remaining_costs, &perim_saturated)?;
-                    }
-
-                    let (all_distances, all_saturated) = Self::compute_domain_cp_entry(
-                        abstraction,
-                        abstraction_task,
-                        self.config.combine_labels,
-                        &remaining_costs,
-                        deadline,
-                    )?;
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP label perimstar/all",
-                        pos,
-                        &all_distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    cp.add_h_values(pos, all_distances);
-                    reduce_costs(&mut remaining_costs, &all_saturated)?;
-                }
-            }
+                    cost_space: SaturationCostSpace::Label,
+                    saturator: self.config.saturator,
+                    step_prefix: "fillSCP label",
+                },
+            )?;
+            assert!(completed, "label residual reduction has no deadline");
         }
 
         Ok((cp, remaining_costs))
@@ -3488,7 +3090,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
 
     fn build_abstract_operator_fill_scp(
         &self,
-        collection: PartitionedCollection<'_>,
+        collection: PartitionedCollection<'_, '_>,
         order: &[usize],
         deadline: Option<Instant>,
         saturator: Saturator,
@@ -3502,245 +3104,48 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     > {
         let PartitionedCollection {
             task,
-            abstractions,
+            components,
             abstract_state_ids,
-            num_domain_abstractions,
             original_costs,
             ..
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
 
-        for &pos in order {
+        for &component_id in order {
             if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                 break;
             }
-            if pos >= num_domain_abstractions {
-                let abstraction = self
-                    .cartesian_abstraction_for_component(pos, num_domain_abstractions)
-                    .ok_or_else(|| {
-                        EvaluationError::InvalidState(format!(
-                            "fillSCP abstract-operator order references unsupported component {pos}"
-                        ))
-                    })?;
-                self.add_transition_cartesian_step(
-                    &mut cp,
-                    &mut remaining_costs,
-                    pos,
-                    &abstraction,
+            let component = components.get(component_id).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "fillSCP abstract-operator order references missing component {component_id}"
+                ))
+            })?;
+            if matches!(component, AbstractionComponent::PatternDatabase(_)) {
+                return Err(EvaluationError::InvalidState(format!(
+                    "fillSCP abstract-operator order references unsupported PDB component {component_id}"
+                )));
+            }
+            if !self.add_transition_component_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
                     abstract_state_ids,
                     deadline,
-                )?;
-                continue;
+                    cost_space: SaturationCostSpace::AbstractOperator,
+                    saturator,
+                    step_prefix: "fillSCP abstract-operator",
+                },
+            )? {
+                info!(
+                    "fillSCP: abstract-operator component {component_id} stopped while reducing residual costs (deadline)"
+                );
+                break;
             }
-            let abstraction = &abstractions[pos];
-            debug!(
-                "fillSCP: abstract-operator CP step abstraction {pos}, abstract_states={}, metadata={}",
-                abstraction_state_count(abstraction),
-                abstraction_metadata_summary(abstraction),
-            );
-            log_abstract_operator_footprint_summary(pos, &abstraction.abstract_operator_footprints);
-            let abstraction_task = abstraction.task_for_factory(task);
-            match saturator {
-                Saturator::All => {
-                    let (table, tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: abstract_state_ids.get(pos).copied().flatten(),
-                                cap_state_id: None,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator table: {error:#}"
-                            ))
-                        })?;
-                    log_transition_table_summary(
-                        "fillSCP/all",
-                        pos,
-                        &table.distances,
-                        &tcf.operator_costs,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator all",
-                        pos,
-                        &table.distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    if !Self::reduce_abstract_operator_costs(
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction.abstract_operator_footprints,
-                        &tcf,
-                        deadline,
-                        "failed to reduce fillSCP abstract-operator residual costs",
-                    )? {
-                        info!(
-                            "fillSCP: abstract-operator abstraction {pos} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    cp.add_h_values(pos, table.distances);
-                    log_transition_residual_summary(&remaining_costs);
-                }
-                Saturator::Perim => {
-                    let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                    let (table, tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: cap_state_id,
-                                cap_state_id,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator PERIM table: {error:#}"
-                            ))
-                        })?;
-                    log_transition_table_summary(
-                        "fillSCP/perim",
-                        pos,
-                        &table.distances,
-                        &tcf.operator_costs,
-                        abstract_state_ids,
-                    );
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator perim",
-                        pos,
-                        &table.distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    if !Self::reduce_abstract_operator_costs(
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction.abstract_operator_footprints,
-                        &tcf,
-                        deadline,
-                        "failed to reduce fillSCP abstract-operator PERIM residual costs",
-                    )? {
-                        info!(
-                            "fillSCP: abstract-operator PERIM abstraction {pos} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    cp.add_h_values(pos, table.distances);
-                    log_transition_residual_summary(&remaining_costs);
-                }
-                Saturator::Perimstar => {
-                    let cap_state_id = abstract_state_ids.get(pos).copied().flatten();
-                    let (perim_table, perim_tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: cap_state_id,
-                                cap_state_id,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator Perim step for Perimstar: {error:#}"
-                            ))
-                        })?;
-                    if !should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator perimstar/perim",
-                        pos,
-                        &perim_table.distances,
-                        abstract_state_ids,
-                    ) {
-                        if !Self::reduce_abstract_operator_costs(
-                            &mut remaining_costs,
-                            pos,
-                            &abstraction.abstract_operator_footprints,
-                            &perim_tcf,
-                            deadline,
-                            "failed to reduce fillSCP abstract-operator Perim residual costs",
-                        )? {
-                            info!(
-                                "fillSCP: abstract-operator Perim abstraction {pos} stopped while reducing residual costs (deadline)"
-                            );
-                            break;
-                        }
-                        cp.add_h_values(pos, perim_table.distances);
-                        log_transition_residual_summary(&remaining_costs);
-                    }
-
-                    let (all_table, all_tcf) = abstraction
-                        .factory
-                        .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints_with_deadline(
-                            abstraction_task,
-                            abstraction.combine_labels,
-                            &abstraction.abstract_operators,
-                            &abstraction.abstract_operator_footprints,
-                            SaturationStep {
-                                residual_costs: &remaining_costs,
-                                abstraction_id: pos,
-                                current_state_id: cap_state_id,
-                                cap_state_id: None,
-                            },
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute fillSCP abstract-operator All step for Perimstar: {error:#}"
-                            ))
-                        })?;
-                    if should_skip_zero_current_table(
-                        self.config.diversify,
-                        "fillSCP abstract-operator perimstar/all",
-                        pos,
-                        &all_table.distances,
-                        abstract_state_ids,
-                    ) {
-                        continue;
-                    }
-                    if !Self::reduce_abstract_operator_costs(
-                        &mut remaining_costs,
-                        pos,
-                        &abstraction.abstract_operator_footprints,
-                        &all_tcf,
-                        deadline,
-                        "failed to reduce fillSCP abstract-operator All residual costs",
-                    )? {
-                        info!(
-                            "fillSCP: abstract-operator All abstraction {pos} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    cp.add_h_values(pos, all_table.distances);
-                    log_transition_residual_summary(&remaining_costs);
-                }
-            }
+            log_transition_residual_summary(&remaining_costs);
         }
 
         let residual_partitions = remaining_costs.operator_cost_partitions_for_lmcut(4, 4);
@@ -3749,200 +3154,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             remaining_costs.operator_costs_for_label_cp(),
             residual_partitions,
         ))
-    }
-
-    fn add_label_cartesian_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut [f64],
-        pos: usize,
-        abstraction: &CartesianAbstraction,
-        abstract_state_ids: &[Option<usize>],
-        deadline: Option<Instant>,
-    ) -> Result<(), EvaluationError> {
-        let cap_state_id = abstract_state_ids
-            .get(pos)
-            .copied()
-            .flatten()
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "missing Cartesian abstract state id for CP component {pos}"
-                ))
-            })?;
-        let build = |costs: &[f64], cap| {
-            build_explicit_label_cost_partitioning_table(
-                &abstraction.transition_system,
-                costs,
-                cap,
-                deadline,
-            )
-            .map_err(|error| {
-                Self::construction_error(
-                    &format!("failed to compute Cartesian label CP table for component {pos}"),
-                    error,
-                )
-            })
-        };
-
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, saturated) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label all",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(remaining_costs, &saturated)?;
-                }
-            }
-            Saturator::Perim => {
-                let (distances, saturated) = build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label perim",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, distances);
-                    reduce_costs(remaining_costs, &saturated)?;
-                }
-            }
-            Saturator::Perimstar => {
-                let (perim_distances, perim_saturated) =
-                    build(remaining_costs, Some(cap_state_id))?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label perimstar/perim",
-                    pos,
-                    &perim_distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, perim_distances);
-                    reduce_costs(remaining_costs, &perim_saturated)?;
-                }
-                let (all_distances, all_saturated) = build(remaining_costs, None)?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "Cartesian label perimstar/all",
-                    pos,
-                    &all_distances,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, all_distances);
-                    reduce_costs(remaining_costs, &all_saturated)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn add_label_pdb_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut [f64],
-        pos: usize,
-        abstract_state_ids: &[Option<usize>],
-        num_domain_abstractions: usize,
-    ) -> Result<(), EvaluationError> {
-        let pdb_id = pos.checked_sub(num_domain_abstractions).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "PDB component {pos} precedes PDB offset {num_domain_abstractions}"
-            ))
-        })?;
-        let pdb = self.pdbs.get(pdb_id).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "label CP component {pos} references missing PDB {pdb_id}"
-            ))
-        })?;
-
-        match self.config.saturator {
-            Saturator::All => {
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table(remaining_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB SCP table {pdb_id}: {error}"
-                        ))
-                    })?;
-                if should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb all",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    return Ok(());
-                }
-                cp.add_h_values(pos, distances);
-                reduce_costs(remaining_costs, &saturated)?;
-            }
-            Saturator::Perim => {
-                let h_cap = Self::pdb_current_h_cap(pdb, remaining_costs, pos, abstract_state_ids)?;
-                let (distances, saturated) = pdb
-                    .build_cost_partitioned_distance_table_capped(remaining_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB PERIM table {pdb_id}: {error}"
-                        ))
-                    })?;
-                if should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb perim",
-                    pos,
-                    &distances,
-                    abstract_state_ids,
-                ) {
-                    return Ok(());
-                }
-                cp.add_h_values(pos, distances);
-                reduce_costs(remaining_costs, &saturated)?;
-            }
-            Saturator::Perimstar => {
-                let h_cap = Self::pdb_current_h_cap(pdb, remaining_costs, pos, abstract_state_ids)?;
-                let (perim_dists, perim_sat) = pdb
-                    .build_cost_partitioned_distance_table_capped(remaining_costs, h_cap)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB Perim step for Perimstar {pdb_id}: {error}"
-                        ))
-                    })?;
-                if !should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb perimstar/perim",
-                    pos,
-                    &perim_dists,
-                    abstract_state_ids,
-                ) {
-                    cp.add_h_values(pos, perim_dists);
-                    reduce_costs(remaining_costs, &perim_sat)?;
-                }
-
-                let (all_dists, all_sat) = pdb
-                    .build_cost_partitioned_distance_table(remaining_costs)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB All step for Perimstar {pdb_id}: {error}"
-                        ))
-                    })?;
-                if should_skip_zero_current_table(
-                    self.config.diversify,
-                    "pdb perimstar/all",
-                    pos,
-                    &all_dists,
-                    abstract_state_ids,
-                ) {
-                    return Ok(());
-                }
-                cp.add_h_values(pos, all_dists);
-                reduce_costs(remaining_costs, &all_sat)?;
-            }
-        }
-
-        Ok(())
     }
 
     fn retain_cp(
@@ -3991,7 +3202,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             );
             state.size_kb = state.size_kb.saturating_add(size_kb);
             state.cp_heuristics.push(cp);
-            state.required_lookup_ids = Self::required_lookup_ids(state);
+            state.required_mask = Self::required_lookup_mask(state, abstract_state_ids.len());
             *max_h = (*max_h).max(new_h);
         } else if !fits_size_limit {
             info!(
@@ -4008,78 +3219,6 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
     }
 
-    fn domain_current_h_cap(
-        abstraction: &DomainAbstraction,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        remaining_costs: &[f64],
-        component_id: usize,
-        abstract_state_ids: &[Option<usize>],
-    ) -> Result<f64, EvaluationError> {
-        let state_id = abstract_state_ids
-            .get(component_id)
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "domain component {component_id} has no state-ID slot"
-                ))
-            })?
-            .ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "domain component {component_id} has no exact abstract state ID"
-                ))
-            })?;
-        let table = abstraction
-            .factory
-            .build_goal_distances_for_goals(
-                task,
-                combine_labels,
-                remaining_costs,
-                &abstraction.distance_table.goal_facts,
-            )
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute current h cap for domain component {component_id}: {error:#}"
-                ))
-            })?;
-        table.distances.get(state_id).copied().ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "domain component {component_id} state ID {state_id} is out of bounds for {} states",
-                table.distances.len()
-            ))
-        })
-    }
-
-    fn pdb_current_h_cap(
-        pdb: &PatternDatabase<'_>,
-        remaining_costs: &[f64],
-        component_id: usize,
-        abstract_state_ids: &[Option<usize>],
-    ) -> Result<f64, EvaluationError> {
-        let state_id = *abstract_state_ids.get(component_id).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "PDB component {component_id} has no state-ID slot"
-            ))
-        })?;
-        let Some(state_id) = state_id else {
-            // A truncated PDB need not contain the exact projected state. Its
-            // standalone fallback remains admissible, but there is no finite
-            // state-specific perimeter cap to apply.
-            return Ok(f64::INFINITY);
-        };
-        let distances = pdb.build_goal_distances(remaining_costs).map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to compute current h cap for PDB component {component_id}: {error}"
-            ))
-        })?;
-        distances.get(state_id).copied().ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "PDB component {component_id} state ID {state_id} is out of bounds for {} states",
-                distances.len()
-            ))
-        })
-    }
-
-    /// Build a single SCP for one domain abstraction using its own factory.
     fn compute_domain_cp_entry(
         abstraction: &DomainAbstraction,
         task: &dyn AbstractNumericTask,
@@ -4200,11 +3339,12 @@ fn abstraction_state_count(abstraction: &DomainAbstraction) -> u128 {
 }
 
 fn abstraction_collection_iteration(
-    abstractions: &[DomainAbstraction],
-    abstraction_id: usize,
+    components: &[AbstractionComponent<'_>],
+    component_id: usize,
 ) -> usize {
-    abstractions
-        .get(abstraction_id)
+    components
+        .get(component_id)
+        .and_then(AbstractionComponent::as_domain)
         .and_then(|abstraction| abstraction.metadata.collection_iteration)
         .unwrap_or(usize::MAX)
 }
@@ -4256,32 +3396,27 @@ fn compact_goal_cover_variants(
 
 fn cartesian_goal_cover_order(
     base_order: &[usize],
-    num_domain_abstractions: usize,
-    cartesian_abstractions: &[CartesianAbstraction],
+    components: &[AbstractionComponent<'_>],
     standalone_current_h: &[f64],
     require_pure_cartesian_collection: bool,
     variant: GoalCoverOrderVariant,
 ) -> Option<Vec<usize>> {
-    let cartesian_end = num_domain_abstractions + cartesian_abstractions.len();
     let is_goal_cartesian = |component_id: usize| {
-        component_id
-            .checked_sub(num_domain_abstractions)
-            .and_then(|id| cartesian_abstractions.get(id))
+        components
+            .get(component_id)
+            .and_then(AbstractionComponent::as_cartesian)
             .is_some_and(|abstraction| abstraction.metadata.collection_goal_id.is_some())
     };
-    let pure_cartesian_collection = base_order
-        .iter()
-        .copied()
-        .all(|id| id < cartesian_end && is_goal_cartesian(id));
+    let pure_cartesian_collection = base_order.iter().copied().all(is_goal_cartesian);
     if (require_pure_cartesian_collection || variant.compact) && !pure_cartesian_collection {
         return None;
     }
 
     let mut by_goal: HashMap<usize, Vec<usize>> = HashMap::new();
     for &component_id in base_order {
-        let Some(abstraction) = component_id
-            .checked_sub(num_domain_abstractions)
-            .and_then(|id| cartesian_abstractions.get(id))
+        let Some(abstraction) = components
+            .get(component_id)
+            .and_then(AbstractionComponent::as_cartesian)
         else {
             continue;
         };
@@ -4290,8 +3425,9 @@ fn cartesian_goal_cover_order(
         };
         by_goal.entry(goal_id).or_default().push(component_id);
     }
-    let progressive_roots = cartesian_abstractions
+    let progressive_roots = components
         .iter()
+        .filter_map(AbstractionComponent::as_cartesian)
         .any(|abstraction| abstraction.metadata.progressive_refinement_root);
     if by_goal.is_empty()
         || (!progressive_roots && by_goal.values().all(|components| components.len() < 2))
@@ -4306,8 +3442,9 @@ fn cartesian_goal_cover_order(
             .unwrap_or(0.0)
     };
     let abstraction = |component_id: usize| {
-        cartesian_abstractions
-            .get(component_id - num_domain_abstractions)
+        components
+            .get(component_id)
+            .and_then(AbstractionComponent::as_cartesian)
             .expect("goal-cover order component must reference a Cartesian abstraction")
     };
     let goal_max_h = |components: &[usize]| {
@@ -4601,12 +3738,12 @@ fn standalone_envelope_value(state: &ScpOnlineState, abstract_state_ids: &[Optio
         .map(|(abstraction_id, distances)| {
             // A miss contributes nothing, for every kind of abstraction.
             //
-            // This used to be infinity for everything below `pdb_offset`, on the
-            // reading that a domain abstraction covers every concrete state, so a
-            // state it has no entry for cannot reach the goal. That reading is
-            // wrong here: when the online path is not rebuilding a partitioning
-            // it computes abstract state ids only for the abstractions in
-            // `required_lookup_ids`, so every other one is legitimately absent.
+            // This used to be infinity for a prefix of component kinds, on the
+            // reading that a domain abstraction covers every concrete state, so
+            // a state it has no entry for cannot reach the goal. That reading is
+            // wrong here: when the online path is not rebuilding a partitioning,
+            // it computes abstract state ids only for abstractions selected by
+            // `required_mask`, so every other one is legitimately absent.
             // Absent then meant infinite, the maximum swallowed every finite
             // estimate, and the search recorded a solvable state as a dead end.
             //
@@ -4696,11 +3833,12 @@ fn retain_mandatory_partition(
 }
 
 fn abstraction_is_target_centered(
-    abstractions: &[DomainAbstraction],
-    abstraction_id: usize,
+    components: &[AbstractionComponent<'_>],
+    component_id: usize,
 ) -> bool {
-    abstractions
-        .get(abstraction_id)
+    components
+        .get(component_id)
+        .and_then(AbstractionComponent::as_domain)
         .and_then(|abstraction| abstraction.metadata.flaw_kind.as_deref())
         .is_some_and(|flaw_kind| flaw_kind == "target_centered")
 }
@@ -4803,7 +3941,7 @@ fn log_abstract_operator_footprint_summary(
 fn log_abstraction_candidate_report(
     mode: &str,
     state: &ScpOnlineState,
-    abstractions: &[DomainAbstraction],
+    components: &[AbstractionComponent<'_>],
     order: &[usize],
     abstract_state_ids: &[Option<usize>],
     scoring_function: ScoringFunction,
@@ -4838,9 +3976,16 @@ fn log_abstraction_candidate_report(
             .get(abstraction_id)
             .copied()
             .unwrap_or(0.0);
-        let Some(abstraction) = abstractions.get(abstraction_id) else {
+        let Some(component) = components.get(abstraction_id) else {
             info!(
-                "scp_online: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, missing_domain_abstraction=true"
+                "scp_online: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, missing_component=true"
+            );
+            continue;
+        };
+        let Some(abstraction) = component.as_domain() else {
+            info!(
+                "scp_online: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, kind={}",
+                component.kind()
             );
             continue;
         };
@@ -5012,16 +4157,16 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
         };
 
         let mut component_ids = self.component_ids_scratch.borrow_mut();
-        let num_domain_abstractions = if build_cp {
-            self.compute_abstract_state_ids_into(eval_state, None, &mut component_ids)?
+        if build_cp {
+            self.compute_abstract_state_ids_into(eval_state, None, &mut component_ids)?;
         } else {
             let state = self.state.borrow();
             self.compute_abstract_state_ids_into(
                 eval_state,
-                Some(&state.required_lookup_ids),
+                Some(&state.required_mask),
                 &mut component_ids,
-            )?
-        };
+            )?;
+        }
         let abstract_state_ids = component_ids.as_slice();
 
         let mut state = self.state.borrow_mut();
@@ -5037,14 +4182,9 @@ impl Heuristic for SaturatedCostPartitioningOnlineHeuristic<'_> {
             self.release_abstractions_if_finished(&mut state);
         }
 
-        let candidate_partitions = self.maybe_build_cp(
-            task,
-            &mut state,
-            abstract_state_ids,
-            num_domain_abstractions,
-        )?;
+        let candidate_partitions = self.maybe_build_cp(task, &mut state, abstract_state_ids)?;
         if build_cp && !self.config.online {
-            Self::retain_standalone_envelope(&mut state);
+            Self::retain_standalone_envelope(&mut state, abstract_state_ids.len());
             max_h = max_h.max(Self::compute_max_h(&state, abstract_state_ids));
         }
         for cp in candidate_partitions {
@@ -5125,7 +4265,6 @@ fn compute_score(h: f64, stolen_costs: f64, scoring_function: ScoringFunction) -
 fn standalone_current_h_values(
     state: &ScpOnlineState,
     abstract_state_ids: &[Option<usize>],
-    _num_domain_abstractions: usize,
 ) -> Vec<f64> {
     (0..state.h_values_by_abstraction.len())
         .map(|abstraction_id| {
@@ -5161,29 +4300,32 @@ fn compute_costs_stolen_by_heuristic(saturated: &[f64], surplus: &[f64]) -> f64 
 }
 
 fn compute_regional_conflict_scores(
-    abstractions: &[DomainAbstraction],
-    cartesian_abstractions: &[CartesianAbstraction],
+    components: &[AbstractionComponent<'_>],
     saturated_by_component: &[Vec<f64>],
     operator_costs: &[f64],
-) -> Result<Vec<f64>, EvaluationError> {
-    let component_count = abstractions.len() + cartesian_abstractions.len();
-    let mut regions_by_component = Vec::with_capacity(component_count);
-    for (component_id, (footprints, expected_footprints)) in abstractions
-        .iter()
-        .map(|abstraction| {
-            (
-                abstraction.abstract_operator_footprints.as_slice(),
-                abstraction.abstract_operators.len(),
-            )
-        })
-        .chain(cartesian_abstractions.iter().map(|abstraction| {
-            (
-                abstraction.abstract_operator_footprints.as_slice(),
-                abstraction.transition_system.transitions.len(),
-            )
-        }))
-        .enumerate()
-    {
+) -> Result<Vec<Option<f64>>, EvaluationError> {
+    let mut regions_by_component = Vec::with_capacity(components.len());
+    for (component_id, component) in components.iter().enumerate() {
+        let (footprints, expected_footprints) = match component {
+            AbstractionComponent::Domain(heuristic) => {
+                let abstraction = heuristic.abstraction();
+                (
+                    abstraction.abstract_operator_footprints.as_slice(),
+                    abstraction.abstract_operators.len(),
+                )
+            }
+            AbstractionComponent::Cartesian(heuristic) => {
+                let abstraction = heuristic.abstraction();
+                (
+                    abstraction.abstract_operator_footprints.as_slice(),
+                    abstraction.transition_system.transitions.len(),
+                )
+            }
+            AbstractionComponent::PatternDatabase(_) => {
+                regions_by_component.push(None);
+                continue;
+            }
+        };
         if footprints.len() != expected_footprints {
             return Err(EvaluationError::ComputationFailed(format!(
                 "region SCP component {component_id} has {} operator footprints for {expected_footprints} retained abstract transitions/operators",
@@ -5205,16 +4347,25 @@ fn compute_regional_conflict_scores(
                     .push(&label.source_region);
             }
         }
-        regions_by_component.push(by_operator);
+        regions_by_component.push(Some(by_operator));
     }
 
-    let mut scores = vec![0.0; component_count];
-    for left in 0..component_count {
-        for right in left + 1..component_count {
+    let mut scores = regions_by_component
+        .iter()
+        .map(|regions| regions.as_ref().map(|_| 0.0))
+        .collect::<Vec<_>>();
+    for left in 0..components.len() {
+        let Some(left_by_operator) = &regions_by_component[left] else {
+            continue;
+        };
+        for right in left + 1..components.len() {
+            let Some(right_by_operator) = &regions_by_component[right] else {
+                continue;
+            };
             let left_saturated = &saturated_by_component[left];
             let right_saturated = &saturated_by_component[right];
-            for (&operator_id, left_regions) in &regions_by_component[left] {
-                let Some(right_regions) = regions_by_component[right].get(&operator_id) else {
+            for (&operator_id, left_regions) in left_by_operator {
+                let Some(right_regions) = right_by_operator.get(&operator_id) else {
                     continue;
                 };
                 let left_amount = left_saturated
@@ -5237,8 +4388,12 @@ fn compute_regional_conflict_scores(
                     base_cost,
                 );
                 if conflict > 1e-9 {
-                    scores[left] += conflict;
-                    scores[right] += conflict;
+                    *scores[left]
+                        .as_mut()
+                        .expect("regional component must have a conflict score") += conflict;
+                    *scores[right]
+                        .as_mut()
+                        .expect("regional component must have a conflict score") += conflict;
                 }
             }
         }
@@ -5331,7 +4486,9 @@ fn reduce_costs(
         .enumerate()
     {
         if !s.is_finite() {
-            continue;
+            return Err(EvaluationError::ComputationFailed(format!(
+                "saturated cost for operator {op_id} must be finite"
+            )));
         }
         if *s <= 1e-9 {
             continue;

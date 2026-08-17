@@ -112,6 +112,15 @@ fn reduce_costs_rejects_significant_underflow() {
 }
 
 #[test]
+fn reduce_costs_rejects_non_finite_saturated_costs() {
+    let mut remaining = vec![1.0];
+
+    let error = reduce_costs(&mut remaining, &[f64::NEG_INFINITY]).unwrap_err();
+
+    assert!(error.to_string().contains("must be finite"));
+}
+
+#[test]
 fn regional_conflict_scoring_accepts_transition_free_components() {
     let task = independent_goals_task();
     let mut cartesian = cartesian_abstraction(&task);
@@ -129,10 +138,13 @@ fn regional_conflict_scoring_accepts_transition_free_components() {
     domain.abstract_operators.clear();
     domain.abstract_operator_footprints.clear();
 
+    let components = vec![
+        AbstractionComponent::domain(None, domain),
+        AbstractionComponent::cartesian(None, cartesian),
+    ];
     assert_eq!(
         compute_regional_conflict_scores(
-            &[domain],
-            &[cartesian],
+            &components,
             &[
                 vec![f64::NEG_INFINITY; task.get_num_operators()],
                 vec![f64::NEG_INFINITY; task.get_num_operators()],
@@ -140,7 +152,7 @@ fn regional_conflict_scoring_accepts_transition_free_components() {
             &[2.0, 3.0],
         )
         .unwrap(),
-        vec![0.0, 0.0]
+        vec![Some(0.0), Some(0.0)]
     );
 }
 
@@ -151,9 +163,9 @@ fn regional_conflict_scoring_rejects_missing_footprints() {
     assert!(!abstraction.transition_system.transitions.is_empty());
     abstraction.abstract_operator_footprints.clear();
 
+    let components = vec![AbstractionComponent::cartesian(None, abstraction)];
     let error = compute_regional_conflict_scores(
-        &[],
-        &[abstraction],
+        &components,
         &[vec![f64::NEG_INFINITY; task.get_num_operators()]],
         &[2.0, 3.0],
     )
@@ -210,9 +222,13 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
         })
         .collect::<Vec<_>>();
+    let components = abstractions
+        .iter()
+        .cloned()
+        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .collect::<Vec<_>>();
     let order = |variant| {
-        cartesian_goal_cover_order(&base_order, 0, &abstractions, &standalone_h, true, variant)
-            .unwrap()
+        cartesian_goal_cover_order(&base_order, &components, &standalone_h, true, variant).unwrap()
     };
     let goal = |component_id: usize| {
         abstractions[component_id]
@@ -272,10 +288,14 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         })
         .collect::<Vec<_>>();
     let structural_id = mixed.len() - 1;
+    let mixed_components = mixed
+        .iter()
+        .cloned()
+        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .collect::<Vec<_>>();
     let prefixed = cartesian_goal_cover_order(
         &mixed_order,
-        0,
-        &mixed,
+        &mixed_components,
         &mixed_h,
         false,
         GoalCoverOrderVariant {
@@ -490,9 +510,23 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     )
     .unwrap();
 
-    assert!(heuristic.cartesian_abstractions.borrow().is_some());
+    assert!(
+        !heuristic.components.borrow()[0]
+            .as_cartesian()
+            .unwrap()
+            .transition_system
+            .transitions
+            .is_empty()
+    );
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
-    assert!(heuristic.cartesian_abstractions.borrow().is_none());
+    assert!(
+        heuristic.components.borrow()[0]
+            .as_cartesian()
+            .unwrap()
+            .transition_system
+            .transitions
+            .is_empty()
+    );
     assert!(heuristic.state.borrow().improvement_ended);
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
 }
@@ -570,7 +604,11 @@ fn offline_diversification_supports_mixed_abstraction_backends() {
     assert!(state.cp_heuristics.len() <= 8);
     drop(state);
     assert!(heuristic.sampling_task.borrow().is_none());
-    assert!(heuristic.cartesian_abstractions.borrow().is_none());
+    assert!(heuristic.components.borrow().iter().all(|component| {
+        component
+            .as_cartesian()
+            .is_none_or(|abstraction| abstraction.transition_system.transitions.is_empty())
+    }));
 }
 
 #[test]
@@ -697,7 +735,6 @@ fn offline_diversifier_keeps_partitions_that_improve_different_samples() {
 fn retained_standalone_envelope_preserves_every_component_without_cp_orders() {
     let mut state = ScpOnlineState::new(Some(1));
     state.h_values_by_abstraction = vec![vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]];
-    state.pdb_offset = 2;
     let samples = [vec![Some(0), Some(0), None], vec![Some(1), Some(1), None]];
 
     assert_eq!(
@@ -708,12 +745,12 @@ fn retained_standalone_envelope_preserves_every_component_without_cp_orders() {
         vec![5.0, 6.0]
     );
 
-    SaturatedCostPartitioningOnlineHeuristic::retain_standalone_envelope(&mut state);
+    SaturatedCostPartitioningOnlineHeuristic::retain_standalone_envelope(&mut state, 3);
 
     assert!(state.h_values_by_abstraction.is_empty());
     assert_eq!(state.standalone_lookup_tables.len(), 2);
     assert!(state.cp_heuristics.is_empty());
-    assert_eq!(state.required_lookup_ids, vec![0, 1]);
+    assert_eq!(state.required_mask, vec![true, true, false]);
     assert_eq!(
         samples
             .iter()
@@ -894,10 +931,14 @@ mod handcrafted_sailing_tests {
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
             })
             .collect::<Vec<_>>();
+        let components = abstractions
+            .iter()
+            .cloned()
+            .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+            .collect::<Vec<_>>();
         let goal_cover_order = cartesian_goal_cover_order(
             &(0..abstractions.len()).collect::<Vec<_>>(),
-            0,
-            &abstractions,
+            &components,
             &standalone_h,
             true,
             GoalCoverOrderVariant::default(),
@@ -959,7 +1000,7 @@ mod handcrafted_sailing_tests {
         .expect("failed to construct oracle SCP heuristic");
         let mut state = heuristic.state.borrow_mut();
         let mut partitions = heuristic
-            .maybe_build_cp(task, &mut state, &abstract_state_ids, 0)
+            .maybe_build_cp(task, &mut state, &abstract_state_ids)
             .expect("oracle SCP construction failed");
         assert_eq!(partitions.len(), 1);
         partitions
@@ -1050,12 +1091,7 @@ mod handcrafted_sailing_tests {
                 &abstract_state_ids,
             );
             let mut partitions = heuristic
-                .maybe_build_cp(
-                    transformed_task,
-                    &mut state,
-                    &abstract_state_ids,
-                    specs.len(),
-                )
+                .maybe_build_cp(transformed_task, &mut state, &abstract_state_ids)
                 .expect("initial SCP construction failed");
             assert_eq!(partitions.len(), 1);
             let cp = partitions.pop().unwrap();
@@ -1072,10 +1108,7 @@ mod handcrafted_sailing_tests {
         let state = heuristic.state.borrow();
         let initial_h =
             SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, &abstract_state_ids);
-        let abstractions_ref = heuristic.abstractions.borrow();
-        let abstractions = abstractions_ref
-            .as_ref()
-            .expect("diagnostic keeps abstractions alive");
+        let components = heuristic.components.borrow();
 
         println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
         let mut contributions = vec![0.0; specs.len()];
@@ -1093,7 +1126,10 @@ mod handcrafted_sailing_tests {
             }
         }
 
-        for (index, (spec, abstraction)) in specs.iter().zip(abstractions).enumerate() {
+        for (index, (spec, component)) in specs.iter().zip(components.iter()).enumerate() {
+            let abstraction = component
+                .as_domain()
+                .expect("handcrafted diagnostic uses domain components");
             let standalone_h = current_h_for_distances(
                 index,
                 &abstraction.distance_table.distances,
@@ -1242,14 +1278,24 @@ mod handcrafted_sailing_tests {
         let prop = task.get_initial_propositional_state_values();
         let numeric = task.get_initial_numeric_state_values();
         heuristic
-            .abstraction_heuristics
+            .components
+            .borrow()
             .iter()
-            .map(|component| {
-                Some(
-                    component
+            .map(|component| match component {
+                AbstractionComponent::Domain(domain) => Some(
+                    domain
                         .abstract_state_hash_from_state_values(prop, numeric)
                         .expect("failed to hash initial state for handcrafted abstraction"),
-                )
+                ),
+                AbstractionComponent::Cartesian(cartesian) => Some(
+                    cartesian
+                        .abstraction()
+                        .abstract_state_id(prop, numeric)
+                        .expect("failed to map initial Cartesian state"),
+                ),
+                AbstractionComponent::PatternDatabase(pdb) => pdb
+                    .abstract_state_id_from_source_state_values(prop, numeric)
+                    .expect("failed to map initial PDB state"),
             })
             .collect()
     }
