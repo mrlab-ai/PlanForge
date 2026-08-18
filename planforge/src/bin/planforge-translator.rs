@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 
-use planforge::init_logger;
-use planforge_translate::{LayerStrategy, translate_to_sas_to_path};
+use planforge::{GroundingOptions, init_logger};
+use planforge_translate::{LayerStrategy, translate_to_sas_to_path_with_limits};
 use tracing::info;
 
 /// The translator's entry points name files, and a path that is not valid
@@ -50,6 +50,8 @@ enum Commands {
         layer_strategy: LayerStrategy,
         #[arg(long = "log-level")]
         log_level: Option<tracing_subscriber::filter::LevelFilter>,
+        #[command(flatten)]
+        grounding: GroundingOptions,
     },
 }
 
@@ -62,16 +64,18 @@ fn main() -> anyhow::Result<()> {
             output,
             layer_strategy,
             log_level,
+            grounding,
         } => {
             init_logger(log_level.unwrap_or(tracing_subscriber::filter::LevelFilter::INFO));
 
             let start = Instant::now();
             let out_path = output.unwrap_or_else(|| PathBuf::from("output.sas"));
-            translate_to_sas_to_path(
+            translate_to_sas_to_path_with_limits(
                 as_str(&domain)?,
                 as_str(&problem)?,
                 &out_path,
                 layer_strategy,
+                grounding.limits(),
             )?;
             info!(
                 "translator: wrote {} in {:.2?}",

@@ -605,6 +605,7 @@ mod tests {
             &path("problem.pddl"),
             false,
             layer_strategy,
+            crate::GroundingLimits::default(),
         )
         .unwrap_or_else(|err| panic!("translating {fixture} failed: {err}"))
         .variables

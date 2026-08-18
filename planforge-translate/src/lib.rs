@@ -24,6 +24,7 @@ mod build_model;
 mod constraints;
 mod fact_groups;
 mod greedy_join;
+mod grounding;
 mod instantiate;
 mod invariant_finder;
 mod invariants;
@@ -43,6 +44,10 @@ mod translate;
 
 pub use api::{
     translate_to_sas_string, translate_to_sas_to_path, translate_to_sas_to_path_fast,
-    translate_to_task,
+    translate_to_sas_to_path_with_limits, translate_to_task, translate_to_task_with_limits,
+};
+pub use grounding::{
+    DEFAULT_MAX_GROUND_ACTIONS, DEFAULT_MAX_GROUND_ATOMS, DEFAULT_MAX_GROUNDING_MEMORY,
+    GroundingLimitError, GroundingLimitKind, GroundingLimits,
 };
 pub use options::LayerStrategy;

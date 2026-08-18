@@ -96,7 +96,7 @@ pub fn run_with_heuristics(extra: Vec<ExternalHeuristic>) -> std::io::Result<()>
             .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
     );
     if let Some(command) = &cli.command {
-        return run_command(command);
+        return run_command(command, cli.grounding.limits());
     }
     if cli.inputs.is_empty() {
         return Err(std::io::Error::new(
@@ -143,6 +143,9 @@ pub struct PlannersCli {
     #[arg(long = "restrict-task")]
     pub restrict_task: bool,
 
+    #[command(flatten)]
+    pub grounding: GroundingOptions,
+
     /// Recursive search configuration.
     /// Examples: `astar(blind())`, `astar(domain_abstraction())`,
     /// `astar(check_admissible(domain_abstraction()))`.
@@ -163,6 +166,37 @@ pub struct PlannersCli {
 
     #[arg(value_name = "INPUT", num_args = 0..=2)]
     pub inputs: Vec<String>,
+}
+
+/// Limits applied while materializing a grounded PDDL task.
+#[derive(Args, Debug, Clone, Copy)]
+pub struct GroundingOptions {
+    /// Maximum number of reachable ground actions.
+    #[arg(long, default_value_t = planforge_translate::DEFAULT_MAX_GROUND_ACTIONS)]
+    pub max_ground_actions: u64,
+
+    /// Maximum number of atoms derived by the grounding model.
+    #[arg(long, default_value_t = planforge_translate::DEFAULT_MAX_GROUND_ATOMS)]
+    pub max_ground_atoms: u64,
+
+    /// Approximate memory allowed for materialized grounding structures.
+    #[arg(
+        long,
+        value_name = "SIZE",
+        default_value = "4G",
+        value_parser = parse_memory_limit
+    )]
+    pub max_grounding_memory: u64,
+}
+
+impl GroundingOptions {
+    pub fn limits(self) -> planforge_translate::GroundingLimits {
+        planforge_translate::GroundingLimits {
+            max_ground_actions: self.max_ground_actions,
+            max_ground_atoms: self.max_ground_atoms,
+            max_grounding_memory: self.max_grounding_memory,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -194,9 +228,12 @@ pub struct EnumerateCli {
     pub inputs: Vec<String>,
 }
 
-pub fn run_command(command: &PlanforgeCommand) -> std::io::Result<()> {
+pub fn run_command(
+    command: &PlanforgeCommand,
+    grounding_limits: planforge_translate::GroundingLimits,
+) -> std::io::Result<()> {
     match command {
-        PlanforgeCommand::Enumerate(arguments) => run_enumeration(arguments),
+        PlanforgeCommand::Enumerate(arguments) => run_enumeration(arguments, grounding_limits),
     }
 }
 
@@ -223,6 +260,14 @@ pub fn run_wrapped_process(cli: &PlannersCli) -> std::io::Result<()> {
     if cli.restrict_task {
         child_args.push(OsString::from("--restrict-task"));
     }
+    child_args.push(OsString::from("--max-ground-actions"));
+    child_args.push(OsString::from(cli.grounding.max_ground_actions.to_string()));
+    child_args.push(OsString::from("--max-ground-atoms"));
+    child_args.push(OsString::from(cli.grounding.max_ground_atoms.to_string()));
+    child_args.push(OsString::from("--max-grounding-memory"));
+    child_args.push(OsString::from(
+        cli.grounding.max_grounding_memory.to_string(),
+    ));
     child_args.push(OsString::from("--search"));
     child_args.push(OsString::from(cli.search.to_string()));
     child_args.extend(cli.inputs.iter().cloned().map(OsString::from));
@@ -348,10 +393,17 @@ pub fn solve_task(
         .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
-fn load_enumeration_task(arguments: &EnumerateCli) -> std::io::Result<NumericRootTask> {
+fn load_enumeration_task(
+    arguments: &EnumerateCli,
+    grounding_limits: planforge_translate::GroundingLimits,
+) -> std::io::Result<NumericRootTask> {
     let mut task = if arguments.inputs.len() == 2 {
-        planforge_translate::translate_to_task(&arguments.inputs[0], &arguments.inputs[1])
-            .map_err(|error| std::io::Error::other(error.to_string()))?
+        planforge_translate::translate_to_task_with_limits(
+            &arguments.inputs[0],
+            &arguments.inputs[1],
+            grounding_limits,
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))?
     } else {
         NumericRootTask::try_from_file(&arguments.inputs[0]).map_err(std::io::Error::other)?
     };
@@ -459,8 +511,11 @@ fn write_state_space_csv(output: &Path, graph: &OwnedStateSpace) -> std::io::Res
     histogram.flush()
 }
 
-fn run_enumeration(arguments: &EnumerateCli) -> std::io::Result<()> {
-    let task: TaskRef<'static> = Arc::new(load_enumeration_task(arguments)?);
+fn run_enumeration(
+    arguments: &EnumerateCli,
+    grounding_limits: planforge_translate::GroundingLimits,
+) -> std::io::Result<()> {
+    let task: TaskRef<'static> = Arc::new(load_enumeration_task(arguments, grounding_limits)?);
     let start = std::time::Instant::now();
     let graph = enumerate_state_space(
         task,
@@ -503,8 +558,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         // The default path: the translation hands over the task it built, with
         // no SAS+ text in between.
         (
-            planforge_translate::translate_to_task(domain, problem)
-                .map_err(|err| std::io::Error::other(err.to_string()))?,
+            planforge_translate::translate_to_task_with_limits(
+                domain,
+                problem,
+                cli.grounding.limits(),
+            )
+            .map_err(|err| std::io::Error::other(err.to_string()))?,
             format!("{domain} + {problem} (in-memory)"),
         )
     } else {

@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use tracing::info;
 
+use crate::grounding::{GroundingLimitError, GroundingMonitor};
 use crate::pddl_to_prolog::{PrologProgram, RuleType};
 use crate::symbols::{ObjectId, PredicateId, Symbols};
 use crate::tools::cmp_quoted_slice;
@@ -30,6 +31,8 @@ pub struct GroundModel {
 
 /// `(rule, condition)`: one place a ground atom can be plugged into.
 type Slot = (u32, u32);
+
+type Enqueue<'a> = dyn FnMut(PredicateId, &[ObjectId]) -> Result<(), GroundingLimitError> + 'a;
 
 /// Argument tuples of the atoms that matched a condition.
 type Matched = Vec<Rc<[ObjectId]>>;
@@ -190,9 +193,9 @@ impl Rule {
 
     /// Records a match so that later firings of the *other* conditions can
     /// combine with it.
-    fn record(&mut self, index: usize, args: &Rc<[ObjectId]>, key: &mut Vec<ObjectId>) {
+    fn record(&mut self, index: usize, args: &Rc<[ObjectId]>, key: &mut Vec<ObjectId>) -> u64 {
         match &mut self.body {
-            Body::Project => {}
+            Body::Project => 0,
             Body::Join {
                 key_positions,
                 matched,
@@ -200,8 +203,10 @@ impl Rule {
                 fill_key(key, &key_positions[index], args);
                 if let Some(matches) = matched[index].get_mut(key.as_slice()) {
                     matches.push(Rc::clone(args));
+                    std::mem::size_of::<Rc<[ObjectId]>>() as u64
                 } else {
                     matched[index].insert(key.clone().into_boxed_slice(), vec![Rc::clone(args)]);
+                    32 + (key.len() * std::mem::size_of::<ObjectId>()) as u64
                 }
             }
             Body::Product { matched, unmatched } => {
@@ -209,6 +214,7 @@ impl Rule {
                     *unmatched -= 1;
                 }
                 matched[index].push(Rc::clone(args));
+                std::mem::size_of::<Rc<[ObjectId]>>() as u64
             }
         }
     }
@@ -220,15 +226,15 @@ impl Rule {
         index: usize,
         args: &[ObjectId],
         scratch: &mut Scratch,
-        enqueue: &mut dyn FnMut(PredicateId, &[ObjectId]),
-    ) {
+        enqueue: &mut Enqueue<'_>,
+    ) -> Result<(), GroundingLimitError> {
         let Scratch { head, key, cursor } = scratch;
         head.clear();
         head.extend_from_slice(&self.head);
         self.conditions[index].bind(args, head);
 
         match &self.body {
-            Body::Project => enqueue(self.head_predicate, head),
+            Body::Project => enqueue(self.head_predicate, head)?,
             Body::Join {
                 key_positions,
                 matched,
@@ -236,19 +242,19 @@ impl Rule {
                 fill_key(key, &key_positions[index], args);
                 let other = 1 - index;
                 let Some(partners) = matched[other].get(key.as_slice()) else {
-                    return;
+                    return Ok(());
                 };
                 // The two conditions agree on exactly the head slots the key
                 // covers, so binding the partner cannot invalidate the slots
                 // already written and no reset is needed between partners.
                 for partner in partners {
                     self.conditions[other].bind(partner, head);
-                    enqueue(self.head_predicate, head);
+                    enqueue(self.head_predicate, head)?;
                 }
             }
             Body::Product { matched, unmatched } => {
                 if *unmatched > 0 {
-                    return;
+                    return Ok(());
                 }
                 cursor.clear();
                 cursor.resize(self.conditions.len(), 0);
@@ -261,13 +267,14 @@ impl Rule {
                             condition.bind(&matched[other][cursor[other]], head);
                         }
                     }
-                    enqueue(self.head_predicate, head);
+                    enqueue(self.head_predicate, head)?;
                     if !advance(cursor, index, matched) {
-                        return;
+                        return Ok(());
                     }
                 }
             }
         }
+        Ok(())
     }
 }
 
@@ -428,20 +435,24 @@ impl Queue {
         }
     }
 
-    fn push(&mut self, predicate: PredicateId, args: &[ObjectId]) {
+    fn push(&mut self, predicate: PredicateId, args: &[ObjectId]) -> bool {
         self.pushes += 1;
         let derived = &mut self.enqueued[predicate.index()];
         if derived.contains(args) {
-            return;
+            return false;
         }
         let args: Rc<[ObjectId]> = Rc::from(args);
         derived.insert(Rc::clone(&args));
         self.atoms.push(GroundAtom { predicate, args });
+        true
     }
 }
 
 /// Computes the least model of `prog` by forward chaining.
-pub fn compute_model(prog: &PrologProgram) -> GroundModel {
+pub fn compute_model(
+    prog: &PrologProgram,
+    monitor: &mut GroundingMonitor,
+) -> Result<GroundModel, GroundingLimitError> {
     let mut symbols = Symbols::default();
 
     // The seed order decides the order of everything the model feeds, down to
@@ -473,7 +484,9 @@ pub fn compute_model(prog: &PrologProgram) -> GroundModel {
 
     let mut queue = Queue::new(predicate_count);
     for (predicate, args) in &interned_facts {
-        queue.push(*predicate, args);
+        if queue.push(*predicate, args) {
+            monitor.note_model_atom(args.len())?;
+        }
     }
 
     info!("Generated {} rules.", rules.len());
@@ -495,17 +508,24 @@ pub fn compute_model(prog: &PrologProgram) -> GroundModel {
         }
 
         unifier.slots(predicate, &args, &mut slots);
+        let mut recorded_bytes = 0;
         for &(rule_index, condition_index) in &slots {
             let rule = &mut rules[rule_index as usize];
             let condition_index = condition_index as usize;
-            rule.record(condition_index, &args, &mut scratch.key);
+            recorded_bytes += rule.record(condition_index, &args, &mut scratch.key);
             rule.fire(
                 condition_index,
                 &args,
                 &mut scratch,
-                &mut |predicate, args| queue.push(predicate, args),
-            );
+                &mut |predicate, args| {
+                    if queue.push(predicate, args) {
+                        monitor.note_model_atom(args.len())?;
+                    }
+                    Ok(())
+                },
+            )?;
         }
+        monitor.note_model_work(recorded_bytes)?;
     }
 
     info!("{relevant_atoms} relevant atoms");
@@ -513,8 +533,9 @@ pub fn compute_model(prog: &PrologProgram) -> GroundModel {
     info!("{} final queue length", queue.atoms.len());
     info!("{} total queue pushes", queue.pushes);
 
-    GroundModel {
+    monitor.finish_model()?;
+    Ok(GroundModel {
         symbols,
         atoms: queue.atoms,
-    }
+    })
 }

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use super::build_model;
+use super::grounding::{GroundingLimitError, GroundingLimits, GroundingMonitor};
 use super::pddl::actions::PropositionalAction;
 use super::pddl::axioms::{InstantiatedNumericAxiom, PropositionalAxiom};
 use super::pddl::conditions::*;
@@ -185,9 +186,11 @@ fn init_function_values(
 
 /// Translates the task into a logic program, computes its model and
 /// instantiates the actions and axioms the model proves reachable.
-pub fn explore(task: &Task) -> ExploreResult {
+pub fn explore(task: &Task, limits: GroundingLimits) -> Result<ExploreResult, GroundingLimitError> {
+    let mut monitor = GroundingMonitor::new(limits);
     let prog = pddl_to_prolog::translate(task);
-    let model = build_model::compute_model(&prog);
+    let model = build_model::compute_model(&prog, &mut monitor)?;
+    monitor.enter_phase("collecting reachable facts");
 
     let fluent_predicates = get_fluent_predicates(task);
     let objects_by_type = get_objects_by_type(&task.objects, &task.types);
@@ -214,10 +217,15 @@ pub fn explore(task: &Task) -> ExploreResult {
         };
         let role = &roles[atom.predicate.index()];
         if role.fluent {
-            reachable_atoms.push(Atom::new(
-                model.symbols.predicate_name(atom.predicate).to_owned(),
-                args(),
-            ));
+            let predicate = model.symbols.predicate_name(atom.predicate);
+            let arguments = args();
+            let string_bytes = predicate.len() + arguments.iter().map(String::len).sum::<usize>();
+            monitor.note_materialized_bytes(
+                (std::mem::size_of::<Atom>()
+                    + arguments.len() * std::mem::size_of::<String>()
+                    + string_bytes) as u64,
+            )?;
+            reachable_atoms.push(Atom::new(predicate.to_owned(), arguments));
         }
         match role.bookkeeping {
             Bookkeeping::None => {}
@@ -228,14 +236,20 @@ pub fn explore(task: &Task) -> ExploreResult {
                     function_type(symbol),
                 ));
             }
-            Bookkeeping::ActionParameters(name) => reachable_action_params
-                .entry(name.to_owned())
-                .or_default()
-                .push(Rc::clone(&atom.args)),
-            Bookkeeping::AxiomParameters(name) => reachable_axiom_params
-                .entry((name.to_owned(), atom.args.len()))
-                .or_default()
-                .push(Rc::clone(&atom.args)),
+            Bookkeeping::ActionParameters(name) => {
+                monitor.note_materialized_bytes(std::mem::size_of::<Rc<[ObjectId]>>() as u64)?;
+                reachable_action_params
+                    .entry(name.to_owned())
+                    .or_default()
+                    .push(Rc::clone(&atom.args));
+            }
+            Bookkeeping::AxiomParameters(name) => {
+                monitor.note_materialized_bytes(std::mem::size_of::<Rc<[ObjectId]>>() as u64)?;
+                reachable_axiom_params
+                    .entry((name.to_owned(), atom.args.len()))
+                    .or_default()
+                    .push(Rc::clone(&atom.args));
+            }
             Bookkeeping::FunctionAxiom(name) => axiom_instances.push((name, args())),
             // The goal atom being derived means the delete-relaxation reaches
             // the goal. Nothing here needs that: the translation of the
@@ -246,6 +260,18 @@ pub fn explore(task: &Task) -> ExploreResult {
         }
     }
 
+    // HashSet owns deep clones of every reachable atom.
+    let fluent_fact_bytes = reachable_atoms
+        .iter()
+        .map(|atom| {
+            std::mem::size_of::<Atom>()
+                + atom.args.len() * std::mem::size_of::<String>()
+                + atom.predicate.len()
+                + atom.args.iter().map(String::len).sum::<usize>()
+                + 16
+        })
+        .sum::<usize>();
+    monitor.note_materialized_bytes(fluent_fact_bytes as u64)?;
     let fluent_facts: HashSet<Atom> = reachable_atoms.iter().cloned().collect();
     let tables = &super::pddl::tasks::GroundingTables {
         init_facts: &init_facts,
@@ -298,12 +324,19 @@ pub fn explore(task: &Task) -> ExploreResult {
                 &mut task_function_admin,
                 &mut new_constant_numeric_axioms,
             ) {
+                let estimated_bytes = std::mem::size_of::<PropositionalAction>()
+                    + prop_action.name.len()
+                    + prop_action.precondition.len() * 128
+                    + (prop_action.add_effects.len() + prop_action.del_effects.len()) * 192
+                    + prop_action.assign_effects.len() * 256;
+                monitor.note_action(&action.name, estimated_bytes as u64)?;
                 grounded_ops.push(prop_action);
             }
         }
     }
 
     // Step 7: Instantiate axioms
+    monitor.enter_phase("instantiating axioms");
     let mut grounded_axioms: Vec<PropositionalAxiom> = vec![];
     let mut var_mapping = VarMapping::default();
     for axiom in &task.axioms {
@@ -429,14 +462,15 @@ pub fn explore(task: &Task) -> ExploreResult {
     // here, not every declared or referenced numeric expression.
     let num_fluents: Vec<PrimitiveNumericExpression> = fluent_functions.iter().cloned().collect();
 
-    ExploreResult {
+    monitor.complete()?;
+    Ok(ExploreResult {
         atoms: reachable_atoms,
         num_fluents,
         grounded_ops,
         grounded_axioms,
         numeric_axioms: numeric_axioms.into_vec(),
         reachable_action_params,
-    }
+    })
 }
 
 /// Visits every assignment of type-correct objects to `parameters`, last

@@ -162,6 +162,14 @@ fn run_stage(
     if cli.restrict_task {
         args.push(OsString::from("--restrict-task"));
     }
+    args.push(OsString::from("--max-ground-actions"));
+    args.push(OsString::from(cli.grounding.max_ground_actions.to_string()));
+    args.push(OsString::from("--max-ground-atoms"));
+    args.push(OsString::from(cli.grounding.max_ground_atoms.to_string()));
+    args.push(OsString::from("--max-grounding-memory"));
+    args.push(OsString::from(
+        cli.grounding.max_grounding_memory.to_string(),
+    ));
     args.extend(cli.inputs.iter().cloned().map(OsString::from));
 
     let mut command = Command::new(executable);

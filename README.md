@@ -112,6 +112,13 @@ Common options:
   - `gbfs(lmcutnumeric())`
 - `--max-time DURATION` — wall-clock budget (`30m`, `1h`, `45s`).
 - `--max-memory SIZE` — address-space cap (`8G`, `4096M`).
+- `--max-ground-actions COUNT` — stop translation before it materializes more
+  than this many reachable ground actions (default: 10,000,000).
+- `--max-ground-atoms COUNT` — stop translation before its reachability model
+  derives more than this many ground atoms (default: 10,000,000).
+- `--max-grounding-memory SIZE` — approximate memory budget for the ground
+  atoms, join tables, reachable facts and ground actions materialized by the
+  translator (default: `4G`).
 - `--restrict-task` — convert an SNP task to its restricted representation;
   already restricted tasks are retained unchanged.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
@@ -152,6 +159,17 @@ reserves address space ahead of committed pages. Heuristic construction and
 search also release their fixed memory padding as the resident limit is
 approached, leaving room for a controlled planner exit before an external
 Slurm or cgroup limit fires.
+
+Grounding has separate structural limits because a task may be too large to
+ground well before search starts. The translator checks those limits in
+batches, reports actions, atoms and estimated grounding memory every five
+seconds on long runs, and returns an error naming the limit and current phase.
+It never hands a truncated task to search. The same three grounding flags are
+accepted by `planforge-translator translate`; that command creates its output
+file only after grounding has completed, so a limit error cannot leave a
+partial SAS+ task. These memory figures estimate the owned grounding data
+structures, not whole-process RSS; `--max-memory` remains the process-wide
+resident-memory limit.
 
 ## License
 
