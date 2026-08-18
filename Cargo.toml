@@ -22,6 +22,7 @@ members = [
     "planforge-sgd",
     "tutorials/rust-goal-count",
     "tutorials/rust-custom-search",
+    "tutorials/rust-plugin-binary",
     "tests",
 ]
 

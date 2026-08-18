@@ -1796,6 +1796,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tutorial-plugin-binary"
+version = "0.1.0"
+dependencies = [
+ "planforge",
+ "planforge-sas",
+ "planforge-search",
+]
+
+[[package]]
 name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
