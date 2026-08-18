@@ -132,7 +132,7 @@ impl FlawKind {
     ///
     /// `TargetCentered` defaults to `Backward` (boundary splits); all other
     /// variants default to `Forward` (concrete-value splits). Callers may
-    /// override via [`get_flaws_with_direction`].
+    /// override via [`Self::get_flaws_with_direction`].
     pub fn default_split_direction(self) -> SplitDirection {
         match self {
             Self::TargetCentered => SplitDirection::Backward,

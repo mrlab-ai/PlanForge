@@ -5,6 +5,9 @@
 //! limits and the wrapped child process, logging, the plan file and the exit
 //! code -- and delegates the planning itself to `planforge-translate` and
 //! `planforge-searcher`/`planforge-search`.
+//! It therefore orchestrates the complete PDDL translation → SAS+ task →
+//! search pipeline. Embedders that need the standard CLI with an additional
+//! native heuristic should use [`run_with_heuristics`].
 
 mod allocator;
 mod limits;

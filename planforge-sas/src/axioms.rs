@@ -482,8 +482,8 @@ impl<'a> AxiomEvaluator<'a> {
     /// The rules the translator emits to *refute* a derived variable -- head at
     /// the variable's default value, for the heuristics that read axioms as
     /// relaxed operators -- are inert here, and only just. Three things make
-    /// them so: [`Self::derive_literal`] returns early when the buffer already
-    /// holds the value, [`Self::fire_trivial_rules`] runs before anything has
+    /// them so: `Self::derive_literal` returns early when the buffer already
+    /// holds the value, `Self::fire_trivial_rules` runs before anything has
     /// been proven so an unconditional refutation only ever confirms the
     /// default, and an exact negation picks one negated literal out of every
     /// positive body, so it cannot hold once one of the rules it negates does.

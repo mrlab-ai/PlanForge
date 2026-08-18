@@ -1,11 +1,11 @@
 //! Best-first search for numeric planning.
 //!
 //! Split into focused submodules:
-//! - [`open_list`]: the dual-queue open list and its entry ordering.
-//! - [`space`]: per-state search bookkeeping (parents, g-values, closed
+//! - `open_list`: the dual-queue open list and its entry ordering.
+//! - `space`: per-state search bookkeeping (parents, g-values, closed
 //!   flags, preferred-operator snapshots) and plan extraction.
-//! - [`stats`]: counters, progress snapshots, and trace flags.
-//! - [`engine`]: the search loop itself.
+//! - `stats`: counters, progress snapshots, and trace flags.
+//! - `engine`: the search loop itself.
 
 #[cfg(test)]
 mod tests;

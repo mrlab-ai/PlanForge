@@ -22,7 +22,7 @@
 //!
 //! *It is deliberately incomplete.* A derived variable whose default value
 //! nothing observes gets no rules at all, because the rules for it would only
-//! feed rules that are themselves unobserved. [`relevant_default_values`] is
+//! feed rules that are themselves unobserved. `relevant_default_values` is
 //! that analysis, and it is the reason a task whose only axiom is the
 //! translator's global-constraint atom comes out of here empty-handed.
 //!

@@ -2,7 +2,7 @@
 //! `tests/assets`.
 //!
 //! The crate has no library surface of its own; everything lives behind
-//! `cfg(test)`. See [`corpus`] for the shared harness and for why every table in
+//! `cfg(test)`. See `corpus` for the shared harness and for why every table in
 //! here is compared set-wise against what is on disk.
 
 #[cfg(test)]

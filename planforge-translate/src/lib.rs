@@ -5,6 +5,18 @@
 //! whole public surface. The pipeline stages behind them are private: they only
 //! ever ran in this order, and the one crate that used to reach past them was
 //! this crate's own CLI wrapper.
+//!
+//! This is the first stage of PlanForge's PDDL translation → SAS+ task → search
+//! pipeline. The usual in-memory entry point returns the task consumed by
+//! `planforge-search`:
+//!
+//! ```no_run
+//! # fn main() -> anyhow::Result<()> {
+//! let task = planforge_translate::translate_to_task("domain.pddl", "problem.pddl")?;
+//! let _ = task;
+//! # Ok(())
+//! # }
+//! ```
 
 mod api;
 mod axiom_rules;

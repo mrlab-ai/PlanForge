@@ -1,5 +1,10 @@
 //! `#[derive(ApplyOptions)]` proc macro for `planforge-search` typed configs.
 //!
+//! This is configuration support for the search end of PlanForge's PDDL
+//! translation → SAS+ task → search pipeline. It generates option assignment
+//! code for typed search and heuristic configurations; it does not translate
+//! tasks or run search itself.
+//!
 //! It is a crate of its own because a `proc-macro = true` crate has to be, and
 //! it pays for itself at the call-site count: 7 config structs and 112
 //! `--search` options as of this writing, against roughly 370 lines of

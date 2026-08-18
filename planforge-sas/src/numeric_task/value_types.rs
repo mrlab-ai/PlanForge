@@ -123,7 +123,8 @@ impl NumericVariable {
 /// A propositional variable, a numeric condition and a domain abstraction's
 /// numeric variable are different kinds of thing that happen to share the
 /// `(variable, value)` shape, so a fact carries the answer instead of leaving
-/// callers to rediscover it from [`NumericConditions::is_condition_var`] or
+/// callers to rediscover it from
+/// [`NumericConditions::is_condition_var`](crate::numeric_conditions::NumericConditions::is_condition_var) or
 /// from an unlabelled `num_propositional_vars + numeric_var_id` offset.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
 #[repr(u32)]
@@ -140,7 +141,7 @@ pub enum FactNamespace {
     ///
     /// That id space is private to the abstraction machinery. No fact a task
     /// exposes may carry this tag, which is what
-    /// [`assert_fact_namespaces`] checks.
+    /// [`assert_fact_namespaces`](crate::numeric_task::assert_fact_namespaces) checks.
     NumericVariable = 2,
 }
 
@@ -165,7 +166,7 @@ impl FactNamespace {
 ///
 /// `u32` fields halve the per-fact footprint compared to `usize` on 64-bit
 /// targets (16 B → 8 B). The namespace occupies the top
-/// [`FactNamespace::BITS`] bits of the variable id, leaving a hard
+/// `FactNamespace::BITS` bits of the variable id, leaving a hard
 /// [`Self::MAX_VAR_ID`] ceiling — vastly above anything realistic planning
 /// tasks reach, and checked at construction.
 ///
@@ -228,7 +229,7 @@ impl ExplicitFact {
     }
 
     /// The same fact re-tagged. Used by the one pass that owns namespace
-    /// assignment, [`NumericRootTask::assign_fact_namespaces`].
+    /// assignment, `NumericRootTask::assign_fact_namespaces`.
     #[inline]
     #[must_use]
     pub fn with_namespace(self, namespace: FactNamespace) -> Self {

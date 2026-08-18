@@ -170,7 +170,7 @@ pub struct SasVariable {
 /// The file states an operator's conditions in two places — the prevail block,
 /// and the value an effect requires of the variable it writes — while an
 /// [`Operator`] holds the single merged list the search checks. Keeping the two
-/// apart until [`Self::into_operator`] is what lets a writer emit the block
+/// apart until `Self::into_operator` is what lets a writer emit the block
 /// without having to work out which merged precondition came from where.
 pub struct SasOperator {
     pub name: String,

@@ -5,6 +5,16 @@
 //! which heuristics. What a heuristic name means, and how it is built, lives in
 //! `planforge_search::heuristic_factory`, next to the heuristics themselves, so
 //! that adding a heuristic never touches this crate.
+//!
+//! It connects the command-line configuration to the search end of PlanForge's
+//! PDDL translation → SAS+ task → search pipeline.
+//!
+//! ```
+//! use planforge_searcher::parse_search_spec;
+//!
+//! let spec = parse_search_spec("astar(blind())").expect("valid search spec");
+//! assert_eq!(spec.to_string(), "astar(blind())");
+//! ```
 
 pub mod recursive_config;
 #[cfg(feature = "sgd")]

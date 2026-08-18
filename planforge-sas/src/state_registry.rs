@@ -1022,7 +1022,7 @@ impl<'a> StateRegistry<'a> {
     /// vector as returned by [`Self::get_numeric_vars`]. Constant entries are
     /// checked against the values this registry already holds and derived
     /// entries are recomputed by the axiom pass; see
-    /// [`Self::process_register_numeric_variables`]. The initial state must
+    /// `Self::process_register_numeric_variables`. The initial state must
     /// have been created first, because that is where the numeric layout of the
     /// registry is fixed.
     pub fn register_state(
@@ -1890,7 +1890,7 @@ impl<'a> StateRegistry<'a> {
 
     /// Get cost information for a given state.
     ///
-    /// This corresponds to the C++ g_cost_information[state] access pattern.
+    /// This corresponds to the C++ `g_cost_information[state]` access pattern.
     /// Return an empty vector if no cost information is stored for the state.
     pub fn get_cost_information(&self, state: &ConcreteState) -> Vec<f64> {
         self.cost_info.borrow().get(state.get_id()).to_vec()

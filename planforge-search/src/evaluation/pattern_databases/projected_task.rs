@@ -104,7 +104,7 @@ pub enum ProjectedTaskBuildError {
         reason: String,
     },
     /// The base task's goal names a variable only the axioms write; see
-    /// [`validate_abstractable_goal`](crate::evaluation::validate_abstractable_goal).
+    /// [`validate_abstractable_goal`].
     UnabstractableGoal {
         reason: String,
     },

@@ -5,6 +5,17 @@
 //! This crate deliberately exposes only the operations required by PlanForge.
 //! All unsafe code is isolated here; planning algorithms consume checked Rust
 //! types and exhaustive solve statuses.
+//! It is an optional backend at the search end of PlanForge's PDDL translation
+//! → SAS+ task → search pipeline; the `cplex` feature must be enabled.
+//!
+//! A variable definition can be prepared without opening a solver model:
+//!
+//! ```
+//! use planforge_cplex::Variable;
+//!
+//! let variable = Variable::new(0.0, 1.0, 2.0);
+//! assert_eq!(variable.objective, 2.0);
+//! ```
 
 mod ffi;
 

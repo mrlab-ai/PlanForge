@@ -1,3 +1,10 @@
+//! Python bindings for the complete PlanForge pipeline.
+//!
+//! The extension translates PDDL into a SAS+ task and exposes both Rust-owned
+//! search and Python-driven prototyping interfaces. Its supported user-facing
+//! examples are Python programs in the package README rather than Rust calls
+//! into the generated PyO3 module.
+
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;

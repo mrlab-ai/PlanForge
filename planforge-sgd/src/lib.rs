@@ -1,5 +1,9 @@
 //! Search-free plan synthesis by gradient descent.
 //!
+//! This is an alternative final stage of PlanForge's PDDL translation → SAS+
+//! task → solving pipeline. It consumes the classical fragment of a SAS+ task
+//! but replaces graph search with continuous optimization and exact replay.
+//!
 //! This crate synthesizes a plan by optimizing a horizon-wide continuous
 //! *transcription* of bounded planning: every timestep holds a distribution over
 //! actions and, per finite-domain variable, a distribution over that variable's
@@ -25,10 +29,20 @@
 //!
 //! Behind the `candle` feature:
 //!
-//! * [`tensor`] — the same residuals as candle tensors, plus exact segmented
+//! * `tensor` — the same residuals as candle tensors, plus exact segmented
 //!   sum/product operators for sparse incidence arithmetic and causal support.
-//! * [`adam`] — Adam with per-slice moment reset, which `candle_nn` cannot do.
-//! * [`engine`] — the optimizer loop and the exact-verifier feedback.
+//! * `adam` — Adam with per-slice moment reset, which `candle_nn` cannot do.
+//! * `engine` — the optimizer loop and the exact-verifier feedback.
+//!
+//! Horizon policies are usable without the optional tensor backend:
+//!
+//! ```
+//! use planforge_sgd::config::HorizonPolicy;
+//!
+//! let policy = HorizonPolicy::Fixed(12);
+//! assert_eq!(policy.horizon_for_round(0), Some(12));
+//! assert_eq!(policy.horizon_for_round(1), None);
+//! ```
 
 pub mod classical;
 pub mod config;
