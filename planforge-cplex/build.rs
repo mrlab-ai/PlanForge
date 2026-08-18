@@ -20,6 +20,11 @@ fn require_file(path: &Path, description: &str) {
 fn main() {
     println!("cargo:rerun-if-env-changed=CPLEX_ROOT");
     println!("cargo:rerun-if-env-changed=DOWNWARD_CPLEX_ROOT");
+    println!("cargo:rerun-if-env-changed=DOCS_RS");
+
+    if env::var_os("CARGO_FEATURE_CPLEX").is_none() || env::var_os("DOCS_RS").is_some() {
+        return;
+    }
 
     let roots = candidate_roots();
     let root = roots

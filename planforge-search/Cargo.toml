@@ -26,7 +26,7 @@ planforge-cplex = { path = "../planforge-cplex", version = "0.1.0", optional = t
 
 [features]
 # Enables the native CPLEX backend used by every LP-based heuristic.
-cplex = ["dep:planforge-cplex"]
+cplex = ["dep:planforge-cplex", "planforge-cplex/cplex"]
 
 [dev-dependencies]
 planforge-translate = { path = "../planforge-translate", version = "0.1.0" }

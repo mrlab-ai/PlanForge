@@ -2,8 +2,17 @@
 name = "planforge-cplex"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Checked Rust ownership and sparse linear-programming bindings for IBM ILOG CPLEX."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["optimization", "linear-programming", "cplex", "ffi"]
+categories = ["api-bindings", "mathematics", "science"]
 license = "LGPL-3.0"
 links = "cplex"
 build = "build.rs"
+
+[features]
+cplex = []
 
 [dependencies]

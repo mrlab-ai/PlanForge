@@ -1,3 +1,5 @@
+#![cfg(feature = "cplex")]
+
 //! Minimal safe ownership and sparse-LP layer over the IBM ILOG CPLEX C API.
 //!
 //! This crate deliberately exposes only the operations required by PlanForge.

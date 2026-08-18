@@ -44,6 +44,7 @@ codex-implement.log
 # whole class and re-admit the few documents that belong to the project.
 *.md
 !README.md
+!PUBLISHING.md
 !CONTRIBUTING.md
 !CHANGELOG.md
 !/planforge-py/README.md
