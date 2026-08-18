@@ -224,15 +224,6 @@ pub(super) fn transition_region_key_parts(
     }
 }
 
-pub(super) fn interval_key(interval: &Interval) -> IntervalKey {
-    IntervalKey {
-        lower_bits: float_tolerance::canonical_bits(interval.lower),
-        upper_bits: float_tolerance::canonical_bits(interval.upper),
-        lower_closed: interval.lower_closed,
-        upper_closed: interval.upper_closed,
-    }
-}
-
 pub(super) fn merge_transition_region(target: &mut TransitionRegion, source: &TransitionRegion) {
     merge_state_region(Arc::make_mut(&mut target.source), &source.source);
     merge_state_region(Arc::make_mut(&mut target.target), &source.target);
@@ -271,86 +262,6 @@ fn interval_hull(left: Interval, right: Interval) -> Interval {
         (left.upper, left.upper_closed || right.upper_closed)
     };
     Interval::new(lower, upper, lower_closed, upper_closed)
-}
-
-pub(super) fn state_regions_have_common_intersection<'a, I>(
-    query: Option<&'a StateRegion>,
-    selected: I,
-    candidate: &'a StateRegion,
-) -> bool
-where
-    I: Iterator<Item = &'a StateRegion> + Clone,
-{
-    let regions = query
-        .into_iter()
-        .chain(selected)
-        .chain(std::iter::once(candidate));
-    state_regions_have_common_intersection_from_slice(regions)
-}
-
-fn state_regions_have_common_intersection_from_slice<'a, I>(regions: I) -> bool
-where
-    I: Iterator<Item = &'a StateRegion> + Clone,
-{
-    let mut regions = regions.peekable();
-    let Some(first) = regions.peek().copied() else {
-        return true;
-    };
-    if regions.clone().any(|region| {
-        region.propositions.len() != first.propositions.len()
-            || region.numeric.len() != first.numeric.len()
-    }) {
-        return false;
-    }
-
-    for prop_id in 0..first.propositions.len() {
-        let mut smallest = first.propositions[prop_id].as_slice();
-        for region in regions.clone() {
-            let values = region.propositions[prop_id].as_slice();
-            if values.len() < smallest.len() {
-                smallest = values;
-            }
-        }
-        if !smallest.iter().any(|value| {
-            regions
-                .clone()
-                .all(|region| region.propositions[prop_id].binary_search(value).is_ok())
-        }) {
-            return false;
-        }
-    }
-
-    for numeric_id in 0..first.numeric.len() {
-        if !intervals_have_common_intersection(
-            regions.clone().map(|region| region.numeric[numeric_id]),
-        ) {
-            return false;
-        }
-    }
-    true
-}
-
-fn intervals_have_common_intersection(intervals: impl Iterator<Item = Interval>) -> bool {
-    let mut lower = f64::NEG_INFINITY;
-    let mut lower_closed = false;
-    let mut upper = f64::INFINITY;
-    let mut upper_closed = false;
-    for interval in intervals {
-        if interval.lower > lower {
-            lower = interval.lower;
-            lower_closed = interval.lower_closed;
-        } else if interval.lower == lower {
-            lower_closed = lower_closed && interval.lower_closed;
-        }
-
-        if interval.upper < upper {
-            upper = interval.upper;
-            upper_closed = interval.upper_closed;
-        } else if interval.upper == upper {
-            upper_closed = upper_closed && interval.upper_closed;
-        }
-    }
-    !Interval::new(lower, upper, lower_closed, upper_closed).is_empty()
 }
 
 fn prop_regions_overlap(left: &[Vec<PropValueId>], right: &[Vec<PropValueId>]) -> bool {

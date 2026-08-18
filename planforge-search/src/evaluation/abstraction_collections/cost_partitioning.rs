@@ -11,12 +11,14 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::utils::float_tolerance;
 
+#[cfg(test)]
 use planforge_sas::utils::interval::Interval;
 
 #[path = "explicit_scp.rs"]
@@ -27,7 +29,6 @@ mod region;
 pub use explicit_scp::*;
 pub use region::*;
 
-const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
 const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
 
 #[derive(Debug)]
@@ -56,19 +57,8 @@ struct OperatorResidual {
     full_regional_usage: RegionalUsage,
     /// Exact disjoint overlay for genuinely fractional regional allocations.
     regional_usage: RegionalUsage,
-    reductions: Vec<ResidualReduction>,
-    #[allow(dead_code)]
-    reduction_indices: HashMap<TransitionIdentity, usize>,
-    generation: Cell<u64>,
     uniform_cost_cache: Cell<Option<f64>>,
-    transition_cost_cache: RefCell<HashMap<TransitionQueryKey, CachedCost>>,
-    full_reduction_index: RefCell<Option<FullReductionIndex>>,
-    /// Lazy sorted index over `reductions` for fast candidate enumeration in
-    /// `max_overlap_reduction`. Indexes reductions by the lower bound of their
-    /// source-region interval on a chosen primary numeric dimension. Built on
-    /// first query after the `generation` advances; invalidated implicitly by
-    /// the generation-mismatch check.
-    sorted_index: RefCell<Option<SortedReductionIndex>>,
+    generation: Cell<u64>,
 }
 
 /// A disjoint partition of the part of the concrete state space on which an
@@ -404,180 +394,6 @@ fn regional_usage_cells_are_disjoint(cells: &[RegionalUsageCell]) -> bool {
     })
 }
 
-/// A per-`OperatorResidual` sorted view that lets `max_overlap_reduction`
-/// enumerate only the reductions whose primary-dim interval could overlap a
-/// query's primary-dim interval, instead of scanning all `reductions` linearly.
-///
-/// The primary dim is chosen at build time as the numeric dimension with the
-/// highest number of distinct lower bounds across the reductions. For
-/// operator-residuals where every reduction has the same lower bound on every
-/// dim (e.g. only one reduction stored), `primary_dim` is `None` and the
-/// fallback is a full scan.
-#[derive(Debug)]
-struct SortedReductionIndex {
-    /// Indices into `reductions`, sorted by the chosen primary dim's lower bound.
-    sorted: Vec<usize>,
-    primary_dim: Option<usize>,
-    generation: u64,
-}
-
-impl SortedReductionIndex {
-    fn build(reductions: &[ResidualReduction], generation: u64) -> Self {
-        let primary_dim = Self::choose_primary_dim(reductions);
-        let mut sorted: Vec<usize> = (0..reductions.len()).collect();
-        if let Some(dim) = primary_dim {
-            sorted.sort_by(|&a, &b| {
-                let la = reductions[a].condition.region.source.numeric[dim].lower;
-                let lb = reductions[b].condition.region.source.numeric[dim].lower;
-                la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-        Self {
-            sorted,
-            primary_dim,
-            generation,
-        }
-    }
-
-    fn choose_primary_dim(reductions: &[ResidualReduction]) -> Option<usize> {
-        if reductions.len() < 2 {
-            return None;
-        }
-        let first = &reductions[0].condition.region.source.numeric;
-        let num_dims = first.len();
-        let mut best_dim: Option<usize> = None;
-        let mut best_distinct = 1usize;
-        for dim in 0..num_dims {
-            let mut distinct: HashSet<u64> = HashSet::with_capacity(reductions.len().min(64));
-            for r in reductions {
-                distinct.insert(r.condition.region.source.numeric[dim].lower.to_bits());
-            }
-            if distinct.len() > best_distinct {
-                best_distinct = distinct.len();
-                best_dim = Some(dim);
-            }
-        }
-        best_dim
-    }
-
-    /// Pre-filter reductions by their primary-dim interval. Returns indices into
-    /// `reductions` for entries that could overlap the query on the primary dim.
-    /// May return false positives (cleared by the full overlap check downstream);
-    /// must not return false negatives.
-    fn candidates(
-        &self,
-        reductions: &[ResidualReduction],
-        query: Option<&TransitionCondition>,
-    ) -> Vec<usize> {
-        let Some(dim) = self.primary_dim else {
-            return self.sorted.clone();
-        };
-        let Some(q) = query else {
-            return self.sorted.clone();
-        };
-        let q_iv = &q.region.source.numeric[dim];
-        // Binary search: first `i` where reductions[sorted[i]].lower > q.upper.
-        // Everything before is a candidate up to the further upper-bound filter.
-        let end = self.sorted.partition_point(|&i| {
-            reductions[i].condition.region.source.numeric[dim].lower <= q_iv.upper
-        });
-        self.sorted[..end]
-            .iter()
-            .copied()
-            .filter(|&i| reductions[i].condition.region.source.numeric[dim].upper >= q_iv.lower)
-            .collect()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct ResidualReduction {
-    amount: f64,
-    condition: TransitionCondition,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct TransitionCondition {
-    abstraction_id: usize,
-    source_hash: usize,
-    abstract_op_id: usize,
-    target_hash: usize,
-    region: TransitionRegion,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct TransitionIdentity {
-    abstraction_id: usize,
-    source_hash: usize,
-    abstract_op_id: usize,
-    target_hash: usize,
-}
-
-/// The transition a residual cost is read or reduced for: the concrete operator
-/// that pays the cost, the abstraction of the collection the query belongs to,
-/// and the abstract operator taking `source_hash` to `target_hash`.
-/// `TransitionIdentity` is the same thing without the operator, which is how
-/// each operator's own reduction map is keyed.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct OperatorTransition {
-    pub concrete_op_id: usize,
-    pub abstraction_id: usize,
-    pub source_hash: usize,
-    pub abstract_op_id: usize,
-    pub target_hash: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct TransitionQueryKey {
-    abstraction_id: usize,
-    source_hash: usize,
-    abstract_op_id: usize,
-    target_hash: usize,
-    region: Option<TransitionRegionKey>,
-}
-
-#[derive(Copy, Clone, Debug)]
-struct CachedCost {
-    generation: u64,
-    cost: f64,
-}
-
-#[derive(Clone, Debug)]
-struct FullReductionIndex {
-    generation: u64,
-    kind: FullReductionIndexKind,
-    all_reductions_full: bool,
-}
-
-#[derive(Clone, Debug)]
-enum FullReductionIndexKind {
-    Prop {
-        feature: RegionFeature,
-        buckets: HashMap<usize, Vec<usize>>,
-    },
-    Numeric {
-        feature: RegionFeature,
-        intervals: Vec<IndexedInterval>,
-        /// `prefix_max_upper[i]` is the maximum `interval.upper` across
-        /// `intervals[..=i]`. Lets `lookup_full_reduction_overlap` short-circuit
-        /// when no candidate's upper bound can reach the query's lower bound.
-        prefix_max_upper: Vec<f64>,
-    },
-}
-
-#[derive(Clone, Debug)]
-struct IndexedInterval {
-    interval: Interval,
-    reduction_id: usize,
-}
-
-#[derive(Copy, Clone, Debug)]
-enum RegionFeature {
-    SourceProp(usize),
-    TargetProp(usize),
-    SourceNumeric(usize),
-    TargetNumeric(usize),
-}
-
 impl TransitionResidualCosts {
     pub fn from_operator_costs(costs: &[f64]) -> Self {
         let operator_residuals = costs
@@ -586,13 +402,8 @@ impl TransitionResidualCosts {
                 base_cost,
                 full_regional_usage: RegionalUsage::default(),
                 regional_usage: RegionalUsage::default(),
-                reductions: Vec::new(),
-                reduction_indices: HashMap::new(),
-                generation: Cell::new(0),
                 uniform_cost_cache: Cell::new(None),
-                transition_cost_cache: RefCell::new(HashMap::new()),
-                full_reduction_index: RefCell::new(None),
-                sorted_index: RefCell::new(None),
+                generation: Cell::new(0),
             })
             .collect();
         Self { operator_residuals }
@@ -602,18 +413,14 @@ impl TransitionResidualCosts {
         self.operator_residuals
             .iter()
             .map(|residual| {
-                residual.reductions.len()
-                    + residual.full_regional_usage.cells.len()
-                    + residual.regional_usage.cells.len()
+                residual.full_regional_usage.cells.len() + residual.regional_usage.cells.len()
             })
             .sum()
     }
 
     pub fn has_reductions(&self) -> bool {
         self.operator_residuals.iter().any(|residual| {
-            !residual.reductions.is_empty()
-                || !residual.full_regional_usage.is_empty()
-                || !residual.regional_usage.is_empty()
+            !residual.full_regional_usage.is_empty() || !residual.regional_usage.is_empty()
         })
     }
 
@@ -639,16 +446,14 @@ impl TransitionResidualCosts {
                 } else {
                     0.0
                 };
-                let reduction = max_overlap_reduction(None, residual, residual.base_cost)
-                    .max(full_regional_reduction)
-                    .max(
-                        residual
-                            .regional_usage
-                            .cells
-                            .iter()
-                            .map(|cell| cell.amount)
-                            .fold(0.0, f64::max),
-                    );
+                let reduction = full_regional_reduction.max(
+                    residual
+                        .regional_usage
+                        .cells
+                        .iter()
+                        .map(|cell| cell.amount)
+                        .fold(0.0, f64::max),
+                );
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
@@ -658,47 +463,22 @@ impl TransitionResidualCosts {
 
     pub fn operator_cost_partitions_for_lmcut(
         &self,
-        max_variants_per_operator: usize,
-        max_guard_conditions_per_variant: usize,
+        _max_variants_per_operator: usize,
+        _max_guard_conditions_per_variant: usize,
     ) -> Vec<LmCutResidualOperatorCostPartition> {
+        // Transition reductions were never populated in production, so
+        // fillscp(partitioning=region) gives LM-cut uniform residuals only and
+        // the region-conditional variant machinery remains dormant. Activating
+        // it requires re-deriving variants from the RegionalUsage cells.
         let uniform_costs = self.operator_costs_for_label_cp();
         self.operator_residuals
             .iter()
             .enumerate()
             .map(|(op_id, residual)| {
                 let fallback_cost = residual.base_cost.max(0.0);
-                if residual.reductions.is_empty()
-                    || residual.reductions.len() > max_variants_per_operator
-                {
-                    return LmCutResidualOperatorCostPartition {
-                        fallback_cost: uniform_costs.get(op_id).copied().unwrap_or(fallback_cost),
-                        variants: Vec::new(),
-                    };
-                }
-
-                let mut variants = Vec::with_capacity(residual.reductions.len());
-                for reduction in &residual.reductions {
-                    if !lmcut_residual_region_is_compact(
-                        &reduction.condition.region.source,
-                        max_guard_conditions_per_variant,
-                    ) {
-                        return LmCutResidualOperatorCostPartition {
-                            fallback_cost: uniform_costs
-                                .get(op_id)
-                                .copied()
-                                .unwrap_or(fallback_cost),
-                            variants: Vec::new(),
-                        };
-                    }
-                    variants.push(LmCutResidualCostVariant {
-                        cost: (residual.base_cost - reduction.amount).max(0.0),
-                        source_region: reduction.condition.region.source.as_ref().clone(),
-                    });
-                }
-
                 LmCutResidualOperatorCostPartition {
-                    fallback_cost,
-                    variants,
+                    fallback_cost: uniform_costs.get(op_id).copied().unwrap_or(fallback_cost),
+                    variants: Vec::new(),
                 }
             })
             .collect()
@@ -706,8 +486,8 @@ impl TransitionResidualCosts {
 
     pub fn cost_for_operator_footprint(
         &self,
-        current_abstraction_id: usize,
-        abstract_op_id: usize,
+        _current_abstraction_id: usize,
+        _abstract_op_id: usize,
         footprint: &ConcreteOperatorFootprint,
     ) -> f64 {
         let Some(residual) = self.operator_residuals.get(footprint.concrete_op_id) else {
@@ -724,89 +504,7 @@ impl TransitionResidualCosts {
         } else {
             residual.regional_usage.max_over(&footprint.source_region)
         };
-        let legacy = self.cost_for_transition_with_region(
-            OperatorTransition {
-                concrete_op_id: footprint.concrete_op_id,
-                abstraction_id: current_abstraction_id,
-                source_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                abstract_op_id,
-                target_hash: ABSTRACT_OPERATOR_REGION_HASH,
-            },
-            TransitionRegion {
-                source: Arc::clone(&footprint.source_region),
-                target: Arc::clone(&footprint.source_region),
-            },
-            None,
-        );
-        (legacy - regional).max(0.0)
-    }
-
-    fn cost_for_transition_with_region(
-        &self,
-        transition: OperatorTransition,
-        query_region: TransitionRegion,
-        region_key: Option<TransitionRegionKey>,
-    ) -> f64 {
-        let OperatorTransition {
-            concrete_op_id,
-            abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
-        } = transition;
-        let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
-            return f64::INFINITY;
-        };
-        if !residual.base_cost.is_finite() {
-            return f64::INFINITY;
-        }
-
-        let key = TransitionQueryKey {
-            abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
-            region: region_key,
-        };
-        if let Some(cached) = residual.transition_cost_cache.borrow().get(&key)
-            && cached.generation == residual.generation.get()
-        {
-            return cached.cost;
-        }
-
-        let query = TransitionCondition {
-            abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
-            region: query_region,
-        };
-
-        if let Some(has_full_overlap) = residual.lookup_full_reduction_overlap(&query) {
-            let cost = if has_full_overlap {
-                0.0
-            } else {
-                residual.base_cost
-            };
-            residual.transition_cost_cache.borrow_mut().insert(
-                key,
-                CachedCost {
-                    generation: residual.generation.get(),
-                    cost,
-                },
-            );
-            return cost;
-        }
-        let reduction = max_overlap_reduction(Some(&query), residual, residual.base_cost);
-        let cost = (residual.base_cost - reduction).max(0.0);
-        residual.transition_cost_cache.borrow_mut().insert(
-            key,
-            CachedCost {
-                generation: residual.generation.get(),
-                cost,
-            },
-        );
-        cost
+        (residual.base_cost - regional).max(0.0)
     }
 
     pub fn reduce_by_abstract_operator_footprints(
@@ -1024,493 +722,7 @@ impl OperatorResidual {
     fn invalidate_cache(&self) {
         self.generation.set(self.generation.get().wrapping_add(1));
         self.uniform_cost_cache.set(None);
-        self.transition_cost_cache.borrow_mut().clear();
-        self.full_reduction_index.borrow_mut().take();
-        self.sorted_index.borrow_mut().take();
     }
-
-    /// Ensure the sorted candidate index is built and up to date with the
-    /// current generation. Returns `Some(_)` only when the index has at least
-    /// `primary_dim` set (i.e. there is some discriminating numeric axis).
-    /// Returns `None` when no discriminating dim was found — callers fall back
-    /// to a full linear scan, which is correct and is the best we can do for
-    /// trivially small reduction sets.
-    fn ensure_sorted_index(&self) -> bool {
-        let needs_build = {
-            let borrow = self.sorted_index.borrow();
-            match borrow.as_ref() {
-                Some(index) => index.generation != self.generation.get(),
-                None => true,
-            }
-        };
-        if needs_build {
-            *self.sorted_index.borrow_mut() = Some(SortedReductionIndex::build(
-                &self.reductions,
-                self.generation.get(),
-            ));
-        }
-        true
-    }
-
-    fn lookup_full_reduction_overlap(&self, query: &TransitionCondition) -> Option<bool> {
-        if !self.base_cost.is_finite()
-            || self.base_cost <= float_tolerance::SEARCH_EPSILON
-            || self.reductions.is_empty()
-        {
-            return None;
-        }
-        self.ensure_full_reduction_index()?;
-        let index_ref = self.full_reduction_index.borrow();
-        let index = index_ref.as_ref()?;
-        if index.generation != self.generation.get() {
-            return None;
-        }
-        match &index.kind {
-            FullReductionIndexKind::Prop { feature, buckets } => {
-                let values = query_values_for_feature(&query.region, *feature)?;
-                for &value in values {
-                    let Some(bucket) = buckets.get(&(value as usize)) else {
-                        continue;
-                    };
-                    if bucket.iter().any(|&reduction_id| {
-                        let reduction = &self.reductions[reduction_id];
-                        compatible_identities(query, &reduction.condition)
-                            && reduction.condition.region.overlaps(&query.region)
-                    }) {
-                        return Some(true);
-                    }
-                }
-            }
-            FullReductionIndexKind::Numeric {
-                feature,
-                intervals,
-                prefix_max_upper,
-            } => {
-                let query_interval = interval_for_feature(&query.region, *feature)?;
-                // Binary-search for the first indexed interval whose lower
-                // strictly starts after the query — everything past that point
-                // cannot overlap and can be skipped without inspection. Without
-                // this, queries whose lower lies above every stored lower would
-                // walk the entire intervals vector before hitting `break`.
-                let end = intervals.partition_point(|indexed| {
-                    !interval_starts_after(&indexed.interval, query_interval)
-                });
-                // Short-circuit: if the max upper among the candidate prefix is
-                // strictly below the query's lower, no candidate can overlap.
-                // This is the dominant case when the query sits *above* the
-                // stored intervals (e.g. a single-goal abstraction querying
-                // high-y cells against a full-goal abstraction that only refined
-                // low-y cells). We deliberately use `<` rather than `<=` so a
-                // closed boundary on either endpoint still falls through to the
-                // exact overlap check below.
-                if end > 0 && prefix_max_upper[end - 1] < query_interval.lower {
-                    return if index.all_reductions_full {
-                        Some(false)
-                    } else {
-                        None
-                    };
-                }
-                for indexed in &intervals[..end] {
-                    if !indexed.interval.intersects(query_interval) {
-                        continue;
-                    }
-                    let reduction = &self.reductions[indexed.reduction_id];
-                    if compatible_identities(query, &reduction.condition)
-                        && reduction.condition.region.overlaps(&query.region)
-                    {
-                        return Some(true);
-                    }
-                }
-            }
-        }
-        if index.all_reductions_full {
-            Some(false)
-        } else {
-            None
-        }
-    }
-
-    fn ensure_full_reduction_index(&self) -> Option<()> {
-        if self
-            .full_reduction_index
-            .borrow()
-            .as_ref()
-            .is_some_and(|index| index.generation == self.generation.get())
-        {
-            return Some(());
-        }
-        let index =
-            build_full_reduction_index(&self.reductions, self.base_cost, self.generation.get())?;
-        self.full_reduction_index.borrow_mut().replace(index);
-        Some(())
-    }
-}
-
-fn build_full_reduction_index(
-    reductions: &[ResidualReduction],
-    cap: f64,
-    generation: u64,
-) -> Option<FullReductionIndex> {
-    if reductions.is_empty() || !cap.is_finite() || cap <= float_tolerance::SEARCH_EPSILON {
-        return None;
-    }
-    let all_reductions_full = reductions
-        .iter()
-        .all(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON);
-    let feature = best_full_reduction_feature(reductions, cap)?;
-    let kind = match feature {
-        RegionFeature::SourceProp(_) | RegionFeature::TargetProp(_) => {
-            let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
-            for (reduction_id, reduction) in reductions.iter().enumerate() {
-                if reduction.amount < cap - float_tolerance::SEARCH_EPSILON {
-                    continue;
-                }
-                let value = singleton_value_for_feature(&reduction.condition.region, feature)?;
-                buckets.entry(value).or_default().push(reduction_id);
-            }
-            if buckets.is_empty() {
-                return None;
-            }
-            FullReductionIndexKind::Prop { feature, buckets }
-        }
-        RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => {
-            let mut intervals = Vec::new();
-            for (reduction_id, reduction) in reductions.iter().enumerate() {
-                if reduction.amount < cap - float_tolerance::SEARCH_EPSILON {
-                    continue;
-                }
-                let interval = *interval_for_feature(&reduction.condition.region, feature)?;
-                if interval.is_empty() {
-                    return None;
-                }
-                intervals.push(IndexedInterval {
-                    interval,
-                    reduction_id,
-                });
-            }
-            if intervals.is_empty() {
-                return None;
-            }
-            intervals.sort_by(|left, right| {
-                left.interval
-                    .lower
-                    .total_cmp(&right.interval.lower)
-                    .then_with(|| left.interval.upper.total_cmp(&right.interval.upper))
-            });
-            let mut prefix_max_upper: Vec<f64> = Vec::with_capacity(intervals.len());
-            let mut running = f64::NEG_INFINITY;
-            for indexed in &intervals {
-                running = running.max(indexed.interval.upper);
-                prefix_max_upper.push(running);
-            }
-            FullReductionIndexKind::Numeric {
-                feature,
-                intervals,
-                prefix_max_upper,
-            }
-        }
-    };
-    Some(FullReductionIndex {
-        generation,
-        kind,
-        all_reductions_full,
-    })
-}
-
-fn best_full_reduction_feature(
-    reductions: &[ResidualReduction],
-    cap: f64,
-) -> Option<RegionFeature> {
-    let first_full = reductions
-        .iter()
-        .find(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON)?;
-    let source_len = first_full.condition.region.source.propositions.len();
-    let target_len = first_full.condition.region.target.propositions.len();
-    let mut best = None;
-    let mut best_distinct = 0usize;
-    for feature in (0..source_len)
-        .map(RegionFeature::SourceProp)
-        .chain((0..target_len).map(RegionFeature::TargetProp))
-    {
-        let mut buckets = std::collections::BTreeSet::new();
-        let mut usable = false;
-        for reduction in reductions
-            .iter()
-            .filter(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON)
-        {
-            let Some(value) = singleton_value_for_feature(&reduction.condition.region, feature)
-            else {
-                usable = false;
-                break;
-            };
-            usable = true;
-            buckets.insert(value);
-        }
-        if usable && buckets.len() > best_distinct {
-            best = Some(feature);
-            best_distinct = buckets.len();
-        }
-    }
-    let source_numeric_len = first_full.condition.region.source.numeric.len();
-    let target_numeric_len = first_full.condition.region.target.numeric.len();
-    for feature in (0..source_numeric_len)
-        .map(RegionFeature::SourceNumeric)
-        .chain((0..target_numeric_len).map(RegionFeature::TargetNumeric))
-    {
-        let mut buckets = std::collections::BTreeSet::new();
-        let mut usable = false;
-        for reduction in reductions
-            .iter()
-            .filter(|reduction| reduction.amount >= cap - float_tolerance::SEARCH_EPSILON)
-        {
-            let Some(interval) = interval_for_feature(&reduction.condition.region, feature) else {
-                usable = false;
-                break;
-            };
-            if interval.is_empty() || (!interval.lower.is_finite() && !interval.upper.is_finite()) {
-                usable = false;
-                break;
-            }
-            usable = true;
-            buckets.insert(interval_key(interval));
-        }
-        if usable && buckets.len() > best_distinct {
-            best = Some(feature);
-            best_distinct = buckets.len();
-        }
-    }
-    best
-}
-
-fn singleton_value_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<usize> {
-    let values = match feature {
-        RegionFeature::SourceProp(var_id) => region.source.propositions.get(var_id)?,
-        RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id)?,
-        RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => return None,
-    };
-    (values.len() == 1).then_some(values[0] as usize)
-}
-
-fn query_values_for_feature(
-    region: &TransitionRegion,
-    feature: RegionFeature,
-) -> Option<&[PropValueId]> {
-    match feature {
-        RegionFeature::SourceProp(var_id) => region.source.propositions.get(var_id),
-        RegionFeature::TargetProp(var_id) => region.target.propositions.get(var_id),
-        RegionFeature::SourceNumeric(_) | RegionFeature::TargetNumeric(_) => None,
-    }
-    .map(Vec::as_slice)
-}
-
-fn interval_for_feature(region: &TransitionRegion, feature: RegionFeature) -> Option<&Interval> {
-    match feature {
-        RegionFeature::SourceNumeric(var_id) => region.source.numeric.get(var_id),
-        RegionFeature::TargetNumeric(var_id) => region.target.numeric.get(var_id),
-        RegionFeature::SourceProp(_) | RegionFeature::TargetProp(_) => None,
-    }
-}
-
-fn interval_starts_after(left: &Interval, right: &Interval) -> bool {
-    left.lower > right.upper
-        || (left.lower == right.upper && !(left.lower_closed && right.upper_closed))
-}
-
-fn max_overlap_reduction(
-    query: Option<&TransitionCondition>,
-    residual: &OperatorResidual,
-    cap: f64,
-) -> f64 {
-    if !cap.is_finite() || cap <= float_tolerance::SEARCH_EPSILON {
-        return 0.0;
-    }
-    let reductions = &residual.reductions;
-    if reductions.is_empty() {
-        return 0.0;
-    }
-    residual.ensure_sorted_index();
-    let index_ref = residual.sorted_index.borrow();
-    let candidates: Vec<usize> = match index_ref.as_ref() {
-        Some(index) => index.candidates(reductions, query),
-        None => (0..reductions.len()).collect(),
-    };
-    drop(index_ref);
-    if candidates.is_empty() {
-        return 0.0;
-    }
-    let mut has_subcap_reduction = false;
-    if candidates.iter().any(|&i| {
-        let reduction = &reductions[i];
-        has_subcap_reduction |= reduction.amount < cap - float_tolerance::SEARCH_EPSILON;
-        reduction.amount >= cap - float_tolerance::SEARCH_EPSILON
-            && query.is_none_or(|query| {
-                compatible_identities(query, &reduction.condition)
-                    && reduction.condition.region.overlaps(&query.region)
-            })
-    }) {
-        return cap;
-    }
-    if !has_subcap_reduction {
-        return 0.0;
-    }
-    let mut relevant: Vec<&ResidualReduction> = candidates
-        .iter()
-        .map(|&i| &reductions[i])
-        .filter(|reduction| {
-            query.is_none_or(|query| {
-                compatible_identities(query, &reduction.condition)
-                    && reduction.condition.region.overlaps(&query.region)
-            })
-        })
-        .collect();
-    // Exact overlap accounting is exponential in the number of overlapping
-    // reductions. For very large overlap sets we deliberately over-approximate
-    // the already allocated cost. This can only lower residual costs and make
-    // the heuristic weaker; it must not increase allocated cost.
-    if relevant.len() > 64 {
-        return relevant
-            .iter()
-            .map(|reduction| reduction.amount.max(0.0))
-            .sum::<f64>()
-            .min(cap);
-    }
-    relevant.sort_by(|left, right| {
-        right
-            .amount
-            .partial_cmp(&left.amount)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    let suffix: Vec<f64> = {
-        let mut suffix = vec![0.0; relevant.len() + 1];
-        for index in (0..relevant.len()).rev() {
-            suffix[index] = suffix[index + 1] + relevant[index].amount.max(0.0);
-        }
-        suffix
-    };
-
-    /// The part of the branch-and-bound that does not change as it recurses:
-    /// the reductions being chosen from, the best-case remaining sum per
-    /// suffix, the query they must stay compatible with, and the bound above
-    /// which no branch can improve.
-    struct SearchSpace<'a> {
-        relevant: &'a [&'a ResidualReduction],
-        suffix: &'a [f64],
-        query: Option<&'a TransitionCondition>,
-        cap: f64,
-    }
-
-    fn search(
-        space: &SearchSpace<'_>,
-        index: usize,
-        selected: &mut Vec<usize>,
-        current_sum: f64,
-        best: &mut f64,
-    ) {
-        if index == space.relevant.len() {
-            *best = best.max(current_sum);
-            return;
-        }
-        if *best >= space.cap - float_tolerance::SEARCH_EPSILON {
-            return;
-        }
-        if current_sum + space.suffix[index] <= *best + float_tolerance::SEARCH_EPSILON {
-            return;
-        }
-
-        let reduction = space.relevant[index];
-        if can_add_reduction(space.query, selected, &reduction.condition, space.relevant) {
-            selected.push(index);
-            search(
-                space,
-                index + 1,
-                selected,
-                current_sum + reduction.amount.max(0.0),
-                best,
-            );
-            selected.pop();
-        }
-        search(space, index + 1, selected, current_sum, best);
-    }
-
-    let mut best = 0.0;
-    let mut selected = Vec::new();
-    search(
-        &SearchSpace {
-            relevant: &relevant,
-            suffix: &suffix,
-            query,
-            cap,
-        },
-        0,
-        &mut selected,
-        0.0,
-        &mut best,
-    );
-    best.min(cap)
-}
-
-fn compatible_identities(left: &TransitionCondition, right: &TransitionCondition) -> bool {
-    if left.abstraction_id != right.abstraction_id {
-        return true;
-    }
-    if left.abstract_op_id != right.abstract_op_id {
-        return false;
-    }
-    let left_is_abstract_operator_query = left.source_hash == ABSTRACT_OPERATOR_REGION_HASH
-        || left.target_hash == ABSTRACT_OPERATOR_REGION_HASH;
-    let right_is_abstract_operator_query = right.source_hash == ABSTRACT_OPERATOR_REGION_HASH
-        || right.target_hash == ABSTRACT_OPERATOR_REGION_HASH;
-    if left_is_abstract_operator_query || right_is_abstract_operator_query {
-        return true;
-    }
-
-    left.source_hash == right.source_hash && left.target_hash == right.target_hash
-}
-
-fn can_add_reduction(
-    query: Option<&TransitionCondition>,
-    selected: &[usize],
-    condition: &TransitionCondition,
-    relevant: &[&ResidualReduction],
-) -> bool {
-    if let Some(query) = query
-        && !compatible_identities(query, condition)
-    {
-        return false;
-    }
-    for &index in selected {
-        if same_abstract_operator_reduction_identity(&relevant[index].condition, condition) {
-            return false;
-        }
-        if !compatible_identities(&relevant[index].condition, condition) {
-            return false;
-        }
-    }
-    state_regions_have_common_intersection(
-        query.map(|condition| condition.region.source.as_ref()),
-        selected
-            .iter()
-            .map(|&index| relevant[index].condition.region.source.as_ref()),
-        &condition.region.source,
-    ) && state_regions_have_common_intersection(
-        query.map(|condition| condition.region.target.as_ref()),
-        selected
-            .iter()
-            .map(|&index| relevant[index].condition.region.target.as_ref()),
-        &condition.region.target,
-    )
-}
-
-fn same_abstract_operator_reduction_identity(
-    left: &TransitionCondition,
-    right: &TransitionCondition,
-) -> bool {
-    left.abstraction_id == right.abstraction_id
-        && left.abstract_op_id == right.abstract_op_id
-        && left.source_hash == ABSTRACT_OPERATOR_REGION_HASH
-        && left.target_hash == ABSTRACT_OPERATOR_REGION_HASH
-        && right.source_hash == ABSTRACT_OPERATOR_REGION_HASH
-        && right.target_hash == ABSTRACT_OPERATOR_REGION_HASH
 }
 
 fn subtract_cost(cost: f64, saturated: f64) -> Result<f64> {
@@ -1529,23 +741,6 @@ fn subtract_cost(cost: f64, saturated: f64) -> Result<f64> {
         );
         Ok(reduced)
     }
-}
-
-fn lmcut_residual_region_is_compact(region: &StateRegion, max_guard_conditions: usize) -> bool {
-    let prop_guards = region
-        .propositions
-        .iter()
-        .filter(|values| values.len() == 1)
-        .count();
-    let numeric_guards = region
-        .numeric
-        .iter()
-        .map(|interval| {
-            usize::from(interval.lower.is_finite()) + usize::from(interval.upper.is_finite())
-        })
-        .sum::<usize>();
-    let guards = prop_guards + numeric_guards;
-    guards > 0 && guards <= max_guard_conditions
 }
 
 #[cfg(test)]
