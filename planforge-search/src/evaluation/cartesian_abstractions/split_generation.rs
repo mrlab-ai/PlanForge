@@ -67,14 +67,14 @@ fn constrain_desired_region(
     }
 
     let values = desired
-        .propositions
+        .propositions()
         .get(fact.var())
         .with_context(|| format!("missing desired propositional variable {}", fact.var()))?;
     ensure!(
         values.binary_search(&(fact.value() as PropValueId)).is_ok(),
         "inconsistent desired fact {fact:?}"
     );
-    Arc::make_mut(&mut desired.propositions)[fact.var()] = vec![fact.value() as PropValueId];
+    desired.narrow_prop(fact.var(), vec![fact.value() as PropValueId]);
     Ok(())
 }
 
@@ -178,7 +178,7 @@ fn splits_for_desired_region(
         .get(state_id)
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
     let mut candidates = Vec::new();
-    for (var_id, current_values) in current.propositions.iter().enumerate() {
+    for (var_id, current_values) in current.propositions().iter().enumerate() {
         if semantics
             .task()
             .numeric_conditions()
@@ -188,7 +188,7 @@ fn splits_for_desired_region(
             continue;
         }
         let witness = prop_values[var_id] as PropValueId;
-        let desired_values = &desired.propositions[var_id];
+        let desired_values = &desired.propositions()[var_id];
         if desired_values.binary_search(&witness).is_ok() {
             continue;
         }

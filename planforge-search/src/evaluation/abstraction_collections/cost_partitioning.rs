@@ -776,9 +776,8 @@ mod tests {
 
     #[test]
     fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
-        let region = |x: Interval, y: Interval| StateRegion {
-            propositions: Vec::new().into(),
-            numeric: vec![x, y].into(),
+        let region = |x: Interval, y: Interval| {
+            StateRegion::with_all_props_constrained(Vec::new(), vec![x, y])
         };
         let first = region(Interval::closed(0.0, 1.0), Interval::closed(0.0, 1.0));
         let second = region(Interval::closed(0.0, 1.0), Interval::closed(2.0, 3.0));
@@ -815,9 +814,11 @@ mod tests {
 
     #[test]
     fn full_cost_operator_regions_use_overlap_cover_without_geometric_overlay() {
-        let region = |lower, upper| StateRegion {
-            propositions: Vec::new().into(),
-            numeric: vec![Interval::closed(lower, upper)].into(),
+        let region = |lower, upper| {
+            StateRegion::with_all_props_constrained(
+                Vec::new(),
+                vec![Interval::closed(lower, upper)],
+            )
         };
         let operator_region = |lower, upper| AbstractOperatorRegions {
             labels: vec![OperatorRegion {
@@ -909,17 +910,11 @@ mod tests {
     }
 
     fn state_region(value: usize) -> StateRegion {
-        StateRegion {
-            propositions: vec![vec![value as PropValueId]].into(),
-            numeric: Vec::new().into(),
-        }
+        StateRegion::with_all_props_constrained(vec![vec![value as PropValueId]], Vec::new())
     }
 
     fn numeric_state_region(lower: f64, upper: f64) -> StateRegion {
-        StateRegion {
-            propositions: vec![vec![0]].into(),
-            numeric: vec![Interval::closed(lower, upper)].into(),
-        }
+        StateRegion::with_all_props_constrained(vec![vec![0]], vec![Interval::closed(lower, upper)])
     }
 
     fn operator_region(lower: f64, upper: f64) -> OperatorRegion {
@@ -940,11 +935,8 @@ mod tests {
     ) -> OperatorRegion {
         OperatorRegion {
             concrete_op_id,
-            source: StateRegion {
-                propositions: vec![vec![0]].into(),
-                numeric: vec![first, second].into(),
-            }
-            .into(),
+            source: StateRegion::with_all_props_constrained(vec![vec![0]], vec![first, second])
+                .into(),
         }
     }
 
@@ -1126,11 +1118,10 @@ mod tests {
                 .map(|i| AbstractOperatorRegions {
                     labels: vec![OperatorRegion {
                         concrete_op_id: 0,
-                        source: StateRegion {
-                            propositions: vec![vec![0]].into(),
-                            numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)]
-                                .into(),
-                        }
+                        source: StateRegion::with_all_props_constrained(
+                            vec![vec![0]],
+                            vec![Interval::new(i as f64, (i + 1) as f64, false, true)],
+                        )
                         .into(),
                     }],
                 })
@@ -1282,10 +1273,10 @@ mod tests {
         let open_tail = AbstractOperatorRegions {
             labels: vec![OperatorRegion {
                 concrete_op_id: 0,
-                source: StateRegion {
-                    propositions: vec![vec![0]].into(),
-                    numeric: vec![Interval::new(f64::NEG_INFINITY, 0.0, false, false)].into(),
-                }
+                source: StateRegion::with_all_props_constrained(
+                    vec![vec![0]],
+                    vec![Interval::new(f64::NEG_INFINITY, 0.0, false, false)],
+                )
                 .into(),
             }],
         };

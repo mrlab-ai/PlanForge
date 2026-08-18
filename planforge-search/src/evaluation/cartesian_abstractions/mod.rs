@@ -587,7 +587,7 @@ impl WorkingAbstraction {
         operator_count: usize,
         index_transitions: bool,
     ) -> Self {
-        let propositional_refinement_counts = vec![0; initial_region.propositions.len()];
+        let propositional_refinement_counts = vec![0; initial_region.propositions().len()];
         let numeric_refinement_counts = vec![0; initial_region.numeric.len()];
         Self {
             states: vec![initial_region],
@@ -1221,8 +1221,8 @@ impl<'task> CartesianSemantics<'task> {
     ) -> bool {
         match dimension {
             SplitDimension::Propositional(var_id) => sorted_value_sets_overlap(
-                &source.propositions[var_id],
-                &target.propositions[var_id],
+                &source.propositions()[var_id],
+                &target.propositions()[var_id],
             ),
             SplitDimension::Numeric(var_id) => {
                 source.numeric[var_id].intersects(&target.numeric[var_id])
@@ -1277,10 +1277,13 @@ impl<'task> CartesianSemantics<'task> {
                 }
             })
             .collect();
-        Ok(StateRegion {
-            propositions: propositions.into(),
-            numeric: numeric.into(),
-        })
+        // Every dimension carries its whole domain, so nothing is constrained
+        // yet; refinement splits add constraints one dimension at a time.
+        Ok(StateRegion::with_constrained_props(
+            propositions,
+            numeric,
+            Arc::from([]),
+        ))
     }
 
     fn region_admits_fact(&self, region: &StateRegion, fact: &ExplicitFact) -> Result<bool> {
@@ -1336,7 +1339,7 @@ impl<'task> CartesianSemantics<'task> {
             return result;
         }
         Ok(region
-            .propositions
+            .propositions()
             .get(var_id)
             .is_some_and(|values| values.binary_search(&(fact.value() as u32)).is_ok()))
     }
@@ -1393,7 +1396,7 @@ impl<'task> CartesianSemantics<'task> {
             visiting[var_id] = false;
             return result;
         }
-        let Some(values) = region.propositions.get(var_id) else {
+        let Some(values) = region.propositions().get(var_id) else {
             return Ok(false);
         };
         Ok(values.len() == 1 && values[0] == fact.value() as u32)
@@ -1494,7 +1497,7 @@ impl<'task> CartesianSemantics<'task> {
                 effect.conditions().is_empty(),
                 "validated Cartesian operator {op_id} has a conditional effect"
             );
-            return target.propositions[var_id]
+            return target.propositions()[var_id]
                 .binary_search(&(effect.value() as PropValueId))
                 .is_ok();
         }
@@ -1504,11 +1507,14 @@ impl<'task> CartesianSemantics<'task> {
                 .iter()
                 .find(|precondition| precondition.var() == var_id)
         {
-            return target.propositions[var_id]
+            return target.propositions()[var_id]
                 .binary_search(&(precondition.value() as PropValueId))
                 .is_ok();
         }
-        sorted_value_sets_overlap(&source.propositions[var_id], &target.propositions[var_id])
+        sorted_value_sets_overlap(
+            &source.propositions()[var_id],
+            &target.propositions()[var_id],
+        )
     }
 
     fn split_dimension_may_transition(
@@ -2951,7 +2957,7 @@ fn add_icaps26_propositional_loop_replacements(
         .map(|effect| effect.value());
     let post = effect.or(pre);
     let old_contains = |value: usize| {
-        working.states[old_state_id].propositions[var_id]
+        working.states[old_state_id].propositions()[var_id]
             .binary_search(&(value as PropValueId))
             .is_ok()
     };
@@ -3099,7 +3105,7 @@ impl WorkingAbstraction {
                 ..
             } => {
                 let current = old_region
-                    .propositions
+                    .propositions()
                     .get(var_id)
                     .with_context(|| format!("split references missing prop var {var_id}"))?;
                 let wanted_child_values: Vec<_> = current
@@ -3118,9 +3124,9 @@ impl WorkingAbstraction {
                 );
                 let witness_is_wanted = wanted_child_values.binary_search(&witness_value).is_ok();
                 let mut wanted_region = old_region.clone();
-                Arc::make_mut(&mut wanted_region.propositions)[var_id] = wanted_child_values;
+                wanted_region.narrow_prop(var_id, wanted_child_values);
                 let mut other_region = old_region.clone();
-                Arc::make_mut(&mut other_region.propositions)[var_id] = other_child_values;
+                other_region.narrow_prop(var_id, other_child_values);
                 working.propositional_refinement_counts[var_id] += 1;
                 working.hierarchy.split_propositional(
                     leaf_node_id,

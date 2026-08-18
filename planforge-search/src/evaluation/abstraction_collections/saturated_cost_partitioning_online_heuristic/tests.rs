@@ -833,9 +833,11 @@ mod handcrafted_sailing_tests {
 
     #[test]
     fn regional_order_conflict_preserves_disjoint_infinite_tails() {
-        let region = |lower, upper, lower_closed, upper_closed| StateRegion {
-            propositions: Vec::new().into(),
-            numeric: vec![Interval::new(lower, upper, lower_closed, upper_closed)].into(),
+        let region = |lower, upper, lower_closed, upper_closed| {
+            StateRegion::with_all_props_constrained(
+                Vec::new(),
+                vec![Interval::new(lower, upper, lower_closed, upper_closed)],
+            )
         };
         let left_tail = region(f64::NEG_INFINITY, 0.0, false, true);
         let right_tail = region(0.0, f64::INFINITY, false, false);

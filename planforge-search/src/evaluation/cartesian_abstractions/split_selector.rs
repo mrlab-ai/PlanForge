@@ -44,7 +44,7 @@ fn split_child_regions(
             ..
         } => {
             let current = parent
-                .propositions
+                .propositions()
                 .get(*var_id)
                 .with_context(|| format!("split references missing prop var {var_id}"))?;
             ensure!(
@@ -67,9 +67,9 @@ fn split_child_regions(
             );
             let witness_is_wanted = wanted_values.binary_search(witness_value).is_ok();
             let mut wanted_region = parent.clone();
-            Arc::make_mut(&mut wanted_region.propositions)[*var_id] = wanted_values;
+            wanted_region.narrow_prop(*var_id, wanted_values);
             let mut other_region = parent.clone();
-            Arc::make_mut(&mut other_region.propositions)[*var_id] = other_values;
+            other_region.narrow_prop(*var_id, other_values);
             Ok(if witness_is_wanted {
                 (wanted_region, other_region)
             } else {
@@ -424,7 +424,7 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
     match split {
         Split::Propositional { var_id, wanted, .. } => {
             let current = parent
-                .propositions
+                .propositions()
                 .get(*var_id)
                 .with_context(|| format!("split references missing prop var {var_id}"))?;
             let wanted_count = current

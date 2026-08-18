@@ -821,7 +821,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
     ) -> Vec<usize> {
         let mut ids = Vec::new();
         let mut seen = BTreeSet::new();
-        for (var, values) in source_region.propositions.iter().enumerate() {
+        for (var, values) in source_region.propositions().iter().enumerate() {
             if values.len() == 1 {
                 let fact = self.numeric_helper.fact(var, values[0] as usize);
                 for proposition_id in self.precondition_proposition_ids(&fact) {

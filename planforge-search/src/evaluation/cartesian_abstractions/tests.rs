@@ -115,14 +115,8 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let source = StateRegion {
-        propositions: vec![vec![0, 1]].into(),
-        numeric: vec![].into(),
-    };
-    let target = StateRegion {
-        propositions: vec![vec![1]].into(),
-        numeric: vec![].into(),
-    };
+    let source = StateRegion::with_all_props_constrained(vec![vec![0, 1]], vec![]);
+    let target = StateRegion::with_all_props_constrained(vec![vec![1]], vec![]);
 
     let native = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     assert!(native.may_transition(&source, 0, &target).unwrap());
@@ -201,10 +195,7 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
     )
     .unwrap();
     let mut working = WorkingAbstraction::new_icaps26(
-        StateRegion {
-            propositions: vec![vec![0, 1]].into(),
-            numeric: vec![].into(),
-        },
+        StateRegion::with_all_props_constrained(vec![vec![0, 1]], vec![]),
         5,
     );
     for op_id in 0..5 {
@@ -308,15 +299,14 @@ fn min_growth_uses_projected_transition_count() {
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1]].into(),
-            numeric: vec![
+        StateRegion::with_all_props_constrained(
+            vec![vec![0, 1]],
+            vec![
                 Interval::unbounded(),
                 Interval::unbounded(),
                 Interval::singleton(1.0),
-            ]
-            .into(),
-        },
+            ],
+        ),
         1,
     );
     working.add_transition(0, 0, 0);
@@ -534,10 +524,10 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
 #[test]
 fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tails() {
     let working = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1, 2, 3]].into(),
-            numeric: vec![Interval::new(-10.0, 10.0, true, true)].into(),
-        },
+        StateRegion::with_all_props_constrained(
+            vec![vec![0, 1, 2, 3]],
+            vec![Interval::new(-10.0, 10.0, true, true)],
+        ),
         0,
     );
     let propositional = Split::Propositional {
@@ -581,10 +571,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let open_tail = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1]].into(),
-            numeric: vec![Interval::unbounded()].into(),
-        },
+        StateRegion::with_all_props_constrained(vec![vec![0, 1]], vec![Interval::unbounded()]),
         0,
     );
     let desired_open_tail = Split::Numeric {
@@ -604,10 +591,10 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let fractional = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1]].into(),
-            numeric: vec![Interval::new(0.0, 0.5, true, true)].into(),
-        },
+        StateRegion::with_all_props_constrained(
+            vec![vec![0, 1]],
+            vec![Interval::new(0.0, 0.5, true, true)],
+        ),
         0,
     );
     let fractional_split = Split::Numeric {
@@ -626,10 +613,10 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let open_integer_interval = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1]].into(),
-            numeric: vec![Interval::new(5.0, 10.0, false, true)].into(),
-        },
+        StateRegion::with_all_props_constrained(
+            vec![vec![0, 1]],
+            vec![Interval::new(5.0, 10.0, false, true)],
+        ),
         0,
     );
     let open_integer_split = Split::Numeric {
@@ -677,10 +664,10 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     };
     let mut semantics = CartesianSemantics::new(&task, &config).unwrap();
     let working = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1, 2, 3]].into(),
-            numeric: semantics.trivial_region().unwrap().numeric,
-        },
+        StateRegion::with_all_props_constrained(
+            vec![vec![0, 1, 2, 3]],
+            semantics.trivial_region().unwrap().numeric.to_vec(),
+        ),
         0,
     );
     let split = |wanted| Split::Propositional {
@@ -768,10 +755,7 @@ fn native_random_and_least_refined_selectors_are_independent() {
     let random_a = CartesianSemantics::new(&task, &random_config).unwrap();
     let random_b = CartesianSemantics::new(&task, &random_config).unwrap();
     let working = WorkingAbstraction::new(
-        StateRegion {
-            propositions: vec![vec![0, 1], vec![0, 1]].into(),
-            numeric: vec![].into(),
-        },
+        StateRegion::with_all_props_constrained(vec![vec![0, 1], vec![0, 1]], vec![]),
         0,
     );
     let draw = |semantics: &CartesianSemantics<'_>| {
@@ -849,10 +833,10 @@ fn unchanged_transition_operator_regions_share_state_dimensions() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
-    let source = StateRegion {
-        propositions: vec![vec![0]].into(),
-        numeric: vec![Interval::unbounded(), Interval::singleton(1.0)].into(),
-    };
+    let source = StateRegion::with_all_props_constrained(
+        vec![vec![0]],
+        vec![Interval::unbounded(), Interval::singleton(1.0)],
+    );
 
     let operator_region = semantics
         .operator_region_source_for_transition(&source, 0, &source)
@@ -860,8 +844,8 @@ fn unchanged_transition_operator_regions_share_state_dimensions() {
         .unwrap();
 
     assert!(Arc::ptr_eq(
-        &source.propositions,
-        &operator_region.propositions
+        source.propositions_arc(),
+        operator_region.propositions_arc()
     ));
     assert!(Arc::ptr_eq(&source.numeric, &operator_region.numeric));
 }
@@ -964,16 +948,13 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
 #[test]
 fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     let mut working = WorkingAbstraction::new(
-        StateRegion {
-            propositions: Vec::new().into(),
-            numeric: Vec::new().into(),
-        },
+        StateRegion::with_all_props_constrained(Vec::new(), Vec::new()),
         8,
     );
-    working.states.push(StateRegion {
-        propositions: Vec::new().into(),
-        numeric: Vec::new().into(),
-    });
+    working.states.push(StateRegion::with_all_props_constrained(
+        Vec::new(),
+        Vec::new(),
+    ));
     working.outgoing.push(Vec::new());
     working.incoming.push(Vec::new());
     working

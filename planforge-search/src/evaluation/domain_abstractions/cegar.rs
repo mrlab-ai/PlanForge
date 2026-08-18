@@ -489,24 +489,27 @@ impl Cegar {
             let before_partition_count = factory.domain_sizes().iter().sum::<usize>()
                 + factory.numeric_domain_sizes().iter().sum::<usize>();
             let refine_start = Instant::now();
-            let (domain_mapping, domain_sizes, partitions, numeric_domain_sizes) =
-                factory.refinement_parts();
-            let refined = fix_flaws(
-                &self.config,
-                task,
-                &eligible_flaws.flaws,
-                RefinementState {
-                    domain_mapping,
-                    domain_sizes,
-                    partitions,
-                    numeric_domain_sizes,
-                    blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
-                    blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
-                },
-                &mut rng,
-                plan.wildcard_plan.len(),
-            )
-            .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
+            let refined = factory
+                .refine(
+                    |domain_mapping, domain_sizes, partitions, numeric_domain_sizes| {
+                        fix_flaws(
+                            &self.config,
+                            task,
+                            &eligible_flaws.flaws,
+                            RefinementState {
+                                domain_mapping,
+                                domain_sizes,
+                                partitions,
+                                numeric_domain_sizes,
+                                blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+                                blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+                            },
+                            &mut rng,
+                            plan.wildcard_plan.len(),
+                        )
+                    },
+                )
+                .with_context(|| format!("failed to fix flaws (iteration {iteration})"))?;
             let refine_time = refine_start.elapsed();
             let after_partition_count = factory.domain_sizes().iter().sum::<usize>()
                 + factory.numeric_domain_sizes().iter().sum::<usize>();

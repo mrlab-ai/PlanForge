@@ -387,11 +387,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     let operator_regions = vec![AbstractOperatorRegions {
         labels: vec![OperatorRegion {
             concrete_op_id: 0,
-            source: StateRegion {
-                propositions: vec![vec![0, 1]].into(),
-                numeric: Vec::new().into(),
-            }
-            .into(),
+            source: StateRegion::with_all_props_constrained(vec![vec![0, 1]], Vec::new()).into(),
         }],
     }];
     let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
@@ -409,7 +405,10 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     assert_eq!(table.distances[table.initial_state_hash], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
-        allocation.entries()[0].operator_region.source.propositions[0],
+        allocation.entries()[0]
+            .operator_region
+            .source
+            .propositions()[0],
         vec![0]
     );
     residuals
@@ -418,11 +417,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
 
     let disjoint_source = OperatorRegion {
         concrete_op_id: 0,
-        source: StateRegion {
-            propositions: vec![vec![1]].into(),
-            numeric: Vec::new().into(),
-        }
-        .into(),
+        source: StateRegion::with_all_props_constrained(vec![vec![1]], Vec::new()).into(),
     };
     assert_eq!(
         residuals.cost_for_operator_region(1, 0, &disjoint_source),
@@ -1401,7 +1396,7 @@ fn abstract_operator_region_allocates_operator_without_numeric_effects() {
         .unwrap();
     let concrete = &operator_regions[0].labels[0];
 
-    assert_eq!(concrete.source.propositions[0], vec![0]);
+    assert_eq!(concrete.source.propositions()[0], vec![0]);
 }
 
 #[test]
@@ -1757,4 +1752,91 @@ fn singleton_preimage_is_preserved_exactly() {
         .unwrap();
     let concrete = &operator_regions[0].labels[0];
     assert_eq!(concrete.source.numeric[0], Interval::singleton(4.0));
+}
+
+/// A refinement changes which propositional variables an abstract state can
+/// constrain, so the factory's cached list has to move with it.
+///
+/// Regression test: the list used to be derived once in the constructor, which
+/// runs before the CEGAR loop, while refinement mutated `domain_sizes` through
+/// it afterwards. State regions were then stamped with a list naming only the
+/// seed-split variables, so the sparse propositional overlap skipped a
+/// dimension that had genuinely been narrowed, reported two disjoint regions as
+/// overlapping, and let one operator's cost be claimed twice.
+#[test]
+fn refinement_updates_the_variables_a_state_region_can_constrain() {
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
+            2,
+            "p".into(),
+            vec!["p0".into(), "p1".into()],
+            None,
+            0,
+        )],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![0],
+        numeric_state: vec![],
+        operators: vec![Operator::new(
+            "move".into(),
+            vec![ExplicitFact::propositional(0, 0)],
+            vec![Effect::new(vec![], 0, None, 1)],
+            vec![],
+            1,
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    });
+
+    // Start coarse: both concrete values share one abstract class, so the single
+    // class covers the variable's whole domain and constrains nothing.
+    let mut factory = DomainAbstractionFactory::new(
+        &task,
+        vec![vec![0, 0]],
+        vec![1],
+        NumericPartitions::with_partitions(vec![]),
+        vec![],
+    )
+    .unwrap();
+
+    let coarse = factory.state_region_from_hash(0, &[], &[1]).unwrap();
+    assert!(
+        coarse.constrained_props().is_empty(),
+        "a one-class variable constrains nothing, got {:?}",
+        coarse.constrained_props()
+    );
+    assert_eq!(coarse.propositions()[0], vec![0, 1]);
+
+    // Refine: split value 1 into its own class, exactly as fix_flaws does.
+    factory.refine(|domain_mapping, domain_sizes, _, _| {
+        domain_mapping[0][1] = 1;
+        domain_sizes[0] = 2;
+    });
+
+    for (state_hash, expected_values) in [(0usize, vec![0u32]), (1usize, vec![1u32])] {
+        let refined = factory
+            .state_region_from_hash(state_hash, &[], &[1])
+            .unwrap();
+        assert_eq!(
+            refined.propositions()[0],
+            expected_values,
+            "state {state_hash} should hold only its own class after refinement"
+        );
+        assert_eq!(
+            refined.constrained_props(),
+            &[0],
+            "variable 0 is split, so a state region constrains it"
+        );
+    }
+
+    // The two classes are disjoint, so the regions must not overlap. This is the
+    // comparison the stale list got wrong.
+    let zero = factory.state_region_from_hash(0, &[], &[1]).unwrap();
+    let one = factory.state_region_from_hash(1, &[], &[1]).unwrap();
+    assert!(!zero.overlaps(&one));
 }

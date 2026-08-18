@@ -300,20 +300,43 @@ pub(super) fn decode_state_to_vectors(
 }
 
 impl DomainAbstractionFactory {
+    /// Check the invariant the sparse propositional overlap depends on: a
+    /// dimension the region does not list as constrained must admit its whole
+    /// concrete domain. Violating it makes disjoint regions compare as
+    /// overlapping, so an operator's cost can be claimed twice -- a wrong
+    /// heuristic rather than a slow one.
+    #[cfg(debug_assertions)]
+    fn debug_assert_constrained_props_cover_narrowings(&self, region: &StateRegion) {
+        for (var_id, values) in region.propositions().iter().enumerate() {
+            let concrete_size = self.domain_mapping[var_id].len();
+            let listed = region
+                .constrained_props()
+                .binary_search(&(var_id as u32))
+                .is_ok();
+            assert!(
+                listed || values.len() == concrete_size,
+                "state region narrows propositional var {var_id} to {} of {concrete_size} values \
+                 without listing it as constrained (listed dimensions: {:?})",
+                values.len(),
+                region.constrained_props()
+            );
+        }
+    }
+
     pub(super) fn state_region_from_hash(
         &self,
         state_hash: usize,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
     ) -> Result<StateRegion> {
-        Ok(StateRegion {
-            propositions: self
-                .propositional_region_from_hash(state_hash, hash_multipliers)?
-                .into(),
-            numeric: self
-                .numeric_region_from_hash(state_hash, numeric_domain_sizes, hash_multipliers)?
-                .into(),
-        })
+        let region = StateRegion::with_constrained_props(
+            self.propositional_region_from_hash(state_hash, hash_multipliers)?,
+            self.numeric_region_from_hash(state_hash, numeric_domain_sizes, hash_multipliers)?,
+            Arc::clone(&self.state_constrained_props),
+        );
+        #[cfg(debug_assertions)]
+        self.debug_assert_constrained_props_cover_narrowings(&region);
+        Ok(region)
     }
 
     pub(super) fn state_region_from_facts(
@@ -324,11 +347,18 @@ impl DomainAbstractionFactory {
         let num_props = self.domain_sizes.len();
         let mut propositions = self.full_propositional_region()?;
         let mut numeric = vec![Interval::unbounded(); task.numeric_variables().len()];
+        // Only the dimensions named by a fact are narrowed below; the rest keep
+        // their whole domain. Recording them here is exact rather than
+        // rediscovered by comparing lengths, except when a variable has a single
+        // abstract class covering its domain -- then this is a sound superset.
+        let mut constrained_props = Vec::new();
 
         for fact in facts {
             if fact.var() < num_props {
                 propositions[fact.var()] =
                     self.concrete_values_for_abstract_value(fact.var(), fact.value())?;
+                constrained_props
+                    .push(u32::try_from(fact.var()).expect("propositional var id exceeds u32"));
             } else {
                 let numeric_var_id = fact.var() - num_props;
                 ensure!(
@@ -348,10 +378,13 @@ impl DomainAbstractionFactory {
             }
         }
 
-        Ok(StateRegion {
-            propositions: propositions.into(),
-            numeric: numeric.into(),
-        })
+        constrained_props.sort_unstable();
+        constrained_props.dedup();
+        let region =
+            StateRegion::with_constrained_props(propositions, numeric, constrained_props.into());
+        #[cfg(debug_assertions)]
+        self.debug_assert_constrained_props_cover_narrowings(&region);
+        Ok(region)
     }
 
     pub(super) fn full_propositional_region(&self) -> Result<Vec<Vec<u32>>> {

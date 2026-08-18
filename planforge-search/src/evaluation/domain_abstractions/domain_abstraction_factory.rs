@@ -74,6 +74,16 @@ pub struct DomainAbstractionFactory {
     /// avoids the `task.get_operators() × assignment_effects` scan that
     /// `metric_operator_cost_from_initial_values` does on every call.
     cached_operator_costs: Arc<[f64]>,
+    /// Propositional dimensions that a single abstract state can constrain,
+    /// ascending: exactly the variables this abstraction split into more than
+    /// one class. A variable with one class has that class covering its whole
+    /// concrete domain, so every state region admits every value there.
+    ///
+    /// This depends only on the abstraction, never on which state is being
+    /// materialized, so it is computed once and shared into every region rather
+    /// than rebuilt per state -- state regions are materialized once per
+    /// transition, millions of times per cost-partitioning build.
+    state_constrained_props: Arc<[u32]>,
 }
 
 impl DomainAbstractionFactory {
@@ -136,6 +146,8 @@ impl DomainAbstractionFactory {
             .collect();
         let additive_numeric_views =
             AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
+        let state_constrained_props = Self::derive_state_constrained_props(&domain_sizes);
+
         Ok(Self {
             domain_mapping,
             domain_sizes,
@@ -144,6 +156,7 @@ impl DomainAbstractionFactory {
             numeric_conditions: Arc::clone(task.numeric_conditions()),
             additive_numeric_views,
             cached_operator_costs,
+            state_constrained_props,
         })
     }
 
@@ -168,20 +181,45 @@ impl DomainAbstractionFactory {
     /// Keeping this crate-private and returning all four at once makes the
     /// factory the only mutation boundary. Read-only consumers use the named
     /// accessors above.
-    pub(super) fn refinement_parts(
+    /// Refine the abstraction in place.
+    ///
+    /// Takes a closure rather than handing out the four `&mut` parts so that
+    /// [`Self::state_constrained_props`] is always rederived afterwards. That
+    /// list is derived from `domain_sizes`, and a refinement that splits a
+    /// variable changes which variables a state region constrains; leaving it
+    /// stale makes disjoint regions compare as overlapping, which silently lets
+    /// one operator's cost be claimed twice. A caller cannot forget to refresh
+    /// it because a caller never gets the chance.
+    pub(super) fn refine<R>(
         &mut self,
-    ) -> (
-        &mut DomainMapping,
-        &mut [usize],
-        &mut NumericPartitions,
-        &mut [usize],
-    ) {
-        (
+        refinement: impl FnOnce(
+            &mut DomainMapping,
+            &mut [usize],
+            &mut NumericPartitions,
+            &mut [usize],
+        ) -> R,
+    ) -> R {
+        let result = refinement(
             &mut self.domain_mapping,
             &mut self.domain_sizes,
             &mut self.partitions,
             &mut self.numeric_domain_sizes,
-        )
+        );
+        self.state_constrained_props = Self::derive_state_constrained_props(&self.domain_sizes);
+        result
+    }
+
+    /// Propositional variables an abstract state can constrain: exactly those
+    /// this abstraction split into more than one class. A variable with a single
+    /// class has that class covering its whole concrete domain.
+    fn derive_state_constrained_props(domain_sizes: &[usize]) -> Arc<[u32]> {
+        domain_sizes
+            .iter()
+            .enumerate()
+            .filter(|(_, abstract_size)| **abstract_size > 1)
+            .map(|(var, _)| u32::try_from(var).expect("propositional var id exceeds u32"))
+            .collect::<Vec<_>>()
+            .into()
     }
 
     pub fn numeric_conditions(&self) -> &NumericConditions {

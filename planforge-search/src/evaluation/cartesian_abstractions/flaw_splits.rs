@@ -212,7 +212,7 @@ fn split_to_guarantee_fact(
     let allowed = working
         .states
         .get(state_id)
-        .and_then(|state| state.propositions.get(fact.var()))
+        .and_then(|state| state.propositions().get(fact.var()))
         .with_context(|| format!("missing Cartesian state {state_id} prop var {}", fact.var()))?;
     ensure!(
         allowed.binary_search(&witness_value).is_ok() && allowed.len() > 1,
@@ -467,7 +467,7 @@ pub(super) fn split_deviation_candidates(
     let target = &working.states()[target_state_id];
     let mut candidates = Vec::new();
     let mut rejected_numeric_splits = Vec::new();
-    for (var_id, allowed) in target.propositions.iter().enumerate() {
+    for (var_id, allowed) in target.propositions().iter().enumerate() {
         if semantics
             .task()
             .numeric_conditions()
