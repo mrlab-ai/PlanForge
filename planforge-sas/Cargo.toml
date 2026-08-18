@@ -2,6 +2,12 @@
 name = "planforge-sas"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "SAS+ task representation, parsing, state transition, and plan verification for PlanForge."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "pddl", "sas-plus", "heuristics"]
+categories = ["science", "algorithms"]
 license = "LGPL-3.0"
 
 [dependencies]

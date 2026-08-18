@@ -2,6 +2,12 @@
 name = "planforge-searcher"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Configuration-driven selection and construction of PlanForge search algorithms."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "heuristics", "search", "configuration"]
+categories = ["algorithms", "science"]
 license = "GPL-3.0"
 
 [features]

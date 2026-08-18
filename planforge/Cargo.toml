@@ -2,6 +2,12 @@
 name = "planforge"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Command-line orchestration for translating and solving planning tasks with PlanForge."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "pddl", "heuristics", "search", "sas-plus"]
+categories = ["command-line-utilities", "science", "algorithms"]
 license = "GPL-3.0"
 
 [[bin]]

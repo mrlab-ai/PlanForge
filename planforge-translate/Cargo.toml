@@ -2,6 +2,12 @@
 name = "planforge-translate"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Translation and preprocessing of PDDL planning tasks into PlanForge's SAS+ representation."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "pddl", "sas-plus", "translator"]
+categories = ["science", "algorithms", "parser-implementations"]
 license = "LGPL-3.0"
 
 [dependencies]

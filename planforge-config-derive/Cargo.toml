@@ -2,6 +2,12 @@
 name = "planforge-config-derive"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Derive macro for applying parsed PlanForge options to typed configuration structs."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "configuration", "derive", "proc-macro"]
+categories = ["development-tools"]
 license = "LGPL-3.0"
 
 [lib]

@@ -1,8 +1,13 @@
 [package]
 name = "planforge-sgd"
-description = "Search-free plan synthesis by gradient descent over a horizon-wide transcription"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Search-free plan synthesis by gradient descent over a horizon-wide transcription."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "optimization", "gradient-descent", "algorithms"]
+categories = ["algorithms", "science", "mathematics"]
 license = "GPL-3.0"
 
 [dependencies]

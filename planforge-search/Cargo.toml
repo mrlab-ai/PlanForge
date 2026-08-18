@@ -2,6 +2,12 @@
 name = "planforge-search"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Search algorithms, heuristics, and task abstractions over PlanForge SAS+ tasks."
+repository = "https://github.com/mrlab-ai/PlanForge"
+readme = "../README.md"
+keywords = ["planning", "heuristics", "search", "algorithms"]
+categories = ["algorithms", "science", "mathematics"]
 license = "LGPL-3.0"
 
 [dependencies]
