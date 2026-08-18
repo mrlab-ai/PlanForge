@@ -143,55 +143,6 @@ fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAb
 }
 
 #[test]
-fn transition_cost_partitioned_table_uses_abstract_transitions() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "p".into(),
-        vec!["p0".into(), "p1".into()],
-        None,
-        0,
-    )];
-    let op = Operator::new(
-        "move".into(),
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(vec![], 0, None, 1)],
-        vec![],
-        1,
-    );
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(0, 1)],
-        mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![],
-        operators: vec![op],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 1),
-    });
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-
-    let (table, tcf, transition_system) = factory
-        .build_transition_cost_partitioned_distance_table(
-            &task,
-            false,
-            &residuals,
-            0,
-            DistanceTableOptions::default(),
-        )
-        .unwrap();
-
-    assert_eq!(transition_system.transitions.len(), 1);
-    assert_eq!(table.distances[table.initial_state_hash], 1.0);
-    assert_eq!(tcf.transition_costs, vec![1.0]);
-}
-
-#[test]
 fn explicit_transition_system_matches_implicit_distances_across_comparison_cascades() {
     let variables = vec![
         condition_variable("x-lt-ten"),

@@ -43,7 +43,7 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
     AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
     RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion, TransitionResidualCosts,
-    saturated_abstract_operator_costs, saturation_need, state_region_intersection,
+    saturation_need, state_region_intersection,
 };
 pub use distances::*;
 use footprints::*;

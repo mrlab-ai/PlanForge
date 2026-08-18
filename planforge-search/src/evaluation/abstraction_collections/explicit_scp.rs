@@ -72,30 +72,6 @@ impl AbstractTransitionSystem {
         Ok(TransitionRegion { source, target })
     }
 
-    pub fn abstract_operator_regions(&self) -> Vec<Option<TransitionRegion>> {
-        assert!(
-            !self.state_regions.is_empty(),
-            "abstract transition system has no materialized state regions"
-        );
-        let num_abstract_ops = self
-            .transitions
-            .iter()
-            .map(|transition| transition.abstract_op_id)
-            .max()
-            .map_or(0, |max_id| max_id + 1);
-        let mut regions: Vec<Option<TransitionRegion>> = vec![None; num_abstract_ops];
-        for transition in &self.transitions {
-            let source = self.state_regions[transition.source_hash].clone();
-            let target = self.state_regions[transition.target_hash].clone();
-            let transition_region = TransitionRegion { source, target };
-            match &mut regions[transition.abstract_op_id] {
-                Some(region) => merge_transition_region(region, &transition_region),
-                None => regions[transition.abstract_op_id] = Some(transition_region),
-            }
-        }
-        regions
-    }
-
     pub fn abstract_operator_region_covers(&self) -> Vec<Vec<TransitionRegion>> {
         assert!(
             !self.state_regions.is_empty(),
