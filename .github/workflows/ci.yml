@@ -50,8 +50,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # `planforge-cplex` links against a proprietary CPLEX installation that
-      # is not available to CI, so it is excluded everywhere below.
+      # The native `planforge-cplex/cplex` feature requires a proprietary CPLEX
+      # installation and is not enabled in this job.
       - run: cargo clippy --workspace --exclude planforge-cplex --all-targets
 
   test:
@@ -73,6 +73,68 @@ jobs:
       # tables load-bearing still runs in this job, so an unpinned fixture fails
       # here regardless.
       - run: cargo test --workspace --exclude planforge-cplex
+
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Document default packages
+        run: cargo doc --no-deps
+      # docs.rs enables this crate's API feature but sets DOCS_RS, which makes
+      # the build script skip the unavailable proprietary native library.
+      - name: Document the CPLEX API as docs.rs does
+        run: DOCS_RS=1 cargo doc -p planforge-cplex --features cplex --no-deps
+
+  package:
+    name: package dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Package crates without unpublished PlanForge dependencies
+        run: |
+          cargo package -p planforge-config-derive
+          cargo package -p planforge-sas
+          cargo package -p planforge-cplex
+      # Before the first release, Cargo cannot resolve a versioned internal
+      # dependency from crates.io. These patches model the required preceding
+      # uploads while `cargo package` still creates and builds each downstream
+      # package from its generated tarball.
+      - name: Package downstream crates in dependency order
+        run: |
+          cargo package -p planforge-translate \
+            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'"
+
+          cargo package -p planforge-search \
+            --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
+            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'" \
+            --config "patch.crates-io.planforge-translate.path='$GITHUB_WORKSPACE/planforge-translate'" \
+            --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
+
+          cargo package -p planforge-sgd \
+            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'"
+
+          cargo package -p planforge-searcher \
+            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'" \
+            --config "patch.crates-io.planforge-search.path='$GITHUB_WORKSPACE/planforge-search'" \
+            --config "patch.crates-io.planforge-sgd.path='$GITHUB_WORKSPACE/planforge-sgd'" \
+            --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
+            --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
+
+          cargo package -p planforge \
+            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'" \
+            --config "patch.crates-io.planforge-translate.path='$GITHUB_WORKSPACE/planforge-translate'" \
+            --config "patch.crates-io.planforge-search.path='$GITHUB_WORKSPACE/planforge-search'" \
+            --config "patch.crates-io.planforge-searcher.path='$GITHUB_WORKSPACE/planforge-searcher'" \
+            --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
+            --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'" \
+            --config "patch.crates-io.planforge-sgd.path='$GITHUB_WORKSPACE/planforge-sgd'"
 
   release-test:
     name: release tests
