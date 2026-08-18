@@ -290,13 +290,6 @@ fn fmt_optional_seed(seed: Option<u64>) -> String {
     seed.map_or_else(|| "none".to_string(), |seed| seed.to_string())
 }
 
-fn time_seed() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0x5EED_F00D_u64)
-}
-
 fn is_generation_deadline_error(error: &anyhow::Error) -> bool {
     crate::resource_limits::is_deadline_exceeded(error)
 }
@@ -381,7 +374,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn create_rng(&self) -> SmallRng {
-        SmallRng::seed_from_u64(self.config.random_seed.unwrap_or_else(time_seed))
+        SmallRng::seed_from_u64(
+            self.config
+                .random_seed
+                .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+        )
     }
 
     fn build_cegar_config(

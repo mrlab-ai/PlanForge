@@ -313,7 +313,9 @@ impl Cegar {
         // initial state while remaining fully reproducible when `random_seed` is set.
         static CEGAR_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(0);
         let invocation = CEGAR_INVOCATION_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base_seed = config.random_seed.unwrap_or_else(current_time_seed);
+        let base_seed = config
+            .random_seed
+            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED);
         let mut rng = SmallRng::seed_from_u64(base_seed ^ splitmix64(invocation));
 
         let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(task)
@@ -801,15 +803,6 @@ fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &StatePacker)
     sorted_goal_facts(task)
         .iter()
         .all(|goal_fact| goal_fact.is_hold(ConcreteStateView::from_decoded(packer, buffer, &[])))
-}
-
-fn current_time_seed() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0x9e37_79b9_7f4a_7c15)
 }
 
 /// SplitMix64 bit-mixer — turns a low-entropy counter into a well-spread `u64` so xor'ing it

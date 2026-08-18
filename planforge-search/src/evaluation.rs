@@ -1,5 +1,16 @@
 //! State evaluation and heuristic implementations.
 
+/// Seed used wherever a randomised evaluation component is not given an explicit
+/// `random_seed`.
+///
+/// A planner run is reproducible by default: two runs of the same configuration
+/// on the same task must produce the same plan and the same number of
+/// expansions. Seeding from the clock instead made order selection, CEGAR
+/// refinement and plan extraction vary between runs, which shows up as an
+/// expansion count that drifts for no visible reason. Randomised behaviour is
+/// available by asking for a seed, not by omitting one.
+pub const DEFAULT_RANDOM_SEED: u64 = 0;
+
 pub mod abstraction_collections;
 pub(crate) mod abstraction_task;
 pub mod cartesian_abstractions;

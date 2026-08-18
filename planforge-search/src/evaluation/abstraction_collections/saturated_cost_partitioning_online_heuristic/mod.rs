@@ -380,12 +380,7 @@ struct ScpOnlineState {
 
 impl ScpOnlineState {
     fn new(seed: Option<u64>) -> Self {
-        let seed = seed.unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos() as u64)
-                .unwrap_or(0x5C9_0A11_u64)
-        });
+        let seed = seed.unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED);
         Self {
             start_time: Instant::now(),
             evaluated_states: 0,

@@ -14,15 +14,6 @@ pub(super) struct SolvedAbstraction<'a> {
     pub(super) comparison_var_ids: &'a [usize],
 }
 
-fn current_time_seed() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64)
-        .unwrap_or(0x9e37_79b9_7f4a_7c15)
-}
-
 #[derive(Debug, Clone)]
 pub struct WildcardPlanResult {
     // Per-step set of concrete operator IDs.
@@ -56,7 +47,9 @@ impl DomainAbstractionFactory {
         dump_distances: bool,
         use_wildcard_plans: bool,
     ) -> Result<Option<WildcardPlanResult>> {
-        let mut local_rng = Some(SmallRng::seed_from_u64(current_time_seed()));
+        let mut local_rng = Some(SmallRng::seed_from_u64(
+            crate::evaluation::DEFAULT_RANDOM_SEED,
+        ));
         self.compute_plan_with_rng(
             task,
             combine_labels,
