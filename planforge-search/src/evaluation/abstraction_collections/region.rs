@@ -233,6 +233,45 @@ pub(super) fn state_region_is_nonempty(region: &StateRegion) -> bool {
         && region.numeric.iter().all(|interval| !interval.is_empty())
 }
 
+/// Whether `inner` is contained in `outer`.
+///
+/// Only dimensions `outer` constrains can exclude anything, so unconstrained
+/// dimensions are skipped: `inner`'s values there are a subset of the whole
+/// domain by definition.
+fn region_contains(outer: &StateRegion, inner: &StateRegion) -> bool {
+    debug_assert_eq!(outer.propositions.len(), inner.propositions.len());
+    debug_assert_eq!(outer.numeric.len(), inner.numeric.len());
+    outer.constrained_props.iter().all(|&var_id| {
+        let var_id = var_id as usize;
+        sorted_value_set_contains(&outer.propositions[var_id], &inner.propositions[var_id])
+    }) && outer
+        .numeric
+        .iter()
+        .zip(inner.numeric.iter())
+        .all(|(outer_interval, inner_interval)| {
+            outer_interval.lower_is_lower_or_equal(inner_interval)
+                && outer_interval.upper_is_higher_or_equal(inner_interval)
+        })
+}
+
+/// Whether every value of `inner` appears in `outer`. Both must be sorted.
+fn sorted_value_set_contains(outer: &[PropValueId], inner: &[PropValueId]) -> bool {
+    if inner.len() > outer.len() {
+        return false;
+    }
+    let mut outer_index = 0;
+    for value in inner {
+        while outer_index < outer.len() && outer[outer_index] < *value {
+            outer_index += 1;
+        }
+        if outer_index == outer.len() || outer[outer_index] != *value {
+            return false;
+        }
+        outer_index += 1;
+    }
+    true
+}
+
 pub(crate) fn state_region_intersection(
     left: &StateRegion,
     right: &StateRegion,
@@ -247,6 +286,18 @@ pub(crate) fn state_region_intersection(
         right.numeric.len(),
         "state-region numeric dimension mismatch"
     );
+    // When one side contains the other, the intersection *is* that side. Taking
+    // it is four `Arc` clones, against rebuilding every value set. This is the
+    // common case rather than a lucky one: operator regions constrain a median
+    // of zero dimensions, so intersecting a transition's source region with one
+    // usually returns the source region unchanged.
+    if region_contains(right, left) {
+        return Some(left.clone());
+    }
+    if region_contains(left, right) {
+        return Some(right.clone());
+    }
+
     let propositions = left
         .propositions
         .iter()
