@@ -432,10 +432,14 @@ impl TransitionResidualCosts {
     }
 
     pub fn base_cost(&self, concrete_op_id: usize) -> f64 {
+        let missing_operator = format!(
+            "missing concrete operator {concrete_op_id}: operator residual count is {}",
+            self.operator_residuals.len()
+        );
         self.operator_residuals
             .get(concrete_op_id)
-            .map(|residual| residual.base_cost)
-            .unwrap_or(f64::INFINITY)
+            .expect(&missing_operator)
+            .base_cost
     }
 
     pub fn operator_costs_for_label_cp(&self) -> Vec<f64> {
@@ -481,12 +485,9 @@ impl TransitionResidualCosts {
         self.operator_residuals
             .iter()
             .enumerate()
-            .map(|(op_id, residual)| {
-                let fallback_cost = residual.base_cost.max(0.0);
-                LmCutResidualOperatorCostPartition {
-                    fallback_cost: uniform_costs.get(op_id).copied().unwrap_or(fallback_cost),
-                    variants: Vec::new(),
-                }
+            .map(|(op_id, _residual)| LmCutResidualOperatorCostPartition {
+                fallback_cost: uniform_costs[op_id],
+                variants: Vec::new(),
             })
             .collect()
     }
@@ -497,9 +498,15 @@ impl TransitionResidualCosts {
         _abstract_op_id: usize,
         operator_region: &OperatorRegion,
     ) -> f64 {
-        let Some(residual) = self.operator_residuals.get(operator_region.concrete_op_id) else {
-            return f64::INFINITY;
-        };
+        let concrete_op_id = operator_region.concrete_op_id;
+        let missing_operator = format!(
+            "missing concrete operator {concrete_op_id}: operator residual count is {}",
+            self.operator_residuals.len()
+        );
+        let residual = self
+            .operator_residuals
+            .get(concrete_op_id)
+            .expect(&missing_operator);
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
         }
