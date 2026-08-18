@@ -296,6 +296,7 @@ impl RegionalUsage {
             if new_cells.len().is_multiple_of(64)
                 && let Err(error) = ensure_scp_table_deadline(deadline)
             {
+                // add_saturation_steps reduces costs before cp.add_h_values, so partial overlays never contribute h-values.
                 new_cells.push(cell);
                 new_cells.extend(old_cells);
                 self.cells = new_cells;
@@ -332,7 +333,11 @@ impl RegionalUsage {
             region,
             amount: uncovered_amount,
         }));
-        new_cells.retain(|cell| cell.amount > float_tolerance::SEARCH_EPSILON);
+        debug_assert!(
+            new_cells
+                .iter()
+                .all(|cell| cell.amount > float_tolerance::SEARCH_EPSILON)
+        );
         debug_assert!(regional_usage_cells_are_disjoint(&new_cells));
         self.cells = new_cells;
         *self.index.get_mut() = None;
