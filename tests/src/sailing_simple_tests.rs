@@ -249,7 +249,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     let domain_abstraction = DomainAbstractionGenerator::new(CegarConfig {
         max_iterations: usize::MAX,
         random_seed: Some(1),
-        compute_operator_footprints: false,
+        compute_operator_regions: false,
         ..Default::default()
     })
     .expect("unrestricted domain abstraction generator should construct")
@@ -271,7 +271,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 
     let cartesian_abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: usize::MAX,
-        compute_operator_footprints: false,
+        compute_operator_regions: false,
         ..Default::default()
     })
     .expect("unrestricted Cartesian abstraction generator should construct")
@@ -465,7 +465,7 @@ fn numeric_var_id_by_name_parts(
 
 /// Under abstract-operator saturation one per-person abstraction contributes its
 /// 10-move route plus save (11), and the other keeps only one distinct save cost
-/// because rival-achiever route footprints consume overlapping move residuals.
+/// because rival-achiever route operator regions consume overlapping move residuals.
 /// The name says what the assertion says: this is the *shortfall* against the
 /// additive 22 that disjoint near boats should give, pinned so a change in
 /// either direction is visible.

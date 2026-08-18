@@ -11,7 +11,7 @@ use super::domain_abstraction_factory::{
     AbstractDistanceTable, DistanceTableOptions, DomainAbstractionFactory,
 };
 use crate::evaluation::abstraction_collections::cost_partitioning::{
-    AbstractOperatorFootprint, AbstractTransitionSystem,
+    AbstractOperatorRegions, AbstractTransitionSystem,
 };
 use crate::evaluation::abstraction_task::AbstractionUse;
 
@@ -24,7 +24,7 @@ pub struct DomainAbstraction {
     pub combine_labels: bool,
     pub relevant_operator_ids: Vec<usize>,
     pub abstract_operators: Vec<AbstractOperator>,
-    pub abstract_operator_footprints: Vec<AbstractOperatorFootprint>,
+    pub abstract_operator_regions: Vec<AbstractOperatorRegions>,
     pub(crate) regional_transition_system: RefCell<Option<AbstractTransitionSystem>>,
     pub metadata: DomainAbstractionMetadata,
 }
@@ -44,7 +44,7 @@ impl DomainAbstraction {
             combine_labels,
             relevant_operator_ids: Vec::new(),
             abstract_operators: Vec::new(),
-            abstract_operator_footprints: Vec::new(),
+            abstract_operator_regions: Vec::new(),
             regional_transition_system: RefCell::new(None),
             metadata,
         }
@@ -59,35 +59,35 @@ impl DomainAbstraction {
 
     pub fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
-        self.abstract_operator_footprints.clear();
+        self.abstract_operator_regions.clear();
         self.regional_transition_system.get_mut().take();
     }
 
-    pub fn ensure_abstract_operator_footprints(
+    pub fn ensure_abstract_operator_regions(
         &mut self,
         task: &dyn AbstractNumericTask,
     ) -> Result<()> {
-        if !self.abstract_operator_footprints.is_empty() {
+        if !self.abstract_operator_regions.is_empty() {
             ensure!(
-                self.abstract_operator_footprints.len() == self.abstract_operators.len(),
-                "domain abstraction has {} operator footprints for {} abstract operators",
-                self.abstract_operator_footprints.len(),
+                self.abstract_operator_regions.len() == self.abstract_operators.len(),
+                "domain abstraction has {} operator regions for {} abstract operators",
+                self.abstract_operator_regions.len(),
                 self.abstract_operators.len()
             );
             return Ok(());
         }
         ensure!(
             !self.abstract_operators.is_empty(),
-            "cannot construct regional footprints after abstract operators were discarded"
+            "cannot construct regional operator regions after abstract operators were discarded"
         );
-        self.abstract_operator_footprints = self
+        self.abstract_operator_regions = self
             .factory
-            .build_abstract_operator_footprints(task, &self.abstract_operators)
-            .context("failed to build abstract-operator footprints")?;
+            .build_abstract_operator_regions(task, &self.abstract_operators)
+            .context("failed to build abstract-operator regions")?;
         ensure!(
-            self.abstract_operator_footprints.len() == self.abstract_operators.len(),
-            "domain footprint construction produced {} entries for {} abstract operators",
-            self.abstract_operator_footprints.len(),
+            self.abstract_operator_regions.len() == self.abstract_operators.len(),
+            "domain operator-region construction produced {} entries for {} abstract operators",
+            self.abstract_operator_regions.len(),
             self.abstract_operators.len()
         );
         Ok(())
@@ -176,15 +176,15 @@ impl DomainAbstractionGenerator {
         let abstract_operators = operator_generator
             .build_abstract_operators_with_deadline(task, None)
             .context("failed to build abstract operators")?;
-        let abstract_operator_footprints = if self.config.compute_operator_footprints {
+        let abstract_operator_regions = if self.config.compute_operator_regions {
             factory
-                .build_abstract_operator_footprints(task, &abstract_operators)
-                .context("failed to build abstract-operator footprints")?
+                .build_abstract_operator_regions(task, &abstract_operators)
+                .context("failed to build abstract-operator regions")?
         } else {
             // Heuristics that read only the distance table (canonical, max,
-            // single domain abstraction) do not consume footprints; skipping
+            // single domain abstraction) do not consume operator regions; skipping
             // saves ~12 GB on minecraft-sword-advanced/prob_30x30_5. SCP /
-            // Callers that need regional SCP can construct footprints from
+            // Callers that need regional SCP can construct operator regions from
             // the finalized abstraction after collection generation.
             Vec::new()
         };
@@ -235,7 +235,7 @@ impl DomainAbstractionGenerator {
             combine_labels: self.config.combine_labels,
             relevant_operator_ids,
             abstract_operators,
-            abstract_operator_footprints,
+            abstract_operator_regions,
             regional_transition_system: RefCell::new(None),
             metadata: DomainAbstractionMetadata {
                 solved_by_self,

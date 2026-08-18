@@ -5,12 +5,12 @@ pub(super) fn finalize_abstraction(
     semantics: &CartesianSemantics<'_>,
     initial_state_hash: usize,
     combine_labels: bool,
-    compute_operator_footprints: bool,
+    compute_operator_regions: bool,
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
     Vec<usize>,
-    Vec<AbstractOperatorFootprint>,
+    Vec<AbstractOperatorRegions>,
 )> {
     let mut grouped: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
     let mut raw = Vec::new();
@@ -44,7 +44,7 @@ pub(super) fn finalize_abstraction(
     let mut transitions = Vec::with_capacity(raw.len());
     let mut forward = vec![Vec::new(); working.states().len()];
     let mut backward = vec![Vec::new(); working.states().len()];
-    let mut footprints = if compute_operator_footprints {
+    let mut operator_regions = if compute_operator_regions {
         Vec::with_capacity(raw.len())
     } else {
         Vec::new()
@@ -62,30 +62,30 @@ pub(super) fn finalize_abstraction(
                 relevant.insert(label);
             }
         }
-        if compute_operator_footprints {
-            footprints.push(AbstractOperatorFootprint {
+        if compute_operator_regions {
+            operator_regions.push(AbstractOperatorRegions {
                 labels: labels
                     .iter()
                     .copied()
                     .map(|concrete_op_id| {
-                        let footprint = semantics.transition_source_footprint(
+                        let operator_region = semantics.operator_region_source_for_transition(
                             &shared_state_regions[source],
                             concrete_op_id,
                             &shared_state_regions[target],
                         )?
                         .with_context(|| {
                             format!(
-                                "emitted Cartesian transition {source} --{concrete_op_id}--> {target} has an empty source footprint"
+                                "emitted Cartesian transition {source} --{concrete_op_id}--> {target} has an empty source operator region"
                             )
                         })?;
-                        let source_region = if footprint == *shared_state_regions[source] {
+                        let source_region = if operator_region == *shared_state_regions[source] {
                             Arc::clone(&shared_state_regions[source])
                         } else {
-                            Arc::new(footprint)
+                            Arc::new(operator_region)
                         };
-                        Ok(ConcreteOperatorFootprint {
+                        Ok(OperatorRegion {
                             concrete_op_id,
-                            source_region,
+                            source: source_region,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?,
@@ -153,7 +153,7 @@ pub(super) fn finalize_abstraction(
         transition_system,
         distance_table,
         relevant_operator_ids,
-        footprints,
+        operator_regions,
     ))
 }
 
@@ -166,7 +166,7 @@ pub(super) fn finalize_standalone_abstraction(
     AbstractTransitionSystem,
     AbstractDistanceTable,
     Vec<usize>,
-    Vec<AbstractOperatorFootprint>,
+    Vec<AbstractOperatorRegions>,
 )> {
     ensure!(
         shortest_paths.distances().len() == working.states().len(),

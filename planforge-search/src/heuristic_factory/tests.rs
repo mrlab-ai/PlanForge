@@ -111,7 +111,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     );
     assert_eq!(config.variants_per_goal, 8);
     assert_eq!(config.abstraction.flaw_kind, FlawKind::ExecuteEntirePlan);
-    assert!(config.abstraction.compute_operator_footprints);
+    assert!(config.abstraction.compute_operator_regions);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn parses_strict_icaps26_cartesian_source() {
         config.flaw_candidate_generation,
         crate::evaluation::cartesian_abstractions::CartesianFlawCandidateGeneration::DesiredRegion
     );
-    assert!(config.compute_operator_footprints);
+    assert!(config.compute_operator_regions);
     assert!(config.retain_transition_system);
 
     let defaults = abstraction_config::apply_icaps26_cartesian_options(

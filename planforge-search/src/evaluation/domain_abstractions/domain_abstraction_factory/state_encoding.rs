@@ -333,7 +333,7 @@ impl DomainAbstractionFactory {
                 let numeric_var_id = fact.var() - num_props;
                 ensure!(
                     numeric_var_id < numeric.len(),
-                    "abstract-operator footprint fact references numeric var {numeric_var_id}, but task has {} numeric vars",
+                    "abstract-operator region fact references numeric var {numeric_var_id}, but task has {} numeric vars",
                     numeric.len()
                 );
                 numeric[numeric_var_id] = self
@@ -380,7 +380,7 @@ impl DomainAbstractionFactory {
         // only has a handful of concrete values mapped to this abstract slot leaves
         // most of that capacity unused. Shrinking before returning saves typically
         // 50-90% of the per-inner-`Vec` heap allocation, which on SCP runs over many
-        // state regions dominates the propositional footprint.
+        // state regions dominates the propositional representation.
         let mut values = self
             .domain_mapping
             .get(var_id)

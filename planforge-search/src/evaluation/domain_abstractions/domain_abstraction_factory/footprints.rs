@@ -1,42 +1,42 @@
 use super::*;
 
-pub(super) fn precise_transition_footprint(
+pub(super) fn precise_operator_region_for_transition(
     transition: &AbstractTransition,
     concrete_op_id: usize,
     source_state_region: &StateRegion,
-    abstract_operator_footprints: &[AbstractOperatorFootprint],
-) -> Result<ConcreteOperatorFootprint> {
-    let abstract_footprint = abstract_operator_footprints
+    abstract_operator_regions: &[AbstractOperatorRegions],
+) -> Result<OperatorRegion> {
+    let abstract_regions = abstract_operator_regions
         .get(transition.abstract_op_id)
         .with_context(|| {
             format!(
-                "transition {} references missing abstract-operator footprint {}",
+                "transition {} references missing abstract-operator region {}",
                 transition.transition_id, transition.abstract_op_id
             )
         })?;
-    let label_footprint = abstract_footprint
+    let label_operator_region = abstract_regions
         .labels
         .iter()
-        .find(|footprint| footprint.concrete_op_id == concrete_op_id)
+        .find(|operator_region| operator_region.concrete_op_id == concrete_op_id)
         .with_context(|| {
             format!(
-                "transition {} abstract operator {} has no footprint for concrete operator {concrete_op_id}",
+                "transition {} abstract operator {} has no operator region for concrete operator {concrete_op_id}",
                 transition.transition_id, transition.abstract_op_id
             )
         })?;
     let source_region = state_region_intersection(
         source_state_region,
-        &label_footprint.source_region,
+        &label_operator_region.source,
     )
     .with_context(|| {
         format!(
-            "transition {} has an empty precise source footprint for concrete operator {concrete_op_id}",
+            "transition {} has an empty precise source operator region for concrete operator {concrete_op_id}",
             transition.transition_id
         )
     })?;
-    Ok(ConcreteOperatorFootprint {
+    Ok(OperatorRegion {
         concrete_op_id,
-        source_region: Arc::new(source_region),
+        source: Arc::new(source_region),
     })
 }
 
@@ -220,11 +220,11 @@ fn interval_is_singleton(interval: Interval) -> bool {
 }
 
 impl DomainAbstractionFactory {
-    pub fn build_abstract_operator_footprints(
+    pub fn build_abstract_operator_regions(
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
-    ) -> Result<Vec<AbstractOperatorFootprint>> {
+    ) -> Result<Vec<AbstractOperatorRegions>> {
         operators
             .iter()
             .map(|operator| {
@@ -233,20 +233,20 @@ impl DomainAbstractionFactory {
                     .iter()
                     .copied()
                     .map(|concrete_op_id| {
-                        self.build_concrete_operator_footprint(task, operator, concrete_op_id)
+                        self.build_operator_region(task, operator, concrete_op_id)
                     })
                     .collect::<Result<Vec<_>>>()?;
-                Ok(AbstractOperatorFootprint { labels })
+                Ok(AbstractOperatorRegions { labels })
             })
             .collect()
     }
 
-    pub(super) fn build_concrete_operator_footprint(
+    pub(super) fn build_operator_region(
         &self,
         task: &dyn AbstractNumericTask,
         abstract_operator: &AbstractOperator,
         concrete_op_id: usize,
-    ) -> Result<ConcreteOperatorFootprint> {
+    ) -> Result<OperatorRegion> {
         let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
             format!("abstract operator references missing concrete operator {concrete_op_id}")
         })?;
@@ -285,7 +285,7 @@ impl DomainAbstractionFactory {
         for numeric_var_id in affected_numeric_dimensions {
             ensure!(
                 numeric_var_id < abstract_source_region.numeric.len(),
-                "abstract operator references affected numeric var {numeric_var_id}, but footprint has {} numeric vars",
+                "abstract operator references affected numeric var {numeric_var_id}, but operator region has {} numeric vars",
                 abstract_source_region.numeric.len()
             );
             let source_interval = abstract_source_region.numeric[numeric_var_id];
@@ -327,7 +327,7 @@ impl DomainAbstractionFactory {
             let regressed_source = source_interval.intersection(&inverse_source);
             ensure!(
                 !regressed_source.is_empty(),
-                "restricted SNP operator {concrete_op_id} has an empty regressed source footprint for numeric variable {numeric_var_id}: source={source_interval:?}, target={target_interval:?}, image={:?}, inverse_source={inverse_source:?}",
+                "restricted SNP operator {concrete_op_id} has an empty regressed source operator region for numeric variable {numeric_var_id}: source={source_interval:?}, target={target_interval:?}, image={:?}, inverse_source={inverse_source:?}",
                 effect_image.image,
             );
             if regressed_source != source_interval {
@@ -335,9 +335,9 @@ impl DomainAbstractionFactory {
             }
         }
 
-        Ok(ConcreteOperatorFootprint {
+        Ok(OperatorRegion {
             concrete_op_id,
-            source_region: Arc::new(source_region),
+            source: Arc::new(source_region),
         })
     }
 }

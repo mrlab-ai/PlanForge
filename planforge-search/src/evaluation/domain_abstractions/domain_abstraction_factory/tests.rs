@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use crate::evaluation::abstraction_collections::cost_partitioning::{
-    AbstractOperatorFootprint, ConcreteOperatorFootprint, StateRegion, TransitionResidualCosts,
+    AbstractOperatorRegions, OperatorRegion, StateRegion, TransitionResidualCosts,
     build_explicit_label_cost_partitioning_table,
 };
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
@@ -384,10 +384,10 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
             DistanceTableOptions::default().without_state_regions(),
         )
         .unwrap();
-    let footprints = vec![AbstractOperatorFootprint {
-        labels: vec![ConcreteOperatorFootprint {
+    let operator_regions = vec![AbstractOperatorRegions {
+        labels: vec![OperatorRegion {
             concrete_op_id: 0,
-            source_region: StateRegion {
+            source: StateRegion {
                 propositions: vec![vec![0, 1]].into(),
                 numeric: Vec::new().into(),
             }
@@ -399,7 +399,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     let (table, allocation) = factory
         .build_precise_regional_cost_partitioned_distance_table(
             &transition_system,
-            &footprints,
+            &operator_regions,
             &residuals,
             0,
             DistanceTableOptions::default(),
@@ -409,23 +409,23 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     assert_eq!(table.distances[table.initial_state_hash], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
-        allocation.entries()[0].footprint.source_region.propositions[0],
+        allocation.entries()[0].operator_region.source.propositions[0],
         vec![0]
     );
     residuals
         .reduce_by_regional_allocation_with_deadline(&allocation, None)
         .unwrap();
 
-    let disjoint_source = ConcreteOperatorFootprint {
+    let disjoint_source = OperatorRegion {
         concrete_op_id: 0,
-        source_region: StateRegion {
+        source: StateRegion {
             propositions: vec![vec![1]].into(),
             numeric: Vec::new().into(),
         }
         .into(),
     };
     assert_eq!(
-        residuals.cost_for_operator_footprint(1, 0, &disjoint_source),
+        residuals.cost_for_operator_region(1, 0, &disjoint_source),
         1.0
     );
 }
@@ -1093,7 +1093,7 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
     assert_eq!(numeric_intervals[2], Interval::singleton(2.0));
 }
 
-fn additive_numeric_footprint_task() -> (NumericRootTask, DomainAbstractionFactory) {
+fn additive_numeric_operator_region_task() -> (NumericRootTask, DomainAbstractionFactory) {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -1154,7 +1154,7 @@ fn additive_numeric_footprint_task() -> (NumericRootTask, DomainAbstractionFacto
     (task, factory)
 }
 
-fn additive_numeric_footprint_task_with_partitions(
+fn additive_numeric_operator_region_task_with_partitions(
     x_partitions: Vec<Interval>,
 ) -> (NumericRootTask, DomainAbstractionFactory) {
     let variables = vec![ExplicitVariable::new(
@@ -1213,8 +1213,8 @@ fn additive_numeric_footprint_task_with_partitions(
 }
 
 #[test]
-fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
-    let (task, factory) = additive_numeric_footprint_task();
+fn abstract_operator_region_keeps_finite_source_when_target_reaches_tail() {
+    let (task, factory) = additive_numeric_operator_region_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operator_generator::AbstractOperator {
         concrete_op_ids: vec![0],
@@ -1225,25 +1225,25 @@ fn abstract_operator_footprint_keeps_finite_source_when_target_reaches_tail() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, 0);
     assert_eq!(
-        concrete.source_region.numeric[0],
+        concrete.source.numeric[0],
         Interval::new(9.0, 10.0, true, true)
     );
     assert_eq!(
-        concrete.source_region.numeric[1],
+        concrete.source.numeric[1],
         Interval::new(f64::NEG_INFINITY, f64::INFINITY, false, false)
     );
 }
 
 #[test]
-fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
-    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+fn abstract_operator_region_tightens_source_by_inverse_target_image() {
+    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
         Interval::new(f64::NEG_INFINITY, 5.0, false, true),
         Interval::new(5.0, 10.0, false, true),
     ]);
@@ -1257,21 +1257,21 @@ fn abstract_operator_footprint_tightens_source_by_inverse_target_image() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, 0);
     assert_eq!(
-        concrete.source_region.numeric[0],
+        concrete.source.numeric[0],
         Interval::new(4.0, 5.0, false, true)
     );
 }
 
 #[test]
-fn footprint_active_preimage_allows_boundary_charge() {
-    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+fn operator_region_active_preimage_allows_boundary_charge() {
+    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
         Interval::new(f64::NEG_INFINITY, 5.0, false, true),
         Interval::new(5.0, 6.0, false, true),
     ]);
@@ -1285,20 +1285,20 @@ fn footprint_active_preimage_allows_boundary_charge() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
     assert_eq!(
-        concrete.source_region.numeric[0],
+        concrete.source.numeric[0],
         Interval::new(4.0, 5.0, false, true)
     );
 }
 
 #[test]
-fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
-    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+fn abstract_operator_region_rejects_empty_inverse_target_image() {
+    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
         Interval::new(f64::NEG_INFINITY, 5.0, false, true),
         Interval::new(7.0, 10.0, false, true),
     ]);
@@ -1313,18 +1313,18 @@ fn abstract_operator_footprint_rejects_empty_inverse_target_image() {
     };
 
     let error = factory
-        .build_abstract_operator_footprints(&task, &[op])
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("empty regressed source footprint")
+            .contains("empty regressed source operator region")
     );
 }
 
 #[test]
-fn abstract_operator_footprint_allocates_unbounded_changed_tail() {
-    let (task, factory) = additive_numeric_footprint_task();
+fn abstract_operator_region_allocates_unbounded_changed_tail() {
+    let (task, factory) = additive_numeric_operator_region_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operator_generator::AbstractOperator {
         concrete_op_ids: vec![0],
@@ -1335,20 +1335,20 @@ fn abstract_operator_footprint_allocates_unbounded_changed_tail() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, 0);
     assert_eq!(
-        concrete.source_region.numeric[0],
+        concrete.source.numeric[0],
         Interval::new(10.0, f64::INFINITY, true, false)
     );
 }
 
 #[test]
-fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
+fn abstract_operator_region_allocates_operator_without_numeric_effects() {
     let variables = vec![ExplicitVariable::new(
         2,
         "saved".into(),
@@ -1396,16 +1396,16 @@ fn abstract_operator_footprint_allocates_operator_without_numeric_effects() {
         changed_numeric_vars: vec![],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
-    assert_eq!(concrete.source_region.propositions[0], vec![0]);
+    assert_eq!(concrete.source.propositions[0], vec![0]);
 }
 
 #[test]
-fn abstract_operator_footprint_allows_one_finite_changed_source() {
+fn abstract_operator_region_allows_one_finite_changed_source() {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -1481,28 +1481,29 @@ fn abstract_operator_footprint_allows_one_finite_changed_source() {
         changed_numeric_vars: vec![0, 1],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
     assert_eq!(
-        concrete.source_region.numeric[0],
+        concrete.source.numeric[0],
         Interval::new(0.0, 1.0, false, true)
     );
     assert_eq!(
-        concrete.source_region.numeric[1],
+        concrete.source.numeric[1],
         Interval::new(f64::NEG_INFINITY, -1.0, false, true)
     );
 
     let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
     let operator_costs =
-        abstract_operator_costs_from_footprints(1, &footprints, &residuals, 0, None).unwrap();
+        abstract_operator_costs_from_operator_regions(1, &operator_regions, &residuals, 0, None)
+            .unwrap();
     assert_eq!(operator_costs, vec![1.0]);
 }
 
 #[test]
-fn footprint_one_finite_dim_suffices() {
+fn operator_region_one_finite_dim_suffices() {
     let variables = vec![
         condition_variable("x_gt_zero"),
         ExplicitVariable::new(
@@ -1592,12 +1593,12 @@ fn footprint_one_finite_dim_suffices() {
         ],
         changed_numeric_vars: vec![0, 1],
     };
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
-    assert_eq!(concrete.source_region.numeric[0], Interval::singleton(0.0));
-    assert_eq!(concrete.source_region.numeric[1], Interval::unbounded());
+    let concrete = &operator_regions[0].labels[0];
+    assert_eq!(concrete.source.numeric[0], Interval::singleton(0.0));
+    assert_eq!(concrete.source.numeric[1], Interval::unbounded());
 
     let table = factory
         .build_abstract_distance_table(&task, false, false)
@@ -1606,7 +1607,7 @@ fn footprint_one_finite_dim_suffices() {
 }
 
 #[test]
-fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
+fn abstract_operator_region_ignores_zero_additive_effect_dimension() {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -1684,32 +1685,32 @@ fn abstract_operator_footprint_ignores_zero_additive_effect_dimension() {
         changed_numeric_vars: vec![0, 1],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
+    let concrete = &operator_regions[0].labels[0];
 
     assert_eq!(
-        concrete.source_region.numeric[0],
+        concrete.source.numeric[0],
         Interval::new(0.0, 1.0, false, true)
     );
     // y has a zero-delta additive effect, so it is not in the affected-var loop
     // that intersects with the inverse target. But y *is* pinned by the
-    // operator's `y_abs_var = 0` precondition, so the footprint reflects that
+    // operator's `y_abs_var = 0` precondition, so the operator region reflects that
     // partition's interval instead of going unbounded — which is the tightest
-    // admissible footprint and the source of the cost-partitioning precision
+    // admissible operator region and the source of the cost-partitioning precision
     // benefit on operators whose preconditions reference unaffected variables.
     assert_eq!(
-        concrete.source_region.numeric[1],
+        concrete.source.numeric[1],
         Interval::new(0.0, 1.0, true, true)
     );
 }
 
 #[test]
-fn footprint_width_does_not_change_valid_preimage() {
-    // Same fixture as `abstract_operator_footprint_tightens_source_by_inverse_target_image`:
+fn operator_region_width_does_not_change_valid_preimage() {
+    // Same fixture as `abstract_operator_region_tightens_source_by_inverse_target_image`:
     // the preimage source for the operator is `(4.0, 5.0]`, width 1.0.
-    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
         Interval::new(f64::NEG_INFINITY, 5.0, false, true),
         Interval::new(5.0, 10.0, false, true),
     ]);
@@ -1723,11 +1724,11 @@ fn footprint_width_does_not_change_valid_preimage() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
     assert_eq!(
-        footprints[0].labels[0].source_region.numeric[0],
+        operator_regions[0].labels[0].source.numeric[0],
         Interval::new(4.0, 5.0, false, true)
     );
 }
@@ -1737,7 +1738,7 @@ fn singleton_preimage_is_preserved_exactly() {
     // Partition `x` so that the operator `x += 1` maps singleton `{4.0}` to
     // singleton `{5.0}`. The preimage `{4.0} ∩ shift({5.0}, -1) = {4.0}` is a
     // singleton of width 0.
-    let (task, factory) = additive_numeric_footprint_task_with_partitions(vec![
+    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
         Interval::singleton(4.0),
         Interval::singleton(5.0),
     ]);
@@ -1751,9 +1752,9 @@ fn singleton_preimage_is_preserved_exactly() {
         changed_numeric_vars: vec![0],
     };
 
-    let footprints = factory
-        .build_abstract_operator_footprints(&task, &[op])
+    let operator_regions = factory
+        .build_abstract_operator_regions(&task, &[op])
         .unwrap();
-    let concrete = &footprints[0].labels[0];
-    assert_eq!(concrete.source_region.numeric[0], Interval::singleton(4.0));
+    let concrete = &operator_regions[0].labels[0];
+    assert_eq!(concrete.source.numeric[0], Interval::singleton(4.0));
 }

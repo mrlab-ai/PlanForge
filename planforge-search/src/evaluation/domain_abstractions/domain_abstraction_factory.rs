@@ -40,8 +40,8 @@ mod state_encoding;
 mod transition_system;
 
 use crate::evaluation::abstraction_collections::cost_partitioning::{
-    AbstractOperatorCostFunction, AbstractOperatorFootprint, AbstractTransition,
-    AbstractTransitionCostFunction, AbstractTransitionSystem, ConcreteOperatorFootprint,
+    AbstractOperatorCostFunction, AbstractOperatorRegions, AbstractTransition,
+    AbstractTransitionCostFunction, AbstractTransitionSystem, OperatorRegion,
     RegionalCostAllocation, RegionalCostAllocationEntry, StateRegion, TransitionResidualCosts,
     saturation_need, state_region_intersection,
 };

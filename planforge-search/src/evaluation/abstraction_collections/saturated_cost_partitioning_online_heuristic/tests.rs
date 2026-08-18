@@ -67,7 +67,7 @@ fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstraction {
         max_states: 16,
         max_time: None,
         combine_labels: false,
-        compute_operator_footprints: true,
+        compute_operator_regions: true,
         random_seed: None,
         debug: false,
         ..Default::default()
@@ -127,10 +127,10 @@ fn regional_conflict_scoring_accepts_transition_free_components() {
     let task = independent_goals_task();
     let mut cartesian = cartesian_abstraction(&task);
     cartesian.transition_system.transitions.clear();
-    cartesian.abstract_operator_footprints.clear();
+    cartesian.abstract_operator_regions.clear();
     let domain_config = CegarConfig {
         max_abstraction_size: 16,
-        compute_operator_footprints: true,
+        compute_operator_regions: true,
         ..Default::default()
     };
     let mut domain = DomainAbstractionGenerator::new(domain_config)
@@ -138,7 +138,7 @@ fn regional_conflict_scoring_accepts_transition_free_components() {
         .generate(&task)
         .unwrap();
     domain.abstract_operators.clear();
-    domain.abstract_operator_footprints.clear();
+    domain.abstract_operator_regions.clear();
 
     let components = vec![
         AbstractionComponent::domain(None, domain),
@@ -159,11 +159,11 @@ fn regional_conflict_scoring_accepts_transition_free_components() {
 }
 
 #[test]
-fn regional_conflict_scoring_rejects_missing_footprints() {
+fn regional_conflict_scoring_rejects_missing_operator_regions() {
     let task = independent_goals_task();
     let mut abstraction = cartesian_abstraction(&task);
     assert!(!abstraction.transition_system.transitions.is_empty());
-    abstraction.abstract_operator_footprints.clear();
+    abstraction.abstract_operator_regions.clear();
 
     let components = vec![AbstractionComponent::cartesian(None, abstraction)];
     let error = compute_regional_conflict_scores(
@@ -172,7 +172,7 @@ fn regional_conflict_scoring_rejects_missing_footprints() {
         &[2.0, 3.0],
     )
     .unwrap_err();
-    assert!(error.to_string().contains("has 0 operator footprints for"));
+    assert!(error.to_string().contains("has 0 operator regions for"));
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
                 max_states: 16,
                 max_time: None,
                 combine_labels: false,
-                compute_operator_footprints: true,
+                compute_operator_regions: true,
                 random_seed: Some(1),
                 debug: false,
                 ..Default::default()
@@ -342,7 +342,7 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
                 max_states: 16,
                 max_time: None,
                 combine_labels: false,
-                compute_operator_footprints: true,
+                compute_operator_regions: true,
                 random_seed: Some(1),
                 debug: false,
                 ..Default::default()
@@ -539,7 +539,7 @@ fn abstract_operator_scp_combines_all_backend_types() {
     let domain_config = CegarConfig {
         max_abstraction_size: 16,
         combine_labels: false,
-        compute_operator_footprints: true,
+        compute_operator_regions: true,
         ..Default::default()
     };
     let domain = DomainAbstractionGenerator::new(domain_config)
@@ -570,7 +570,7 @@ fn offline_diversification_supports_mixed_abstraction_backends() {
     let domain_config = CegarConfig {
         max_abstraction_size: 16,
         combine_labels: false,
-        compute_operator_footprints: true,
+        compute_operator_regions: true,
         ..Default::default()
     };
     let domain = DomainAbstractionGenerator::new(domain_config)
@@ -867,7 +867,7 @@ mod handcrafted_sailing_tests {
                     max_states: 1_000,
                     max_time: Some(Duration::from_secs(5)),
                     combine_labels: false,
-                    compute_operator_footprints: true,
+                    compute_operator_regions: true,
                     random_seed: Some(1),
                     debug: false,
                     ..Default::default()
@@ -1244,8 +1244,8 @@ mod handcrafted_sailing_tests {
         )?;
         let mut operator_generator = factory.make_operator_generator(transformed_task, false)?;
         let abstract_operators = operator_generator.build_abstract_operators(transformed_task)?;
-        let abstract_operator_footprints =
-            factory.build_abstract_operator_footprints(transformed_task, &abstract_operators)?;
+        let abstract_operator_regions =
+            factory.build_abstract_operator_regions(transformed_task, &abstract_operators)?;
         let distance_table = factory.build_distance_table_with_operators(
             transformed_task,
             &operator_generator,
@@ -1267,7 +1267,7 @@ mod handcrafted_sailing_tests {
             combine_labels: false,
             relevant_operator_ids,
             abstract_operators,
-            abstract_operator_footprints,
+            abstract_operator_regions,
             regional_transition_system: RefCell::new(None),
             metadata: DomainAbstractionMetadata::default(),
         })

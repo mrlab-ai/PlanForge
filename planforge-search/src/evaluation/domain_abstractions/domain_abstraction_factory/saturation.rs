@@ -60,9 +60,9 @@ fn apply_abstract_operator_costs(
     Ok(())
 }
 
-pub(super) fn abstract_operator_costs_from_footprints(
+pub(super) fn abstract_operator_costs_from_operator_regions(
     num_operators: usize,
-    footprints: &[AbstractOperatorFootprint],
+    operator_regions: &[AbstractOperatorRegions],
     residual_costs: &TransitionResidualCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
@@ -73,23 +73,19 @@ pub(super) fn abstract_operator_costs_from_footprints(
         if abstract_op_id % 64 == 0 {
             ensure_online_scp_deadline(deadline)?;
         }
-        let footprint = footprints
-            .get(abstract_op_id)
-            .with_context(|| format!("missing footprint for abstract operator {abstract_op_id}"))?;
+        let operator_region = operator_regions.get(abstract_op_id).with_context(|| {
+            format!("missing operator region for abstract operator {abstract_op_id}")
+        })?;
         ensure!(
-            !footprint.labels.is_empty(),
-            "abstract operator {abstract_op_id} has no concrete footprint labels"
+            !operator_region.labels.is_empty(),
+            "abstract operator {abstract_op_id} has no concrete operator-region labels"
         );
-        *operator_cost = footprint
+        *operator_cost = operator_region
             .labels
             .iter()
             .map(|label| {
                 let residual = if has_reductions {
-                    residual_costs.cost_for_operator_footprint(
-                        abstraction_id,
-                        abstract_op_id,
-                        label,
-                    )
+                    residual_costs.cost_for_operator_region(abstraction_id, abstract_op_id, label)
                 } else {
                     residual_costs.base_cost(label.concrete_op_id)
                 };
@@ -180,7 +176,7 @@ impl DomainAbstractionFactory {
     pub fn build_precise_regional_cost_partitioned_distance_table(
         &self,
         transition_system: &AbstractTransitionSystem,
-        abstract_operator_footprints: &[AbstractOperatorFootprint],
+        abstract_operator_regions: &[AbstractOperatorRegions],
         residual_costs: &TransitionResidualCosts,
         abstraction_id: usize,
         options: DistanceTableOptions<'_>,
@@ -210,16 +206,16 @@ impl DomainAbstractionFactory {
                     .concrete_op_ids
                     .iter()
                     .map(|&concrete_op_id| {
-                        let footprint = precise_transition_footprint(
+                        let operator_region = precise_operator_region_for_transition(
                             transition,
                             concrete_op_id,
                             &source_region,
-                            abstract_operator_footprints,
+                            abstract_operator_regions,
                         )?;
-                        Ok(residual_costs.cost_for_operator_footprint(
+                        Ok(residual_costs.cost_for_operator_region(
                             abstraction_id,
                             transition_id,
-                            &footprint,
+                            &operator_region,
                         ))
                     })
                     .collect::<Result<Vec<_>>>()
@@ -285,23 +281,23 @@ impl DomainAbstractionFactory {
                 &transition_system.hash_multipliers,
             )?;
             for &concrete_op_id in &transition.concrete_op_ids {
-                let footprint = precise_transition_footprint(
+                let operator_region = precise_operator_region_for_transition(
                     transition,
                     concrete_op_id,
                     &source_region,
-                    abstract_operator_footprints,
+                    abstract_operator_regions,
                 )?;
-                let current_residual = residual_costs.cost_for_operator_footprint(
+                let current_residual = residual_costs.cost_for_operator_region(
                     abstraction_id,
                     transition_id,
-                    &footprint,
+                    &operator_region,
                 );
                 ensure!(
                     saturated <= current_residual + 1e-7,
                     "regional transition allocation {saturated} exceeds residual {current_residual} for transition {transition_id}, operator {concrete_op_id}"
                 );
                 entries.push(RegionalCostAllocationEntry {
-                    footprint,
+                    operator_region,
                     amount: saturated,
                 });
             }
@@ -310,12 +306,12 @@ impl DomainAbstractionFactory {
         Ok((lookup_table, RegionalCostAllocation::new(entries)))
     }
 
-    pub fn build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints(
+    pub fn build_abstract_operator_cost_partitioned_distance_table_with_operators_and_operator_regions(
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
         operators: &[AbstractOperator],
-        footprints: &[AbstractOperatorFootprint],
+        operator_regions: &[AbstractOperatorRegions],
         step: SaturationStep<'_>,
         options: DistanceTableOptions<'_>,
     ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
@@ -328,15 +324,15 @@ impl DomainAbstractionFactory {
         let deadline = options.deadline;
         ensure_online_scp_deadline(deadline)?;
         ensure!(
-            footprints.len() >= operators.len(),
-            "abstract-operator footprint/operator size mismatch: {} vs {}",
-            footprints.len(),
+            operator_regions.len() >= operators.len(),
+            "abstract-operator region/operator size mismatch: {} vs {}",
+            operator_regions.len(),
             operators.len()
         );
 
-        let operator_costs = abstract_operator_costs_from_footprints(
+        let operator_costs = abstract_operator_costs_from_operator_regions(
             operators.len(),
-            footprints,
+            operator_regions,
             residual_costs,
             abstraction_id,
             deadline,

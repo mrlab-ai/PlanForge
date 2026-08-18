@@ -253,13 +253,12 @@ impl FillScpConfig {
         self.collection_config.combine_labels = self.combine_labels;
         self.random_seed = self.collection_config.random_seed;
         // Label-mode fillSCP only consumes per-abstraction distance tables — it never
-        // touches `ConcreteOperatorFootprint`. Building those footprints during CEGAR
+        // touches `OperatorRegion`. Building those operator regions during CEGAR
         // is pure memory bloat (the same per-concrete-op `StateRegion` cost that
         // canonical/max already skip via 468f06a). Disable it unconditionally for
         // the label-CP path.
         if !self.partitioning.uses_regions() {
-            self.collection_config
-                .set_compute_operator_footprints(false);
+            self.collection_config.set_compute_operator_regions(false);
         }
     }
 

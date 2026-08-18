@@ -35,16 +35,16 @@ pub(super) fn log_transition_table_summary(
     );
 }
 
-pub(super) fn log_abstract_operator_footprint_summary(
+pub(super) fn log_abstract_operator_region_summary(
     abstraction_id: usize,
-    footprints: &[AbstractOperatorFootprint],
+    operator_regions: &[AbstractOperatorRegions],
 ) {
     if !enabled!(Level::DEBUG) {
         return;
     }
-    let stats = abstract_operator_footprint_stats(footprints);
+    let stats = abstract_operator_region_stats(operator_regions);
     debug!(
-        "scp_online: abstract-operator footprints abstraction {abstraction_id}: labels={}, bounded_labels={}, bounded_numeric_dimensions={}",
+        "scp_online: abstract-operator regions abstraction {abstraction_id}: labels={}, bounded_labels={}, bounded_numeric_dimensions={}",
         stats.total_labels, stats.bounded_labels, stats.bounded_numeric_dimensions,
     );
 }
@@ -101,11 +101,11 @@ pub(super) fn log_abstraction_candidate_report(
             continue;
         };
         let score = compute_score(h, stolen, scoring_function);
-        let stats = abstract_operator_footprint_stats(&abstraction.abstract_operator_footprints);
+        let stats = abstract_operator_region_stats(&abstraction.abstract_operator_regions);
         let metadata = &abstraction.metadata;
         let seeds = truncate_for_log(&metadata.initial_seed_splits.join("|"), 220);
         info!(
-            "scp_online: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, footprint_labels={}, bounded_footprint_labels={}, bounded_numeric_dimensions={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}, seeds={seeds}",
+            "scp_online: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, operator_region_labels={}, bounded_operator_region_labels={}, bounded_numeric_dimensions={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}, seeds={seeds}",
             abstraction_state_count(abstraction),
             abstraction.abstract_operators.len(),
             stats.total_labels,
@@ -119,13 +119,13 @@ pub(super) fn log_abstraction_candidate_report(
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct AbstractOperatorFootprintStats {
+pub(super) struct AbstractOperatorRegionStats {
     total_labels: usize,
     bounded_labels: usize,
     bounded_numeric_dimensions: usize,
 }
 
-impl AbstractOperatorFootprintStats {
+impl AbstractOperatorRegionStats {
     pub(super) fn total_labels(&self) -> usize {
         self.total_labels
     }
@@ -135,14 +135,14 @@ impl AbstractOperatorFootprintStats {
     }
 }
 
-pub(super) fn abstract_operator_footprint_stats(
-    footprints: &[AbstractOperatorFootprint],
-) -> AbstractOperatorFootprintStats {
-    let mut stats = AbstractOperatorFootprintStats::default();
-    for label in footprints.iter().flat_map(|fp| fp.labels.iter()) {
+pub(super) fn abstract_operator_region_stats(
+    operator_regions: &[AbstractOperatorRegions],
+) -> AbstractOperatorRegionStats {
+    let mut stats = AbstractOperatorRegionStats::default();
+    for label in operator_regions.iter().flat_map(|fp| fp.labels.iter()) {
         stats.total_labels = stats.total_labels.saturating_add(1);
         let bounded_dimensions = label
-            .source_region
+            .source
             .numeric
             .iter()
             .filter(|interval| interval.lower.is_finite() || interval.upper.is_finite())
@@ -158,36 +158,36 @@ pub(super) fn abstract_operator_footprint_stats(
 }
 
 #[derive(Debug, Default)]
-struct LabelFootprintCounts {
-    footprints: usize,
-    bounded_footprints: usize,
+struct LabelOperatorRegionCounts {
+    operator_regions: usize,
+    bounded_operator_regions: usize,
     bounded_numeric_dimensions: usize,
 }
 
-pub(super) fn log_positive_label_footprint_diagnostics(
+pub(super) fn log_positive_label_operator_region_diagnostics(
     abstraction_id: usize,
     task: &dyn AbstractNumericTask,
-    footprints: &[AbstractOperatorFootprint],
+    operator_regions: &[AbstractOperatorRegions],
     label_saturated_costs: &[f64],
 ) {
     if !enabled!(Level::INFO) {
         return;
     }
-    let mut counts_by_label: HashMap<usize, LabelFootprintCounts> = HashMap::new();
-    for label in footprints
+    let mut counts_by_label: HashMap<usize, LabelOperatorRegionCounts> = HashMap::new();
+    for label in operator_regions
         .iter()
-        .flat_map(|footprint| footprint.labels.iter())
+        .flat_map(|operator_region| operator_region.labels.iter())
     {
         let counts = counts_by_label.entry(label.concrete_op_id).or_default();
-        counts.footprints += 1;
+        counts.operator_regions += 1;
         let bounded_dimensions = label
-            .source_region
+            .source
             .numeric
             .iter()
             .filter(|interval| interval.lower.is_finite() || interval.upper.is_finite())
             .count();
         if bounded_dimensions > 0 {
-            counts.bounded_footprints += 1;
+            counts.bounded_operator_regions += 1;
         }
         counts.bounded_numeric_dimensions += bounded_dimensions;
     }
@@ -213,11 +213,11 @@ pub(super) fn log_positive_label_footprint_diagnostics(
     for (rank, (concrete_op_id, saturated_cost)) in positive_labels.into_iter().take(12).enumerate()
     {
         let counts = counts_by_label.get(&concrete_op_id);
-        let (footprint_count, bounded_footprints, bounded_numeric_dimensions) = counts
+        let (operator_region_count, bounded_operator_regions, bounded_numeric_dimensions) = counts
             .map(|counts| {
                 (
-                    counts.footprints,
-                    counts.bounded_footprints,
+                    counts.operator_regions,
+                    counts.bounded_operator_regions,
                     counts.bounded_numeric_dimensions,
                 )
             })
@@ -226,7 +226,7 @@ pub(super) fn log_positive_label_footprint_diagnostics(
         let op_name = op.map(|op| op.name()).unwrap_or("<missing operator>");
         let numeric_effects = op.map(|op| op.assignment_effects().len()).unwrap_or(0);
         info!(
-            "scp_online: abstract-operator label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, footprints={footprint_count}, bounded_footprints={bounded_footprints}, bounded_numeric_dimensions={bounded_numeric_dimensions}, op={op_name}"
+            "scp_online: abstract-operator label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, operator_regions={operator_region_count}, bounded_operator_regions={bounded_operator_regions}, bounded_numeric_dimensions={bounded_numeric_dimensions}, op={op_name}"
         );
     }
 }

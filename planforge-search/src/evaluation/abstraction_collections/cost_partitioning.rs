@@ -1,13 +1,13 @@
 //! Label and regional saturated cost partitioning for abstraction components.
 //!
-//! Each [`ConcreteOperatorFootprint::source_region`] stores the *regressed
+//! Each [`OperatorRegion::source`] stores the *regressed
 //! preimage source* of an abstract operator's effect — the intersection of the
 //! abstract source region with the inverse image of the abstract target region
 //! under the operator's numeric effect (computed in
-//! `domain_abstraction_factory::build_concrete_operator_footprint`).
+//! `domain_abstraction_factory::build_operator_region`).
 //!
 //! Unbounded preimages are ordinary regions. Cost is allocated on their exact
-//! source footprint and remains available on disjoint regions.
+//! operator region and remains available on disjoint regions.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -236,7 +236,7 @@ impl RegionalUsage {
 
     /// Pointwise maximum assignment. This is used to form the allocation
     /// envelope of one abstraction table: a concrete transition maps to one
-    /// abstract transition in that table, even when conservative footprints
+    /// abstract transition in that table, even when conservative operator regions
     /// overlap.
     fn maximize(
         &mut self,
@@ -484,13 +484,13 @@ impl TransitionResidualCosts {
             .collect()
     }
 
-    pub fn cost_for_operator_footprint(
+    pub fn cost_for_operator_region(
         &self,
         _current_abstraction_id: usize,
         _abstract_op_id: usize,
-        footprint: &ConcreteOperatorFootprint,
+        operator_region: &OperatorRegion,
     ) -> f64 {
-        let Some(residual) = self.operator_residuals.get(footprint.concrete_op_id) else {
+        let Some(residual) = self.operator_residuals.get(operator_region.concrete_op_id) else {
             return f64::INFINITY;
         };
         if !residual.base_cost.is_finite() {
@@ -498,40 +498,40 @@ impl TransitionResidualCosts {
         }
         let regional = if residual
             .full_regional_usage
-            .overlaps(&footprint.source_region)
+            .overlaps(&operator_region.source)
         {
             residual.base_cost
         } else {
-            residual.regional_usage.max_over(&footprint.source_region)
+            residual.regional_usage.max_over(&operator_region.source)
         };
         (residual.base_cost - regional).max(0.0)
     }
 
-    pub fn reduce_by_abstract_operator_footprints(
+    pub fn reduce_by_abstract_operator_regions(
         &mut self,
         producing_abstraction_id: usize,
-        footprints: &[AbstractOperatorFootprint],
+        operator_regions: &[AbstractOperatorRegions],
         tcf: &AbstractOperatorCostFunction,
     ) -> Result<()> {
-        self.reduce_by_abstract_operator_footprints_with_deadline(
+        self.reduce_by_abstract_operator_regions_with_deadline(
             producing_abstraction_id,
-            footprints,
+            operator_regions,
             tcf,
             None,
         )
     }
 
-    pub fn reduce_by_abstract_operator_footprints_with_deadline(
+    pub fn reduce_by_abstract_operator_regions_with_deadline(
         &mut self,
         producing_abstraction_id: usize,
-        footprints: &[AbstractOperatorFootprint],
+        operator_regions: &[AbstractOperatorRegions],
         tcf: &AbstractOperatorCostFunction,
         deadline: Option<Instant>,
     ) -> Result<()> {
         ensure!(
-            footprints.len() >= tcf.operator_costs.len(),
-            "abstract-operator footprint/cost function size mismatch: footprints={} costs={}",
-            footprints.len(),
+            operator_regions.len() >= tcf.operator_costs.len(),
+            "abstract-operator region/cost function size mismatch: operator_regions={} costs={}",
+            operator_regions.len(),
             tcf.operator_costs.len()
         );
 
@@ -550,12 +550,12 @@ impl TransitionResidualCosts {
                 continue;
             }
 
-            for footprint in &footprints[abstract_op_id].labels {
-                let concrete_op_id = footprint.concrete_op_id;
-                let current_residual = self.cost_for_operator_footprint(
+            for operator_region in &operator_regions[abstract_op_id].labels {
+                let concrete_op_id = operator_region.concrete_op_id;
+                let current_residual = self.cost_for_operator_region(
                     producing_abstraction_id,
                     abstract_op_id,
-                    footprint,
+                    operator_region,
                 );
                 ensure!(
                     current_residual.is_finite(),
@@ -563,7 +563,7 @@ impl TransitionResidualCosts {
                 );
                 ensure!(
                     saturated <= current_residual + float_tolerance::SEARCH_EPSILON,
-                    "abstract-operator footprint reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
+                    "abstract-operator region reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
                 );
                 let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
                     continue;
@@ -577,11 +577,11 @@ impl TransitionResidualCosts {
                 );
                 ensure!(
                     saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
-                    "residual cost underflow: abstract-operator footprint reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
+                    "residual cost underflow: abstract-operator region reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
                 entries.push(RegionalCostAllocationEntry {
-                    footprint: footprint.clone(),
+                    operator_region: operator_region.clone(),
                     amount: saturated,
                 });
             }
@@ -611,7 +611,7 @@ impl TransitionResidualCosts {
             if entry.amount <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
-            let concrete_op_id = entry.footprint.concrete_op_id;
+            let concrete_op_id = entry.operator_region.concrete_op_id;
             let residual = self
                 .operator_residuals
                 .get(concrete_op_id)
@@ -635,7 +635,7 @@ impl TransitionResidualCosts {
                 .entry(concrete_op_id)
                 .or_default()
                 .maximize(
-                    &entry.footprint.source_region,
+                    &entry.operator_region.source,
                     entry.amount,
                     residual.base_cost,
                     deadline,
@@ -647,7 +647,7 @@ impl TransitionResidualCosts {
             let residual = self
                 .operator_residuals
                 .get_mut(concrete_op_id)
-                .expect("validated concrete operator footprint must exist");
+                .expect("validated concrete operator region must exist");
             match envelope {
                 TableRegionalEnvelope::Full(regions) => {
                     for region in &regions {
@@ -794,24 +794,24 @@ mod tests {
     }
 
     #[test]
-    fn full_cost_footprints_use_overlap_cover_without_geometric_overlay() {
+    fn full_cost_operator_regions_use_overlap_cover_without_geometric_overlay() {
         let region = |lower, upper| StateRegion {
             propositions: Vec::new().into(),
             numeric: vec![Interval::closed(lower, upper)].into(),
         };
-        let footprint = |lower, upper| AbstractOperatorFootprint {
-            labels: vec![ConcreteOperatorFootprint {
+        let operator_region = |lower, upper| AbstractOperatorRegions {
+            labels: vec![OperatorRegion {
                 concrete_op_id: 0,
-                source_region: Arc::new(region(lower, upper)),
+                source: Arc::new(region(lower, upper)),
             }],
         };
-        let footprints = vec![footprint(0.0, 2.0), footprint(1.0, 3.0)];
+        let operator_regions = vec![operator_region(0.0, 2.0), operator_region(1.0, 3.0)];
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
 
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
-                &footprints,
+                &operator_regions,
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0, 1.0],
                 },
@@ -821,19 +821,16 @@ mod tests {
         let residual = &residuals.operator_residuals[0];
         assert_eq!(residual.full_regional_usage.cells.len(), 2);
         assert!(residual.regional_usage.cells.is_empty());
-        let overlapping = ConcreteOperatorFootprint {
+        let overlapping = OperatorRegion {
             concrete_op_id: 0,
-            source_region: Arc::new(region(1.5, 1.5)),
+            source: Arc::new(region(1.5, 1.5)),
         };
-        let disjoint = ConcreteOperatorFootprint {
+        let disjoint = OperatorRegion {
             concrete_op_id: 0,
-            source_region: Arc::new(region(4.0, 5.0)),
+            source: Arc::new(region(4.0, 5.0)),
         };
-        assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &overlapping),
-            0.0
-        );
-        assert_eq!(residuals.cost_for_operator_footprint(1, 0, &disjoint), 1.0);
+        assert_eq!(residuals.cost_for_operator_region(1, 0, &overlapping), 0.0);
+        assert_eq!(residuals.cost_for_operator_region(1, 0, &disjoint), 1.0);
     }
 
     fn two_state_transition_system() -> AbstractTransitionSystem {
@@ -868,18 +865,18 @@ mod tests {
     }
 
     #[test]
-    fn explicit_regional_cost_partitioning_uses_footprints() {
+    fn explicit_regional_cost_partitioning_uses_operator_regions() {
         let system = two_state_transition_system();
-        let footprints = vec![AbstractOperatorFootprint {
-            labels: vec![ConcreteOperatorFootprint {
+        let operator_regions = vec![AbstractOperatorRegions {
+            labels: vec![OperatorRegion {
                 concrete_op_id: 0,
-                source_region: state_region(0).into(),
+                source: state_region(0).into(),
             }],
         }];
         let residual = TransitionResidualCosts::from_operator_costs(&[5.0]);
         let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
             &system,
-            &footprints,
+            &operator_regions,
             &residual,
             0,
             None,
@@ -905,29 +902,25 @@ mod tests {
         }
     }
 
-    fn concrete_footprint(lower: f64, upper: f64) -> ConcreteOperatorFootprint {
-        concrete_footprint_for_op(0, lower, upper)
+    fn operator_region(lower: f64, upper: f64) -> OperatorRegion {
+        operator_region_for_op(0, lower, upper)
     }
 
-    fn concrete_footprint_for_op(
-        concrete_op_id: usize,
-        lower: f64,
-        upper: f64,
-    ) -> ConcreteOperatorFootprint {
-        ConcreteOperatorFootprint {
+    fn operator_region_for_op(concrete_op_id: usize, lower: f64, upper: f64) -> OperatorRegion {
+        OperatorRegion {
             concrete_op_id,
-            source_region: numeric_state_region(lower, upper).into(),
+            source: numeric_state_region(lower, upper).into(),
         }
     }
 
-    fn concrete_footprint_2d(
+    fn operator_region_2d(
         concrete_op_id: usize,
         first: Interval,
         second: Interval,
-    ) -> ConcreteOperatorFootprint {
-        ConcreteOperatorFootprint {
+    ) -> OperatorRegion {
+        OperatorRegion {
             concrete_op_id,
-            source_region: StateRegion {
+            source: StateRegion {
                 propositions: vec![vec![0]].into(),
                 numeric: vec![first, second].into(),
             }
@@ -935,18 +928,18 @@ mod tests {
         }
     }
 
-    fn footprint(lower: f64, upper: f64) -> AbstractOperatorFootprint {
-        AbstractOperatorFootprint {
-            labels: vec![concrete_footprint(lower, upper)],
+    fn abstract_regions_for_interval(lower: f64, upper: f64) -> AbstractOperatorRegions {
+        AbstractOperatorRegions {
+            labels: vec![operator_region(lower, upper)],
         }
     }
 
     #[test]
-    fn footprint_reductions_apply_to_same_concrete_operator_only() {
+    fn operator_region_reductions_apply_to_same_concrete_operator_only() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0, 10.0]);
-        let reduced = footprint(3.0, 7.0);
+        let reduced = abstract_regions_for_interval(3.0, 7.0);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 std::slice::from_ref(&reduced),
                 &AbstractOperatorCostFunction {
@@ -955,21 +948,21 @@ mod tests {
             )
             .unwrap();
 
-        let query = concrete_footprint(5.0, 8.0);
-        assert_eq!(residuals.cost_for_operator_footprint(1, 0, &query), 7.0);
-        let other_op_query = concrete_footprint_for_op(1, 5.0, 8.0);
+        let query = operator_region(5.0, 8.0);
+        assert_eq!(residuals.cost_for_operator_region(1, 0, &query), 7.0);
+        let other_op_query = operator_region_for_op(1, 5.0, 8.0);
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &other_op_query),
+            residuals.cost_for_operator_region(1, 0, &other_op_query),
             10.0
         );
     }
 
     #[test]
-    fn footprint_reduction_allows_full_cost() {
+    fn operator_region_reduction_allows_full_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-        let reduced = footprint(3.0, 7.0);
+        let reduced = abstract_regions_for_interval(3.0, 7.0);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 std::slice::from_ref(&reduced),
                 &AbstractOperatorCostFunction {
@@ -979,19 +972,19 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &reduced.labels[0]),
+            residuals.cost_for_operator_region(1, 0, &reduced.labels[0]),
             0.0
         );
     }
 
     #[test]
-    fn same_abstract_operator_alternative_footprints_do_not_stack() {
+    fn same_abstract_operator_alternative_operator_regions_do_not_stack() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-        let reduced = AbstractOperatorFootprint {
-            labels: vec![concrete_footprint(0.0, 10.0), concrete_footprint(5.0, 15.0)],
+        let reduced = AbstractOperatorRegions {
+            labels: vec![operator_region(0.0, 10.0), operator_region(5.0, 15.0)],
         };
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 &[reduced],
                 &AbstractOperatorCostFunction {
@@ -1001,18 +994,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(7.0, 8.0)),
+            residuals.cost_for_operator_region(1, 0, &operator_region(7.0, 8.0)),
             0.6
         );
     }
 
     #[test]
-    fn disjoint_footprint_sources_do_not_reduce_residual_cost() {
+    fn disjoint_operator_region_sources_do_not_reduce_residual_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
-                &[footprint(0.0, 2.0)],
+                &[abstract_regions_for_interval(0.0, 2.0)],
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![4.0],
                 },
@@ -1020,18 +1013,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(3.0, 5.0)),
+            residuals.cost_for_operator_region(1, 0, &operator_region(3.0, 5.0)),
             10.0
         );
     }
 
     #[test]
-    fn target_hull_overlap_is_ignored_for_abstract_operator_footprints() {
+    fn target_hull_overlap_is_ignored_for_abstract_operator_regions() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
-                &[footprint(1.0, 10.0)],
+                &[abstract_regions_for_interval(1.0, 10.0)],
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![4.0],
                 },
@@ -1039,18 +1032,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(10.5, 11.0)),
+            residuals.cost_for_operator_region(1, 0, &operator_region(10.5, 11.0)),
             10.0
         );
     }
 
     #[test]
-    fn overlapping_footprint_sources_reduce_residual_cost() {
+    fn overlapping_operator_region_sources_reduce_residual_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
-                &[footprint(0.0, 5.0), footprint(4.0, 10.0)],
+                &[
+                    abstract_regions_for_interval(0.0, 5.0),
+                    abstract_regions_for_interval(4.0, 10.0),
+                ],
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![3.0, 4.0],
                 },
@@ -1058,7 +1054,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(4.5, 4.75)),
+            residuals.cost_for_operator_region(1, 0, &operator_region(4.5, 4.75)),
             6.0
         );
     }
@@ -1067,9 +1063,9 @@ mod tests {
     fn label_cp_steals_shared_operator_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
-                &[footprint(0.0, 5.0)],
+                &[abstract_regions_for_interval(0.0, 5.0)],
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -1085,9 +1081,9 @@ mod tests {
     fn region_cp_preserves_residual_for_complementary_abstraction() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
-                &[footprint(0.0, 5.0)],
+                &[abstract_regions_for_interval(0.0, 5.0)],
                 &AbstractOperatorCostFunction {
                     operator_costs: vec![1.0],
                 },
@@ -1096,8 +1092,8 @@ mod tests {
 
         // The complementary abstraction starts after the first one's active
         // source region, so region CP preserves the unit residual there.
-        let complementary = concrete_footprint(5.0 + 1e-6, 10.0);
-        let region_residual = residuals.cost_for_operator_footprint(1, 0, &complementary);
+        let complementary = operator_region(5.0 + 1e-6, 10.0);
+        let region_residual = residuals.cost_for_operator_region(1, 0, &complementary);
         assert_eq!(region_residual, 1.0);
         assert!(region_residual > residuals.operator_costs_for_label_cp()[0]);
         assert!(region_residual <= 11.0);
@@ -1105,12 +1101,12 @@ mod tests {
 
     #[test]
     fn region_cp_overlapping_nested_targets_order_insensitive() {
-        fn move_footprints(start: usize, end: usize) -> Vec<AbstractOperatorFootprint> {
+        fn move_operator_regions(start: usize, end: usize) -> Vec<AbstractOperatorRegions> {
             (start..end)
-                .map(|i| AbstractOperatorFootprint {
-                    labels: vec![ConcreteOperatorFootprint {
+                .map(|i| AbstractOperatorRegions {
+                    labels: vec![OperatorRegion {
                         concrete_op_id: 0,
-                        source_region: StateRegion {
+                        source: StateRegion {
                             propositions: vec![vec![0]].into(),
                             numeric: vec![Interval::new(i as f64, (i + 1) as f64, false, true)]
                                 .into(),
@@ -1121,26 +1117,26 @@ mod tests {
                 .collect()
         }
 
-        fn save_footprint(save_op_id: usize) -> AbstractOperatorFootprint {
-            AbstractOperatorFootprint {
-                labels: vec![concrete_footprint_for_op(save_op_id, 0.0, 15.0)],
+        fn save_operator_region(save_op_id: usize) -> AbstractOperatorRegions {
+            AbstractOperatorRegions {
+                labels: vec![operator_region_for_op(save_op_id, 0.0, 15.0)],
             }
         }
 
         fn contribution(
             residuals: &TransitionResidualCosts,
             abstraction_id: usize,
-            footprints: &[AbstractOperatorFootprint],
+            operator_regions: &[AbstractOperatorRegions],
         ) -> f64 {
-            footprints
+            operator_regions
                 .iter()
                 .enumerate()
-                .map(|(abstract_op_id, footprint)| {
-                    footprint
+                .map(|(abstract_op_id, operator_region)| {
+                    operator_region
                         .labels
                         .iter()
                         .map(|label| {
-                            residuals.cost_for_operator_footprint(
+                            residuals.cost_for_operator_region(
                                 abstraction_id,
                                 abstract_op_id,
                                 label,
@@ -1154,23 +1150,23 @@ mod tests {
         fn reduce(
             residuals: &mut TransitionResidualCosts,
             abstraction_id: usize,
-            footprints: &[AbstractOperatorFootprint],
+            operator_regions: &[AbstractOperatorRegions],
         ) {
             residuals
-                .reduce_by_abstract_operator_footprints(
+                .reduce_by_abstract_operator_regions(
                     abstraction_id,
-                    footprints,
+                    operator_regions,
                     &AbstractOperatorCostFunction {
-                        operator_costs: vec![1.0; footprints.len()],
+                        operator_costs: vec![1.0; operator_regions.len()],
                     },
                 )
                 .unwrap();
         }
 
-        let mut alpha10 = move_footprints(0, 10);
-        alpha10.push(save_footprint(1));
-        let mut alpha15 = move_footprints(0, 15);
-        alpha15.push(save_footprint(2));
+        let mut alpha10 = move_operator_regions(0, 10);
+        alpha10.push(save_operator_region(1));
+        let mut alpha15 = move_operator_regions(0, 15);
+        alpha15.push(save_operator_region(2));
 
         let label_cp_value = {
             let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0, 1.0, 1.0]);
@@ -1207,15 +1203,15 @@ mod tests {
     #[test]
     fn cross_dimension_residual_shared() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-        let x_abstraction = AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_2d(
+        let x_abstraction = AbstractOperatorRegions {
+            labels: vec![operator_region_2d(
                 0,
                 Interval::closed(0.0, 1.0),
                 Interval::unbounded(),
             )],
         };
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 &[x_abstraction],
                 &AbstractOperatorCostFunction {
@@ -1225,9 +1221,9 @@ mod tests {
             .unwrap();
 
         let y_abstraction =
-            concrete_footprint_2d(0, Interval::unbounded(), Interval::closed(0.0, 1.0));
+            operator_region_2d(0, Interval::unbounded(), Interval::closed(0.0, 1.0));
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &y_abstraction),
+            residuals.cost_for_operator_region(1, 0, &y_abstraction),
             0.0
         );
     }
@@ -1235,9 +1231,9 @@ mod tests {
     #[test]
     fn infinite_tail_reduction_preserves_disjoint_tail_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
-        let tail = footprint(f64::NEG_INFINITY, 0.0);
+        let tail = abstract_regions_for_interval(f64::NEG_INFINITY, 0.0);
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 &[tail],
                 &AbstractOperatorCostFunction {
@@ -1247,14 +1243,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(1.0, f64::INFINITY),),
+            residuals.cost_for_operator_region(1, 0, &operator_region(1.0, f64::INFINITY),),
             10.0
         );
         assert_eq!(
-            residuals.cost_for_operator_footprint(
+            residuals.cost_for_operator_region(
                 1,
                 0,
-                &concrete_footprint(f64::NEG_INFINITY, f64::INFINITY),
+                &operator_region(f64::NEG_INFINITY, f64::INFINITY),
             ),
             6.0
         );
@@ -1263,10 +1259,10 @@ mod tests {
     #[test]
     fn open_infinite_tail_does_not_consume_boundary() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-        let open_tail = AbstractOperatorFootprint {
-            labels: vec![ConcreteOperatorFootprint {
+        let open_tail = AbstractOperatorRegions {
+            labels: vec![OperatorRegion {
                 concrete_op_id: 0,
-                source_region: StateRegion {
+                source: StateRegion {
                     propositions: vec![vec![0]].into(),
                     numeric: vec![Interval::new(f64::NEG_INFINITY, 0.0, false, false)].into(),
                 }
@@ -1274,7 +1270,7 @@ mod tests {
             }],
         };
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 &[open_tail],
                 &AbstractOperatorCostFunction {
@@ -1284,7 +1280,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_operator_footprint(1, 0, &concrete_footprint(0.0, 0.0)),
+            residuals.cost_for_operator_region(1, 0, &operator_region(0.0, 0.0)),
             1.0
         );
     }
@@ -1292,15 +1288,15 @@ mod tests {
     #[test]
     fn multidimensional_disjoint_regions_preserve_full_cost() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
-        let lower_y = AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_2d(
+        let lower_y = AbstractOperatorRegions {
+            labels: vec![operator_region_2d(
                 0,
                 Interval::closed(0.0, 10.0),
                 Interval::new(f64::NEG_INFINITY, 0.0, false, true),
             )],
         };
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 &[lower_y],
                 &AbstractOperatorCostFunction {
@@ -1309,33 +1305,33 @@ mod tests {
             )
             .unwrap();
 
-        let upper_y = concrete_footprint_2d(
+        let upper_y = operator_region_2d(
             0,
             Interval::closed(0.0, 10.0),
             Interval::new(0.0, f64::INFINITY, false, false),
         );
-        assert_eq!(residuals.cost_for_operator_footprint(1, 0, &upper_y), 10.0);
+        assert_eq!(residuals.cost_for_operator_region(1, 0, &upper_y), 10.0);
     }
 
     #[test]
     fn perpendicular_tail_allocations_preserve_untouched_corner() {
         let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
-        let left = AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_2d(
+        let left = AbstractOperatorRegions {
+            labels: vec![operator_region_2d(
                 0,
                 Interval::new(f64::NEG_INFINITY, 0.0, false, true),
                 Interval::unbounded(),
             )],
         };
-        let lower = AbstractOperatorFootprint {
-            labels: vec![concrete_footprint_2d(
+        let lower = AbstractOperatorRegions {
+            labels: vec![operator_region_2d(
                 0,
                 Interval::unbounded(),
                 Interval::new(f64::NEG_INFINITY, 0.0, false, true),
             )],
         };
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 0,
                 &[left],
                 &AbstractOperatorCostFunction {
@@ -1344,7 +1340,7 @@ mod tests {
             )
             .unwrap();
         residuals
-            .reduce_by_abstract_operator_footprints(
+            .reduce_by_abstract_operator_regions(
                 1,
                 &[lower],
                 &AbstractOperatorCostFunction {
@@ -1353,24 +1349,18 @@ mod tests {
             )
             .unwrap();
 
-        let upper_right = concrete_footprint_2d(
+        let upper_right = operator_region_2d(
             0,
             Interval::new(0.0, f64::INFINITY, false, false),
             Interval::new(0.0, f64::INFINITY, false, false),
         );
-        let lower_left = concrete_footprint_2d(
+        let lower_left = operator_region_2d(
             0,
             Interval::new(f64::NEG_INFINITY, 0.0, false, true),
             Interval::new(f64::NEG_INFINITY, 0.0, false, true),
         );
-        assert_eq!(
-            residuals.cost_for_operator_footprint(2, 0, &upper_right),
-            10.0
-        );
-        assert_eq!(
-            residuals.cost_for_operator_footprint(2, 0, &lower_left),
-            3.0
-        );
+        assert_eq!(residuals.cost_for_operator_region(2, 0, &upper_right), 10.0);
+        assert_eq!(residuals.cost_for_operator_region(2, 0, &lower_left), 3.0);
     }
 
     #[test]

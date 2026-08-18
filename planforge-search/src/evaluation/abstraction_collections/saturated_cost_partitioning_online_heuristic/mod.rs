@@ -21,7 +21,7 @@ use crate::successor_generator::SuccessorTree;
 
 use super::component::AbstractionComponent;
 use super::cost_partitioning::{
-    AbstractOperatorCostFunction, AbstractOperatorFootprint, LmCutResidualOperatorCostPartition,
+    AbstractOperatorCostFunction, AbstractOperatorRegions, LmCutResidualOperatorCostPartition,
     RegionalCostAllocation, StateRegion, TransitionResidualCosts,
     build_explicit_label_cost_partitioning_table, build_explicit_regional_cost_partitioning_table,
 };
@@ -180,11 +180,11 @@ impl ComponentSaturation<'_, '_> {
                 let abstraction_task = abstraction.task_for_factory(self.task);
                 let (table, saturated) = abstraction
                     .factory
-                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_footprints(
+                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_operator_regions(
                         abstraction_task,
                         abstraction.combine_labels,
                         &abstraction.abstract_operators,
-                        &abstraction.abstract_operator_footprints,
+                        &abstraction.abstract_operator_regions,
                         SaturationStep {
                             residual_costs: residual,
                             abstraction_id: component_id,
@@ -216,7 +216,7 @@ impl ComponentSaturation<'_, '_> {
                     .factory
                     .build_precise_regional_cost_partitioned_distance_table(
                         &transition_system,
-                        &abstraction.abstract_operator_footprints,
+                        &abstraction.abstract_operator_regions,
                         residual,
                         component_id,
                         DistanceTableOptions::default()
@@ -255,7 +255,7 @@ impl ComponentSaturation<'_, '_> {
                 let abstraction = heuristic.abstraction();
                 let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
                     &abstraction.transition_system,
-                    &abstraction.abstract_operator_footprints,
+                    &abstraction.abstract_operator_regions,
                     residual,
                     component_id,
                     cap_state_id,
@@ -835,15 +835,13 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             cost_space,
             current_state_id,
         };
-        let footprints = match component {
-            AbstractionComponent::Domain(heuristic) => heuristic
-                .abstraction()
-                .abstract_operator_footprints
-                .as_slice(),
-            AbstractionComponent::Cartesian(heuristic) => heuristic
-                .abstraction()
-                .abstract_operator_footprints
-                .as_slice(),
+        let operator_regions = match component {
+            AbstractionComponent::Domain(heuristic) => {
+                heuristic.abstraction().abstract_operator_regions.as_slice()
+            }
+            AbstractionComponent::Cartesian(heuristic) => {
+                heuristic.abstraction().abstract_operator_regions.as_slice()
+            }
             AbstractionComponent::PatternDatabase(_) => &[],
         };
         self.add_saturation_steps(
@@ -873,7 +871,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 SaturatedCosts::AbstractOperator(costs) => Self::reduce_abstract_operator_costs(
                     residual,
                     component_id,
-                    footprints,
+                    operator_regions,
                     costs,
                     deadline,
                     &format!(
@@ -1481,14 +1479,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     fn reduce_abstract_operator_costs(
         remaining_costs: &mut TransitionResidualCosts,
         abstraction_id: usize,
-        footprints: &[AbstractOperatorFootprint],
+        operator_regions: &[AbstractOperatorRegions],
         tcf: &AbstractOperatorCostFunction,
         deadline: Option<Instant>,
         context: &str,
     ) -> Result<bool, EvaluationError> {
-        match remaining_costs.reduce_by_abstract_operator_footprints_with_deadline(
+        match remaining_costs.reduce_by_abstract_operator_regions_with_deadline(
             abstraction_id,
-            footprints,
+            operator_regions,
             tcf,
             deadline,
         ) {
@@ -2340,9 +2338,9 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                             .unwrap_or(0.0),
                         abstraction_metadata_summary(abstraction),
                     );
-                    log_abstract_operator_footprint_summary(
+                    log_abstract_operator_region_summary(
                         component_id,
-                        &abstraction.abstract_operator_footprints,
+                        &abstraction.abstract_operator_regions,
                     );
                     self.log_abstract_operator_label_diagnostic(
                         abstraction,
@@ -2410,16 +2408,16 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         )?;
         let label_h = current_h_for_distances(abstraction_id, &label_distances, abstract_state_ids);
         let (positive_labels, total_label_saturated) = positive_cost_stats(&label_saturated);
-        let stats = abstract_operator_footprint_stats(&abstraction.abstract_operator_footprints);
+        let stats = abstract_operator_region_stats(&abstraction.abstract_operator_regions);
         info!(
-            "scp_online: abstract-operator label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, footprint_labels={}, bounded_footprint_labels={}",
+            "scp_online: abstract-operator label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, operator_region_labels={}, bounded_operator_region_labels={}",
             stats.total_labels(),
             stats.bounded_labels(),
         );
-        log_positive_label_footprint_diagnostics(
+        log_positive_label_operator_region_diagnostics(
             abstraction_id,
             abstraction_task,
-            &abstraction.abstract_operator_footprints,
+            &abstraction.abstract_operator_regions,
             &label_saturated,
         );
         Ok(())
@@ -3492,18 +3490,18 @@ fn compute_regional_conflict_scores(
 ) -> Result<Vec<Option<f64>>, EvaluationError> {
     let mut regions_by_component = Vec::with_capacity(components.len());
     for (component_id, component) in components.iter().enumerate() {
-        let (footprints, expected_footprints) = match component {
+        let (operator_regions, expected_operator_regions) = match component {
             AbstractionComponent::Domain(heuristic) => {
                 let abstraction = heuristic.abstraction();
                 (
-                    abstraction.abstract_operator_footprints.as_slice(),
+                    abstraction.abstract_operator_regions.as_slice(),
                     abstraction.abstract_operators.len(),
                 )
             }
             AbstractionComponent::Cartesian(heuristic) => {
                 let abstraction = heuristic.abstraction();
                 (
-                    abstraction.abstract_operator_footprints.as_slice(),
+                    abstraction.abstract_operator_regions.as_slice(),
                     abstraction.transition_system.transitions.len(),
                 )
             }
@@ -3512,25 +3510,25 @@ fn compute_regional_conflict_scores(
                 continue;
             }
         };
-        if footprints.len() != expected_footprints {
+        if operator_regions.len() != expected_operator_regions {
             return Err(EvaluationError::ComputationFailed(format!(
-                "region SCP component {component_id} has {} operator footprints for {expected_footprints} retained abstract transitions/operators",
-                footprints.len()
+                "region SCP component {component_id} has {} operator regions for {expected_operator_regions} retained abstract transitions/operators",
+                operator_regions.len()
             )));
         }
         let mut by_operator = HashMap::<usize, Vec<&StateRegion>>::new();
-        for footprint in footprints {
-            for label in &footprint.labels {
+        for operator_region in operator_regions {
+            for label in &operator_region.labels {
                 if label.concrete_op_id >= operator_costs.len() {
                     return Err(EvaluationError::ComputationFailed(format!(
-                        "region SCP component {component_id} footprint references missing operator {}",
+                        "region SCP component {component_id} operator region references missing operator {}",
                         label.concrete_op_id
                     )));
                 }
                 by_operator
                     .entry(label.concrete_op_id)
                     .or_default()
-                    .push(&label.source_region);
+                    .push(&label.source);
             }
         }
         regions_by_component.push(Some(by_operator));

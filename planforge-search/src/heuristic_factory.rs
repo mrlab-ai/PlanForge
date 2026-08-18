@@ -368,7 +368,7 @@ impl From<String> for HeuristicBuildError {
 
 fn cartesian_config_from_collection(
     config: &crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    compute_operator_footprints: bool,
+    compute_operator_regions: bool,
 ) -> Result<CartesianAbstractionConfig, String> {
     let max_time = if config.abstraction_generation_max_time.is_finite() {
         Some(
@@ -398,7 +398,7 @@ fn cartesian_config_from_collection(
         max_states: config.max_abstraction_size,
         max_time,
         combine_labels: config.combine_labels,
-        compute_operator_footprints,
+        compute_operator_regions,
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
@@ -416,7 +416,7 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         max_states: config.max_abstraction_size,
         max_time: config.max_time,
         combine_labels: config.combine_labels,
-        compute_operator_footprints: false,
+        compute_operator_regions: false,
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
@@ -650,9 +650,9 @@ heuristic_registry! {
             info!("Building domain abstraction (CEGAR)...");
             let mut cfg = CegarConfig::default();
             cfg.apply_options(&spec.args)?;
-            // Single DA reads only the distance table; footprints are
+            // Single DA reads only the distance table; operator regions are
             // SCP-specific. Skip the per-concrete-op StateRegion cost.
-            cfg.compute_operator_footprints = false;
+            cfg.compute_operator_regions = false;
             let generator = DomainAbstractionGenerator::new(cfg)
                 .map_err(|e| format!("failed to construct DomainAbstractionGenerator: {e:#}"))?;
             let abstraction = generator
@@ -731,9 +731,9 @@ heuristic_registry! {
             use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            // Canonical never consumes operator footprints — skip ~12 GB of
+            // Canonical never consumes operator regions — skip ~12 GB of
             // per-concrete-op StateRegion storage on big tasks.
-            cfg.set_compute_operator_footprints(false);
+            cfg.set_compute_operator_regions(false);
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building canonical domain abstractions (CEGAR)...");
             let abstractions = generator
@@ -768,7 +768,7 @@ heuristic_registry! {
             use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.set_compute_operator_footprints(false);
+            cfg.set_compute_operator_regions(false);
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building multiple domain abstractions (CEGAR)...");
             let abstractions = generator
@@ -804,7 +804,7 @@ heuristic_registry! {
                 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
                 let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-                cfg.set_compute_operator_footprints(false);
+                cfg.set_compute_operator_regions(false);
                 let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
                 info!("Building posthoc_optimization domain abstractions (CEGAR)...");
                 let abstractions = generator.generate_collection(task).map_err(|e| {
@@ -901,7 +901,7 @@ heuristic_registry! {
             }
             let mut da_config = CegarConfig::default();
             da_config.apply_options(&da_args)?;
-            da_config.compute_operator_footprints = false;
+            da_config.compute_operator_regions = false;
             info!("Building recorded domain abstraction for pot_da_ocp...");
             let abstraction = DomainAbstractionGenerator::new(da_config)
                 .map_err(|error| format!("failed to construct pot_da_ocp abstraction: {error:#}"))?

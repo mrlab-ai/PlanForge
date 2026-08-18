@@ -48,9 +48,8 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::validate_abstractable_goal;
 
 use super::abstraction_collections::cost_partitioning::{
-    AbstractOperatorFootprint, AbstractTransition, AbstractTransitionSystem,
-    ConcreteOperatorFootprint, PropValueId, StateRegion, build_explicit_goal_distances,
-    sorted_value_sets_overlap,
+    AbstractOperatorRegions, AbstractTransition, AbstractTransitionSystem, OperatorRegion,
+    PropValueId, StateRegion, build_explicit_goal_distances, sorted_value_sets_overlap,
 };
 use super::abstraction_collections::portfolio::{
     CollectionStrategy, derive_variant_seed, mix_seed, stable_text_seed,
@@ -132,7 +131,7 @@ pub struct CartesianAbstractionConfig {
     pub max_states: usize,
     pub max_time: Option<Duration>,
     pub combine_labels: bool,
-    pub compute_operator_footprints: bool,
+    pub compute_operator_regions: bool,
     /// Retain the explicit graph required by cost partitioning.
     pub retain_transition_system: bool,
     pub random_seed: Option<u64>,
@@ -151,7 +150,7 @@ impl Default for CartesianAbstractionConfig {
             max_states: 10_000,
             max_time: None,
             combine_labels: false,
-            compute_operator_footprints: true,
+            compute_operator_regions: true,
             retain_transition_system: true,
             random_seed: None,
             flaw_kind: FlawKind::Progression,
@@ -394,7 +393,7 @@ pub struct CartesianAbstraction {
     pub distance_table: AbstractDistanceTable,
     pub transition_system: AbstractTransitionSystem,
     pub relevant_operator_ids: Vec<usize>,
-    pub abstract_operator_footprints: Vec<AbstractOperatorFootprint>,
+    pub abstract_operator_regions: Vec<AbstractOperatorRegions>,
     pub metadata: CartesianAbstractionMetadata,
 }
 
@@ -412,7 +411,7 @@ impl CartesianAbstraction {
         self.transition_system.backward = Vec::new();
         self.transition_system.forward = Vec::new();
         self.transition_system.state_regions = Vec::new();
-        self.abstract_operator_footprints = Vec::new();
+        self.abstract_operator_regions = Vec::new();
     }
 }
 
@@ -1706,7 +1705,7 @@ impl<'task> CartesianSemantics<'task> {
         Ok(Some(preimage))
     }
 
-    fn transition_source_footprint(
+    fn operator_region_source_for_transition(
         &self,
         source: &StateRegion,
         op_id: usize,
@@ -1717,7 +1716,7 @@ impl<'task> CartesianSemantics<'task> {
             target.numeric.len(),
             "Cartesian transition source/target numeric dimension mismatch"
         );
-        let mut footprint = source.clone();
+        let mut operator_region = source.clone();
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
             match variable.get_type() {
                 NumericType::Constant => {
@@ -1739,7 +1738,7 @@ impl<'task> CartesianSemantics<'task> {
                         return Ok(None);
                     }
                     if regressed != source.numeric[numeric_var_id] {
-                        Arc::make_mut(&mut footprint.numeric)[numeric_var_id] = regressed;
+                        Arc::make_mut(&mut operator_region.numeric)[numeric_var_id] = regressed;
                     }
                 }
                 NumericType::Derived => {
@@ -1758,13 +1757,13 @@ impl<'task> CartesianSemantics<'task> {
                         return Ok(None);
                     }
                     if regressed != source.numeric[numeric_var_id] {
-                        Arc::make_mut(&mut footprint.numeric)[numeric_var_id] = regressed;
+                        Arc::make_mut(&mut operator_region.numeric)[numeric_var_id] = regressed;
                     }
                 }
                 NumericType::Cost => {}
             }
         }
-        Ok(Some(footprint))
+        Ok(Some(operator_region))
     }
 
     fn region_is_goal(&self, region: &StateRegion) -> Result<bool> {
@@ -1994,14 +1993,14 @@ impl CartesianAbstractionGenerator {
         let initial_state_hash = working
             .hierarchy
             .map_state(&initial_prop_values, &initial_numeric)?;
-        let (transition_system, distance_table, relevant_operator_ids, footprints) =
+        let (transition_system, distance_table, relevant_operator_ids, operator_regions) =
             if self.config.retain_transition_system {
                 finalize_abstraction(
                     &working,
                     &semantics,
                     initial_state_hash,
                     self.config.combine_labels,
-                    self.config.compute_operator_footprints,
+                    self.config.compute_operator_regions,
                 )?
             } else {
                 finalize_standalone_abstraction(
@@ -2053,7 +2052,7 @@ impl CartesianAbstractionGenerator {
             distance_table,
             transition_system,
             relevant_operator_ids,
-            abstract_operator_footprints: footprints,
+            abstract_operator_regions: operator_regions,
             metadata: CartesianAbstractionMetadata {
                 solved_by_self: solved_plan.is_some(),
                 abstraction_use: AbstractionUse::Standalone,

@@ -201,12 +201,12 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// flaw kind chooses its own default (`Forward` for everything except
     /// `TargetCentered`, which defaults to `Backward`).
     pub split_direction: Option<SplitDirection>,
-    /// Pass-through for `CegarConfig::compute_operator_footprints`. Default
+    /// Pass-through for `CegarConfig::compute_operator_regions`. Default
     /// `true`. Hierarchical combinators disable it during CEGAR and construct
-    /// footprints after collection generation when region SCP needs them.
+    /// operator regions after collection generation when region SCP needs them.
     /// Set internally by heuristic construction; not exposed as a CLI option.
     #[option(skip)]
-    pub compute_operator_footprints: bool,
+    pub compute_operator_regions: bool,
     /// Cap on the number of comparison-axiom propositional vars a single
     /// CEGAR run may refine into its pattern. `None` = unbounded (the
     /// historical behavior). When set, the refinement loop rejects any
@@ -255,7 +255,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             collection_strategy: CollectionStrategy::Standard,
             interleave_split_directions: false,
             split_direction: None,
-            compute_operator_footprints: true,
+            compute_operator_regions: true,
             max_refined_comparison_vars_per_abstraction: None,
         }
     }
@@ -270,11 +270,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.abstraction_generation_max_time.min(max_seconds);
     }
 
-    /// Select whether generated abstractions retain operator footprints.
+    /// Select whether generated abstractions retain operator regions.
     ///
     /// This is an internal construction policy rather than a user option.
-    pub(crate) fn set_compute_operator_footprints(&mut self, enabled: bool) {
-        self.compute_operator_footprints = enabled;
+    pub(crate) fn set_compute_operator_regions(&mut self, enabled: bool) {
+        self.compute_operator_regions = enabled;
     }
 }
 
@@ -425,7 +425,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_numeric_var_ids,
             initial_seed_splits,
             split_direction,
-            compute_operator_footprints: self.config.compute_operator_footprints,
+            compute_operator_regions: self.config.compute_operator_regions,
             max_refined_comparison_vars_per_abstraction: self
                 .config
                 .max_refined_comparison_vars_per_abstraction,

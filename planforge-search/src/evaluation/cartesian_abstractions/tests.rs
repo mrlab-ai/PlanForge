@@ -811,7 +811,7 @@ fn unsupported_cartesian_flaw_kinds_are_rejected() {
 }
 
 #[test]
-fn unchanged_transition_footprints_share_state_dimensions() {
+fn unchanged_transition_operator_regions_share_state_dimensions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 1,
         metric: Metric::new(true, None),
@@ -854,13 +854,16 @@ fn unchanged_transition_footprints_share_state_dimensions() {
         numeric: vec![Interval::unbounded(), Interval::singleton(1.0)].into(),
     };
 
-    let footprint = semantics
-        .transition_source_footprint(&source, 0, &source)
+    let operator_region = semantics
+        .operator_region_source_for_transition(&source, 0, &source)
         .unwrap()
         .unwrap();
 
-    assert!(Arc::ptr_eq(&source.propositions, &footprint.propositions));
-    assert!(Arc::ptr_eq(&source.numeric, &footprint.numeric));
+    assert!(Arc::ptr_eq(
+        &source.propositions,
+        &operator_region.propositions
+    ));
+    assert!(Arc::ptr_eq(&source.numeric, &operator_region.numeric));
 }
 
 #[test]
@@ -888,7 +891,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
     });
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 1,
-        compute_operator_footprints: true,
+        compute_operator_regions: true,
         ..CartesianAbstractionConfig::default()
     })
     .unwrap()
@@ -896,7 +899,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
     .unwrap();
 
     assert!(abstraction.transition_system.transitions.is_empty());
-    assert!(abstraction.abstract_operator_footprints.is_empty());
+    assert!(abstraction.abstract_operator_regions.is_empty());
     assert!(abstraction.relevant_operator_ids.is_empty());
     assert_eq!(abstraction.distance_table.distances, vec![0.0]);
 }
@@ -933,7 +936,7 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
     let generate = |retain_transition_system| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             max_states: 2,
-            compute_operator_footprints: false,
+            compute_operator_regions: false,
             retain_transition_system,
             ..CartesianAbstractionConfig::default()
         })
@@ -1461,7 +1464,7 @@ fn assignment_outside_target_is_not_a_cartesian_transition() {
     assert!(!semantics.may_transition(&source, 0, &target).unwrap());
     assert!(
         semantics
-            .transition_source_footprint(&source, 0, &target)
+            .operator_region_source_for_transition(&source, 0, &target)
             .unwrap()
             .is_none()
     );
@@ -1568,7 +1571,7 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 1,
-        compute_operator_footprints: false,
+        compute_operator_regions: false,
         ..Default::default()
     })
     .unwrap()
@@ -1582,11 +1585,11 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
         CartesianStopReason::StateLimit
     );
     assert!(abstraction.metadata.pending_flaw.is_some());
-    assert!(abstraction.abstract_operator_footprints.is_empty());
+    assert!(abstraction.abstract_operator_regions.is_empty());
 }
 
 #[test]
-fn goal_collection_builds_every_goal_with_operator_footprints() {
+fn goal_collection_builds_every_goal_with_operator_regions() {
     let variables = vec![
         comparison_variable("x-at-two"),
         comparison_variable("y-at-three"),
@@ -1652,7 +1655,7 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             abstraction: CartesianAbstractionConfig {
                 max_states: 64,
-                compute_operator_footprints: true,
+                compute_operator_regions: true,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::Complementary,
@@ -1670,7 +1673,7 @@ fn goal_collection_builds_every_goal_with_operator_footprints() {
         .iter()
         .map(|abstraction| {
             assert_eq!(
-                abstraction.abstract_operator_footprints.len(),
+                abstraction.abstract_operator_regions.len(),
                 abstraction.transition_system.transitions.len()
             );
             let mut expected_relevant = abstraction
@@ -2404,7 +2407,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             CartesianStopReason::ConcretePlan
         );
         assert_eq!(
-            abstraction.abstract_operator_footprints.len(),
+            abstraction.abstract_operator_regions.len(),
             abstraction.transition_system.transitions.len()
         );
     }

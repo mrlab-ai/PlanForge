@@ -494,7 +494,7 @@ fn ocp_retains_stuttering_action_constraints() {
     let cegar_config = CegarConfig {
         max_abstraction_size: 1,
         max_iterations: 1,
-        compute_operator_footprints: false,
+        compute_operator_regions: false,
         ..CegarConfig::default()
     };
     let generator = DomainAbstractionGenerator::new(cegar_config).unwrap();

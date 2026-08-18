@@ -68,14 +68,14 @@ pub struct CegarConfig {
     pub blacklisted_numeric_var_ids: HashSet<usize>,
     pub initial_seed_splits: Vec<InitialSeedSplit>,
     /// When false, `DomainAbstractionGenerator::generate` skips building the
-    /// `Vec<AbstractOperatorFootprint>`. Footprints are only
+    /// `Vec<AbstractOperatorRegions>`. Operator regions are only
     /// consumed by abstract-operator transition-cost partitioning
     /// (SCP / fillSCP); for canonical-max and other heuristics that read
     /// only the distance table they are pure memory bloat — on
     /// minecraft-sword-advanced/prob_30x30_5 they account for ~12 GB of
     /// per-concrete-op `StateRegion` storage. Default `true` for
     /// backward-compat; the canonical/max wrappers flip this off.
-    pub compute_operator_footprints: bool,
+    pub compute_operator_regions: bool,
     /// How numeric flaw split values are chosen: `Forward` keeps the legacy
     /// concrete-value split; `Backward` places splits at the boundary derived
     /// from the regressed-target / required interval. When `None`, the flaw
@@ -113,7 +113,7 @@ impl Default for CegarConfig {
             blacklisted_numeric_var_ids: HashSet::new(),
             initial_seed_splits: Vec::new(),
             split_direction: None,
-            compute_operator_footprints: true,
+            compute_operator_regions: true,
             max_refined_comparison_vars_per_abstraction: None,
         }
     }
