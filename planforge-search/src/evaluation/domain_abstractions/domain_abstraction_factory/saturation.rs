@@ -208,6 +208,26 @@ impl DomainAbstractionFactory {
         self.compute_saturated_costs(task, &generator, operators, table)
     }
 
+    /// The state region for `state_hash`, materializing it on first use.
+    fn cached_state_region<'cache>(
+        &self,
+        cache: &'cache mut [Option<StateRegion>],
+        state_hash: usize,
+        transition_system: &AbstractTransitionSystem,
+    ) -> Result<&'cache StateRegion> {
+        let slot = cache
+            .get_mut(state_hash)
+            .with_context(|| format!("state hash {state_hash} out of range for region cache"))?;
+        if slot.is_none() {
+            *slot = Some(self.state_region_from_hash(
+                state_hash,
+                &transition_system.numeric_domain_sizes,
+                &transition_system.hash_multipliers,
+            )?);
+        }
+        Ok(slot.as_ref().expect("region was just materialized"))
+    }
+
     pub fn build_precise_regional_cost_partitioned_distance_table(
         &self,
         transition_system: &AbstractTransitionSystem,
@@ -228,40 +248,46 @@ impl DomainAbstractionFactory {
         let mut operator_pairs = 0usize;
         let phase_start = std::time::Instant::now();
 
-        let transition_costs = transition_system
+        // Several transitions leave the same abstract state, and both loops below
+        // ask for that state's region, so materializing it per transition rebuilds
+        // one value set per propositional variable many times over for the same
+        // answer. Keep the regions for the duration of the build; a region is four
+        // `Arc`s, so reuse is a clone.
+        let num_states = transition_system
             .transitions
             .iter()
-            .enumerate()
-            .map(|(transition_id, transition)| {
-                if transition_id.is_multiple_of(1024) {
-                    ensure_online_scp_deadline(deadline)?;
-                }
-                let source_region = self.state_region_from_hash(
-                    transition.source_hash,
-                    &transition_system.numeric_domain_sizes,
-                    &transition_system.hash_multipliers,
+            .map(|transition| transition.source_hash)
+            .max()
+            .map_or(0, |max_hash| max_hash + 1);
+        let mut source_regions: Vec<Option<StateRegion>> = vec![None; num_states];
+
+        let mut transition_costs = Vec::with_capacity(transition_system.transitions.len());
+        for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
+            if transition_id.is_multiple_of(1024) {
+                ensure_online_scp_deadline(deadline)?;
+            }
+            let source_region = self.cached_state_region(
+                &mut source_regions,
+                transition.source_hash,
+                transition_system,
+            )?;
+            operator_pairs += transition.concrete_op_ids.len();
+            let mut cost = f64::INFINITY;
+            for &concrete_op_id in &transition.concrete_op_ids {
+                let operator_region = precise_operator_region_for_transition(
+                    transition,
+                    concrete_op_id,
+                    source_region,
+                    abstract_operator_regions,
                 )?;
-                operator_pairs += transition.concrete_op_ids.len();
-                transition
-                    .concrete_op_ids
-                    .iter()
-                    .map(|&concrete_op_id| {
-                        let operator_region = precise_operator_region_for_transition(
-                            transition,
-                            concrete_op_id,
-                            &source_region,
-                            abstract_operator_regions,
-                        )?;
-                        Ok(residual_costs.cost_for_operator_region(
-                            abstraction_id,
-                            transition_id,
-                            &operator_region,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>>>()
-                    .map(|costs| costs.into_iter().fold(f64::INFINITY, f64::min))
-            })
-            .collect::<Result<Vec<_>>>()?;
+                cost = cost.min(residual_costs.cost_for_operator_region(
+                    abstraction_id,
+                    transition_id,
+                    &operator_region,
+                ));
+            }
+            transition_costs.push(cost);
+        }
         timings.transition_costs = phase_start.elapsed();
 
         let phase_start = std::time::Instant::now();
@@ -324,16 +350,16 @@ impl DomainAbstractionFactory {
             if !saturated.is_finite() || saturated <= 1e-9 {
                 continue;
             }
-            let source_region = self.state_region_from_hash(
+            let source_region = self.cached_state_region(
+                &mut source_regions,
                 transition.source_hash,
-                &transition_system.numeric_domain_sizes,
-                &transition_system.hash_multipliers,
+                transition_system,
             )?;
             for &concrete_op_id in &transition.concrete_op_ids {
                 let operator_region = precise_operator_region_for_transition(
                     transition,
                     concrete_op_id,
-                    &source_region,
+                    source_region,
                     abstract_operator_regions,
                 )?;
                 let current_residual = residual_costs.cost_for_operator_region(
