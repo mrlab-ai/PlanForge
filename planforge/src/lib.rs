@@ -27,7 +27,9 @@ use limits::{
 };
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::heuristic_factory::HeuristicBuildError;
+use planforge_search::heuristic_factory::{
+    ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
+};
 use planforge_search::search::{SearchBuildContext, SearchResult, search_algorithm};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
@@ -78,6 +80,46 @@ pub fn init_logger(level: LevelFilter) {
         .with(stdout_layer)
         .with(stderr_layer)
         .init();
+}
+
+/// Run the standard PlanForge CLI, with extra heuristics registered first.
+/// This is the supported way to ship your own heuristic inside the real binary.
+pub fn run_with_heuristics(extra: Vec<ExternalHeuristic>) -> std::io::Result<()> {
+    register_external_heuristics(extra).map_err(std::io::Error::other)?;
+
+    let cli = PlannersCli::parse();
+    init_logger(
+        cli.log_level
+            .unwrap_or(tracing_subscriber::filter::LevelFilter::INFO),
+    );
+    if let Some(command) = &cli.command {
+        return run_command(command);
+    }
+    if cli.inputs.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "search requires one SAS input or a domain/problem PDDL pair",
+        ));
+    }
+    // The portfolio drives whole `planforge` runs as its stages, so it has to
+    // branch off before this process turns itself into one of them.
+    if cli.portfolio.portfolio {
+        return portfolio::run_portfolio(&cli);
+    }
+    #[cfg(unix)]
+    if !cli.internal_run {
+        return run_wrapped_process(&cli);
+    }
+
+    install_process_hooks(cli.max_memory)?;
+    match run_internal(&cli) {
+        Ok(result) => std::process::exit(exit_code_for_search_status(&result.status)),
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            tracing::info!("Time limit reached during heuristic construction.");
+            std::process::exit(EXIT_TIMEOUT);
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[derive(Parser, Debug, Clone)]
