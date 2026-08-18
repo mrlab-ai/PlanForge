@@ -121,6 +121,41 @@ pub(super) fn comparison_preconditions_by_operator(
         .collect()
 }
 
+/// Coarse wall-clock split of one regional table build.
+///
+/// Phase granularity on purpose: the two transition loops call into region
+/// geometry once per (transition, operator) pair, so timing individual calls
+/// would cost more than the phases being measured.
+#[derive(Default)]
+struct RegionalTableTimings {
+    transition_costs: std::time::Duration,
+    distance_table: std::time::Duration,
+    saturation: std::time::Duration,
+    lookup_table: std::time::Duration,
+    allocation_entries: std::time::Duration,
+}
+
+impl RegionalTableTimings {
+    fn log(
+        &self,
+        abstraction_id: usize,
+        transitions: usize,
+        operator_pairs: usize,
+        entries: usize,
+    ) {
+        tracing::debug!(
+            "regional table {abstraction_id}: transitions={transitions} operator_pairs={operator_pairs} \
+             entries={entries} | transition_costs={:.3}s distance_table={:.3}s saturation={:.3}s \
+             lookup_table={:.3}s allocation_entries={:.3}s",
+            self.transition_costs.as_secs_f64(),
+            self.distance_table.as_secs_f64(),
+            self.saturation.as_secs_f64(),
+            self.lookup_table.as_secs_f64(),
+            self.allocation_entries.as_secs_f64(),
+        );
+    }
+}
+
 impl DomainAbstractionFactory {
     /// Builds an abstract distance table using the supplied per-concrete-operator costs and
     /// returns the saturated costs induced by the resulting distances.
@@ -189,6 +224,10 @@ impl DomainAbstractionFactory {
             "precise domain regional SCP expects lazy state regions"
         );
 
+        let mut timings = RegionalTableTimings::default();
+        let mut operator_pairs = 0usize;
+        let phase_start = std::time::Instant::now();
+
         let transition_costs = transition_system
             .transitions
             .iter()
@@ -202,6 +241,7 @@ impl DomainAbstractionFactory {
                     &transition_system.numeric_domain_sizes,
                     &transition_system.hash_multipliers,
                 )?;
+                operator_pairs += transition.concrete_op_ids.len();
                 transition
                     .concrete_op_ids
                     .iter()
@@ -222,12 +262,16 @@ impl DomainAbstractionFactory {
                     .map(|costs| costs.into_iter().fold(f64::INFINITY, f64::min))
             })
             .collect::<Result<Vec<_>>>()?;
+        timings.transition_costs = phase_start.elapsed();
+
+        let phase_start = std::time::Instant::now();
         let table = self.build_distance_table_with_transition_costs(
             transition_system,
             &transition_costs,
             &transition_system.hash_multipliers,
             &transition_system.numeric_domain_sizes,
         )?;
+        timings.distance_table = phase_start.elapsed();
 
         let capped_table = if let Some(state_id) = cap_state_id {
             let h_cap = table.distances.get(state_id).copied().with_context(|| {
@@ -249,12 +293,15 @@ impl DomainAbstractionFactory {
             None
         };
         let saturation_table = capped_table.as_ref().unwrap_or(&table);
+        let phase_start = std::time::Instant::now();
         let tcf = self.compute_saturated_transition_costs(
             transition_system,
             &transition_costs,
             saturation_table,
         )?;
+        timings.saturation = phase_start.elapsed();
 
+        let phase_start = std::time::Instant::now();
         let lookup_table = if cap_state_id.is_some() {
             self.build_distance_table_with_transition_costs(
                 transition_system,
@@ -265,7 +312,9 @@ impl DomainAbstractionFactory {
         } else {
             table
         };
+        timings.lookup_table = phase_start.elapsed();
 
+        let phase_start = std::time::Instant::now();
         let mut entries = Vec::new();
         for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
             if transition_id.is_multiple_of(1024) {
@@ -302,6 +351,14 @@ impl DomainAbstractionFactory {
                 });
             }
         }
+
+        timings.allocation_entries = phase_start.elapsed();
+        timings.log(
+            abstraction_id,
+            transition_system.transitions.len(),
+            operator_pairs,
+            entries.len(),
+        );
 
         Ok((lookup_table, RegionalCostAllocation::new(entries)))
     }
