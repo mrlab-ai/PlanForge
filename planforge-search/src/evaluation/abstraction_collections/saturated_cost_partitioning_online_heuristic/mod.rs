@@ -252,6 +252,8 @@ impl ComponentSaturation<'_, '_> {
                 AbstractionComponent::Cartesian(heuristic),
                 SaturationCostSpace::AbstractOperator | SaturationCostSpace::Regional,
             ) => {
+                // Phase 5 should give Cartesian components native regional allocations;
+                // the Regional arm currently degrades to abstract-operator granularity.
                 let abstraction = heuristic.abstraction();
                 let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
                     &abstraction.transition_system,
@@ -272,6 +274,8 @@ impl ComponentSaturation<'_, '_> {
                 Ok((distances, SaturatedCosts::AbstractOperator(saturated)))
             }
             (AbstractionComponent::PatternDatabase(pdb), _) => {
+                // Phase 5 will add regional PDB support; until then every PDB
+                // saturation deliberately degrades to label granularity.
                 let operator_costs = residual.operator_costs_for_label_cp();
                 let (distances, saturated) = if let Some(state_id) = cap_state_id {
                     let cap_distances = pdb.build_goal_distances(&operator_costs).map_err(|error| {
@@ -525,6 +529,19 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             return Err(EvaluationError::ComputationFailed(
                 "SCP max_size must be greater than zero".to_string(),
             ));
+        }
+        if config.partitioning.uses_regions() {
+            for (component_id, component) in components.iter().enumerate() {
+                match component {
+                    AbstractionComponent::Cartesian(_) => info!(
+                        "Cartesian component {component_id}: partitioning=region requested, using abstract-operator cost partitioning (Cartesian abstractions do not yet support regional granularity)"
+                    ),
+                    AbstractionComponent::PatternDatabase(_) => info!(
+                        "PDB component {component_id}: partitioning=region requested, using label cost partitioning (PDBs do not yet support regional granularity)"
+                    ),
+                    AbstractionComponent::Domain(_) => {}
+                }
+            }
         }
         let original_costs: Vec<f64> = task
             .get_operators()
