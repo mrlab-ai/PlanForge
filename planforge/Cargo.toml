@@ -29,10 +29,10 @@ cplex = ["planforge-searcher/cplex", "planforge-search/cplex"]
 sgd = ["planforge-searcher/sgd"]
 
 [dependencies]
-planforge-sas = { path = "../planforge-sas" }
-planforge-translate = { path = "../planforge-translate" }
-planforge-search = { path = "../planforge-search" }
-planforge-searcher = { path = "../planforge-searcher" }
+planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
+planforge-translate = { path = "../planforge-translate", version = "0.1.0" }
+planforge-search = { path = "../planforge-search", version = "0.1.0" }
+planforge-searcher = { path = "../planforge-searcher", version = "0.1.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2"

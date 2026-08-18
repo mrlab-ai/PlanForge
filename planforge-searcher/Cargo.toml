@@ -17,7 +17,7 @@ cplex = ["planforge-search/cplex"]
 sgd = ["dep:planforge-sgd", "planforge-sgd/candle"]
 
 [dependencies]
-planforge-sas = { path = "../planforge-sas" }
-planforge-search = { path = "../planforge-search" }
+planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
+planforge-search = { path = "../planforge-search", version = "0.1.0" }
 tracing = { version = "0.1", features = ["log"] }
-planforge-sgd = { path = "../planforge-sgd", optional = true }
+planforge-sgd = { path = "../planforge-sgd", version = "0.1.0", optional = true }

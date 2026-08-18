@@ -6,5 +6,5 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-planforge-sas = { path = "../../planforge-sas" }
-planforge-search = { path = "../../planforge-search" }
+planforge-sas = { path = "../../planforge-sas", version = "0.1.0" }
+planforge-search = { path = "../../planforge-search", version = "0.1.0" }

@@ -11,7 +11,7 @@ categories = ["algorithms", "science", "mathematics"]
 license = "GPL-3.0"
 
 [dependencies]
-planforge-sas = { path = "../planforge-sas" }
+planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 rand_chacha = "0.3"
 

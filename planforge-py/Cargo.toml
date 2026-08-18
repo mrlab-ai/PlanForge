@@ -10,8 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
-planforge-core = { package = "planforge", path = "../planforge" }
-planforge-search = { path = "../planforge-search" }
-planforge-searcher = { path = "../planforge-searcher" }
-planforge-sas = { path = "../planforge-sas" }
-planforge-translate = { path = "../planforge-translate" }
+planforge-core = { package = "planforge", path = "../planforge", version = "0.1.0" }
+planforge-search = { path = "../planforge-search", version = "0.1.0" }
+planforge-searcher = { path = "../planforge-searcher", version = "0.1.0" }
+planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
+planforge-translate = { path = "../planforge-translate", version = "0.1.0" }
