@@ -726,49 +726,6 @@ impl TransitionResidualCosts {
             .collect()
     }
 
-    pub fn cost_for_transition(
-        &self,
-        transition: OperatorTransition,
-        source_region: &StateRegion,
-        target_region: &StateRegion,
-    ) -> f64 {
-        self.cost_for_transition_with_region_key(
-            transition,
-            source_region,
-            target_region,
-            Some(transition_region_key_parts(source_region, target_region)),
-        )
-    }
-
-    pub fn cost_for_indexed_transition(
-        &self,
-        transition: OperatorTransition,
-        source_region: &StateRegion,
-        target_region: &StateRegion,
-    ) -> f64 {
-        self.cost_for_transition_with_region_key(transition, source_region, target_region, None)
-    }
-
-    pub fn cost_for_abstract_operator(
-        &self,
-        concrete_op_id: usize,
-        current_abstraction_id: usize,
-        abstract_op_id: usize,
-        region: &TransitionRegion,
-    ) -> f64 {
-        self.cost_for_transition_with_region(
-            OperatorTransition {
-                concrete_op_id,
-                abstraction_id: current_abstraction_id,
-                source_hash: ABSTRACT_OPERATOR_REGION_HASH,
-                abstract_op_id,
-                target_hash: ABSTRACT_OPERATOR_REGION_HASH,
-            },
-            region.clone(),
-            None,
-        )
-    }
-
     pub fn cost_for_operator_footprint(
         &self,
         current_abstraction_id: usize,
@@ -806,6 +763,7 @@ impl TransitionResidualCosts {
         (legacy - regional).max(0.0)
     }
 
+    #[cfg(test)]
     fn cost_for_transition_with_region_key(
         &self,
         transition: OperatorTransition,
@@ -820,6 +778,21 @@ impl TransitionResidualCosts {
                 target: Arc::new(target_region.clone()),
             },
             region_key,
+        )
+    }
+
+    #[cfg(test)]
+    fn reduction_cost_for_transition(
+        &self,
+        transition: OperatorTransition,
+        source_region: &StateRegion,
+        target_region: &StateRegion,
+    ) -> f64 {
+        self.cost_for_transition_with_region_key(
+            transition,
+            source_region,
+            target_region,
+            Some(transition_region_key_parts(source_region, target_region)),
         )
     }
 
@@ -2088,7 +2061,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(0, 3, 7, 4),
                 &reduced_region.source,
                 &reduced_region.target
@@ -2097,7 +2070,7 @@ mod tests {
         );
         let other_target = state_region(2);
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(0, 3, 7, 5),
                 &reduced_region.source,
                 &other_target
@@ -2106,7 +2079,7 @@ mod tests {
         );
         let overlapping = region(0, 1);
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(1, 3, 7, 4),
                 &overlapping.source,
                 &overlapping.target
@@ -2115,7 +2088,7 @@ mod tests {
         );
         let disjoint = region(1, 0);
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(1, 3, 7, 4),
                 &disjoint.source,
                 &disjoint.target
@@ -2166,7 +2139,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(0, 0, 0, 1),
                 &reduced_region.source,
                 &reduced_region.target
@@ -2215,7 +2188,7 @@ mod tests {
 
         let disjoint = region(1, 0);
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(0, 9, 7, 4),
                 &disjoint.source,
                 &disjoint.target
@@ -2223,7 +2196,7 @@ mod tests {
             5.0
         );
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(1, 9, 7, 4),
                 &disjoint.source,
                 &disjoint.target
@@ -2232,7 +2205,7 @@ mod tests {
         );
         let overlapping = region(0, 1);
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(1, 9, 7, 4),
                 &overlapping.source,
                 &overlapping.target
@@ -2290,7 +2263,7 @@ mod tests {
 
         let overlapping = region(0, 1);
         assert_eq!(
-            residuals.cost_for_transition(
+            residuals.reduction_cost_for_transition(
                 transition(1, 99, 99, 100),
                 &overlapping.source,
                 &overlapping.target
@@ -2349,7 +2322,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            residuals.cost_for_transition(transition(1, 99, 99, 100), &query.source, &query.target),
+            residuals.reduction_cost_for_transition(
+                transition(1, 99, 99, 100),
+                &query.source,
+                &query.target
+            ),
             6.0
         );
         assert_eq!(residuals.operator_costs_for_label_cp(), vec![6.0]);

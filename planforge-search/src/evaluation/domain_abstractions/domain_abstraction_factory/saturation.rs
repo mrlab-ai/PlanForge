@@ -240,16 +240,15 @@ impl DomainAbstractionFactory {
                     .iter()
                     .map(|&concrete_op_id| {
                         if residuals_have_reductions {
-                            residual_costs.cost_for_indexed_transition(
-                                OperatorTransition {
+                            residual_costs.cost_for_operator_footprint(
+                                abstraction_id,
+                                transition.abstract_op_id,
+                                &ConcreteOperatorFootprint {
                                     concrete_op_id,
-                                    abstraction_id,
-                                    source_hash: transition.source_hash,
-                                    abstract_op_id: transition.abstract_op_id,
-                                    target_hash: transition.target_hash,
+                                    source_region: Arc::clone(
+                                        &transition_system.state_regions[transition.source_hash],
+                                    ),
                                 },
-                                &transition_system.state_regions[transition.source_hash],
-                                &transition_system.state_regions[transition.target_hash],
                             )
                         } else {
                             residual_costs.base_cost(concrete_op_id)
@@ -629,11 +628,13 @@ impl DomainAbstractionFactory {
                 concrete_op_ids[abstract_op_id]
                     .iter()
                     .map(|&concrete_op_id| {
-                        residual_costs.cost_for_abstract_operator(
-                            concrete_op_id,
+                        residual_costs.cost_for_operator_footprint(
                             abstraction_id,
                             abstract_op_id,
-                            region,
+                            &ConcreteOperatorFootprint {
+                                concrete_op_id,
+                                source_region: Arc::clone(&region.source),
+                            },
                         )
                     })
                     .fold(f64::INFINITY, f64::min)
