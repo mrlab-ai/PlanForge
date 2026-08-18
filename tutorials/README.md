@@ -9,10 +9,15 @@
   targets.
 - [`python/goal_count.ipynb`](python/goal_count.ipynb) is an interactive first
   heuristic that compares a Python callback with Rust-backed search.
-- [`rust-goal-count/`](rust-goal-count/) implements a native `Heuristic`; it is
-  for extensions evaluated at every search node.
-- [`rust-custom-search/`](rust-custom-search/) registers a new priority policy
-  outside the search crate while keeping the expansion loop monomorphized.
+- [`rust-goal-count/`](rust-goal-count/) implements a native `Heuristic`, then
+  loads a task and drives A* itself; use it when you want direct control over
+  search construction.
+- [`rust-custom-search/`](rust-custom-search/) registers a new search algorithm
+  and drives the generic expansion loop with its own priority policy.
+- [`rust-plugin-binary/`](rust-plugin-binary/) registers a native heuristic and
+  runs the real PlanForge binary; use this path to keep the standard CLI,
+  portfolio, limits, re-exec behavior, and plan output while adding your own
+  heuristic name.
 
 Use Rust for anything on the per-node hot path. Use Python for prototyping when
 the FFI cost per call is acceptable; bulk state-space enumeration still runs
@@ -35,5 +40,5 @@ notebook with that environment as its kernel. Build the Rust tutorials
 explicitly because they are not default workspace members:
 
 ```console
-cargo build -p tutorial-goal-count -p tutorial-custom-search
+cargo build -p tutorial-goal-count -p tutorial-custom-search -p tutorial-plugin-binary
 ```
