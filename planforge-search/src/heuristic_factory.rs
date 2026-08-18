@@ -100,6 +100,16 @@ pub struct ExternalHeuristic {
 
 static EXTERNAL_HEURISTICS: OnceLock<Vec<ExternalHeuristic>> = OnceLock::new();
 
+fn external_heuristics() -> &'static [ExternalHeuristic] {
+    EXTERNAL_HEURISTICS.get_or_init(Vec::new)
+}
+
+fn external_heuristic(name: &str) -> Option<&'static ExternalHeuristic> {
+    external_heuristics()
+        .iter()
+        .find(|heuristic| heuristic.name == name)
+}
+
 /// Register heuristics that are not compiled into PlanForge. Call once, before
 /// any search is constructed. Returns an error if called twice or if a name
 /// collides with a built-in.
@@ -208,11 +218,13 @@ macro_rules! heuristic_registry {
         pub const HEURISTIC_HELP: &str = concat!(
             "Built-in heuristics: ",
             $($( $name, ", ", )+)+
+            "Externally registered heuristic names are also accepted. ",
             "Custom Rust heuristics can still be passed directly as Box<dyn Heuristic>."
         );
 
         pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
             HEURISTIC_PLUGINS.iter().map(|(name, _)| *name)
+                .chain(external_heuristics().iter().map(|heuristic| heuristic.name))
         }
 
         pub fn build_heuristic_from_spec<'a>(
@@ -220,20 +232,30 @@ macro_rules! heuristic_registry {
             $task: &'a dyn AbstractNumericTask,
             $sampling_task: TaskRef<'a>,
         ) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
-            let plugin = heuristic_plugin(&$spec.name).ok_or_else(|| {
-                format!(
-                    "unknown heuristic `{}`; expected one of {}",
-                    $spec.name,
-                    heuristic_names().collect::<Vec<_>>().join(", ")
-                )
-            })?;
-            (plugin.requirements)($spec)?.validate($task)?;
-            match $spec.name.as_str() {
-                $(
-                    $($name)|+ => $body,
-                )+
-                _ => unreachable!("the registry lookup and generated dispatch have the same names"),
+            // Resolving the external registry here also seals an empty
+            // registry, so registration after construction is an error.
+            let external_heuristics = external_heuristics();
+            if let Some(plugin) = heuristic_plugin(&$spec.name) {
+                (plugin.requirements)($spec)?.validate($task)?;
+                return match $spec.name.as_str() {
+                    $(
+                        $($name)|+ => $body,
+                    )+
+                    _ => unreachable!("the registry lookup and generated dispatch have the same names"),
+                };
             }
+            let external = external_heuristics
+                .iter()
+                .find(|heuristic| heuristic.name == $spec.name)
+                .ok_or_else(|| {
+                    format!(
+                        "unknown heuristic `{}`; expected one of {}",
+                        $spec.name,
+                        heuristic_names().collect::<Vec<_>>().join(", ")
+                    )
+                })?;
+            (external.requirements)($spec)?.validate($task)?;
+            (external.build)($spec, $task, $sampling_task)
         }
     };
 }
@@ -242,14 +264,18 @@ macro_rules! heuristic_registry {
 /// registry. Parsers call this before translation, while direct Rust callers
 /// receive the same check at construction.
 pub fn validate_heuristic_spec(spec: &HeuristicSpec) -> Result<(), String> {
-    let plugin = heuristic_plugin(&spec.name).ok_or_else(|| {
-        format!(
+    let nested = if let Some(plugin) = heuristic_plugin(&spec.name) {
+        (plugin.nested_heuristics)(spec)?
+    } else if let Some(external) = external_heuristic(&spec.name) {
+        (external.nested_heuristics)(spec)?
+    } else {
+        return Err(format!(
             "unknown heuristic `{}`; expected one of {}",
             spec.name,
             heuristic_names().collect::<Vec<_>>().join(", ")
-        )
-    })?;
-    for nested in (plugin.nested_heuristics)(spec)? {
+        ));
+    };
+    for nested in nested {
         validate_heuristic_spec(&nested)?;
     }
     Ok(())
@@ -259,17 +285,21 @@ pub fn validate_heuristic_spec(spec: &HeuristicSpec) -> Result<(), String> {
 /// needs a solver backend this build cannot supply.
 pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> {
     fn needs_cplex(spec: &HeuristicSpec) -> Result<bool, String> {
-        let plugin = heuristic_plugin(&spec.name).ok_or_else(|| {
-            format!(
+        let (backend, nested) = if let Some(plugin) = heuristic_plugin(&spec.name) {
+            (plugin.backend, (plugin.nested_heuristics)(spec)?)
+        } else if let Some(external) = external_heuristic(&spec.name) {
+            (external.backend, (external.nested_heuristics)(spec)?)
+        } else {
+            return Err(format!(
                 "unknown heuristic `{}`; expected one of {}",
                 spec.name,
                 heuristic_names().collect::<Vec<_>>().join(", ")
-            )
-        })?;
-        if plugin.backend == RequiredBackend::Cplex {
+            ));
+        };
+        if backend == RequiredBackend::Cplex {
             return Ok(true);
         }
-        for nested in (plugin.nested_heuristics)(spec)? {
+        for nested in nested {
             if needs_cplex(&nested)? {
                 return Ok(true);
             }
