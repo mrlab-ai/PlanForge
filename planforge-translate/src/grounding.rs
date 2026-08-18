@@ -186,7 +186,9 @@ impl GroundingMonitor {
             .model_bytes
             .saturating_add(48 + 4 * argument_count as u64);
         self.transient_bytes = self.transient_bytes.saturating_add(16);
-        self.check(false)?;
+        if self.atoms >= self.next_atom_check || self.current_bytes() >= self.next_memory_check {
+            self.check()?;
+        }
         self.note_progress_work();
         Ok(())
     }
@@ -196,17 +198,20 @@ impl GroundingMonitor {
         transient_bytes: u64,
     ) -> Result<(), GroundingLimitError> {
         self.transient_bytes = self.transient_bytes.saturating_add(transient_bytes);
-        self.check(false)?;
+        if self.current_bytes() >= self.next_memory_check {
+            self.check()?;
+        }
         self.note_progress_work();
         Ok(())
     }
 
     pub(crate) fn finish_model(&mut self) -> Result<(), GroundingLimitError> {
+        self.check()?;
         // Rule match tables are dropped with the compiled rules here. The
         // returned model retains the unique atom queue and its deduplication
         // table no longer exists.
         self.transient_bytes = 0;
-        self.check(true)
+        Ok(())
     }
 
     pub(crate) fn note_materialized_bytes(
@@ -214,24 +219,29 @@ impl GroundingMonitor {
         bytes: u64,
     ) -> Result<(), GroundingLimitError> {
         self.materialized_bytes = self.materialized_bytes.saturating_add(bytes);
-        self.check(false)
+        if self.current_bytes() >= self.next_memory_check {
+            self.check()?;
+        }
+        Ok(())
     }
 
-    pub(crate) fn note_action(
-        &mut self,
-        action_name: &str,
-        estimated_bytes: u64,
-    ) -> Result<(), GroundingLimitError> {
+    pub(crate) fn enter_action(&mut self, action_name: &str) {
         self.phase = format!("instantiating action `{action_name}`");
+    }
+
+    pub(crate) fn note_action(&mut self, estimated_bytes: u64) -> Result<(), GroundingLimitError> {
         self.actions = self.actions.saturating_add(1);
         self.materialized_bytes = self.materialized_bytes.saturating_add(estimated_bytes);
-        self.check(false)?;
+        if self.actions >= self.next_action_check || self.current_bytes() >= self.next_memory_check
+        {
+            self.check()?;
+        }
         self.note_progress_work();
         Ok(())
     }
 
     pub(crate) fn complete(&mut self) -> Result<(), GroundingLimitError> {
-        self.check(true)?;
+        self.check()?;
         info!(
             "Grounding complete: {} actions, {} atoms, approximately {} held ({} peak).",
             self.actions,
@@ -252,17 +262,9 @@ impl GroundingMonitor {
         self.peak_bytes = self.peak_bytes.max(self.current_bytes());
     }
 
-    fn check(&mut self, force: bool) -> Result<(), GroundingLimitError> {
+    fn check(&mut self) -> Result<(), GroundingLimitError> {
         self.update_peak();
         let bytes = self.current_bytes();
-        let due = force
-            || self.actions >= self.next_action_check
-            || self.atoms >= self.next_atom_check
-            || bytes >= self.next_memory_check;
-        if !due {
-            return Ok(());
-        }
-
         if self.actions > self.limits.max_ground_actions {
             return Err(self.error(
                 GroundingLimitKind::Actions,
@@ -304,6 +306,7 @@ impl GroundingMonitor {
         if !force && self.last_progress.elapsed() < PROGRESS_INTERVAL {
             return;
         }
+        self.update_peak();
         info!(
             "Grounding progress: {} actions, {} atoms, approximately {} held; {}.",
             self.actions,

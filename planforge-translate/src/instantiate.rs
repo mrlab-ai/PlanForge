@@ -294,6 +294,7 @@ pub fn explore(task: &Task, limits: GroundingLimits) -> Result<ExploreResult, Gr
         let Some(param_lists) = reachable_action_params.get(&action.name) else {
             continue;
         };
+        monitor.enter_action(&action.name);
         for params in param_lists {
             // The exploration rule for an action has `action.parameters` as its
             // head arguments, so a reachable tuple has exactly that length. It is
@@ -329,7 +330,7 @@ pub fn explore(task: &Task, limits: GroundingLimits) -> Result<ExploreResult, Gr
                     + prop_action.precondition.len() * 128
                     + (prop_action.add_effects.len() + prop_action.del_effects.len()) * 192
                     + prop_action.assign_effects.len() * 256;
-                monitor.note_action(&action.name, estimated_bytes as u64)?;
+                monitor.note_action(estimated_bytes as u64)?;
                 grounded_ops.push(prop_action);
             }
         }
