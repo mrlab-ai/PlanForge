@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 /// Sparse propositional active-set ID, narrowed to `u32` to halve the per-value
@@ -18,26 +17,6 @@ impl StateRegion {
     pub fn overlaps(&self, other: &Self) -> bool {
         prop_regions_overlap(&self.propositions, &other.propositions)
             && numeric_regions_overlap(&self.numeric, &other.numeric)
-    }
-
-    pub fn merge_hull(&mut self, other: &Self) {
-        merge_state_region(self, other);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TransitionRegion {
-    pub source: Arc<StateRegion>,
-    pub target: Arc<StateRegion>,
-}
-
-impl TransitionRegion {
-    pub fn overlaps(&self, other: &Self) -> bool {
-        self.source.overlaps(&other.source) && self.target.overlaps(&other.target)
-    }
-
-    pub fn overlaps_parts(&self, source: &StateRegion, target: &StateRegion) -> bool {
-        self.source.overlaps(source) && self.target.overlaps(target)
     }
 }
 
@@ -172,96 +151,6 @@ fn regional_regions_are_disjoint(regions: &[StateRegion]) -> bool {
             .iter()
             .all(|other| !region.overlaps(other))
     })
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub(super) struct TransitionRegionKey {
-    source: StateRegionKey,
-    target: StateRegionKey,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub(super) struct StateRegionKey {
-    propositions: Arc<[Vec<PropValueId>]>,
-    numeric: Vec<IntervalKey>,
-}
-
-#[derive(Copy, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(super) struct IntervalKey {
-    lower_bits: u64,
-    upper_bits: u64,
-    lower_closed: bool,
-    upper_closed: bool,
-}
-
-pub(super) fn state_region_key(region: &StateRegion) -> StateRegionKey {
-    StateRegionKey {
-        propositions: region.propositions.clone(),
-        numeric: region
-            .numeric
-            .iter()
-            .map(|interval| IntervalKey {
-                lower_bits: float_tolerance::canonical_bits(interval.lower),
-                upper_bits: float_tolerance::canonical_bits(interval.upper),
-                lower_closed: interval.lower_closed,
-                upper_closed: interval.upper_closed,
-            })
-            .collect(),
-    }
-}
-
-pub(super) fn transition_region_key(region: &TransitionRegion) -> TransitionRegionKey {
-    transition_region_key_parts(&region.source, &region.target)
-}
-
-pub(super) fn transition_region_key_parts(
-    source: &StateRegion,
-    target: &StateRegion,
-) -> TransitionRegionKey {
-    TransitionRegionKey {
-        source: state_region_key(source),
-        target: state_region_key(target),
-    }
-}
-
-pub(super) fn merge_transition_region(target: &mut TransitionRegion, source: &TransitionRegion) {
-    merge_state_region(Arc::make_mut(&mut target.source), &source.source);
-    merge_state_region(Arc::make_mut(&mut target.target), &source.target);
-}
-
-fn merge_state_region(target: &mut StateRegion, source: &StateRegion) {
-    for (target_values, source_values) in Arc::make_mut(&mut target.propositions)
-        .iter_mut()
-        .zip(source.propositions.iter())
-    {
-        target_values.extend(source_values.iter().copied());
-        target_values.sort_unstable();
-        target_values.dedup();
-    }
-    for (target_interval, source_interval) in Arc::make_mut(&mut target.numeric)
-        .iter_mut()
-        .zip(source.numeric.iter())
-    {
-        *target_interval = interval_hull(*target_interval, *source_interval);
-    }
-}
-
-fn interval_hull(left: Interval, right: Interval) -> Interval {
-    let (lower, lower_closed) = if left.lower < right.lower {
-        (left.lower, left.lower_closed)
-    } else if left.lower > right.lower {
-        (right.lower, right.lower_closed)
-    } else {
-        (left.lower, left.lower_closed || right.lower_closed)
-    };
-    let (upper, upper_closed) = if left.upper > right.upper {
-        (left.upper, left.upper_closed)
-    } else if left.upper < right.upper {
-        (right.upper, right.upper_closed)
-    } else {
-        (left.upper, left.upper_closed || right.upper_closed)
-    };
-    Interval::new(lower, upper, lower_closed, upper_closed)
 }
 
 fn prop_regions_overlap(left: &[Vec<PropValueId>], right: &[Vec<PropValueId>]) -> bool {

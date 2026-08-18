@@ -1,8 +1,8 @@
 //! Label and regional saturated cost partitioning for abstraction components.
 //!
 //! Vocabulary:
-//! - A *region* is geometry represented by [`StateRegion`] or [`TransitionRegion`]
-//!   (defined in `region.rs`).
+//! - A *region* is geometry represented by [`StateRegion`] (defined in
+//!   `region.rs`).
 //! - An *operator region* is the region on which a concrete operator's cost is
 //!   claimed.
 //! - *Regional* means per-region cost accounting.
@@ -36,8 +36,6 @@ mod region;
 pub use explicit_scp::*;
 pub use region::*;
 
-const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
-
 #[derive(Debug)]
 pub struct TransitionResidualCosts {
     operator_residuals: Vec<OperatorResidual>,
@@ -65,7 +63,6 @@ struct OperatorResidual {
     /// Exact disjoint overlay for genuinely fractional regional allocations.
     regional_usage: RegionalUsage,
     uniform_cost_cache: Cell<Option<f64>>,
-    generation: Cell<u64>,
 }
 
 /// A disjoint partition of the part of the concrete state space on which an
@@ -415,7 +412,6 @@ impl TransitionResidualCosts {
                 full_regional_usage: RegionalUsage::default(),
                 regional_usage: RegionalUsage::default(),
                 uniform_cost_cache: Cell::new(None),
-                generation: Cell::new(0),
             })
             .collect();
         Self { operator_residuals }
@@ -745,7 +741,6 @@ impl TransitionResidualCosts {
 
 impl OperatorResidual {
     fn invalidate_cache(&self) {
-        self.generation.set(self.generation.get().wrapping_add(1));
         self.uniform_cost_cache.set(None);
     }
 }

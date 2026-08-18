@@ -8,10 +8,8 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::ExplicitFact;
 use planforge_sas::utils::float_tolerance;
 
-use super::region::{
-    StateRegion, TransitionRegion, merge_transition_region, transition_region_key,
-};
-use super::{MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES, TransitionResidualCosts};
+use super::TransitionResidualCosts;
+use super::region::StateRegion;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {
@@ -45,91 +43,6 @@ pub struct AbstractTransitionSystem {
     pub hash_multipliers: Vec<usize>,
     pub numeric_domain_sizes: Vec<usize>,
     pub state_regions: Vec<Arc<StateRegion>>,
-}
-
-impl AbstractTransitionSystem {
-    pub fn transition_region(&self, transition: &AbstractTransition) -> Result<TransitionRegion> {
-        let source = self
-            .state_regions
-            .get(transition.source_hash)
-            .with_context(|| {
-                format!(
-                    "missing source state region {} for transition {}",
-                    transition.source_hash, transition.transition_id
-                )
-            })?
-            .clone();
-        let target = self
-            .state_regions
-            .get(transition.target_hash)
-            .with_context(|| {
-                format!(
-                    "missing target state region {} for transition {}",
-                    transition.target_hash, transition.transition_id
-                )
-            })?
-            .clone();
-        Ok(TransitionRegion { source, target })
-    }
-
-    pub fn abstract_operator_region_covers(&self) -> Vec<Vec<TransitionRegion>> {
-        assert!(
-            !self.state_regions.is_empty(),
-            "abstract transition system has no materialized state regions"
-        );
-        let num_abstract_ops = self
-            .transitions
-            .iter()
-            .map(|transition| transition.abstract_op_id)
-            .max()
-            .map_or(0, |max_id| max_id + 1);
-        let mut covers = vec![Vec::new(); num_abstract_ops];
-        let mut seen = vec![std::collections::HashSet::new(); num_abstract_ops];
-        for transition in &self.transitions {
-            let region = TransitionRegion {
-                source: self.state_regions[transition.source_hash].clone(),
-                target: self.state_regions[transition.target_hash].clone(),
-            };
-            let key = transition_region_key(&region);
-            if seen[transition.abstract_op_id].insert(key) {
-                covers[transition.abstract_op_id].push(region);
-            }
-        }
-        for (abstract_op_id, cover) in covers.iter_mut().enumerate() {
-            if cover.len() > MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES {
-                let mut hull = cover[0].clone();
-                for region in cover.iter().skip(1) {
-                    merge_transition_region(&mut hull, region);
-                }
-                tracing::debug!(
-                    "abstract operator {abstract_op_id} reduction cover exceeded {} pieces; using hull fallback",
-                    MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES
-                );
-                cover.clear();
-                cover.push(hull);
-            }
-        }
-        covers
-    }
-
-    pub fn concrete_operator_ids_by_abstract_operator(&self) -> Vec<Vec<usize>> {
-        let num_abstract_ops = self
-            .transitions
-            .iter()
-            .map(|transition| transition.abstract_op_id)
-            .max()
-            .map_or(0, |max_id| max_id + 1);
-        let mut concrete_op_ids = vec![Vec::new(); num_abstract_ops];
-        for transition in &self.transitions {
-            concrete_op_ids[transition.abstract_op_id]
-                .extend(transition.concrete_op_ids.iter().copied());
-        }
-        for ids in &mut concrete_op_ids {
-            ids.sort_unstable();
-            ids.dedup();
-        }
-        concrete_op_ids
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
