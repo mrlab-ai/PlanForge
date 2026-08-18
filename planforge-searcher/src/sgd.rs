@@ -35,6 +35,7 @@ where
             "option `{key}` expects a value, got the call `{}(...)`",
             call.name()
         )),
+        ConfigValue::List(_) => Err(format!("option `{key}` expects a value, got a list")),
     }
 }
 
@@ -49,6 +50,7 @@ fn boolean(key: &str, value: &ConfigValue) -> Result<bool, String> {
             "option `{key}` expects a boolean, got the call `{}(...)`",
             call.name()
         )),
+        ConfigValue::List(_) => Err(format!("option `{key}` expects a boolean, got a list")),
     }
 }
 
@@ -81,6 +83,9 @@ fn horizon(value: &ConfigValue) -> Result<HorizonPolicy, String> {
              or `dovetail(start, growth, max)`",
             call.name()
         )),
+        ConfigValue::List(_) => {
+            Err("option `horizon`: expected a number or `dovetail`, got a list".to_string())
+        }
     }
 }
 
@@ -97,6 +102,7 @@ pub fn apply_sgd_options(config: &mut SgdConfig, args: &[ConfigArg]) -> Result<(
                 match arg.value() {
                     ConfigValue::Atom(text) => text.clone(),
                     ConfigValue::Call(call) => format!("{}(...)", call.name()),
+                    ConfigValue::List(values) => format!("a list of {} values", values.len()),
                 }
             ));
         };

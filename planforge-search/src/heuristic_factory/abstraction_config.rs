@@ -41,6 +41,26 @@ pub(crate) const COMPONENT_SOURCE_NAMES: &[&str] = &[
     "numeric_pdb",
 ];
 
+const SCP_COMBINATOR_OPTIONS: &[&str] = &[
+    "online",
+    "max_time",
+    "table_construction_max_time",
+    "max_size",
+    "diversify",
+    "samples",
+    "max_orders",
+    "interval",
+    "combine_labels",
+    "scoring_function",
+    "orders",
+    "initial_order_generation_max_time",
+    "order_optimization_max_time",
+    "saturator",
+    "residual_sweeps",
+    "random_seed",
+    "partitioning",
+];
+
 pub(crate) fn component_source_help() -> String {
     COMPONENT_SOURCE_NAMES
         .iter()
@@ -67,12 +87,60 @@ impl ComponentUse {
 }
 
 pub(crate) fn split_component_sources(
+    combinator: &str,
     args: &[ConfigArg],
 ) -> Result<(Vec<ConfigCall>, Vec<ConfigArg>), String> {
     let mut sources = Vec::new();
     let mut options = Vec::new();
+    let mut uses_source_list = false;
 
-    for arg in args {
+    for (index, arg) in args.iter().enumerate() {
+        if let ConfigValue::List(values) = arg.value()
+            && arg.key().is_none()
+        {
+            if uses_source_list {
+                return Err(format!("duplicate source list for `{combinator}`"));
+            }
+            if index != 0 {
+                return Err(format!(
+                    "the `[...]` source list for `{combinator}` must be the first argument"
+                ));
+            }
+            uses_source_list = true;
+            if values.is_empty() {
+                return Err(format!(
+                    "`{combinator}` requires at least one abstraction source inside `[...]`"
+                ));
+            }
+            for value in values {
+                if let Some(source) = component_source_call(value) {
+                    sources.push(source);
+                    continue;
+                }
+                if combinator == "scp"
+                    && let ConfigValue::Atom(option) = value
+                    && let Some((key, _)) = option.split_once('=')
+                    && SCP_COMBINATOR_OPTIONS.contains(&key)
+                {
+                    return Err(format!(
+                        "`{option}` is a collection option and cannot appear inside the source list; move it after `]`"
+                    ));
+                }
+                let name = match value {
+                    ConfigValue::Atom(name) => name.as_str(),
+                    ConfigValue::Call(call) => call.name(),
+                    ConfigValue::List(_) => {
+                        return Err("nested lists are not supported".to_string());
+                    }
+                };
+                return Err(format!(
+                    "unknown abstraction source `{name}`; expected one of: {}",
+                    component_source_help()
+                ));
+            }
+            continue;
+        }
+
         let Some(source) = component_source_call(arg.value()) else {
             options.push(arg.clone());
             continue;
@@ -80,6 +148,12 @@ pub(crate) fn split_component_sources(
         if let Some(key) = arg.key() {
             return Err(format!(
                 "abstraction source `{}` must be positional, not `{key}=...`",
+                source.name()
+            ));
+        }
+        if uses_source_list {
+            return Err(format!(
+                "abstraction sources must all appear inside the `[...]` list; found stray source `{}`",
                 source.name()
             ));
         }
@@ -125,7 +199,7 @@ fn take_construction_deadline(
 pub(crate) fn canonical_sources_and_deadline(
     args: &[ConfigArg],
 ) -> Result<(Vec<ConfigCall>, Option<Instant>), String> {
-    let (sources, options) = split_component_sources(args)?;
+    let (sources, options) = split_component_sources("canonical", args)?;
     let (options, deadline) = take_construction_deadline(options)?;
     if let Some(option) = options.first() {
         let key = option.key().unwrap_or("<positional>");
@@ -146,7 +220,7 @@ pub(crate) struct ScpSourceConfig {
 pub(crate) fn scp_sources_options_and_deadline(
     args: &[ConfigArg],
 ) -> Result<ScpSourceConfig, String> {
-    let (sources, options) = split_component_sources(args)?;
+    let (sources, options) = split_component_sources("scp", args)?;
     let (options, construction_deadline) = take_construction_deadline(options)?;
     validate_scp_combinator_options(&options)?;
     Ok(ScpSourceConfig {
@@ -160,7 +234,7 @@ pub(crate) fn require_only_component_sources(
     combinator: &str,
     args: &[ConfigArg],
 ) -> Result<Vec<ConfigCall>, String> {
-    let (sources, options) = split_component_sources(args)?;
+    let (sources, options) = split_component_sources(combinator, args)?;
     if let Some(option) = options.first() {
         let description = option.key().map_or_else(
             || format_config_value(option.value()),
@@ -181,33 +255,13 @@ pub(crate) fn require_only_component_sources(
 }
 
 pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), String> {
-    const ALLOWED: &[&str] = &[
-        "online",
-        "max_time",
-        "table_construction_max_time",
-        "max_size",
-        "diversify",
-        "samples",
-        "max_orders",
-        "interval",
-        "combine_labels",
-        "scoring_function",
-        "orders",
-        "initial_order_generation_max_time",
-        "order_optimization_max_time",
-        "saturator",
-        "residual_sweeps",
-        "random_seed",
-        "partitioning",
-    ];
-
     let mut seen = HashSet::new();
     for arg in args {
         let key = arg.key().ok_or_else(|| {
             "options in hierarchical `scp(...)` must be named; abstraction sources are the only positional arguments"
                 .to_string()
         })?;
-        if !ALLOWED.contains(&key) {
+        if !SCP_COMBINATOR_OPTIONS.contains(&key) {
             return Err(format!(
                 "unknown `scp` combinator option `{key}`; abstraction-generation options belong inside one of: {}",
                 component_source_help(),
@@ -449,6 +503,7 @@ fn component_source_call(value: &ConfigValue) -> Option<ConfigCall> {
         ConfigValue::Atom(name) if is_component_source_name(name) => {
             Some(ConfigCall::new(name.clone(), Vec::new()))
         }
+        ConfigValue::List(_) => None,
         _ => None,
     }
 }
@@ -710,6 +765,7 @@ fn format_config_value(value: &ConfigValue) -> String {
     match value {
         ConfigValue::Atom(atom) => atom.clone(),
         ConfigValue::Call(call) => format!("{}(...)", call.name()),
+        ConfigValue::List(_) => value.to_string(),
     }
 }
 
@@ -745,9 +801,73 @@ mod tests {
                 ConfigValue::Atom("5".to_string()),
             ),
         ];
-        let (sources, options) = split_component_sources(&args).unwrap();
+        let (sources, options) = split_component_sources("scp", &args).unwrap();
         assert_eq!(sources.len(), 2);
         assert_eq!(options.len(), 1);
+    }
+
+    #[test]
+    fn flat_and_list_sources_split_identically() {
+        let flat = crate::config::parse_heuristic_spec(
+            "scp(domain(max_collection_size=1000),cartesian(max_states=100),partitioning=region)",
+        )
+        .unwrap();
+        let listed = crate::config::parse_heuristic_spec(
+            "scp([domain(max_collection_size=1000),cartesian(max_states=100)],partitioning=region)",
+        )
+        .unwrap();
+        assert_eq!(
+            split_component_sources("scp", &flat.args).unwrap(),
+            split_component_sources("scp", &listed.args).unwrap()
+        );
+    }
+
+    #[test]
+    fn source_list_errors_name_the_invalid_structure() {
+        fn split(raw: &str) -> Result<(Vec<ConfigCall>, Vec<ConfigArg>), String> {
+            let spec = crate::config::parse_heuristic_spec(raw).unwrap();
+            split_component_sources("scp", &spec.args)
+        }
+
+        assert_eq!(
+            split("scp([domian()])").unwrap_err(),
+            format!(
+                "unknown abstraction source `domian`; expected one of: {}",
+                super::component_source_help()
+            )
+        );
+        assert_eq!(
+            split("scp([domain(), partitioning=region])").unwrap_err(),
+            "`partitioning=region` is a collection option and cannot appear inside the source list; move it after `]`"
+        );
+        assert_eq!(
+            split("scp([], partitioning=region)").unwrap_err(),
+            "`scp` requires at least one abstraction source inside `[...]`"
+        );
+        assert_eq!(
+            split("scp([domain()], cartesian())").unwrap_err(),
+            "abstraction sources must all appear inside the `[...]` list; found stray source `cartesian`"
+        );
+        assert_eq!(
+            split("scp([domain()], [cartesian()])").unwrap_err(),
+            "duplicate source list for `scp`"
+        );
+    }
+
+    #[test]
+    fn all_collection_combinators_accept_a_leading_source_list() {
+        for combinator in ["max", "canonical", "scp", "fillscp"] {
+            let spec = crate::config::parse_heuristic_spec(&format!(
+                "{combinator}([domain(),cartesian()])"
+            ))
+            .unwrap();
+            let (sources, options) = split_component_sources(combinator, &spec.args).unwrap();
+            assert_eq!(
+                sources.iter().map(ConfigCall::name).collect::<Vec<_>>(),
+                ["domain", "cartesian"]
+            );
+            assert!(options.is_empty());
+        }
     }
 
     #[test]

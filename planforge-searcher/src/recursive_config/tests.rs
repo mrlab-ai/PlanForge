@@ -89,6 +89,24 @@ fn parses_hierarchical_canonical_abstraction_sources() {
 }
 
 #[test]
+fn parses_and_round_trips_collection_source_lists() {
+    let spec = parse_search_spec(
+        "astar(scp([domain(max_abstraction_size=100), cartesian(), pdb(),], partitioning=region))",
+    )
+    .unwrap();
+    assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
+}
+
+#[test]
+fn rejects_nested_collection_source_lists() {
+    let error = parse_search_spec("astar(scp([[domain()]]))").unwrap_err();
+    assert!(
+        error.contains("nested lists are not supported"),
+        "got `{error}`"
+    );
+}
+
+#[test]
 fn parses_astar_scp_online_with_or_without_unit_parens() {
     let h = astar_heuristic("astar(scp_online)");
     assert_eq!(h.name, "scp_online");
@@ -264,7 +282,7 @@ fn parses_check_admissible_around_a_nested_heuristic() {
     let spec = astar_heuristic("astar(check_admissible(domain_abstraction()));");
     assert_eq!(spec.name, "check_admissible");
     assert_eq!(spec.args.len(), 1);
-    let inner = HeuristicSpec::from_value(spec.args[0].value());
+    let inner = HeuristicSpec::from_value(spec.args[0].value()).unwrap();
     assert_eq!(inner.name, "domain_abstraction");
     assert!(spec.contains_call("domain_abstraction"));
 }
@@ -323,6 +341,19 @@ fn contains_call_finds_only_nested_icaps_cartesian_sources() {
         parse_search_spec("astar(scp(cartesian_collection(source=cartesian(max_states=1000))))")
             .unwrap();
     assert!(!native.contains_call("icaps26_cartesian"));
+}
+
+#[test]
+fn contains_call_recurses_into_source_lists() {
+    let spec = parse_search_spec("astar(scp([domain(), pdb()]))").unwrap();
+    assert!(spec.contains_call("pdb"));
+    assert!(!spec.contains_call("numeric_pdb"));
+}
+
+#[test]
+fn lists_are_typed_errors_where_heuristics_are_expected() {
+    let error = parse_search_spec("astar([blind()])").unwrap_err();
+    assert_eq!(error, "expected heuristic, got a list");
 }
 
 // =============================================================================

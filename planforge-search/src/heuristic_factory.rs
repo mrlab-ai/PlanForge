@@ -166,7 +166,7 @@ fn component_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements,
 }
 
 fn scp_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
-    let (sources, _) = split_component_sources(&spec.args)?;
+    let (sources, _) = split_component_sources(spec.name.as_str(), &spec.args)?;
     if !sources.is_empty() {
         return component_task_requirements(spec);
     }
@@ -968,7 +968,8 @@ heuristic_registry! {
         requirements: scp_task_requirements,
         nested: no_nested_heuristics,
         build: {
-            let (component_sources, _) = split_component_sources(&spec.args)?;
+            let (component_sources, _) =
+                split_component_sources(spec.name.as_str(), &spec.args)?;
             if !component_sources.is_empty() {
                 let source_config =
                     abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
@@ -1225,5 +1226,5 @@ fn single_wrapped_heuristic_spec(
             "`{wrapper}` takes its heuristic positionally, not as `{key}=...`"
         ));
     }
-    Ok(HeuristicSpec::from_value(arg.value()))
+    HeuristicSpec::from_value(arg.value())
 }

@@ -102,6 +102,7 @@ impl ConfigArg {
 pub enum ConfigValue {
     Atom(String),
     Call(ConfigCall),
+    List(Vec<ConfigValue>),
 }
 
 impl ConfigValue {
@@ -109,6 +110,7 @@ impl ConfigValue {
         match self {
             ConfigValue::Atom(value) => Ok(value),
             ConfigValue::Call(call) => Err(format!("expected scalar value, got `{}`", call.name)),
+            ConfigValue::List(_) => Err("expected scalar value, got a list".to_string()),
         }
     }
 
@@ -116,6 +118,7 @@ impl ConfigValue {
         match self {
             ConfigValue::Call(call) => Ok(call),
             ConfigValue::Atom(name) => Err(format!("expected call, got atom `{name}`")),
+            ConfigValue::List(_) => Err("expected call, got a list".to_string()),
         }
     }
 
@@ -132,6 +135,7 @@ impl ConfigValue {
                         .iter()
                         .any(|arg| arg.value().contains_call(name))
             }
+            ConfigValue::List(values) => values.iter().any(|value| value.contains_call(name)),
         }
     }
 }
@@ -167,10 +171,11 @@ impl HeuristicSpec {
     ///
     /// Named/positional/duplicate validation is deferred to the heuristic's own
     /// config, which owns the canonical option order.
-    pub fn from_value(value: &ConfigValue) -> Self {
+    pub fn from_value(value: &ConfigValue) -> Result<Self, String> {
         match value {
-            ConfigValue::Atom(name) => Self::new(name.clone(), Vec::new()),
-            ConfigValue::Call(call) => Self::new(call.name.clone(), call.args.clone()),
+            ConfigValue::Atom(name) => Ok(Self::new(name.clone(), Vec::new())),
+            ConfigValue::Call(call) => Ok(Self::new(call.name.clone(), call.args.clone())),
+            ConfigValue::List(_) => Err("expected heuristic, got a list".to_string()),
         }
     }
 
@@ -203,6 +208,16 @@ impl std::fmt::Display for ConfigValue {
         match self {
             ConfigValue::Atom(atom) => f.write_str(atom),
             ConfigValue::Call(call) => write!(f, "{call}"),
+            ConfigValue::List(values) => {
+                f.write_str("[")?;
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{value}")?;
+                }
+                f.write_str("]")
+            }
         }
     }
 }

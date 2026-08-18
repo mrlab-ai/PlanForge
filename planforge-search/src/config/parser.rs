@@ -109,18 +109,57 @@ impl<'a> ConfigParser<'a> {
 
     fn parse_value(&mut self) -> Result<ConfigValue, String> {
         self.skip_ws();
+        if self.peek_char() == Some('[') {
+            return self.parse_list();
+        }
         let checkpoint = self.pos;
-        if let Ok(call) = self.parse_call_or_bare() {
-            if !call.args.is_empty() || self.peek_non_ws() == Some('(') {
-                return Ok(ConfigValue::Call(call));
-            }
+        if let Ok(name) = self.parse_identifier() {
             self.skip_ws();
-            if matches!(self.peek_char(), Some(',') | Some(')') | None) {
-                return Ok(ConfigValue::Atom(call.name));
+            let is_call = self.peek_char() == Some('(');
+            if is_call {
+                self.pos = checkpoint;
+                let call = self.parse_call_or_bare()?;
+                return if call.args.is_empty() {
+                    Ok(ConfigValue::Atom(call.name))
+                } else {
+                    Ok(ConfigValue::Call(call))
+                };
+            }
+            if matches!(self.peek_char(), Some(',') | Some(')') | Some(']') | None) {
+                return Ok(ConfigValue::Atom(name));
             }
         }
         self.pos = checkpoint;
         Ok(ConfigValue::Atom(self.parse_scalar()?))
+    }
+
+    fn parse_list(&mut self) -> Result<ConfigValue, String> {
+        self.expect_char('[')?;
+        let mut values = Vec::new();
+        self.skip_ws();
+        if self.consume_char(']') {
+            return Ok(ConfigValue::List(values));
+        }
+
+        loop {
+            let value = self.parse_value()?;
+            if matches!(value, ConfigValue::List(_)) {
+                return Err("Invalid --search config: nested lists are not supported".to_string());
+            }
+            values.push(value);
+            self.skip_ws();
+            if self.consume_char(',') {
+                self.skip_ws();
+                if self.consume_char(']') {
+                    break;
+                }
+                continue;
+            }
+            self.expect_char(']')?;
+            break;
+        }
+
+        Ok(ConfigValue::List(values))
     }
 
     fn parse_identifier(&mut self) -> Result<String, String> {
@@ -147,7 +186,7 @@ impl<'a> ConfigParser<'a> {
         self.skip_ws();
         let start = self.pos;
         while let Some(ch) = self.peek_char() {
-            if ch == ',' || ch == ')' {
+            if ch == ',' || ch == ')' || ch == ']' || ch == '[' {
                 break;
             }
             self.pos += ch.len_utf8();
@@ -174,12 +213,6 @@ impl<'a> ConfigParser<'a> {
 
     fn peek_char(&self) -> Option<char> {
         self.input[self.pos..].chars().next()
-    }
-
-    fn peek_non_ws(&self) -> Option<char> {
-        self.input[self.pos..]
-            .chars()
-            .find(|ch| !ch.is_whitespace())
     }
 
     fn consume_char(&mut self, expected: char) -> bool {

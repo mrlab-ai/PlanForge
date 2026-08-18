@@ -134,8 +134,8 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
                     "`astar_fs(...)` expects named `fast=...` and `slow=...` arguments".to_string()
                 })?;
                 match key {
-                    "fast" => fast = Some(HeuristicSpec::from_value(&arg.value)),
-                    "slow" => slow = Some(HeuristicSpec::from_value(&arg.value)),
+                    "fast" => fast = Some(HeuristicSpec::from_value(&arg.value)?),
+                    "slow" => slow = Some(HeuristicSpec::from_value(&arg.value)?),
                     other => return Err(format!("unknown option `{other}` for `astar_fs`")),
                 }
             }
@@ -156,7 +156,7 @@ fn extract_astar_options(call: &ConfigCall) -> Result<(HeuristicSpec, bool), Str
                 if heuristic.is_some() {
                     return Err("`astar(...)` received more than one heuristic".to_string());
                 }
-                heuristic = Some(HeuristicSpec::from_value(&arg.value));
+                heuristic = Some(HeuristicSpec::from_value(&arg.value)?);
             }
             Some("mpd") => {
                 if saw_mpd {
@@ -194,7 +194,7 @@ fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicSpec, Stri
             call.name
         ));
     }
-    Ok(HeuristicSpec::from_value(&arg.value))
+    HeuristicSpec::from_value(&arg.value)
 }
 
 fn call_from_value(value: &ConfigValue) -> Result<ConfigCall, String> {
@@ -204,5 +204,6 @@ fn call_from_value(value: &ConfigValue) -> Result<ConfigCall, String> {
             name: name.clone(),
             args: Vec::new(),
         }),
+        ConfigValue::List(_) => Err("expected call, got a list".to_string()),
     }
 }

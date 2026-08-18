@@ -76,7 +76,7 @@ fn parses_hierarchical_scp_options_and_sources() {
         "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), online=false, diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, residual_sweeps=2, partitioning=region))",
     );
     assert_eq!(h.name, "scp");
-    let (sources, options) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 3);
     assert_eq!(options.len(), 9);
     abstraction_config::validate_scp_combinator_options(&options).unwrap();
@@ -92,11 +92,26 @@ fn parses_hierarchical_scp_options_and_sources() {
 }
 
 #[test]
+fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
+    let h = astar_heuristic("astar(scp([domain()], max_time=[5]))");
+    let source_config = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap();
+    let error =
+        ApplyOptions::apply_options(&mut ScpOnlineConfig::default(), &source_config.options)
+            .unwrap_err();
+    assert_eq!(error, "expected scalar value, got a list");
+
+    let wrapper = astar_heuristic("astar(check_admissible([domain()]))");
+    let error =
+        super::single_wrapped_heuristic_spec("check_admissible", &wrapper.args).unwrap_err();
+    assert_eq!(error, "expected heuristic, got a list");
+}
+
+#[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
         "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
-    let (sources, options) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "cartesian_collection");
     assert_eq!(options.len(), 2);
@@ -119,7 +134,7 @@ fn parses_strict_icaps26_cartesian_source() {
     let h = astar_heuristic(
         "astar(scp(icaps26_cartesian(pick=min_unwanted,max_time=900,random_seed=7),online=false,partitioning=region))",
     );
-    let (sources, options) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "icaps26_cartesian");
     assert_eq!(options.len(), 2);
@@ -216,7 +231,7 @@ fn rejects_invalid_shared_construction_deadlines() {
 #[test]
 fn icaps26_cartesian_rejects_native_refinement_options() {
     let h = astar_heuristic("astar(canonical(icaps26_cartesian(flaw_kind=execute_entire_plan)))");
-    let (sources, _) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let error = abstraction_config::apply_icaps26_cartesian_options(
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
@@ -228,7 +243,7 @@ fn icaps26_cartesian_rejects_native_refinement_options() {
 #[test]
 fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
     let h = astar_heuristic("astar(canonical(cartesian_collection(max_states=1000)))");
-    let (sources, _) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let config = abstraction_config::apply_cartesian_collection_options(
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
@@ -240,7 +255,7 @@ fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
 #[test]
 fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
     let h = astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=regression)))");
-    let (sources, _) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let error = abstraction_config::apply_cartesian_collection_options(
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
@@ -312,13 +327,13 @@ fn legacy_cartesian_collection_rejects_domain_only_options() {
 #[test]
 fn rejects_boolean_cost_partitioning_mode() {
     let h = astar_heuristic("astar(scp(domain(), partitioning=label))");
-    let (_, options) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let mut config = ScpOnlineConfig::default();
     ApplyOptions::apply_options(&mut config, &options).unwrap();
     assert_eq!(config.partitioning, CostPartitioningMethod::Label);
 
     let h = astar_heuristic("astar(scp(domain(), partitioning=true))");
-    let (_, options) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let mut config = ScpOnlineConfig::default();
     assert!(ApplyOptions::apply_options(&mut config, &options).is_err());
 }
@@ -365,7 +380,7 @@ fn parses_full_task_interleaved_domain_collection() {
     let h = astar_heuristic(
         "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_kind=execute_entire_plan,flaw_treatment=min_growth_single_atom)))",
     );
-    let (sources, options) = abstraction_config::split_component_sources(&h.args).unwrap();
+    let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert!(options.is_empty());
     let mut source = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
