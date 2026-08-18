@@ -33,7 +33,7 @@ use super::numeric_context::{
 use super::utils;
 
 mod distances;
-mod footprints;
+mod operator_regions;
 mod plan_extraction;
 mod saturation;
 mod state_encoding;
@@ -46,7 +46,7 @@ use crate::evaluation::abstraction_collections::cost_partitioning::{
     saturation_need, state_region_intersection,
 };
 pub use distances::*;
-use footprints::*;
+use operator_regions::*;
 pub use plan_extraction::*;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;

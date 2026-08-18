@@ -164,7 +164,7 @@ impl FactNamespace {
 
 /// Variable/value pair, tagged with the variable's [`FactNamespace`].
 ///
-/// `u32` fields halve the per-fact footprint compared to `usize` on 64-bit
+/// `u32` fields halve the storage per fact compared to `usize` on 64-bit
 /// targets (16 B → 8 B). The namespace occupies the top
 /// `FactNamespace::BITS` bits of the variable id, leaving a hard
 /// [`Self::MAX_VAR_ID`] ceiling — vastly above anything realistic planning

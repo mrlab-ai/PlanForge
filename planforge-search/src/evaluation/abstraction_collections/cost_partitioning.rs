@@ -1,5 +1,12 @@
 //! Label and regional saturated cost partitioning for abstraction components.
 //!
+//! Vocabulary:
+//! - A *region* is geometry represented by [`StateRegion`] or [`TransitionRegion`]
+//!   (defined in `region.rs`).
+//! - An *operator region* is the region on which a concrete operator's cost is
+//!   claimed.
+//! - *Regional* means per-region cost accounting.
+//!
 //! Each [`OperatorRegion::source`] stores the *regressed
 //! preimage source* of an abstract operator's effect — the intersection of the
 //! abstract source region with the inverse image of the abstract target region
