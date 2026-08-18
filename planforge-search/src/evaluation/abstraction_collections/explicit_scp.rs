@@ -154,19 +154,6 @@ impl AbstractTransitionSystem {
         }
         concrete_op_ids
     }
-
-    pub(super) fn transition_counts_by_abstract_operator(
-        &self,
-        num_abstract_ops: usize,
-    ) -> Vec<usize> {
-        let mut counts = vec![0usize; num_abstract_ops];
-        for transition in &self.transitions {
-            if let Some(count) = counts.get_mut(transition.abstract_op_id) {
-                *count = count.saturating_add(1);
-            }
-        }
-        counts
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -29,7 +29,6 @@ pub use region::*;
 
 const ABSTRACT_OPERATOR_REGION_HASH: usize = usize::MAX;
 const MAX_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 4096;
-const MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES: usize = 50_000;
 
 #[derive(Debug)]
 pub struct TransitionResidualCosts {
@@ -58,6 +57,7 @@ struct OperatorResidual {
     /// Exact disjoint overlay for genuinely fractional regional allocations.
     regional_usage: RegionalUsage,
     reductions: Vec<ResidualReduction>,
+    #[allow(dead_code)]
     reduction_indices: HashMap<TransitionIdentity, usize>,
     generation: Cell<u64>,
     uniform_cost_cache: Cell<Option<f64>>,
@@ -504,17 +504,6 @@ struct TransitionCondition {
     region: TransitionRegion,
 }
 
-impl TransitionCondition {
-    fn identity(&self) -> TransitionIdentity {
-        TransitionIdentity {
-            abstraction_id: self.abstraction_id,
-            source_hash: self.source_hash,
-            abstract_op_id: self.abstract_op_id,
-            target_hash: self.target_hash,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct TransitionIdentity {
     abstraction_id: usize,
@@ -535,17 +524,6 @@ pub struct OperatorTransition {
     pub source_hash: usize,
     pub abstract_op_id: usize,
     pub target_hash: usize,
-}
-
-impl OperatorTransition {
-    fn identity(&self) -> TransitionIdentity {
-        TransitionIdentity {
-            abstraction_id: self.abstraction_id,
-            source_hash: self.source_hash,
-            abstract_op_id: self.abstract_op_id,
-            target_hash: self.target_hash,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -763,39 +741,6 @@ impl TransitionResidualCosts {
         (legacy - regional).max(0.0)
     }
 
-    #[cfg(test)]
-    fn cost_for_transition_with_region_key(
-        &self,
-        transition: OperatorTransition,
-        source_region: &StateRegion,
-        target_region: &StateRegion,
-        region_key: Option<TransitionRegionKey>,
-    ) -> f64 {
-        self.cost_for_transition_with_region(
-            transition,
-            TransitionRegion {
-                source: Arc::new(source_region.clone()),
-                target: Arc::new(target_region.clone()),
-            },
-            region_key,
-        )
-    }
-
-    #[cfg(test)]
-    fn reduction_cost_for_transition(
-        &self,
-        transition: OperatorTransition,
-        source_region: &StateRegion,
-        target_region: &StateRegion,
-    ) -> f64 {
-        self.cost_for_transition_with_region_key(
-            transition,
-            source_region,
-            target_region,
-            Some(transition_region_key_parts(source_region, target_region)),
-        )
-    }
-
     fn cost_for_transition_with_region(
         &self,
         transition: OperatorTransition,
@@ -862,145 +807,6 @@ impl TransitionResidualCosts {
             },
         );
         cost
-    }
-
-    pub fn reduce_by_tcf(
-        &mut self,
-        producing_abstraction_id: usize,
-        transition_system: &AbstractTransitionSystem,
-        tcf: &AbstractTransitionCostFunction,
-    ) -> Result<()> {
-        ensure!(
-            transition_system.transitions.len() == tcf.transition_costs.len(),
-            "transition system/cost function size mismatch: {} vs {}",
-            transition_system.transitions.len(),
-            tcf.transition_costs.len()
-        );
-        for transition in &transition_system.transitions {
-            let saturated = tcf.transition_costs[transition.transition_id];
-            ensure!(
-                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
-                "negative transition saturated costs are not supported: transition {} has {}",
-                transition.transition_id,
-                saturated
-            );
-            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
-                continue;
-            }
-            for &concrete_op_id in &transition.concrete_op_ids {
-                let region = transition_system.transition_region(transition)?;
-                self.reduce_exact_transition(
-                    OperatorTransition {
-                        concrete_op_id,
-                        abstraction_id: producing_abstraction_id,
-                        source_hash: transition.source_hash,
-                        abstract_op_id: transition.abstract_op_id,
-                        target_hash: transition.target_hash,
-                    },
-                    &region,
-                    saturated,
-                )
-                .with_context(|| {
-                    format!(
-                        "failed to reduce op {concrete_op_id} by transition {}",
-                        transition.transition_id
-                    )
-                })?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn reduce_by_abstract_operator_tcf(
-        &mut self,
-        producing_abstraction_id: usize,
-        transition_system: &AbstractTransitionSystem,
-        tcf: &AbstractOperatorCostFunction,
-    ) -> Result<bool> {
-        let concrete_op_ids = transition_system.concrete_operator_ids_by_abstract_operator();
-        ensure!(
-            concrete_op_ids.len() == tcf.operator_costs.len(),
-            "abstract-operator system/cost function size mismatch: {} vs {}",
-            concrete_op_ids.len(),
-            tcf.operator_costs.len()
-        );
-        let transition_counts =
-            transition_system.transition_counts_by_abstract_operator(tcf.operator_costs.len());
-        let mut total_reduction_pieces = 0usize;
-        for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
-            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
-                continue;
-            }
-            total_reduction_pieces = total_reduction_pieces.saturating_add(
-                transition_counts[abstract_op_id]
-                    .saturating_mul(concrete_op_ids[abstract_op_id].len()),
-            );
-            if total_reduction_pieces > MAX_TOTAL_ABSTRACT_OPERATOR_REDUCTION_PIECES {
-                return Ok(false);
-            }
-        }
-        if transition_system.state_regions.is_empty() {
-            return Ok(false);
-        }
-        let covers = transition_system.abstract_operator_region_covers();
-        for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
-            ensure!(
-                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
-                "negative abstract-operator saturated costs are not supported: abstract op {} has {}",
-                abstract_op_id,
-                saturated
-            );
-            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
-                continue;
-            }
-            let Some(cover) = covers.get(abstract_op_id) else {
-                continue;
-            };
-            for (piece_id, region) in cover.iter().enumerate() {
-                for &concrete_op_id in &concrete_op_ids[abstract_op_id] {
-                    let Some(residual) = self.operator_residuals.get_mut(concrete_op_id) else {
-                        continue;
-                    };
-                    ensure!(
-                        residual.base_cost.is_finite(),
-                        "no base residual cost for operator {concrete_op_id}"
-                    );
-                    ensure!(
-                        saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
-                        "residual cost underflow: abstract-operator reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
-                        residual.base_cost
-                    );
-                    let condition = TransitionCondition {
-                        abstraction_id: producing_abstraction_id,
-                        source_hash: piece_id,
-                        abstract_op_id,
-                        target_hash: piece_id,
-                        region: region.clone(),
-                    };
-                    let identity = condition.identity();
-                    if let Some(&index) = residual.reduction_indices.get(&identity) {
-                        let reduction = &mut residual.reductions[index];
-                        let new_amount = reduction.amount + saturated;
-                        ensure!(
-                            new_amount <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
-                            "abstract-operator reductions for concrete operator {concrete_op_id} exceed base cost {}",
-                            residual.base_cost
-                        );
-                        reduction.amount = new_amount.min(residual.base_cost);
-                    } else {
-                        let index = residual.reductions.len();
-                        residual.reductions.push(ResidualReduction {
-                            amount: saturated.min(residual.base_cost),
-                            condition,
-                        });
-                        let previous = residual.reduction_indices.insert(identity, index);
-                        assert!(previous.is_none(), "duplicate residual reduction identity");
-                    }
-                    residual.invalidate_cache();
-                }
-            }
-        }
-        Ok(true)
     }
 
     pub fn reduce_by_abstract_operator_footprints(
@@ -1210,59 +1016,6 @@ impl TransitionResidualCosts {
                 )?;
             self.operator_residuals[op_id].invalidate_cache();
         }
-        Ok(())
-    }
-
-    fn reduce_exact_transition(
-        &mut self,
-        transition: OperatorTransition,
-        region: &TransitionRegion,
-        saturated: f64,
-    ) -> Result<()> {
-        let concrete_op_id = transition.concrete_op_id;
-        ensure!(
-            concrete_op_id < self.operator_residuals.len(),
-            "concrete operator id out of bounds: {concrete_op_id}"
-        );
-        let condition = TransitionCondition {
-            abstraction_id: transition.abstraction_id,
-            source_hash: transition.source_hash,
-            abstract_op_id: transition.abstract_op_id,
-            target_hash: transition.target_hash,
-            region: region.clone(),
-        };
-        let residual = &mut self.operator_residuals[concrete_op_id];
-        let identity = transition.identity();
-        if let Some(&index) = residual.reduction_indices.get(&identity) {
-            let reduction = &mut residual.reductions[index];
-            let new_amount = reduction.amount + saturated;
-            ensure!(
-                new_amount <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
-                "residual cost underflow: transition reductions for operator {concrete_op_id} exceed base cost {}",
-                residual.base_cost
-            );
-            reduction.amount = new_amount.min(residual.base_cost);
-            residual.invalidate_cache();
-            return Ok(());
-        }
-
-        ensure!(
-            residual.base_cost.is_finite(),
-            "no base residual cost for operator {concrete_op_id}"
-        );
-        ensure!(
-            saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
-            "residual cost underflow: transition reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
-            residual.base_cost
-        );
-        let index = residual.reductions.len();
-        residual.reductions.push(ResidualReduction {
-            amount: saturated.min(residual.base_cost),
-            condition,
-        });
-        let previous = residual.reduction_indices.insert(identity, index);
-        assert!(previous.is_none(), "duplicate residual reduction identity");
-        residual.invalidate_cache();
         Ok(())
     }
 }
@@ -1950,41 +1703,10 @@ mod tests {
         }
     }
 
-    fn region(source: usize, target: usize) -> TransitionRegion {
-        TransitionRegion {
-            source: state_region(source).into(),
-            target: state_region(target).into(),
-        }
-    }
-
-    /// A transition of concrete operator 0, which is the only operator these
-    /// residual-cost tests give a base cost to.
-    fn transition(
-        abstraction_id: usize,
-        source_hash: usize,
-        abstract_op_id: usize,
-        target_hash: usize,
-    ) -> OperatorTransition {
-        OperatorTransition {
-            concrete_op_id: 0,
-            abstraction_id,
-            source_hash,
-            abstract_op_id,
-            target_hash,
-        }
-    }
-
     fn numeric_state_region(lower: f64, upper: f64) -> StateRegion {
         StateRegion {
             propositions: vec![vec![0]].into(),
             numeric: vec![Interval::closed(lower, upper)].into(),
-        }
-    }
-
-    fn numeric_region(source_lower: f64, source_upper: f64) -> TransitionRegion {
-        TransitionRegion {
-            source: numeric_state_region(source_lower, source_upper).into(),
-            target: numeric_state_region(source_lower, source_upper).into(),
         }
     }
 
@@ -2022,314 +1744,6 @@ mod tests {
         AbstractOperatorFootprint {
             labels: vec![concrete_footprint(lower, upper)],
         }
-    }
-
-    #[test]
-    fn exact_transition_reduction_does_not_reduce_other_transitions() {
-        let reduced_region = region(0, 1);
-        let mut residuals = TransitionResidualCosts::from_operator_costs(&[5.0]);
-        let transition_system = AbstractTransitionSystem {
-            transitions: vec![AbstractTransition {
-                transition_id: 0,
-                abstract_op_id: 7,
-                concrete_op_ids: vec![0],
-                source_hash: 3,
-                target_hash: 4,
-            }],
-            duplicate_transition_attempts: 0,
-            backward: vec![vec![], vec![], vec![], vec![], vec![0]],
-            forward: vec![vec![], vec![], vec![], vec![0], vec![]],
-            goal_facts: vec![],
-            goal_state_hashes: vec![],
-            initial_state_hash: 0,
-            hash_multipliers: vec![],
-            numeric_domain_sizes: vec![],
-            state_regions: vec![
-                state_region(9).into(),
-                state_region(9).into(),
-                state_region(9).into(),
-                reduced_region.source.clone(),
-                reduced_region.target.clone(),
-            ],
-        };
-        let tcf = AbstractTransitionCostFunction {
-            transition_costs: vec![2.0],
-        };
-
-        residuals
-            .reduce_by_tcf(0, &transition_system, &tcf)
-            .unwrap();
-
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(0, 3, 7, 4),
-                &reduced_region.source,
-                &reduced_region.target
-            ),
-            3.0
-        );
-        let other_target = state_region(2);
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(0, 3, 7, 5),
-                &reduced_region.source,
-                &other_target
-            ),
-            5.0
-        );
-        let overlapping = region(0, 1);
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(1, 3, 7, 4),
-                &overlapping.source,
-                &overlapping.target
-            ),
-            3.0
-        );
-        let disjoint = region(1, 0);
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(1, 3, 7, 4),
-                &disjoint.source,
-                &disjoint.target
-            ),
-            5.0
-        );
-    }
-
-    #[test]
-    fn repeated_exact_transition_reduction_clamps_tiny_negative_to_zero() {
-        let reduced_region = region(0, 1);
-        let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-        let transition_system = AbstractTransitionSystem {
-            transitions: vec![AbstractTransition {
-                transition_id: 0,
-                abstract_op_id: 0,
-                concrete_op_ids: vec![0],
-                source_hash: 0,
-                target_hash: 1,
-            }],
-            duplicate_transition_attempts: 0,
-            backward: vec![vec![], vec![0]],
-            forward: vec![vec![0], vec![]],
-            goal_facts: vec![],
-            goal_state_hashes: vec![],
-            initial_state_hash: 0,
-            hash_multipliers: vec![],
-            numeric_domain_sizes: vec![],
-            state_regions: vec![reduced_region.source.clone(), reduced_region.target.clone()],
-        };
-        residuals
-            .reduce_by_tcf(
-                0,
-                &transition_system,
-                &AbstractTransitionCostFunction {
-                    transition_costs: vec![0.4],
-                },
-            )
-            .unwrap();
-        residuals
-            .reduce_by_tcf(
-                0,
-                &transition_system,
-                &AbstractTransitionCostFunction {
-                    transition_costs: vec![0.6000000001],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(0, 0, 0, 1),
-                &reduced_region.source,
-                &reduced_region.target
-            ),
-            0.0
-        );
-    }
-
-    #[test]
-    fn foreign_abstraction_uses_region_overlap() {
-        let reduced_region = region(0, 1);
-        let mut residuals = TransitionResidualCosts::from_operator_costs(&[5.0]);
-        let transition_system = AbstractTransitionSystem {
-            transitions: vec![AbstractTransition {
-                transition_id: 0,
-                abstract_op_id: 7,
-                concrete_op_ids: vec![0],
-                source_hash: 3,
-                target_hash: 4,
-            }],
-            duplicate_transition_attempts: 0,
-            backward: vec![vec![], vec![], vec![], vec![], vec![0]],
-            forward: vec![vec![], vec![], vec![], vec![0], vec![]],
-            goal_facts: vec![],
-            goal_state_hashes: vec![],
-            initial_state_hash: 0,
-            hash_multipliers: vec![],
-            numeric_domain_sizes: vec![],
-            state_regions: vec![
-                state_region(9).into(),
-                state_region(9).into(),
-                state_region(9).into(),
-                reduced_region.source.clone(),
-                reduced_region.target.clone(),
-            ],
-        };
-        residuals
-            .reduce_by_tcf(
-                0,
-                &transition_system,
-                &AbstractTransitionCostFunction {
-                    transition_costs: vec![2.0],
-                },
-            )
-            .unwrap();
-
-        let disjoint = region(1, 0);
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(0, 9, 7, 4),
-                &disjoint.source,
-                &disjoint.target
-            ),
-            5.0
-        );
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(1, 9, 7, 4),
-                &disjoint.source,
-                &disjoint.target
-            ),
-            5.0
-        );
-        let overlapping = region(0, 1);
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(1, 9, 7, 4),
-                &overlapping.source,
-                &overlapping.target
-            ),
-            3.0
-        );
-    }
-
-    #[test]
-    fn same_abstraction_reductions_need_same_transition_identity() {
-        let first_region = region(0, 1);
-        let second_region = region(0, 1);
-        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
-        let transition_system = AbstractTransitionSystem {
-            transitions: vec![
-                AbstractTransition {
-                    transition_id: 0,
-                    abstract_op_id: 0,
-                    concrete_op_ids: vec![0],
-                    source_hash: 0,
-                    target_hash: 1,
-                },
-                AbstractTransition {
-                    transition_id: 1,
-                    abstract_op_id: 1,
-                    concrete_op_ids: vec![0],
-                    source_hash: 2,
-                    target_hash: 3,
-                },
-            ],
-            duplicate_transition_attempts: 0,
-            backward: vec![vec![], vec![0], vec![], vec![1]],
-            forward: vec![vec![0], vec![], vec![1], vec![]],
-            goal_facts: vec![],
-            goal_state_hashes: vec![],
-            initial_state_hash: 0,
-            hash_multipliers: vec![],
-            numeric_domain_sizes: vec![],
-            state_regions: vec![
-                first_region.source.clone(),
-                first_region.target.clone(),
-                second_region.source.clone(),
-                second_region.target.clone(),
-            ],
-        };
-        residuals
-            .reduce_by_tcf(
-                0,
-                &transition_system,
-                &AbstractTransitionCostFunction {
-                    transition_costs: vec![3.0, 4.0],
-                },
-            )
-            .unwrap();
-
-        let overlapping = region(0, 1);
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(1, 99, 99, 100),
-                &overlapping.source,
-                &overlapping.target
-            ),
-            6.0
-        );
-        assert_eq!(residuals.operator_costs_for_label_cp(), vec![6.0]);
-    }
-
-    #[test]
-    fn disjoint_transition_reductions_use_max_overlap_not_sum() {
-        let first_region = numeric_region(0.0, 4.0);
-        let second_region = numeric_region(6.0, 10.0);
-        let query = numeric_region(0.0, 10.0);
-        let mut residuals = TransitionResidualCosts::from_operator_costs(&[10.0]);
-        let transition_system = AbstractTransitionSystem {
-            transitions: vec![
-                AbstractTransition {
-                    transition_id: 0,
-                    abstract_op_id: 0,
-                    concrete_op_ids: vec![0],
-                    source_hash: 0,
-                    target_hash: 1,
-                },
-                AbstractTransition {
-                    transition_id: 1,
-                    abstract_op_id: 1,
-                    concrete_op_ids: vec![0],
-                    source_hash: 2,
-                    target_hash: 3,
-                },
-            ],
-            duplicate_transition_attempts: 0,
-            backward: vec![vec![], vec![0], vec![], vec![1]],
-            forward: vec![vec![0], vec![], vec![1], vec![]],
-            goal_facts: vec![],
-            goal_state_hashes: vec![],
-            initial_state_hash: 0,
-            hash_multipliers: vec![],
-            numeric_domain_sizes: vec![],
-            state_regions: vec![
-                first_region.source.clone(),
-                first_region.target.clone(),
-                second_region.source.clone(),
-                second_region.target.clone(),
-            ],
-        };
-        residuals
-            .reduce_by_tcf(
-                0,
-                &transition_system,
-                &AbstractTransitionCostFunction {
-                    transition_costs: vec![3.0, 4.0],
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            residuals.reduction_cost_for_transition(
-                transition(1, 99, 99, 100),
-                &query.source,
-                &query.target
-            ),
-            6.0
-        );
-        assert_eq!(residuals.operator_costs_for_label_cp(), vec![6.0]);
     }
 
     #[test]
