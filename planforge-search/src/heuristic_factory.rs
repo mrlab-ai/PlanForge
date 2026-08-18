@@ -6,6 +6,7 @@
 //! CLI help are generated from that declaration.
 
 use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use std::sync::OnceLock;
 use tracing::info;
 use crate::evaluation::domain_abstractions::cegar::CegarConfig;
 use crate::evaluation::abstraction_collections::canonical_heuristic::CanonicalAbstractionHeuristic;
@@ -43,27 +44,27 @@ mod tests;
 use crate::config::{ApplyOptions, ConfigArg, HeuristicSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequiredBackend {
+pub enum RequiredBackend {
     None,
     Cplex,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct TaskRequirements {
-    restricted: bool,
-    abstractable_goal: bool,
+pub struct TaskRequirements {
+    pub restricted: bool,
+    pub abstractable_goal: bool,
 }
 
 impl TaskRequirements {
-    const ANY: Self = Self {
+    pub const ANY: Self = Self {
         restricted: false,
         abstractable_goal: false,
     };
-    const ABSTRACTABLE_GOAL: Self = Self {
+    pub const ABSTRACTABLE_GOAL: Self = Self {
         restricted: false,
         abstractable_goal: true,
     };
-    const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
+    pub const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
         restricted: true,
         abstractable_goal: true,
     };
@@ -79,8 +80,54 @@ impl TaskRequirements {
     }
 }
 
-type RequirementsFn = fn(&HeuristicSpec) -> Result<TaskRequirements, String>;
-type NestedHeuristicsFn = fn(&HeuristicSpec) -> Result<Vec<HeuristicSpec>, String>;
+pub type RequirementsFn = fn(&HeuristicSpec) -> Result<TaskRequirements, String>;
+pub type NestedHeuristicsFn = fn(&HeuristicSpec) -> Result<Vec<HeuristicSpec>, String>;
+
+pub type ExternalHeuristicBuilder =
+    for<'a> fn(
+        &HeuristicSpec,
+        &'a dyn AbstractNumericTask,
+        TaskRef<'a>,
+    ) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError>;
+
+pub struct ExternalHeuristic {
+    pub name: &'static str,
+    pub backend: RequiredBackend,
+    pub requirements: RequirementsFn,
+    pub nested_heuristics: NestedHeuristicsFn,
+    pub build: ExternalHeuristicBuilder,
+}
+
+static EXTERNAL_HEURISTICS: OnceLock<Vec<ExternalHeuristic>> = OnceLock::new();
+
+/// Register heuristics that are not compiled into PlanForge. Call once, before
+/// any search is constructed. Returns an error if called twice or if a name
+/// collides with a built-in.
+pub fn register_external_heuristics(entries: Vec<ExternalHeuristic>) -> Result<(), String> {
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.name.is_empty() {
+            return Err("external heuristic names must not be empty".to_string());
+        }
+        if heuristic_plugin(entry.name).is_some() {
+            return Err(format!(
+                "external heuristic `{}` collides with a built-in heuristic",
+                entry.name
+            ));
+        }
+        if entries[..index]
+            .iter()
+            .any(|registered| registered.name == entry.name)
+        {
+            return Err(format!(
+                "external heuristic `{}` is registered more than once",
+                entry.name
+            ));
+        }
+    }
+    EXTERNAL_HEURISTICS
+        .set(entries)
+        .map_err(|_| "external heuristics have already been registered or used".to_string())
+}
 
 struct HeuristicPlugin {
     backend: RequiredBackend,

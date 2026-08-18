@@ -4,7 +4,10 @@
 //! The option language is parsed in this crate too, so these tests need nothing
 //! from `planforge-searcher` and the factory's internals stay private.
 
-use super::{abstraction_config, heuristic_names};
+use super::{
+    ExternalHeuristic, RequiredBackend, TaskRequirements, abstraction_config, heuristic_names,
+    register_external_heuristics,
+};
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
@@ -683,4 +686,28 @@ fn heuristic_registry_names_are_unique_and_complete() {
             "missing registry entry {required}"
         );
     }
+}
+
+fn test_external(name: &'static str) -> ExternalHeuristic {
+    ExternalHeuristic {
+        name,
+        backend: RequiredBackend::None,
+        requirements: |_| Ok(TaskRequirements::ANY),
+        nested_heuristics: |_| Ok(Vec::new()),
+        build: |_, _, _| Ok(None::<Box<dyn crate::evaluation::Heuristic>>),
+    }
+}
+
+#[test]
+fn external_registration_rejects_builtin_name_collision() {
+    let error = register_external_heuristics(vec![test_external("blind")]).unwrap_err();
+    assert!(error.contains("collides with a built-in"), "got `{error}`");
+}
+
+#[test]
+fn external_registration_rejects_duplicate_external_names() {
+    let error =
+        register_external_heuristics(vec![test_external("duplicate"), test_external("duplicate")])
+            .unwrap_err();
+    assert!(error.contains("registered more than once"), "got `{error}`");
 }
