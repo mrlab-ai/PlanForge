@@ -369,7 +369,7 @@ fn scp_online_initial_h_with_config(
     let abstractions = generator
         .generate_collection(&task)
         .expect("scp_online domain abstractions should build");
-    scp_online_initial_h_for_collection(&task, abstractions, collection_config)
+    scp_online_initial_h_for_collection(&task, abstractions)
 }
 
 /// Greedy order optimization is the third budget that is spent in full instead
@@ -384,7 +384,6 @@ const ORDER_OPTIMIZATION_MAX_TIME: f64 = 1.0;
 fn scp_online_initial_h_for_collection(
     task: &NumericRootTask,
     abstractions: Vec<DomainAbstraction>,
-    collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 ) -> f64 {
     let config = ScpOnlineConfig {
         max_time: 100.0,
@@ -392,8 +391,6 @@ fn scp_online_initial_h_for_collection(
         interval: 100_000_000_000,
         table_construction_max_time: 100.0,
         order_optimization_max_time: ORDER_OPTIMIZATION_MAX_TIME,
-        collection_config,
-        use_numeric_pdbs: false,
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
@@ -436,8 +433,6 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
         interval: 100_000_000_000,
         table_construction_max_time: 100.0,
         order_optimization_max_time: ORDER_OPTIMIZATION_MAX_TIME,
-        collection_config: standard_round7_collection_config(1),
-        use_numeric_pdbs: false,
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
@@ -558,7 +553,7 @@ fn sailing_simple_ratchet_equilibrium() {
         "expected at least one saved(p0) abstraction refining both boat x roots"
     );
 
-    let h = scp_online_initial_h_for_collection(&task, abstractions, config);
+    let h = scp_online_initial_h_for_collection(&task, abstractions);
     assert!(h >= 10.0, "prob_2b1p: initial h={h} should stay >= 10");
 }
 

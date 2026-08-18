@@ -1,7 +1,5 @@
 use super::*;
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-use crate::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
 };
@@ -1056,17 +1054,6 @@ mod handcrafted_sailing_tests {
             max_orders: usize::MAX,
             interval: usize::MAX,
             combine_labels: false,
-            collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-                debug: true,
-                ..Default::default()
-            },
-            use_numeric_pdbs: false,
-            max_pdb_states: 0,
-            max_pattern_size: 0,
-            only_interesting_patterns: true,
-            pdb_exploration_heuristic: PdbInternalHeuristic::Blind,
-            pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
-            pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristic,
             order_generator: OrderGenerator::Greedy,
             initial_order_generation_max_time: 0.0,

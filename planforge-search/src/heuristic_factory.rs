@@ -34,7 +34,6 @@ use crate::evaluation::pattern_databases::pattern_generator_systematic::{
 };
 use crate::evaluation::pattern_databases::pdb_collection::PdbCollection;
 use crate::evaluation::pattern_databases::validate_restricted_task;
-use crate::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use std::time::{Duration, Instant};
 
 mod abstraction_config;
@@ -170,7 +169,7 @@ fn scp_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, Strin
     if !sources.is_empty() {
         return component_task_requirements(spec);
     }
-    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
+    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::LegacyScpOnlineConfig::default();
     config.apply_options(&spec.args)?;
     Ok(TaskRequirements {
         restricted: config.use_numeric_pdbs,
@@ -530,7 +529,7 @@ fn build_scp_from_sources<'task>(
         .into());
     }
     validate_scp_combinator_options(options)?;
-    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
+    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpCollectionConfig::default();
     ApplyOptions::apply_options(&mut config, options)?;
     let component_use = if config.partitioning.uses_regions() {
         ComponentUse::RegionalCostPartitioning
@@ -986,7 +985,7 @@ heuristic_registry! {
             if use_cartesian {
                 validate_legacy_cartesian_collection_options(&spec.args)?;
             }
-            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpOnlineConfig::default();
+            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::LegacyScpOnlineConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let abstractions = if use_cartesian {
                 Vec::new()
@@ -1046,12 +1045,14 @@ heuristic_registry! {
                 components.push(AbstractionComponent::cartesian(None, abstraction));
             }
             components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
-            let h = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+            let collection_config = cfg.scp_collection_config();
+            let h = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task_and_debug(
                 None,
                 components,
-                cfg,
+                collection_config,
                 task,
                 sampling_task,
+                cfg.collection_config.debug,
             )
             .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
@@ -1064,6 +1065,42 @@ heuristic_registry! {
         requirements: abstractable_task,
         nested: no_nested_heuristics,
         build: {
+            let (component_sources, _) =
+                split_component_sources(spec.name.as_str(), &spec.args)?;
+            if !component_sources.is_empty() {
+                let source_config =
+                    abstraction_config::fill_scp_sources_options_and_deadline(&spec.args)?;
+                let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
+                ApplyOptions::apply_options(&mut cfg, &source_config.options)?;
+                let component_use = if cfg.partitioning.uses_regions() {
+                    ComponentUse::RegionalCostPartitioning
+                } else {
+                    ComponentUse::LabelCostPartitioning
+                };
+                let components = build_components(
+                    task,
+                    &source_config.sources,
+                    component_use,
+                    source_config.construction_deadline,
+                )?;
+                if let Some(remaining) =
+                    remaining_construction_time(source_config.construction_deadline)?
+                {
+                    let seconds = remaining.as_secs_f64();
+                    cfg.table_construction_max_time =
+                        cfg.table_construction_max_time.min(seconds);
+                    cfg.order_optimization_max_time = cfg.order_optimization_max_time.min(seconds);
+                }
+                let h = FillScpHeuristic::from_components(
+                    Some(spec.name.clone()),
+                    components,
+                    cfg,
+                    task,
+                )
+                .map_err(|e| format!("failed to construct `{}`: {e}", spec.name))?;
+                remaining_construction_time(source_config.construction_deadline)?;
+                return Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>));
+            }
             let use_cartesian = matches!(
                 spec.name.as_str(),
                 "fillscp_cartesian" | "fill_scp_cartesian"
@@ -1115,11 +1152,17 @@ heuristic_registry! {
         requirements: restricted_abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            let mut cfg = crate::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            let h = GreedyNumericPdbHeuristic::new(task, cfg)
-                .map_err(|e| format!("failed to build greedy numeric pdb heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            let source = crate::config::ConfigCall::new(
+                "pdb",
+                vec![crate::config::ConfigArg::new(
+                    Some("patterns".to_string()),
+                    crate::config::ConfigValue::Call(crate::config::ConfigCall::new(
+                        "greedy",
+                        spec.args.clone(),
+                    )),
+                )],
+            );
+            build_max_from_sources(task, &[source], "greedy_numeric_pdb")
         }
     }
 
@@ -1129,34 +1172,8 @@ heuristic_registry! {
         requirements: restricted_abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            let mut cfg = crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            let patterns = generate_systematic_patterns(
-                task,
-                SystematicPatternGeneratorConfig {
-                    max_pdb_states: cfg.max_pdb_states,
-                    max_pattern_size: cfg.max_pattern_size,
-                    only_interesting_patterns: cfg.only_interesting_patterns,
-                },
-            );
-            let components = PdbCollection::with_heuristic_config(
-                task,
-                patterns,
-                cfg.max_pdb_states,
-                cfg.pdb_heuristic_config(),
-            )
-            .map_err(|e| format!("failed to build canonical numeric PDBs: {e}"))?
-            .into_pdbs()
-            .into_iter()
-            .map(AbstractionComponent::pattern_database)
-            .collect();
-            let h = CanonicalAbstractionHeuristic::new(
-                Some("canonical_numeric_pdb".to_string()),
-                task,
-                components,
-            )
-            .map_err(|e| format!("failed to build canonical numeric PDB heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            let source = crate::config::ConfigCall::new("pdb", spec.args.clone());
+            build_canonical_from_sources(task, &[source], "canonical_numeric_pdb", None)
         }
     }
 
@@ -1166,30 +1183,8 @@ heuristic_registry! {
         requirements: restricted_abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            let mut cfg = crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            let patterns = generate_systematic_patterns(
-                task,
-                SystematicPatternGeneratorConfig {
-                    max_pdb_states: cfg.max_pdb_states,
-                    max_pattern_size: cfg.max_pattern_size,
-                    only_interesting_patterns: cfg.only_interesting_patterns,
-                },
-            );
-            let components = PdbCollection::with_heuristic_config(
-                task,
-                patterns,
-                cfg.max_pdb_states,
-                cfg.pdb_heuristic_config(),
-            )
-            .map_err(|e| format!("failed to build max numeric PDBs: {e}"))?
-            .into_pdbs()
-            .into_iter()
-            .map(AbstractionComponent::pattern_database)
-            .collect();
-            let h = MaxAbstractionHeuristic::new(Some("max_numeric_pdb".to_string()), components)
-                .map_err(|e| format!("failed to build max numeric PDB heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            let source = crate::config::ConfigCall::new("pdb", spec.args.clone());
+            build_max_from_sources(task, &[source], "max_numeric_pdb")
         }
     }
 

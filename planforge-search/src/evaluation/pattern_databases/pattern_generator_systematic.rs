@@ -14,7 +14,16 @@ use crate::causal_graph::{CausalGraph, CausalGraphVariable, RestrictedCausalGrap
 pub const DEFAULT_SYSTEMATIC_MAX_PDB_STATES: usize = 50_000;
 pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    PartialEq,
+    Eq,
+    planforge_search::config::ApplyOptions,
+)]
 pub struct SystematicPatternGeneratorConfig {
     pub max_pdb_states: usize,
     pub max_pattern_size: usize,

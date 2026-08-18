@@ -73,16 +73,21 @@ Hierarchical abstraction sources make collection generation and combination
 independent. For example:
 
     planforge --restrict-task --search \
-      'astar(canonical(cartesian_collection(max_states=1000,max_collection_size=100000),construction_max_time=900))' \
+      'astar(canonical([cartesian_collection(max_states=1000,max_collection_size=100000)],construction_max_time=900))' \
       domain.pddl problem.pddl
 
     planforge --restrict-task --search \
-      'astar(scp(domain(max_abstraction_size=1000,max_collection_size=100000),online=false,partitioning=region,construction_max_time=900))' \
+      'astar(scp([domain(max_abstraction_size=1000,max_collection_size=100000)],online=false,partitioning=region,construction_max_time=900))' \
       domain.pddl problem.pddl
 
     planforge --restrict-task --search \
-      'astar(canonical(icaps26_cartesian(pick=min_unwanted,max_time=900)))' \
+      'astar(canonical([icaps26_cartesian(pick=min_unwanted,max_time=900)]))' \
       domain.pddl problem.pddl
+
+The `[...]` source-list form is canonical for `max`, `canonical`, `scp`, and
+`fillscp`; the older flat positional source form remains accepted. PDB sources
+select their generator explicitly with `patterns=systematic(...)` or
+`patterns=greedy(...)`.
 
 `icaps26_cartesian` accepts `pick=random|min_unwanted|max_unwanted` and requires
 `--restrict-task`. It reproduces the artifact semantics on integer restricted

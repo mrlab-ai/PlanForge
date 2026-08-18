@@ -19,6 +19,11 @@ use crate::evaluation::domain_abstractions::domain_abstraction_collection_genera
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
 use crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use crate::evaluation::pattern_databases::pattern_collection::PatternCollection;
+use crate::evaluation::pattern_databases::pattern_database::PdbHeuristicConfig;
+use crate::evaluation::pattern_databases::pattern_generator_greedy::{
+    GreedyPatternGeneratorConfig, generate_greedy_pattern,
+};
 use crate::evaluation::pattern_databases::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
@@ -74,6 +79,128 @@ pub(crate) enum ComponentUse {
     Standalone,
     LabelCostPartitioning,
     RegionalCostPartitioning,
+}
+
+#[derive(Debug)]
+enum PdbPatternsConfig {
+    Systematic(SystematicPatternGeneratorConfig),
+    Greedy(GreedyPatternGeneratorConfig),
+    // Phase 4 adds the third closed strategy, CEGAR, here.
+}
+
+#[derive(Debug)]
+struct PdbSourceConfig {
+    patterns: PdbPatternsConfig,
+    systematic_heuristic: PdbHeuristicConfig,
+}
+
+impl PdbSourceConfig {
+    fn from_args(args: &[ConfigArg]) -> Result<Self, String> {
+        let Some(patterns_arg) = args.iter().find(|arg| arg.key() == Some("patterns")) else {
+            let mut legacy = CanonicalNumericPdbConfig::default();
+            legacy.apply_options(args)?;
+            return Ok(Self {
+                patterns: PdbPatternsConfig::Systematic(SystematicPatternGeneratorConfig {
+                    max_pdb_states: legacy.max_pdb_states,
+                    max_pattern_size: legacy.max_pattern_size,
+                    only_interesting_patterns: legacy.only_interesting_patterns,
+                }),
+                systematic_heuristic: legacy.pdb_heuristic_config(),
+            });
+        };
+
+        if args
+            .iter()
+            .filter(|arg| arg.key() == Some("patterns"))
+            .count()
+            > 1
+        {
+            return Err("duplicate option `patterns` for `pdb` source".to_string());
+        }
+        let patterns = Self::parse_patterns(patterns_arg.value())?;
+        let mut systematic_heuristic = PdbHeuristicConfig::default();
+        let mut seen = HashSet::new();
+        for arg in args {
+            let key = arg
+                .key()
+                .ok_or_else(|| "options for `pdb(patterns=...)` must be named".to_string())?;
+            if !seen.insert(key) {
+                return Err(format!("duplicate option `{key}` for `pdb` source"));
+            }
+            match key {
+                "patterns" => {}
+                "exploration_heuristic" => {
+                    systematic_heuristic.exploration_heuristic =
+                        FromOptionValue::from_option_value(arg.value())?;
+                }
+                "frontier_heuristic" => {
+                    systematic_heuristic.frontier_heuristic =
+                        FromOptionValue::from_option_value(arg.value())?;
+                }
+                "failed_lookup_heuristic" => {
+                    systematic_heuristic.failed_lookup_heuristic =
+                        FromOptionValue::from_option_value(arg.value())?;
+                }
+                other => {
+                    return Err(format!(
+                        "unknown option `{other}` for `pdb` source with `patterns=...`; put pattern-generator options inside `patterns=systematic(...)` or `patterns=greedy(...)`"
+                    ));
+                }
+            }
+        }
+        Ok(Self {
+            patterns,
+            systematic_heuristic,
+        })
+    }
+
+    fn parse_patterns(value: &ConfigValue) -> Result<PdbPatternsConfig, String> {
+        let (name, args) = match value {
+            ConfigValue::Atom(name) => (name.as_str(), &[][..]),
+            ConfigValue::Call(call) => (call.name(), call.args()),
+            ConfigValue::List(_) => {
+                return Err("expected PDB pattern strategy, got a list".to_string());
+            }
+        };
+        match name {
+            "systematic" => {
+                let mut config = SystematicPatternGeneratorConfig::default();
+                config.apply_options(args)?;
+                Ok(PdbPatternsConfig::Systematic(config))
+            }
+            "greedy" => {
+                let mut config = GreedyPatternGeneratorConfig::default();
+                config.apply_options(args)?;
+                Ok(PdbPatternsConfig::Greedy(config))
+            }
+            other => Err(format!(
+                "unknown PDB pattern strategy `{other}`; expected `systematic(...)` or `greedy(...)`"
+            )),
+        }
+    }
+
+    fn build_patterns(
+        self,
+        task: &dyn AbstractNumericTask,
+    ) -> (PatternCollection, usize, PdbHeuristicConfig) {
+        match self.patterns {
+            PdbPatternsConfig::Systematic(config) => (
+                generate_systematic_patterns(task, config),
+                config.max_pdb_states,
+                self.systematic_heuristic,
+            ),
+            PdbPatternsConfig::Greedy(config) => {
+                let max_pdb_states = config.max_pdb_states;
+                let heuristic = config.pdb_heuristic_config();
+                let pattern = generate_greedy_pattern(task, config);
+                (
+                    PatternCollection::new(vec![pattern]),
+                    max_pdb_states,
+                    heuristic,
+                )
+            }
+        }
+    }
 }
 
 impl ComponentUse {
@@ -211,6 +338,7 @@ pub(crate) fn canonical_sources_and_deadline(
     Ok((sources, deadline))
 }
 
+#[derive(Debug)]
 pub(crate) struct ScpSourceConfig {
     pub sources: Vec<ConfigCall>,
     pub options: Vec<ConfigArg>,
@@ -223,6 +351,46 @@ pub(crate) fn scp_sources_options_and_deadline(
     let (sources, options) = split_component_sources("scp", args)?;
     let (options, construction_deadline) = take_construction_deadline(options)?;
     validate_scp_combinator_options(&options)?;
+    Ok(ScpSourceConfig {
+        sources,
+        options,
+        construction_deadline,
+    })
+}
+
+pub(crate) fn fill_scp_sources_options_and_deadline(
+    args: &[ConfigArg],
+) -> Result<ScpSourceConfig, String> {
+    const ALLOWED: &[&str] = &[
+        "table_construction_max_time",
+        "combine_labels",
+        "scoring_function",
+        "orders",
+        "order_optimization_max_time",
+        "saturator",
+        "random_seed",
+        "partitioning",
+        "lmcut",
+    ];
+
+    let (sources, options) = split_component_sources("fillscp", args)?;
+    let (options, construction_deadline) = take_construction_deadline(options)?;
+    let mut seen = HashSet::new();
+    for arg in &options {
+        let key = arg.key().ok_or_else(|| {
+            "options in hierarchical `fillscp(...)` must be named; abstraction sources are the only positional arguments"
+                .to_string()
+        })?;
+        if !ALLOWED.contains(&key) {
+            return Err(format!(
+                "unknown `fillscp` combinator option `{key}`; abstraction-generation options belong inside one of: {}",
+                component_source_help(),
+            ));
+        }
+        if !seen.insert(key) {
+            return Err(format!("duplicate option `{key}` for `fillscp`"));
+        }
+    }
     Ok(ScpSourceConfig {
         sources,
         options,
@@ -398,22 +566,14 @@ pub(crate) fn build_components<'task>(
             }
             "pdb" | "numeric_pdb" => {
                 validate_restricted_task(task)?;
-                let mut config = CanonicalNumericPdbConfig::default();
-                config.apply_options(source.args())?;
+                let config = PdbSourceConfig::from_args(source.args())?;
                 info!("Building numeric PDB source {source_index}...");
-                let patterns = generate_systematic_patterns(
-                    task,
-                    SystematicPatternGeneratorConfig {
-                        max_pdb_states: config.max_pdb_states,
-                        max_pattern_size: config.max_pattern_size,
-                        only_interesting_patterns: config.only_interesting_patterns,
-                    },
-                );
+                let (patterns, max_pdb_states, heuristic_config) = config.build_patterns(task);
                 let pdbs = PdbCollection::with_heuristic_config(
                     task,
                     patterns,
-                    config.max_pdb_states,
-                    config.pdb_heuristic_config(),
+                    max_pdb_states,
+                    heuristic_config,
                 )
                 .map_err(|error| {
                     format!("failed to build numeric PDB source {source_index}: {error}")
@@ -778,8 +938,8 @@ mod tests {
     use super::HeuristicBuildError;
 
     use super::{
-        ComponentUse, apply_cartesian_options, remaining_construction_time,
-        require_only_component_sources, split_component_sources,
+        ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
+        remaining_construction_time, require_only_component_sources, split_component_sources,
     };
     use crate::evaluation::cartesian_abstractions::{
         CartesianAbstractPlanSelection, CartesianFlawCandidateGeneration, CartesianSplitSelection,
@@ -868,6 +1028,43 @@ mod tests {
             );
             assert!(options.is_empty());
         }
+    }
+
+    #[test]
+    fn pdb_source_patterns_are_a_closed_strategy_enum() {
+        let systematic = crate::config::parse_heuristic_spec(
+            "pdb(patterns=systematic(max_pdb_states=321,max_pattern_size=3),frontier_heuristic=lmcut)",
+        )
+        .unwrap();
+        let config = PdbSourceConfig::from_args(&systematic.args).unwrap();
+        let PdbPatternsConfig::Systematic(patterns) = config.patterns else {
+            panic!("expected systematic patterns");
+        };
+        assert_eq!(patterns.max_pdb_states, 321);
+        assert_eq!(patterns.max_pattern_size, 3);
+        assert_eq!(
+            config.systematic_heuristic.frontier_heuristic,
+            crate::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic::Lmcut
+        );
+
+        let greedy = crate::config::parse_heuristic_spec(
+            "pdb(patterns=greedy(max_pdb_states=654,numeric_first=false,random_seed=7))",
+        )
+        .unwrap();
+        let config = PdbSourceConfig::from_args(&greedy.args).unwrap();
+        let PdbPatternsConfig::Greedy(patterns) = config.patterns else {
+            panic!("expected greedy patterns");
+        };
+        assert_eq!(patterns.max_pdb_states, 654);
+        assert!(!patterns.numeric_first);
+        assert_eq!(patterns.random_seed, 7);
+
+        let cegar = crate::config::parse_heuristic_spec("pdb(patterns=cegar())").unwrap();
+        let error = PdbSourceConfig::from_args(&cegar.args).unwrap_err();
+        assert_eq!(
+            error,
+            "unknown PDB pattern strategy `cegar`; expected `systematic(...)` or `greedy(...)`"
+        );
     }
 
     #[test]

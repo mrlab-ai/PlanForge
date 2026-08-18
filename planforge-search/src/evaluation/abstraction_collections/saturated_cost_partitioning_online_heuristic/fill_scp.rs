@@ -24,18 +24,51 @@ impl<'task> FillScpHeuristic<'task> {
         name: Option<String>,
         abstractions: Vec<DomainAbstraction>,
         cartesian_abstractions: Vec<CartesianAbstraction>,
+        config: FillScpConfig,
+        task: &'task dyn AbstractNumericTask,
+    ) -> Result<Self, EvaluationError> {
+        let mut components = Vec::with_capacity(abstractions.len() + cartesian_abstractions.len());
+        components.extend(
+            abstractions
+                .into_iter()
+                .enumerate()
+                .map(|(index, abstraction)| {
+                    AbstractionComponent::domain(Some(format!("fillSCP_{index}")), abstraction)
+                }),
+        );
+        components.extend(cartesian_abstractions.into_iter().enumerate().map(
+            |(index, abstraction)| {
+                AbstractionComponent::cartesian(
+                    Some(format!("fillSCP_cartesian_{index}")),
+                    abstraction,
+                )
+            },
+        ));
+        Self::from_components(name, components, config, task)
+    }
+
+    pub fn from_components(
+        name: Option<String>,
+        components: Vec<AbstractionComponent<'task>>,
         mut config: FillScpConfig,
         task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
+        if let Some(component_id) = components
+            .iter()
+            .position(|component| matches!(component, AbstractionComponent::PatternDatabase(_)))
+        {
+            return Err(EvaluationError::InvalidState(format!(
+                "fillSCP does not support PDB component {component_id}"
+            )));
+        }
         config.force_full_goal_tasks();
-        let scp_config = config.as_scp_online_config();
-        let temp = SaturatedCostPartitioningOnlineHeuristic::new_with_cartesian(
+        let scp_config = config.as_scp_collection_config();
+        let temp = SaturatedCostPartitioningOnlineHeuristic::from_components_with_debug(
             Some("fillSCP_scp_builder".to_string()),
-            abstractions.clone(),
-            cartesian_abstractions.clone(),
-            Vec::new(),
+            components,
             scp_config,
             task,
+            config.collection_config.debug,
         )?;
         let components = temp.components.borrow();
         let abstract_state_ids = components
@@ -122,25 +155,23 @@ impl<'task> FillScpHeuristic<'task> {
                 residual_partitions,
             )
             .map_err(EvaluationError::ComputationFailed)?;
-        let abstraction_heuristics = abstractions
-            .into_iter()
-            .enumerate()
-            .map(|(index, mut abstraction)| {
-                abstraction.discard_transition_data();
-                DomainAbstractionHeuristic::new(Some(format!("fillSCP_{index}")), abstraction)
-            })
-            .collect();
-        let cartesian_heuristics = cartesian_abstractions
-            .into_iter()
-            .enumerate()
-            .map(|(index, mut abstraction)| {
-                abstraction.discard_transition_data();
-                CartesianAbstractionHeuristic::new(
-                    Some(format!("fillSCP_cartesian_{index}")),
-                    abstraction,
-                )
-            })
-            .collect();
+        drop(components);
+        let mut abstraction_heuristics = Vec::new();
+        let mut cartesian_heuristics = Vec::new();
+        for mut component in temp.components.into_inner() {
+            component.discard_transition_data();
+            match component {
+                AbstractionComponent::Domain(heuristic) => {
+                    abstraction_heuristics.push(*heuristic);
+                }
+                AbstractionComponent::Cartesian(heuristic) => {
+                    cartesian_heuristics.push(*heuristic);
+                }
+                AbstractionComponent::PatternDatabase(_) => {
+                    unreachable!("PDB components are rejected before fillSCP construction")
+                }
+            }
+        }
 
         Ok(Self {
             name: name.unwrap_or_else(|| "fillSCP".to_string()),

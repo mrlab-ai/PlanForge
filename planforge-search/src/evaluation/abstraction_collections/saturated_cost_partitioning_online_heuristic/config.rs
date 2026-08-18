@@ -145,7 +145,7 @@ impl crate::config::FromOptionValue for CostPartitioningMethod {
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
-pub struct ScpOnlineConfig {
+pub struct ScpCollectionConfig {
     /// Whether to rebuild cost partitions during search. When false, all cost
     /// partitions are built before search and construction-only abstraction
     /// data is released immediately afterwards.
@@ -162,9 +162,37 @@ pub struct ScpOnlineConfig {
     /// Maximum number of diversified cost partitions retained offline.
     pub max_orders: usize,
     pub interval: usize,
-    /// Mirrored into `collection_config.combine_labels` so `combine_labels=true`
-    /// sets both. To set them independently, use the nested `collection=…`
-    /// form: `scp_online(combine_labels=true, collection=…(combine_labels=false))`.
+    pub combine_labels: bool,
+    pub scoring_function: ScoringFunction,
+    #[option(rename = "orders")]
+    pub order_generator: OrderGenerator,
+    /// Time reserved for the bounded initial order portfolio when offline
+    /// diversification is enabled. This is independent of hill climbing.
+    pub initial_order_generation_max_time: f64,
+    pub order_optimization_max_time: f64,
+    pub saturator: Saturator,
+    /// Additional traversals over the same abstraction order using the
+    /// remaining regional transition costs.
+    pub residual_sweeps: usize,
+    pub random_seed: Option<u64>,
+    pub partitioning: CostPartitioningMethod,
+}
+
+/// Parser-only compatibility surface for the flat `scp_online*` registry
+/// names. New hierarchical configurations use [`ScpCollectionConfig`] plus
+/// explicit abstraction sources.
+#[derive(
+    Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
+)]
+pub(crate) struct LegacyScpOnlineConfig {
+    pub online: bool,
+    pub max_time: f64,
+    pub table_construction_max_time: f64,
+    pub max_size: usize,
+    pub diversify: bool,
+    pub samples: usize,
+    pub max_orders: usize,
+    pub interval: usize,
     #[option(also_sets = "collection_config.combine_labels")]
     pub combine_labels: bool,
     /// Catch-all: flat collection keys (`scp_online(max_collection_size=…)`)
@@ -262,8 +290,8 @@ impl FillScpConfig {
         }
     }
 
-    pub(super) fn as_scp_online_config(&self) -> ScpOnlineConfig {
-        ScpOnlineConfig {
+    pub(super) fn as_scp_collection_config(&self) -> ScpCollectionConfig {
+        ScpCollectionConfig {
             online: false,
             max_time: 0.0,
             table_construction_max_time: self.table_construction_max_time,
@@ -273,14 +301,6 @@ impl FillScpConfig {
             max_orders: usize::MAX,
             interval: usize::MAX,
             combine_labels: self.combine_labels,
-            collection_config: self.collection_config.clone(),
-            use_numeric_pdbs: false,
-            max_pdb_states: 0,
-            max_pattern_size: 0,
-            only_interesting_patterns: true,
-            pdb_exploration_heuristic: PdbInternalHeuristic::Blind,
-            pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
-            pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: self.scoring_function,
             order_generator: self.order_generator,
             initial_order_generation_max_time: 10.0,
@@ -293,13 +313,10 @@ impl FillScpConfig {
     }
 }
 
-impl Default for ScpOnlineConfig {
+impl Default for ScpCollectionConfig {
     fn default() -> Self {
-        let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            combine_labels: false,
-            ..Default::default()
-        };
-        let random_seed = collection_config.random_seed;
+        let random_seed =
+            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default().random_seed;
         Self {
             online: true,
             max_time: 200.0,
@@ -315,14 +332,6 @@ impl Default for ScpOnlineConfig {
             // re-orderings are worth the rebuild time (rarely, in practice).
             interval: usize::MAX,
             combine_labels: false,
-            collection_config,
-            use_numeric_pdbs: false,
-            max_pdb_states: 50_000,
-            max_pattern_size: 2,
-            only_interesting_patterns: true,
-            pdb_exploration_heuristic: PdbInternalHeuristic::Blind,
-            pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
-            pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
             scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
             order_generator: OrderGenerator::Greedy,
             initial_order_generation_max_time: 10.0,
@@ -338,7 +347,7 @@ impl Default for ScpOnlineConfig {
     }
 }
 
-impl ScpOnlineConfig {
+impl ScpCollectionConfig {
     /// Bound every phase of SCP construction by the caller's remaining time.
     pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
         self.table_construction_max_time = self.table_construction_max_time.min(max_seconds);
@@ -346,8 +355,69 @@ impl ScpOnlineConfig {
             self.initial_order_generation_max_time.min(max_seconds);
         self.order_optimization_max_time = self.order_optimization_max_time.min(max_seconds);
     }
+}
 
-    pub fn pdb_heuristic_config(&self) -> PdbHeuristicConfig {
+impl Default for LegacyScpOnlineConfig {
+    fn default() -> Self {
+        let collection = ScpCollectionConfig::default();
+        let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+            combine_labels: collection.combine_labels,
+            ..Default::default()
+        };
+        Self {
+            online: collection.online,
+            max_time: collection.max_time,
+            table_construction_max_time: collection.table_construction_max_time,
+            max_size: collection.max_size,
+            diversify: collection.diversify,
+            samples: collection.samples,
+            max_orders: collection.max_orders,
+            interval: collection.interval,
+            combine_labels: collection.combine_labels,
+            collection_config,
+            use_numeric_pdbs: false,
+            max_pdb_states: 50_000,
+            max_pattern_size: 2,
+            only_interesting_patterns: true,
+            pdb_exploration_heuristic: PdbInternalHeuristic::Blind,
+            pdb_frontier_heuristic: PdbInternalHeuristic::Zero,
+            pdb_failed_lookup_heuristic: PdbInternalHeuristic::Zero,
+            scoring_function: collection.scoring_function,
+            order_generator: collection.order_generator,
+            initial_order_generation_max_time: collection.initial_order_generation_max_time,
+            order_optimization_max_time: collection.order_optimization_max_time,
+            saturator: collection.saturator,
+            residual_sweeps: collection.residual_sweeps,
+            random_seed: collection.random_seed,
+            partitioning: collection.partitioning,
+        }
+    }
+}
+
+impl LegacyScpOnlineConfig {
+    pub(crate) fn scp_collection_config(&self) -> ScpCollectionConfig {
+        ScpCollectionConfig {
+            online: self.online,
+            max_time: self.max_time,
+            table_construction_max_time: self.table_construction_max_time,
+            max_size: self.max_size,
+            diversify: self.diversify,
+            samples: self.samples,
+            max_orders: self.max_orders,
+            interval: self.interval,
+            combine_labels: self.combine_labels,
+            scoring_function: self.scoring_function,
+            order_generator: self.order_generator,
+            initial_order_generation_max_time: self.initial_order_generation_max_time,
+            order_optimization_max_time: self.order_optimization_max_time,
+            saturator: self.saturator,
+            residual_sweeps: self.residual_sweeps,
+            random_seed: self.random_seed,
+            partitioning: self.partitioning,
+        }
+    }
+
+    pub(crate) fn pdb_heuristic_config(&self) -> PdbHeuristicConfig {
         PdbHeuristicConfig {
             exploration_heuristic: self.pdb_exploration_heuristic,
             frontier_heuristic: self.pdb_frontier_heuristic,

@@ -38,10 +38,13 @@ use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
 mod config;
 mod diagnostics;
 mod fill_scp;
+pub(crate) use config::LegacyScpOnlineConfig;
 pub use config::{
     CostPartitioningMethod, FillScpConfig, OrderGenerator, Saturator, ScoringFunction,
-    ScpOnlineConfig,
+    ScpCollectionConfig,
 };
+/// Backward-compatible library name for the runtime collection configuration.
+pub type ScpOnlineConfig = ScpCollectionConfig;
 use diagnostics::*;
 pub use fill_scp::FillScpHeuristic;
 
@@ -404,7 +407,8 @@ pub struct SaturatedCostPartitioningOnlineHeuristic<'task> {
     name: String,
     task: &'task dyn AbstractNumericTask,
     components: RefCell<Vec<AbstractionComponent<'task>>>,
-    config: ScpOnlineConfig,
+    config: ScpCollectionConfig,
+    debug_diagnostics: bool,
     original_operator_costs: Vec<f64>,
     state: RefCell<ScpOnlineState>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
@@ -417,7 +421,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         name: Option<String>,
         abstractions: Vec<DomainAbstraction>,
         pdbs: Vec<PatternDatabase<'task>>,
-        config: ScpOnlineConfig,
+        config: ScpCollectionConfig,
         task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
         Self::new_with_cartesian(name, abstractions, Vec::new(), pdbs, config, task)
@@ -428,7 +432,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstractions: Vec<DomainAbstraction>,
         cartesian_abstractions: Vec<CartesianAbstraction>,
         pdbs: Vec<PatternDatabase<'task>>,
-        config: ScpOnlineConfig,
+        config: ScpCollectionConfig,
         task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
         Self::new_with_cartesian_and_sampling_task(
@@ -447,7 +451,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstractions: Vec<DomainAbstraction>,
         cartesian_abstractions: Vec<CartesianAbstraction>,
         pdbs: Vec<PatternDatabase<'task>>,
-        config: ScpOnlineConfig,
+        config: ScpCollectionConfig,
         task: &'task dyn AbstractNumericTask,
         sampling_task: Option<TaskRef<'task>>,
     ) -> Result<Self, EvaluationError> {
@@ -470,15 +474,23 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             },
         ));
         components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
-        Self::new_from_components_and_sampling_task(name, components, config, task, sampling_task)
+        Self::new_from_components_and_sampling_task(
+            name,
+            components,
+            config,
+            task,
+            sampling_task,
+            false,
+        )
     }
 
     fn new_from_components_and_sampling_task(
         name: Option<String>,
         components: Vec<AbstractionComponent<'task>>,
-        config: ScpOnlineConfig,
+        config: ScpCollectionConfig,
         task: &'task dyn AbstractNumericTask,
         sampling_task: Option<TaskRef<'task>>,
+        debug_diagnostics: bool,
     ) -> Result<Self, EvaluationError> {
         if components.is_empty() {
             return Err(EvaluationError::ComputationFailed(
@@ -586,7 +598,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                                 "failed to compute saturated costs for order generator: {error:#}"
                             ))
                         })?;
-                    if config.collection_config.debug {
+                    if debug_diagnostics {
                         info!(
                             "scp_online debug: collection abstraction {component_id}: states={}, goal_facts={}",
                             abstraction_state_count(abstraction),
@@ -630,7 +642,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     (distances, saturated, 0)
                 }
             };
-            if config.collection_config.debug {
+            if debug_diagnostics {
                 let initial_h = distances.get(initial_state_id).copied().ok_or_else(|| {
                     EvaluationError::InvalidState(format!(
                         "{} component {component_id} initial state {initial_state_id} out of bounds for {} states",
@@ -649,7 +661,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             saturated_costs_by_abstraction.push(saturated);
         }
 
-        if config.collection_config.debug {
+        if debug_diagnostics {
             let max_initial_h = debug_initial_h_values
                 .iter()
                 .copied()
@@ -688,6 +700,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             task,
             components: RefCell::new(components),
             config,
+            debug_diagnostics,
             original_operator_costs: original_costs,
             state: RefCell::new(st),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
@@ -699,16 +712,33 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     pub fn from_components(
         name: Option<String>,
         components: Vec<AbstractionComponent<'task>>,
-        config: ScpOnlineConfig,
+        config: ScpCollectionConfig,
         task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
-        Self::new_from_components_and_sampling_task(name, components, config, task, None)
+        Self::new_from_components_and_sampling_task(name, components, config, task, None, false)
+    }
+
+    pub(crate) fn from_components_with_debug(
+        name: Option<String>,
+        components: Vec<AbstractionComponent<'task>>,
+        config: ScpCollectionConfig,
+        task: &'task dyn AbstractNumericTask,
+        debug_diagnostics: bool,
+    ) -> Result<Self, EvaluationError> {
+        Self::new_from_components_and_sampling_task(
+            name,
+            components,
+            config,
+            task,
+            None,
+            debug_diagnostics,
+        )
     }
 
     pub fn from_components_with_sampling_task(
         name: Option<String>,
         components: Vec<AbstractionComponent<'task>>,
-        config: ScpOnlineConfig,
+        config: ScpCollectionConfig,
         task: &'task dyn AbstractNumericTask,
         sampling_task: TaskRef<'task>,
     ) -> Result<Self, EvaluationError> {
@@ -718,6 +748,25 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             config,
             task,
             Some(sampling_task),
+            false,
+        )
+    }
+
+    pub(crate) fn from_components_with_sampling_task_and_debug(
+        name: Option<String>,
+        components: Vec<AbstractionComponent<'task>>,
+        config: ScpCollectionConfig,
+        task: &'task dyn AbstractNumericTask,
+        sampling_task: TaskRef<'task>,
+        debug_diagnostics: bool,
+    ) -> Result<Self, EvaluationError> {
+        Self::new_from_components_and_sampling_task(
+            name,
+            components,
+            config,
+            task,
+            Some(sampling_task),
+            debug_diagnostics,
         )
     }
 
@@ -1606,7 +1655,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             self.config.saturator,
             state.start_time.elapsed().as_secs_f64(),
         );
-        if self.config.collection_config.debug {
+        if self.debug_diagnostics {
             log_abstraction_candidate_report(
                 mode,
                 state,
@@ -2036,7 +2085,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     && partitions[best_index].is_empty()
                     && !partitions[candidate_index].is_empty())
             {
-                if self.config.collection_config.debug {
+                if self.debug_diagnostics {
                     info!("scp_online: label candidate order improved h {best_h} -> {candidate_h}");
                 }
                 best_h = candidate_h;
@@ -2125,7 +2174,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     && partitions[best_index].is_empty()
                     && !partitions[candidate_index].is_empty())
             {
-                if self.config.collection_config.debug {
+                if self.debug_diagnostics {
                     info!("scp_online: candidate order improved h {best_h} -> {candidate_h}");
                 }
                 best_h = candidate_h;
@@ -2245,7 +2294,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
     ) -> Result<(), EvaluationError> {
         let abstract_state_ids = collection.abstract_state_ids;
         let mut incumbent_h = incumbent_cp.compute_heuristic(abstract_state_ids);
-        if self.config.collection_config.debug {
+        if self.debug_diagnostics {
             info!("scp_online: order optimization incumbent_h={incumbent_h}");
         }
 
@@ -2287,7 +2336,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     };
                     let neighbor_h = neighbor_cp.compute_heuristic(abstract_state_ids);
                     if neighbor_h > incumbent_h {
-                        if self.config.collection_config.debug {
+                        if self.debug_diagnostics {
                             info!(
                                 "scp_online: order optimization swapped positions {i}/{j}, h {incumbent_h} -> {neighbor_h}"
                             );
@@ -2412,7 +2461,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
         remaining_costs: &TransitionResidualCosts,
     ) -> Result<(), EvaluationError> {
-        if !self.config.collection_config.debug || !enabled!(Level::INFO) {
+        if !self.debug_diagnostics || !enabled!(Level::INFO) {
             return Ok(());
         }
         let label_remaining_costs = remaining_costs.operator_costs_for_label_cp();
