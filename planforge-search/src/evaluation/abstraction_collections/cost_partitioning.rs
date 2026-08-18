@@ -559,6 +559,15 @@ impl TransitionResidualCosts {
 
             for operator_region in &operator_regions[abstract_op_id].labels {
                 let concrete_op_id = operator_region.concrete_op_id;
+                let residual = self
+                    .operator_residuals
+                    .get(concrete_op_id)
+                    .with_context(|| {
+                        format!(
+                            "abstract-operator region reduction references missing concrete operator {concrete_op_id}: operator residual count is {}",
+                            self.operator_residuals.len()
+                        )
+                    })?;
                 let current_residual = self.cost_for_operator_region(
                     producing_abstraction_id,
                     abstract_op_id,
@@ -572,9 +581,6 @@ impl TransitionResidualCosts {
                     saturated <= current_residual + float_tolerance::SEARCH_EPSILON,
                     "abstract-operator region reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
                 );
-                let Some(residual) = self.operator_residuals.get(concrete_op_id) else {
-                    continue;
-                };
                 if residual.base_cost <= float_tolerance::SEARCH_EPSILON {
                     continue;
                 }

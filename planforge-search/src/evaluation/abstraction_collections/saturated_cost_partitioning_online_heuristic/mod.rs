@@ -3674,6 +3674,11 @@ fn reduce_costs(
                 "saturated cost for operator {op_id} must be finite"
             )));
         }
+        if *s < -1e-9 {
+            return Err(EvaluationError::ComputationFailed(format!(
+                "negative saturated cost for operator {op_id}: {s}"
+            )));
+        }
         if *s <= 1e-9 {
             continue;
         }
