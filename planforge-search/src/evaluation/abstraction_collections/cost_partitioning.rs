@@ -433,14 +433,22 @@ impl TransitionResidualCosts {
     }
 
     pub fn base_cost(&self, concrete_op_id: usize) -> f64 {
-        let missing_operator = format!(
-            "missing concrete operator {concrete_op_id}: operator residual count is {}",
-            self.operator_residuals.len()
-        );
+        self.residual(concrete_op_id).base_cost
+    }
+
+    /// Panics on an unknown operator id: costs are indexed by concrete operator
+    /// and every caller derives the id from the task the residuals were built
+    /// from, so a miss is a broken invariant rather than missing input.
+    #[inline]
+    fn residual(&self, concrete_op_id: usize) -> &OperatorResidual {
         self.operator_residuals
             .get(concrete_op_id)
-            .expect(&missing_operator)
-            .base_cost
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing concrete operator {concrete_op_id}: operator residual count is {}",
+                    self.operator_residuals.len()
+                )
+            })
     }
 
     pub fn operator_costs_for_label_cp(&self) -> Vec<f64> {
@@ -499,15 +507,7 @@ impl TransitionResidualCosts {
         _abstract_op_id: usize,
         operator_region: &OperatorRegion,
     ) -> f64 {
-        let concrete_op_id = operator_region.concrete_op_id;
-        let missing_operator = format!(
-            "missing concrete operator {concrete_op_id}: operator residual count is {}",
-            self.operator_residuals.len()
-        );
-        let residual = self
-            .operator_residuals
-            .get(concrete_op_id)
-            .expect(&missing_operator);
+        let residual = self.residual(operator_region.concrete_op_id);
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
         }
