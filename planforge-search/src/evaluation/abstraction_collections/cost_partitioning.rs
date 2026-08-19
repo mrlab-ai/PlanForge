@@ -72,7 +72,7 @@ struct OperatorResidual {
 #[derive(Debug, Clone, Default)]
 struct RegionalUsage {
     cells: Vec<RegionalUsageCell>,
-    index: RefCell<Option<RegionalUsageIndex>>,
+    index: RefCell<CellIndex>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,18 +161,16 @@ impl RegionalUsage {
                 region,
                 amount: base_cost,
             }));
-        *self.index.get_mut() = None;
+        *self.index.get_mut() = CellIndex::Stale;
     }
 
     fn overlaps(&self, query: &StateRegion) -> bool {
         if self.cells.len() < REGIONAL_INDEX_MIN_CELLS {
             return self.cells.iter().any(|cell| cell.region.overlaps(query));
         }
-        if self.index.borrow().is_none() {
-            *self.index.borrow_mut() = RegionalUsageIndex::build(&self.cells);
-        }
+        CellIndex::ensure_built(&self.index, &self.cells);
         let index = self.index.borrow();
-        let Some(index) = index.as_ref() else {
+        let Some(index) = index.ready() else {
             return self.cells.iter().any(|cell| cell.region.overlaps(query));
         };
         let query_interval = query.numeric[index.primary_dim];
@@ -200,11 +198,9 @@ impl RegionalUsage {
         if self.cells.len() < REGIONAL_INDEX_MIN_CELLS {
             return self.max_over_cell_ids(query, 0..self.cells.len());
         }
-        if self.index.borrow().is_none() {
-            *self.index.borrow_mut() = RegionalUsageIndex::build(&self.cells);
-        }
+        CellIndex::ensure_built(&self.index, &self.cells);
         let index = self.index.borrow();
-        let Some(index) = index.as_ref() else {
+        let Some(index) = index.ready() else {
             return self.max_over_cell_ids(query, 0..self.cells.len());
         };
         let query_interval = query.numeric[index.primary_dim];
@@ -297,7 +293,7 @@ impl RegionalUsage {
                 new_cells.push(cell);
                 new_cells.extend(old_cells);
                 self.cells = new_cells;
-                *self.index.get_mut() = None;
+                *self.index.get_mut() = CellIndex::Stale;
                 return Err(error);
             }
             let Some(intersection) = state_region_intersection(&cell.region, region) else {
@@ -337,8 +333,44 @@ impl RegionalUsage {
         );
         debug_assert!(regional_usage_cells_are_disjoint(&new_cells));
         self.cells = new_cells;
-        *self.index.get_mut() = None;
+        *self.index.get_mut() = CellIndex::Stale;
         Ok(())
+    }
+}
+
+/// Lazily built numeric index over a usage cover.
+///
+/// `Unusable` is the reason this is not an `Option`: building the index fails
+/// whenever the cells share no finite numeric dimension to sort on, and with an
+/// `Option` that failure is indistinguishable from "not built yet", so every
+/// query retries the build -- which allocates a hash set per numeric dimension
+/// and visits every cell -- and throws the result away.
+#[derive(Debug, Clone, Default)]
+enum CellIndex {
+    /// The cells changed, or nothing has been built yet.
+    #[default]
+    Stale,
+    /// The cells cannot be indexed; queries scan them linearly.
+    Unusable,
+    Ready(RegionalUsageIndex),
+}
+
+impl CellIndex {
+    /// Build on first use, and remember a failed attempt.
+    fn ensure_built(index: &RefCell<Self>, cells: &[RegionalUsageCell]) {
+        if matches!(&*index.borrow(), CellIndex::Stale) {
+            *index.borrow_mut() = match RegionalUsageIndex::build(cells) {
+                Some(built) => CellIndex::Ready(built),
+                None => CellIndex::Unusable,
+            };
+        }
+    }
+
+    fn ready(&self) -> Option<&RegionalUsageIndex> {
+        match self {
+            CellIndex::Ready(index) => Some(index),
+            CellIndex::Stale | CellIndex::Unusable => None,
+        }
     }
 }
 
@@ -792,7 +824,7 @@ mod tests {
                     amount: 2.0,
                 },
             ],
-            index: RefCell::new(None),
+            index: RefCell::new(CellIndex::Stale),
         };
 
         usage.add(
@@ -1391,6 +1423,6 @@ mod tests {
             .map(|cell| cell.amount)
             .fold(0.0, f64::max);
         assert_eq!(usage.max_over(&query), expected);
-        assert!(usage.index.borrow().is_some());
+        assert!(usage.index.borrow().ready().is_some());
     }
 }
