@@ -468,3 +468,158 @@ fn numeric_regions_overlap(left: &[Interval], right: &[Interval]) -> bool {
     }
     left.iter().zip(right.iter()).all(|(l, r)| l.intersects(r))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regions built through [`StateRegion::new`], so their constrained-dimension
+    /// lists are derived from real domain sizes rather than declared to be
+    /// everything. The unit tests elsewhere use
+    /// `with_all_props_constrained`, which makes the sparse path degenerate into
+    /// the dense one and so cannot catch a wrong list.
+    struct SmallSpace {
+        domain_sizes: Vec<usize>,
+    }
+
+    impl SmallSpace {
+        /// Every concrete point of the space, as one value per dimension.
+        fn points(&self) -> Vec<Vec<PropValueId>> {
+            let mut points = vec![Vec::new()];
+            for &size in &self.domain_sizes {
+                points = points
+                    .into_iter()
+                    .flat_map(|point| {
+                        (0..size as PropValueId).map(move |value| {
+                            let mut extended = point.clone();
+                            extended.push(value);
+                            extended
+                        })
+                    })
+                    .collect();
+            }
+            points
+        }
+
+        /// The points a region admits: the oracle every assertion compares to.
+        fn admitted(&self, region: &StateRegion) -> Vec<Vec<PropValueId>> {
+            self.points()
+                .into_iter()
+                .filter(|point| {
+                    point.iter().enumerate().all(|(var_id, value)| {
+                        region.propositions()[var_id].binary_search(value).is_ok()
+                    })
+                })
+                .collect()
+        }
+
+        fn region(&self, values: Vec<Vec<PropValueId>>) -> StateRegion {
+            StateRegion::new(values, Vec::new(), &self.domain_sizes)
+        }
+
+        /// A region whose every dimension admits a nonempty subset of its domain.
+        fn random_region(&self, rng: &mut Lcg) -> StateRegion {
+            let values = self
+                .domain_sizes
+                .iter()
+                .map(|&size| {
+                    loop {
+                        let keep: Vec<PropValueId> = (0..size as PropValueId)
+                            .filter(|_| rng.next_bool())
+                            .collect();
+                        if !keep.is_empty() {
+                            return keep;
+                        }
+                    }
+                })
+                .collect();
+            self.region(values)
+        }
+    }
+
+    /// A deterministic generator, so a failure is reproducible from the seed.
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next_bool(&mut self) -> bool {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 33) & 1 == 1
+        }
+    }
+
+    #[test]
+    fn sparse_region_operations_agree_with_enumerating_the_space() {
+        let space = SmallSpace {
+            domain_sizes: vec![2, 3, 2, 4],
+        };
+        let mut rng = Lcg(0x5eed);
+
+        for iteration in 0..2000 {
+            let left = space.random_region(&mut rng);
+            let right = space.random_region(&mut rng);
+            let left_points = space.admitted(&left);
+            let right_points = space.admitted(&right);
+            let shared: Vec<_> = left_points
+                .iter()
+                .filter(|point| right_points.contains(point))
+                .cloned()
+                .collect();
+
+            assert_eq!(
+                left.overlaps(&right),
+                !shared.is_empty(),
+                "iteration {iteration}: overlaps disagrees with the enumerated space"
+            );
+
+            match state_region_intersection(&left, &right) {
+                Some(intersection) => {
+                    assert_eq!(
+                        space.admitted(&intersection),
+                        shared,
+                        "iteration {iteration}: intersection admits the wrong points"
+                    );
+                    // The pieces of `left` outside the intersection, plus the
+                    // intersection itself, must retile `left` exactly.
+                    let pieces = subtract_state_region(&left, &intersection);
+                    for (index, piece) in pieces.iter().enumerate() {
+                        assert!(
+                            state_region_is_nonempty(piece),
+                            "iteration {iteration}: piece {index} is empty"
+                        );
+                        for other in &pieces[index + 1..] {
+                            assert!(
+                                !piece.overlaps(other),
+                                "iteration {iteration}: pieces {index} and later overlap"
+                            );
+                        }
+                    }
+                    let mut covered: Vec<Vec<PropValueId>> = shared.clone();
+                    for piece in &pieces {
+                        covered.extend(space.admitted(piece));
+                    }
+                    covered.sort();
+                    covered.dedup();
+                    let mut expected = left_points.clone();
+                    expected.sort();
+                    assert_eq!(
+                        covered, expected,
+                        "iteration {iteration}: subtraction does not retile the region"
+                    );
+                }
+                None => assert!(
+                    shared.is_empty(),
+                    "iteration {iteration}: intersection reported empty but the regions share points"
+                ),
+            }
+
+            assert_eq!(
+                region_contains(&left, &right),
+                right_points.iter().all(|point| left_points.contains(point)),
+                "iteration {iteration}: containment disagrees with the enumerated space"
+            );
+        }
+    }
+}
