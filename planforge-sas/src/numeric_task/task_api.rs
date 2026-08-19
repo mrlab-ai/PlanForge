@@ -990,8 +990,27 @@ impl AbstractNumericTask for NumericRootTask {
         Ok(self.variables[index].axiom_default_value)
     }
 
-    fn get_fact_name(&self, _fact: &ExplicitFact) -> &str {
-        ""
+    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
+        // Only facts on genuine propositional variables name a ground atom. A
+        // condition fact carries a numeric condition's truth value and a
+        // numeric-variable fact a partition index; both reuse the variable-id
+        // bits for their own id space, so indexing `variables` with them would
+        // return another variable's atom name.
+        if fact.namespace() != FactNamespace::Propositional {
+            return "";
+        }
+        let variable = self.variables.get(fact.var()).unwrap_or_else(|| {
+            panic!(
+                "propositional fact names variable {} but the task has {}",
+                fact.var(),
+                self.variables.len()
+            )
+        });
+        // A task assembled in memory rather than parsed may carry no names.
+        variable
+            .fact_names
+            .get(fact.value())
+            .map_or("", String::as_str)
     }
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {

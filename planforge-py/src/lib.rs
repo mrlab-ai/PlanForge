@@ -16,7 +16,8 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueEr
 use pyo3::prelude::*;
 
 use planforge_sas::numeric_task::{
-    AssignmentOperation, Effect, NumericRootTask, NumericTaskExt, NumericType, Operator, TaskRef,
+    AssignmentOperation, Effect, ExplicitFact, NumericRootTask, NumericTaskExt, NumericType,
+    Operator, TaskRef,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -100,6 +101,89 @@ impl PyNumericEffect {
     }
 }
 
+/// Split a translator fact name into its parts.
+///
+/// The translator writes `Atom pred(a, b)`, `NegatedAtom pred(a, b)`, `pred()`
+/// for a nullary predicate, and `<none of those>` for the sentinel value of a
+/// mutex group. A name that does not have this shape is reported as
+/// unparsed - predicate `None` and no arguments - rather than guessed at, so a
+/// caller can always fall back on the raw name.
+fn split_fact_name(name: &str) -> (bool, Option<String>, Vec<String>) {
+    let (negated, rest) = match name.strip_prefix("NegatedAtom ") {
+        Some(rest) => (true, rest),
+        None => (false, name.strip_prefix("Atom ").unwrap_or(name)),
+    };
+    let Some(open) = rest.find('(') else {
+        return (negated, None, Vec::new());
+    };
+    if !rest.ends_with(')') {
+        return (negated, None, Vec::new());
+    }
+    let predicate = rest[..open].trim().to_string();
+    if predicate.is_empty() {
+        return (negated, None, Vec::new());
+    }
+    let inner = &rest[open + 1..rest.len() - 1];
+    let arguments = if inner.trim().is_empty() {
+        Vec::new()
+    } else {
+        inner
+            .split(',')
+            .map(|argument| argument.trim().to_string())
+            .collect()
+    };
+    (negated, Some(predicate), arguments)
+}
+
+/// Split a translator operator name into the action and its arguments.
+///
+/// The translator writes them whitespace separated, `drop item1 rooma bot1`.
+fn split_operator_name(name: &str) -> (Option<String>, Vec<String>) {
+    let mut parts = name.split_whitespace();
+    let Some(action) = parts.next() else {
+        return (None, Vec::new());
+    };
+    (
+        Some(action.to_string()),
+        parts.map(str::to_string).collect(),
+    )
+}
+
+/// One ground atom of the task, as the SAS encoding represents it: a value of a
+/// finite-domain variable.
+///
+/// A PDDL ground atom becomes a `(variable, value)` pair. Mutually exclusive
+/// atoms are collapsed into one variable, so a variable holding `n` values
+/// encodes `n` atoms, one of which is true in any state. Some values are the
+/// `<none of those>` sentinel the translator adds when no atom of a mutex group
+/// holds; they are reported as they are named rather than filtered out, because
+/// which values are real atoms is the translator's business, not this API's.
+#[pyclass(name = "Atom", frozen, get_all)]
+struct PyAtom {
+    /// Index of the finite-domain variable this atom belongs to.
+    variable: usize,
+    /// The variable's value that makes this atom true.
+    value: usize,
+    /// The translator's name for the atom, e.g. `Atom at(rover1, waypoint2)`.
+    name: String,
+    /// The predicate, or `None` when the name is not of the form `pred(args)`.
+    predicate: Option<String>,
+    /// The predicate's arguments, in order.
+    arguments: Vec<String>,
+    /// Whether this value encodes the *absence* of the predicate.
+    negated: bool,
+}
+
+#[pymethods]
+impl PyAtom {
+    fn __repr__(&self) -> String {
+        format!(
+            "Atom(variable={}, value={}, name={:?})",
+            self.variable, self.value, self.name
+        )
+    }
+}
+
 #[pyclass(name = "Operator", frozen)]
 struct PyOperator {
     id: Option<usize>,
@@ -126,6 +210,19 @@ impl PyOperator {
     #[getter]
     fn cost(&self) -> f64 {
         self.cost
+    }
+
+    /// The action this is a ground instance of, or `None` for an unnamed
+    /// operator.
+    #[getter]
+    fn action(&self) -> Option<String> {
+        split_operator_name(&self.name).0
+    }
+
+    /// The action's arguments, in order.
+    #[getter]
+    fn arguments(&self) -> Vec<String> {
+        split_operator_name(&self.name).1
     }
 
     #[getter]
@@ -665,6 +762,16 @@ impl Task {
         self.task.get_operators().len()
     }
 
+    /// The number of ground atoms: every value of every finite-domain variable.
+    #[getter]
+    fn num_atoms(&self) -> usize {
+        self.task
+            .variables()
+            .iter()
+            .map(|variable| variable.domain_size())
+            .sum()
+    }
+
     #[getter]
     fn num_goals(&self) -> usize {
         self.task.get_num_goals()
@@ -729,6 +836,37 @@ impl Task {
         self.registry.borrow().num_registered_states()
     }
 
+    /// Every ground atom of the task, ordered by variable and then by value.
+    fn atoms(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAtom>>> {
+        self.task
+            .variables()
+            .iter()
+            .enumerate()
+            .flat_map(|(variable, explicit_variable)| {
+                (0..explicit_variable.domain_size()).map(move |value| (variable, value))
+            })
+            .map(|(variable, value)| {
+                let name = self
+                    .task
+                    .get_fact_name(&ExplicitFact::propositional(variable, value))
+                    .to_string();
+                let (negated, predicate, arguments) = split_fact_name(&name);
+                Py::new(
+                    py,
+                    PyAtom {
+                        variable,
+                        value,
+                        name,
+                        predicate,
+                        arguments,
+                        negated,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Every ground action of the task, ordered by operator id.
     fn operators(&self, py: Python<'_>) -> Vec<Py<PyOperator>> {
         let task_id = self.registry.borrow().id();
         self.task
@@ -1143,6 +1281,7 @@ fn planforge(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(solve, m)?)?;
     m.add_class::<PySearchResult>()?;
     m.add_class::<PyStateSpace>()?;
+    m.add_class::<PyAtom>()?;
     m.add_class::<PyOperator>()?;
     m.add_class::<PyEffect>()?;
     m.add_class::<PyNumericEffect>()?;
