@@ -8,9 +8,7 @@ requires-python = ">=3.10"
 description = "Python bindings for the PlanForge numeric planner"
 readme = "planforge-py/README.md"
 license = { text = "GPL-3.0" }
-authors = [
-    { name = "Markus Fritzsche", email = "fritzsma@gmail.com" },
-]
+authors = [{ name = "Markus Fritzsche", email = "fritzsma@gmail.com" }]
 keywords = ["automated-planning", "numeric-planning", "pddl", "search"]
 classifiers = [
     "Intended Audience :: Science/Research",
@@ -33,3 +31,12 @@ python-source = "planforge-py/python"
 module-name = "planforge.planforge"
 features = ["pyo3/extension-module"]
 sdist-generator = "git"
+
+[dependency-groups]
+dev = [
+    "jupyter >= 1.1.1",
+    "ipykernel >= 7.3",
+    "nbconvert >= 7.17.1",
+    "maturin >= 1.14.1",
+    "pytest >= 9.1",
+]

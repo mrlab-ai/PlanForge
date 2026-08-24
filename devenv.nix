@@ -6,15 +6,13 @@
   '';
   languages.rust.enable = true;
   languages.rust.channel = "stable";
-  languages.python.enable = true;
-  languages.python.venv.enable = true;
-  languages.python.venv.requirements = ''
-    jupyter
-    ipykernel
-    nbconvert
-    maturin
-    pytest
-  '';
+  languages.python = {
+    enable = true;
+    uv = {
+      enable = true;
+      sync.enable = true;
+    };
+  };
   packages = [
     pkgs.vscode-extensions.vadimcn.vscode-lldb
     pkgs.taplo
