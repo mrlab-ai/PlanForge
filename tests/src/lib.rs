@@ -12,6 +12,8 @@ mod derived_predicate_tests;
 #[cfg(test)]
 mod determinism_tests;
 #[cfg(test)]
+mod fact_group_tests;
+#[cfg(test)]
 mod goal_census;
 #[cfg(test)]
 mod numeric_condition_tests;

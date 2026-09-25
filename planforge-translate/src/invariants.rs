@@ -63,19 +63,16 @@ fn get_literals(condition: &Condition) -> Vec<&Condition> {
             .filter(|part| match part {
                 Condition::Atom(_) | Condition::NegatedAtom(_) => true,
                 // Numeric conditions do not constrain propositional invariants.
-                // `add_inequality_preconds` can also wrap an existing conjunction
-                // in another one; omitting that nested conjunction is the existing
-                // conservative relaxation, which may lose a mutex group but cannot
-                // make an invalid one pass the balance check.
+                Condition::FunctionComparison(_) | Condition::NegatedFunctionComparison(_) => false,
+                // Dropping a nested conjunction would silently drop its literals,
+                // and with them every precondition the balance check relies on.
                 Condition::Truth
                 | Condition::Falsity
                 | Condition::Conjunction(_)
-                | Condition::FunctionComparison(_)
-                | Condition::NegatedFunctionComparison(_) => false,
-                Condition::Disjunction(_)
+                | Condition::Disjunction(_)
                 | Condition::UniversalCondition(_)
                 | Condition::ExistentialCondition(_) => panic!(
-                    "condition {part} should have been normalized away before invariant analysis"
+                    "condition {part} should have been simplified away before invariant analysis"
                 ),
             })
             .collect(),

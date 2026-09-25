@@ -95,12 +95,10 @@ fn add_inequality_preconds(
                 Condition::NegatedAtom(NegatedAtom::new("=".to_string(), vec![param1, param2]));
             precond_parts.push(new_cond);
         }
-        // Simplified conjunction (Python calls .simplified())
-        let precond = if precond_parts.len() == 1 {
-            precond_parts.pop().unwrap()
-        } else {
-            Condition::Conjunction(Conjunction::new(precond_parts))
-        };
+        // Splice the original precondition into the new conjunction, as Fast
+        // Downward's `.simplified()` does: the balance check reads preconditions
+        // one conjunction deep, so a nested conjunction would hide them.
+        let precond = Condition::Conjunction(Conjunction::new(precond_parts)).simplified();
         Action {
             name: action.name.clone(),
             parameters: action.parameters.clone(),
