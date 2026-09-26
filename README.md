@@ -115,15 +115,16 @@ Common options:
   - `astar(ff())`
   - `gbfs(ff())` — fast non-admissible search
   - `gbfs(lmcutnumeric())`
-- `--max-time DURATION` — wall-clock budget (`30m`, `1h`, `45s`).
+- `--max-time DURATION` — CPU-time budget from process start, including
+  translation and heuristic construction (`30m`, `1h`, `45s`).
 - `--max-memory SIZE` — address-space cap (`8G`, `4096M`).
 - `--max-ground-actions COUNT` — stop translation before it materializes more
-  than this many reachable ground actions (default: 10,000,000).
+  than this many reachable ground actions (default: no limit).
 - `--max-ground-atoms COUNT` — stop translation before its reachability model
-  derives more than this many ground atoms (default: 10,000,000).
+  derives more than this many ground atoms (default: no limit).
 - `--max-grounding-memory SIZE` — approximate memory budget for the ground
   atoms, join tables, reachable facts and ground actions materialized by the
-  translator (default: `4G`).
+  translator (default: no limit; `--max-memory` still bounds the run).
 - `--restrict-task` — convert an SNP task to its restricted representation;
   already restricted tasks are retained unchanged.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
