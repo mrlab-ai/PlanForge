@@ -1390,6 +1390,37 @@ impl NumericTaskHelper {
                 .cloned()
                 .unwrap_or_default();
         }
+
+        // A goal on a comparison variable names its numeric condition directly
+        // instead of through a goal axiom. Model all such goals together, as
+        // the axiom encoding did, so they also get their pairwise redundant
+        // conditions. Only the goal models change: the variables stay ordinary
+        // comparison variables for the preconditions that use them.
+        let direct_goal_indices = (0..task.get_num_goals())
+            .filter(|&goal_index| {
+                self.is_comparison_axiom_var(task.get_goal_fact(goal_index).var())
+            })
+            .collect::<Vec<_>>();
+        if direct_goal_indices.is_empty() {
+            return;
+        }
+        let mut group_ids = Vec::new();
+        for &goal_index in &direct_goal_indices {
+            let goal = task.get_goal_fact(goal_index);
+            let goal_group_ids = self
+                .comparison_fact_condition_group_ids(goal.var(), goal.value())
+                .unwrap_or_else(|| {
+                    panic!("comparison goal fact {goal:?} has no numeric conditions")
+                })
+                .to_vec();
+            group_ids.extend(goal_group_ids);
+        }
+        let redundant_group_ids =
+            self.materialize_pairwise_redundant_condition_groups(&group_ids, precision);
+        group_ids.extend(redundant_group_ids);
+        for goal_index in direct_goal_indices {
+            self.goal_models[goal_index].numeric_group_ids = group_ids.clone();
+        }
     }
 
     fn register_condition_group(&mut self, conditions: Vec<LinearNumericCondition>) -> usize {

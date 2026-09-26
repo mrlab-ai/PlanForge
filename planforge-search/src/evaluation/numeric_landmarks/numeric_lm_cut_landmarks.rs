@@ -976,16 +976,18 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .collect::<Vec<_>>();
 
             if helper_propositional_ids.is_empty() && helper_numeric_ids.is_empty() {
-                if self.is_numeric_axiom_var(goal.var()) {
-                    // The numeric helper did not compile this goal into helper
-                    // conditions, so the goal operator gets no precondition for
-                    // it. Dropping a numeric-axiom condition we cannot model is
-                    // the admissible relaxation documented on
-                    // `precondition_proposition_ids`: the goal becomes easier to
-                    // reach, never harder.
-                    continue;
-                }
-                for proposition_id in self.precondition_proposition_ids(goal) {
+                // A goal on a comparison variable (the translator names a
+                // numeric goal condition directly) maps to its numeric
+                // conditions exactly as a precondition does. Dropping it would
+                // leave the goal operator without the goal: h = 0.
+                let goal_proposition_ids = self.precondition_proposition_ids(goal);
+                assert!(
+                    !goal_proposition_ids.is_empty()
+                        || self.config.ignore_numeric
+                        || !self.is_numeric_axiom_var(goal.var()),
+                    "LM-cut cannot model goal fact {goal:?}; dropping it would drop the goal"
+                );
+                for proposition_id in goal_proposition_ids {
                     if seen.insert(proposition_id) {
                         goal_preconditions.push(proposition_id);
                     }

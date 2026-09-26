@@ -21,7 +21,7 @@ use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
 
 use crate::corpus::{
     self, Scratch, Solution, assert_fixture_set_is_pinned, blind_astar, problem_file, single_file,
-    subdirectory_names, translate_to_disk,
+    subdirectory_names, translate_in_memory, translate_to_disk,
 };
 
 /// Known optima of every benchmark folder under `assets/numeric-pddl-files`,
@@ -640,4 +640,37 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
         (solution_cost - OPTIMAL_COST).abs() <= 1e-6,
         "Plant Watering lmcutnumeric must keep the optimal cost {OPTIMAL_COST}, got {solution_cost}"
     );
+}
+
+/// `lmcutnumeric` must count a goal that names a numeric condition directly.
+///
+/// Since the translator stopped wrapping numeric goals in an axiom, a goal fact
+/// can be a comparison variable. LM-cut once dropped such goals as an
+/// "admissible relaxation", leaving the goal operator without its goal and the
+/// heuristic at 0 on every task whose goal is numeric. The expected values are
+/// those of the axiom encoding (revision ee17371) on the same PDDL.
+#[test]
+fn lmcutnumeric_counts_numeric_goal_conditions() {
+    for (domain, expected_initial_h) in [("farmland", 77.2), ("counters-sym", 5.0)] {
+        let dir = benchmarks_root().join(domain);
+        let task = translate_in_memory(&dir.join("domain.pddl"), &problem_file(&dir));
+        let mut registry = StateRegistry::for_task(Arc::new(&task));
+        let state = registry.get_initial_state();
+        let (mut propositional_values, mut numeric_values) = (Vec::new(), Vec::new());
+        registry
+            .fill_state_and_numeric_vars(&state, &mut propositional_values, &mut numeric_values)
+            .unwrap_or_else(|e| panic!("failed to unpack the {domain} initial state: {e:?}"));
+        let (dead_end, initial_h) = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default())
+            .compute_landmark_cost(
+                &propositional_values,
+                state.buffer(&registry).len(),
+                &numeric_values,
+            )
+            .unwrap_or_else(|e| panic!("LM-cut evaluation failed on {domain}: {e}"));
+        assert!(!dead_end, "the {domain} initial state is not a dead end");
+        assert!(
+            (initial_h - expected_initial_h).abs() <= 1e-6,
+            "{domain}: LM-cut initial value {initial_h}, expected {expected_initial_h}"
+        );
+    }
 }
