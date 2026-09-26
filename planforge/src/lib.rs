@@ -171,19 +171,21 @@ pub struct PlannersCli {
 /// Limits applied while materializing a grounded PDDL task.
 #[derive(Args, Debug, Clone, Copy)]
 pub struct GroundingOptions {
-    /// Maximum number of reachable ground actions.
-    #[arg(long, default_value_t = planforge_translate::DEFAULT_MAX_GROUND_ACTIONS)]
+    /// Maximum number of reachable ground actions (default: no limit).
+    #[arg(long, default_value_t = planforge_translate::DEFAULT_MAX_GROUND_ACTIONS, hide_default_value = true)]
     pub max_ground_actions: u64,
 
-    /// Maximum number of atoms derived by the grounding model.
-    #[arg(long, default_value_t = planforge_translate::DEFAULT_MAX_GROUND_ATOMS)]
+    /// Maximum number of atoms derived by the grounding model (default: no limit).
+    #[arg(long, default_value_t = planforge_translate::DEFAULT_MAX_GROUND_ATOMS, hide_default_value = true)]
     pub max_ground_atoms: u64,
 
-    /// Approximate memory allowed for materialized grounding structures.
+    /// Approximate memory allowed for materialized grounding structures
+    /// (default: no limit; the run's --max-memory still applies).
     #[arg(
         long,
         value_name = "SIZE",
-        default_value = "4G",
+        default_value_t = planforge_translate::DEFAULT_MAX_GROUNDING_MEMORY,
+        hide_default_value = true,
         value_parser = parse_memory_limit
     )]
     pub max_grounding_memory: u64,
