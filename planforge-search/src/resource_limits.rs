@@ -175,7 +175,9 @@ pub fn poll_and_release_if_exceeded() -> bool {
     if let Some(rss) = current_rss_bytes()
         && rss >= limit_bytes
     {
-        tracing::warn!(
+        // Routine: the padding exists so a memory-out is reported cleanly.
+        // Warnings go to stderr, which experiment tooling reads as errors.
+        tracing::info!(
             "memory limit threshold reached (RSS={} MiB, threshold={} MiB); releasing memory padding",
             rss / MIB,
             limit_bytes / MIB
