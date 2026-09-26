@@ -331,9 +331,15 @@ fn compact_goal_cover_schedule_supports_one_abstraction_per_goal() {
     assert_eq!(anchor_goals, (0..18).collect());
 }
 
-#[test]
-fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
-    let task = std::sync::Arc::new(independent_goals_task());
+/// Offline diversified SCP over a complementary Cartesian collection of `task`,
+/// with the goals its abstractions specialize in.
+fn specialist_scp<'task>(
+    task: &'task std::sync::Arc<NumericRootTask>,
+    max_orders: impl FnOnce(usize) -> usize,
+) -> (
+    SaturatedCostPartitioningOnlineHeuristic<'task>,
+    HashSet<usize>,
+) {
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             abstraction: CartesianAbstractionConfig {
@@ -352,7 +358,7 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
             progressive_goal_roots: true,
         })
         .unwrap()
-        .generate(&*task)
+        .generate(&**task)
         .unwrap();
     let expected_goals = abstractions
         .iter()
@@ -366,27 +372,22 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
     config.online = false;
     config.diversify = true;
     config.samples = 16;
-    // Standalone bounds live in one envelope outside the SCP order budget.
-    config.max_orders = 1 + 4 * expected_goals.len();
+    config.max_orders = max_orders(expected_goals.len());
     config.initial_order_generation_max_time = 10.0;
     let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
         None,
         components,
         config,
-        &*task,
+        &**task,
         task.clone(),
     )
     .unwrap();
+    (heuristic, expected_goals)
+}
 
-    evaluate_initial(&task, &heuristic).unwrap();
-    let retained_goals = heuristic
-        .state
-        .borrow()
-        .cp_heuristics
-        .iter()
-        .filter_map(|cp| cp.specialist_goal_id)
-        .collect::<HashSet<_>>();
-    assert_eq!(retained_goals, expected_goals);
+fn retained_specialists_per_goal(
+    heuristic: &SaturatedCostPartitioningOnlineHeuristic<'_>,
+) -> HashMap<usize, usize> {
     let mut retained_per_goal = HashMap::<usize, usize>::new();
     for goal_id in heuristic
         .state
@@ -397,12 +398,41 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
     {
         *retained_per_goal.entry(goal_id).or_default() += 1;
     }
+    retained_per_goal
+}
+
+#[test]
+fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
+    // Standalone bounds live in one envelope outside the SCP order budget.
+    let task = std::sync::Arc::new(independent_goals_task());
+    let (heuristic, expected_goals) = specialist_scp(&task, |goals| 1 + 4 * goals);
+    evaluate_initial(&task, &heuristic).unwrap();
+    let retained_per_goal = retained_specialists_per_goal(&heuristic);
+    assert_eq!(
+        retained_per_goal.keys().copied().collect::<HashSet<_>>(),
+        expected_goals
+    );
     assert!(
         retained_per_goal
             .values()
             .all(|&count| (2..=4).contains(&count)),
         "retained specialists by goal: {retained_per_goal:?}"
     );
+}
+
+/// The global best and the goal specialists are part of the heuristic, so a
+/// max_orders below their number limits only the diversified orders.
+#[test]
+fn mandatory_orders_are_retained_beyond_max_orders() {
+    let task = std::sync::Arc::new(independent_goals_task());
+    let (heuristic, expected_goals) = specialist_scp(&task, |_| 1);
+    evaluate_initial(&task, &heuristic).unwrap();
+    let retained_per_goal = retained_specialists_per_goal(&heuristic);
+    assert_eq!(
+        retained_per_goal.keys().copied().collect::<HashSet<_>>(),
+        expected_goals
+    );
+    assert!(heuristic.state.borrow().cp_heuristics.len() > 1);
 }
 
 #[test]

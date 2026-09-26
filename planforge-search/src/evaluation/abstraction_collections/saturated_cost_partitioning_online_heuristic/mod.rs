@@ -1770,13 +1770,10 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .map(|ids| standalone_envelope_value(state, ids))
             .collect::<Vec<_>>();
         let mut portfolio = Vec::new();
+        // The standalone envelope and the mandatory orders below are part of
+        // the heuristic, not optional extras: max_orders and max_size only
+        // bound the diversified orders added after them.
         let standalone_size_kb = standalone_lookup_values_size_kb(&state.h_values_by_abstraction);
-        if standalone_size_kb > self.config.max_size {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "standalone abstraction envelope requires {standalone_size_kb} KiB, exceeding max_size={} KiB",
-                self.config.max_size
-            )));
-        }
         let mut portfolio_size_kb = standalone_size_kb;
         let mut evaluated_orders = initial_candidates.len();
         let mandatory_indices =
@@ -1801,11 +1798,11 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             }
         }
         if mandatory_partitions.len() > self.config.max_orders {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "offline SCP requires {} orders to retain the global best and configured goal specialists, exceeding max_orders={}",
+            info!(
+                "scp_online: retaining all {} mandatory orders (global best and goal specialists), more than max_orders={}; no diversified orders are added",
                 mandatory_partitions.len(),
                 self.config.max_orders,
-            )));
+            );
         }
         for candidate in mandatory_partitions {
             retain_mandatory_partition(
@@ -1814,9 +1811,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 &mut sample_best,
                 &mut portfolio,
                 &mut portfolio_size_kb,
-                self.config.max_size,
-            )
-            .map_err(EvaluationError::ComputationFailed)?;
+            );
         }
         info!(
             "scp_online: reserved {standalone_size_kb} KiB for the standalone envelope and retained {specialist_count} specialists across {represented_goal_count} goals plus the global best"
@@ -3308,28 +3303,21 @@ fn mandatory_goal_specialist_indices(
     indices
 }
 
+/// Adds an order the heuristic requires. Unlike the diversified orders, it is
+/// not subject to max_orders or max_size.
 fn retain_mandatory_partition(
     candidate: CostPartitioningHeuristic,
     sample_ids: &[Vec<Option<usize>>],
     sample_best: &mut [f64],
     portfolio: &mut Vec<CostPartitioningHeuristic>,
     portfolio_size_kb: &mut usize,
-    max_size_kb: usize,
-) -> Result<(), String> {
+) {
     assert_eq!(sample_ids.len(), sample_best.len());
-    let candidate_size = candidate.estimate_size_in_kb();
-    let required_size = portfolio_size_kb.saturating_add(candidate_size);
-    if required_size > max_size_kb {
-        return Err(format!(
-            "mandatory goal-specialist SCPs require {required_size} KiB, exceeding max_size={max_size_kb} KiB"
-        ));
-    }
     for (best, ids) in sample_best.iter_mut().zip(sample_ids) {
         *best = (*best).max(candidate.compute_heuristic(ids));
     }
-    *portfolio_size_kb = required_size;
+    *portfolio_size_kb = portfolio_size_kb.saturating_add(candidate.estimate_size_in_kb());
     portfolio.push(candidate);
-    Ok(())
 }
 
 fn abstraction_is_target_centered(
