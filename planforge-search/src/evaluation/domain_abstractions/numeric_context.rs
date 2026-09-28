@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex, ZERO_VALUE};
 use planforge_sas::utils::float_tolerance;
 
 use super::abstraction_numeric_var;
@@ -14,7 +14,7 @@ pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask)
     for (i, v) in task.numeric_variables().iter().enumerate() {
         if v.get_type() == &NumericType::Constant {
             numeric_intervals[i] =
-                Interval::singleton(float_tolerance::canonicalize(initial_numeric_values[i]));
+                Interval::singleton(float_tolerance::canonicalize_nv(initial_numeric_values[i]));
         }
     }
     numeric_intervals
@@ -44,12 +44,12 @@ pub fn prepare_comparison_tree_inputs_from_initial_state(
     let mut numeric_intervals: Vec<Interval> = Vec::with_capacity(initial_numeric_values.len());
     for (numeric_var_id, &raw_value) in initial_numeric_values.iter().enumerate() {
         if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived {
-            numeric_intervals.push(Interval::new(0.0, 0.0, false, false));
+            numeric_intervals.push(Interval::new(ZERO_VALUE, ZERO_VALUE, false, false));
             continue;
         }
-        let value = float_tolerance::canonicalize(raw_value);
+        let value = float_tolerance::canonicalize_nv(raw_value);
         ensure!(
-            value.is_finite() && !value.is_nan(),
+            value.value().is_finite() && !value.value().is_nan(),
             "initial numeric value for var {numeric_var_id} must be finite, got {value}"
         );
         numeric_intervals.push(Interval::singleton(value));
@@ -111,26 +111,32 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
 
     let initial_numeric_values = task.get_initial_numeric_state_values();
     out.clear();
-    out.resize(num_numeric_vars, Interval::new(0.0, 0.0, false, false));
+    out.resize(
+        num_numeric_vars,
+        Interval::new(ZERO_VALUE, ZERO_VALUE, false, false),
+    );
     for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
+        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
         match numeric_var.get_type() {
             NumericType::Constant => {
-                let value = float_tolerance::canonicalize(initial_numeric_values[numeric_var_id]);
+                let value = float_tolerance::canonicalize_nv(
+                    initial_numeric_values[numeric_var_id.index()],
+                );
                 ensure!(
-                    value.is_finite() && !value.is_nan(),
+                    value.value().is_finite() && !value.value().is_nan(),
                     "constant numeric value for var {numeric_var_id} must be finite, got {value}"
                 );
-                out[numeric_var_id] = Interval::singleton(value);
+                out[numeric_var_id.index()] = Interval::singleton(value);
             }
-            NumericType::Derived if numeric_domain_sizes[numeric_var_id] == 1 => {}
+            NumericType::Derived if numeric_domain_sizes[numeric_var_id.index()] == 1 => {}
             NumericType::Derived | NumericType::Regular => {
                 let abs_var = abstraction_numeric_var(num_props, numeric_var_id);
                 ensure!(
-                    abs_var < hash_multipliers.len(),
+                    abs_var.index() < hash_multipliers.len(),
                     "missing hash multiplier for abstract numeric var {abs_var}"
                 );
-                let mult = hash_multipliers[abs_var] as i64;
-                let dom = numeric_domain_sizes[numeric_var_id] as i64;
+                let mult = hash_multipliers[abs_var.index()] as i64;
+                let dom = numeric_domain_sizes[numeric_var_id.index()] as i64;
                 ensure!(
                     dom > 0,
                     "numeric domain size must be > 0 for var {numeric_var_id}"
@@ -141,10 +147,10 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
                         "missing partition interval for numeric var {numeric_var_id} part {part}"
                     )
                 })?;
-                out[numeric_var_id] = interval;
+                out[numeric_var_id.index()] = interval;
             }
             NumericType::Cost => {
-                out[numeric_var_id] = Interval::unbounded();
+                out[numeric_var_id.index()] = Interval::unbounded();
             }
         }
     }

@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+
 use super::*;
 
 pub enum OcpTransitionSystemBuild {
@@ -103,7 +105,7 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         operators: &[AbstractOperator],
         options: DistanceTableOptions<'_>,
-    ) -> Result<Vec<usize>> {
+    ) -> Result<Vec<OperatorIndex>> {
         let generator = self.make_operator_generator(task, combine_labels)?;
         self.relevant_operator_ids_with_operators(task, &generator, operators, options.deadline)
     }
@@ -411,7 +413,7 @@ impl DomainAbstractionFactory {
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
         deadline: Option<Instant>,
-    ) -> Result<Vec<usize>> {
+    ) -> Result<Vec<OperatorIndex>> {
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
@@ -438,11 +440,12 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
-                if op
-                    .concrete_op_ids
-                    .iter()
-                    .all(|&op_id| seen_operator_ids.get(op_id).copied().unwrap_or(false))
-                {
+                if op.concrete_op_ids.iter().all(|&op_id| {
+                    seen_operator_ids
+                        .get(op_id.index())
+                        .copied()
+                        .unwrap_or(false)
+                }) {
                     continue;
                 }
                 let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
@@ -455,12 +458,12 @@ impl DomainAbstractionFactory {
                 }
                 for &op_id in &op.concrete_op_ids {
                     ensure!(
-                        op_id < seen_operator_ids.len(),
+                        op_id.index() < seen_operator_ids.len(),
                         "concrete operator id out of range: {op_id} >= {}",
                         seen_operator_ids.len()
                     );
-                    if !seen_operator_ids[op_id] {
-                        seen_operator_ids[op_id] = true;
+                    if !seen_operator_ids[op_id.index()] {
+                        seen_operator_ids[op_id.index()] = true;
                         num_seen += 1;
                     }
                 }
@@ -479,7 +482,7 @@ impl DomainAbstractionFactory {
         // double-counts that operator's cost — producing an inadmissible
         // canonical heuristic (sailing/plant-watering reproducers).
         if !comparison_var_ids.is_empty() {
-            let mut cascade_numeric_deps: std::collections::HashSet<usize> =
+            let mut cascade_numeric_deps: std::collections::HashSet<VariableIndex> =
                 std::collections::HashSet::new();
             for &cmp_var_id in &comparison_var_ids {
                 if let Some(condition) = self.numeric_conditions.for_var(cmp_var_id) {
@@ -510,7 +513,7 @@ impl DomainAbstractionFactory {
         Ok(seen_operator_ids
             .into_iter()
             .enumerate()
-            .filter_map(|(op_id, seen)| seen.then_some(op_id))
+            .filter_map(|(op_id, seen)| seen.then_some(OperatorIndex::from_usize(op_id)))
             .collect())
     }
 }

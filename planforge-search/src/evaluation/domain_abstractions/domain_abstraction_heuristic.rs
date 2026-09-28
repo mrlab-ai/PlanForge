@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
-use planforge_sas::numeric_task::Operator;
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, Operator, VariableIndex};
 use planforge_sas::state_registry::ConcreteState;
 
 use super::abstraction_numeric_var;
@@ -16,9 +16,9 @@ use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, Numeri
 
 #[derive(Debug, Clone)]
 pub(crate) struct DomainAbstractionLookupScratch {
-    pub(crate) prop: Vec<usize>,
-    pub(crate) numeric: Vec<f64>,
-    pub(crate) comparisons: Vec<Option<usize>>,
+    pub(crate) prop: Vec<ExplicitValueIndex>,
+    pub(crate) numeric: Vec<NumericValue>,
+    pub(crate) comparisons: Vec<Option<ExplicitValueIndex>>,
     pub(crate) required_domain_ids: Vec<usize>,
     pub(crate) abstract_state_ids: Vec<Option<usize>>,
 }
@@ -105,9 +105,9 @@ pub(crate) fn compute_collection_abstract_state_ids(
 
 fn hash_with_shared_values(
     heuristic: &DomainAbstractionHeuristic,
-    prop_values: &[usize],
-    numeric_values: &[f64],
-    comparison_values: &[Option<usize>],
+    prop_values: &[ExplicitValueIndex],
+    numeric_values: &[NumericValue],
+    comparison_values: &[Option<ExplicitValueIndex>],
 ) -> Result<usize, EvaluationError> {
     heuristic.compute_abstract_hash_from_projected_state_values_inner(
         prop_values,
@@ -122,27 +122,27 @@ fn hash_with_shared_values(
 pub struct DomainAbstractionHeuristic {
     name: String,
     abstraction: DomainAbstraction,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
-    active_prop_vars: Vec<usize>,
-    active_numeric_vars: Vec<usize>,
+    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: RefCell<Vec<NumericValue>>,
+    active_prop_vars: Vec<VariableIndex>,
+    active_numeric_vars: Vec<VariableIndex>,
 }
 
 impl DomainAbstractionHeuristic {
     pub fn new(name: Option<String>, abstraction: DomainAbstraction) -> Self {
-        let active_prop_vars: Vec<usize> = abstraction
+        let active_prop_vars: Vec<VariableIndex> = abstraction
             .factory
             .domain_sizes()
             .iter()
             .enumerate()
-            .filter_map(|(var_id, &size)| (size > 1).then_some(var_id))
+            .filter_map(|(var_id, &size)| (size > 1).then_some(VariableIndex::from_usize(var_id)))
             .collect();
-        let active_numeric_vars: Vec<usize> = abstraction
+        let active_numeric_vars: Vec<VariableIndex> = abstraction
             .factory
             .numeric_domain_sizes()
             .iter()
             .enumerate()
-            .filter_map(|(var_id, &size)| (size > 1).then_some(var_id))
+            .filter_map(|(var_id, &size)| (size > 1).then_some(VariableIndex::from_usize(var_id)))
             .collect();
         Self {
             name: name.unwrap_or_else(|| "domain_abstraction".to_string()),
@@ -168,10 +168,10 @@ impl DomainAbstractionHeuristic {
 
     fn numeric_partition_for_projected_value(
         &self,
-        num_var_id: usize,
-        value: f64,
+        num_var_id: VariableIndex,
+        value: NumericValue,
     ) -> Result<usize, EvaluationError> {
-        if !value.is_finite() || value.is_nan() {
+        if !value.value().is_finite() || value.value().is_nan() {
             return Err(EvaluationError::InvalidState(format!(
                 "numeric value for var {num_var_id} must be finite, got {value}"
             )));
@@ -209,17 +209,17 @@ impl DomainAbstractionHeuristic {
 
     pub fn abstract_state_hash_from_state_values(
         &self,
-        prop_values: &[usize],
-        numeric_values: &[f64],
+        prop_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
     ) -> Result<usize, EvaluationError> {
         self.compute_abstract_hash_from_state_values(prop_values, numeric_values, None)
     }
 
     pub fn abstract_state_hash_from_state_values_with_comparisons(
         &self,
-        prop_values: &[usize],
-        numeric_values: &[f64],
-        comparison_values: &[Option<usize>],
+        prop_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+        comparison_values: &[Option<ExplicitValueIndex>],
     ) -> Result<usize, EvaluationError> {
         self.compute_abstract_hash_from_state_values(
             prop_values,
@@ -230,9 +230,9 @@ impl DomainAbstractionHeuristic {
 
     pub fn abstract_state_hash_from_projected_state_values_with_comparisons(
         &self,
-        prop_values: &[usize],
-        projected_numeric_values: &[f64],
-        comparison_values: &[Option<usize>],
+        prop_values: &[ExplicitValueIndex],
+        projected_numeric_values: &[NumericValue],
+        comparison_values: &[Option<ExplicitValueIndex>],
     ) -> Result<usize, EvaluationError> {
         self.compute_abstract_hash_from_projected_state_values(
             prop_values,
@@ -243,16 +243,16 @@ impl DomainAbstractionHeuristic {
 
     pub fn fill_comparison_values_from_state_values(
         &self,
-        numeric: &[f64],
-        out: &mut Vec<Option<usize>>,
+        numeric: &[NumericValue],
+        out: &mut Vec<Option<ExplicitValueIndex>>,
     ) -> Result<(), EvaluationError> {
         self.fill_comparison_values_from_projected_state_values(numeric, out)
     }
 
     pub fn fill_comparison_values_from_projected_state_values(
         &self,
-        numeric_values: &[f64],
-        out: &mut Vec<Option<usize>>,
+        numeric_values: &[NumericValue],
+        out: &mut Vec<Option<ExplicitValueIndex>>,
     ) -> Result<(), EvaluationError> {
         let conditions = self.abstraction.factory.numeric_conditions();
         if out.len() < self.abstraction.factory.domain_sizes().len() {
@@ -262,10 +262,10 @@ impl DomainAbstractionHeuristic {
             let holds = evaluate_condition_on_concrete_numeric_state(condition, numeric_values)?;
             let value = ConditionValue::from(holds).as_usize();
             let prop_var_id = condition.prop_var_id();
-            if prop_var_id >= out.len() {
-                out.resize(prop_var_id + 1, None);
+            if prop_var_id.index() >= out.len() {
+                out.resize(prop_var_id.index() + 1, None);
             }
-            out[prop_var_id] = Some(value);
+            out[prop_var_id.index()] = Some(ExplicitValueIndex::from_usize(value));
         }
         Ok(())
     }
@@ -294,9 +294,9 @@ impl DomainAbstractionHeuristic {
 
     fn compute_abstract_hash_from_state_values(
         &self,
-        prop_values: &[usize],
-        numeric: &[f64],
-        comparison_values: Option<&[Option<usize>]>,
+        prop_values: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+        comparison_values: Option<&[Option<ExplicitValueIndex>]>,
     ) -> Result<usize, EvaluationError> {
         // Conservative path used by external callers: assume `prop_values`
         // does not yet have comparison-axiom-derived bits resolved, so we
@@ -306,9 +306,9 @@ impl DomainAbstractionHeuristic {
 
     fn compute_abstract_hash_inner(
         &self,
-        prop_values: &[usize],
-        numeric: &[f64],
-        comparison_values: Option<&[Option<usize>]>,
+        prop_values: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+        comparison_values: Option<&[Option<ExplicitValueIndex>]>,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
 
@@ -328,9 +328,9 @@ impl DomainAbstractionHeuristic {
 
     fn compute_abstract_hash_from_projected_state_values(
         &self,
-        prop_values: &[usize],
-        numeric_values: &[f64],
-        comparison_values: Option<&[Option<usize>]>,
+        prop_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+        comparison_values: Option<&[Option<ExplicitValueIndex>]>,
     ) -> Result<usize, EvaluationError> {
         self.compute_abstract_hash_from_projected_state_values_inner(
             prop_values,
@@ -341,9 +341,9 @@ impl DomainAbstractionHeuristic {
 
     pub(crate) fn compute_abstract_hash_from_projected_state_values_inner(
         &self,
-        prop_values: &[usize],
-        numeric_values: &[f64],
-        comparison_values: Option<&[Option<usize>]>,
+        prop_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+        comparison_values: Option<&[Option<ExplicitValueIndex>]>,
     ) -> Result<usize, EvaluationError> {
         let num_props = self.abstraction.factory.domain_sizes().len();
         let num_numeric = self.abstraction.factory.numeric_domain_sizes().len();
@@ -372,23 +372,25 @@ impl DomainAbstractionHeuristic {
         let mut index: usize = 0;
 
         for &num_var_id in &self.active_numeric_vars {
-            let part =
-                self.numeric_partition_for_projected_value(num_var_id, numeric_values[num_var_id])?;
+            let part = self.numeric_partition_for_projected_value(
+                num_var_id,
+                numeric_values[num_var_id.index()],
+            )?;
             let abs_var = abstraction_numeric_var(num_props, num_var_id);
-            index += multipliers[abs_var] * part;
+            index += multipliers[abs_var.index()] * part;
         }
 
         let mut prop_index: usize = 0;
         for &var in &self.active_prop_vars {
             let concrete_val = resolved_propositional_value(
                 var,
-                prop_values[var],
+                prop_values[var.index()],
                 numeric_values,
                 self.abstraction.factory.numeric_conditions(),
                 comparison_values,
             )?;
             let abs_val = abstract_propositional_value(var, concrete_val, mapping)?;
-            prop_index += multipliers[var] * abs_val;
+            prop_index += multipliers[var.index()] * abs_val.index();
         }
 
         Ok(index + prop_index)
@@ -396,14 +398,14 @@ impl DomainAbstractionHeuristic {
 }
 
 fn resolved_propositional_value(
-    var: usize,
-    stored_val: usize,
-    numeric: &[f64],
+    var: VariableIndex,
+    stored_val: ExplicitValueIndex,
+    numeric: &[NumericValue],
     conditions: &NumericConditions,
-    comparison_values: Option<&[Option<usize>]>,
-) -> Result<usize, EvaluationError> {
+    comparison_values: Option<&[Option<ExplicitValueIndex>]>,
+) -> Result<ExplicitValueIndex, EvaluationError> {
     if let Some(value) = comparison_values
-        .and_then(|values| values.get(var))
+        .and_then(|values| values.get(var.index()))
         .copied()
         .flatten()
     {
@@ -416,12 +418,14 @@ fn resolved_propositional_value(
     // Concrete evaluation on the state's numeric values. This is the
     // deterministic α-image of the concrete state's comparison bit.
     let holds = evaluate_condition_on_concrete_numeric_state(condition, numeric)?;
-    Ok(ConditionValue::from(holds).as_usize())
+    Ok(ExplicitValueIndex::from_usize(
+        ConditionValue::from(holds).as_usize(),
+    ))
 }
 
 fn evaluate_condition_on_concrete_numeric_state(
     condition: &NumericCondition,
-    numeric: &[f64],
+    numeric: &[NumericValue],
 ) -> Result<bool, EvaluationError> {
     let required_len = condition.required_numeric_len();
     if numeric.len() < required_len {
@@ -437,13 +441,13 @@ fn evaluate_condition_on_concrete_numeric_state(
 }
 
 fn abstract_propositional_value(
-    var: usize,
-    concrete_val: usize,
-    mapping: &[Vec<usize>],
-) -> Result<usize, EvaluationError> {
+    var: VariableIndex,
+    concrete_val: ExplicitValueIndex,
+    mapping: &[Vec<ExplicitValueIndex>],
+) -> Result<ExplicitValueIndex, EvaluationError> {
     mapping
-        .get(var)
-        .and_then(|m| m.get(concrete_val))
+        .get(var.index())
+        .and_then(|m| m.get(concrete_val.index()))
         .copied()
         .ok_or_else(|| {
             EvaluationError::InvalidState(format!(

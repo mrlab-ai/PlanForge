@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
+};
 
 use crate::evaluation::cartesian_abstractions::{
     CartesianAbstraction, CartesianAbstractionHeuristic,
@@ -37,8 +39,8 @@ pub enum AbstractionComponent<'task> {
 
 #[derive(Debug, Default)]
 pub(super) struct ComponentStateValues {
-    pub(super) propositional: Vec<usize>,
-    pub(super) numeric: Vec<f64>,
+    pub(super) propositional: Vec<ExplicitValueIndex>,
+    pub(super) numeric: Vec<NumericValue>,
 }
 
 impl ComponentStateValues {
@@ -119,8 +121,8 @@ impl<'task> AbstractionComponent<'task> {
 
     pub fn standalone_value_from_state_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Result<f64, EvaluationError> {
         match self {
             Self::Domain(heuristic) => {
@@ -203,8 +205,8 @@ impl<'task> AbstractionComponent<'task> {
     pub fn relevant_operator_ids(
         &self,
         task: &dyn AbstractNumericTask,
-    ) -> Result<BTreeSet<usize>, String> {
-        let ids = match self {
+    ) -> Result<BTreeSet<OperatorIndex>, String> {
+        let ids: Vec<OperatorIndex> = match self {
             Self::Domain(heuristic) => {
                 let abstraction = heuristic.abstraction();
                 if !abstraction.relevant_operator_ids.is_empty() {
@@ -242,7 +244,7 @@ impl<'task> AbstractionComponent<'task> {
         };
 
         let operator_count = task.get_operators().len();
-        if let Some(operator_id) = ids.iter().copied().find(|id| *id >= operator_count) {
+        if let Some(operator_id) = ids.iter().copied().find(|id| id.index() >= operator_count) {
             return Err(format!(
                 "{} references operator {operator_id}, but task has {operator_count} operators",
                 self.kind()

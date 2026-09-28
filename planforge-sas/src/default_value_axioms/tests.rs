@@ -1,8 +1,8 @@
 use crate::axioms::{ComparisonAxiom, ComparisonOperator};
 use crate::numeric_conditions::ConditionValue;
 use crate::numeric_task::{
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
-    Operator,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorCost,
 };
 
 use super::*;
@@ -20,7 +20,7 @@ fn sized(name: &str, domain_size: usize) -> ExplicitVariable {
             .map(|value| format!("{name}={value}"))
             .collect(),
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )
 }
 
@@ -31,7 +31,7 @@ fn derived(name: &str, layer: usize) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}"), format!("not {name}")],
         Some(layer),
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -41,13 +41,18 @@ fn condition_variable(name: &str, layer: usize) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}"), format!("not {name}")],
         Some(layer),
-        ConditionValue::False.as_usize(),
+        ExplicitValueIndex::new(ConditionValue::False.as_u32()),
     )
 }
 
 /// `head=0 <- body`, i.e. a rule proving a derived variable that defaults to 1.
-fn proves(head: usize, body: Vec<ExplicitFact>) -> PropositionalAxiom {
-    PropositionalAxiom::new(body, head, 1, 0)
+fn proves(head: VariableIndex, body: Vec<ExplicitFact>) -> PropositionalAxiom {
+    PropositionalAxiom::new(
+        body,
+        head,
+        ExplicitValueIndex::new(1),
+        ExplicitValueIndex::new(0),
+    )
 }
 
 struct TaskBuilder {
@@ -56,7 +61,7 @@ struct TaskBuilder {
     goals: Vec<ExplicitFact>,
     operators: Vec<Operator>,
     numeric_variables: Vec<NumericVariable>,
-    numeric_state: Vec<f64>,
+    numeric_state: Vec<NumericValue>,
     comparison_axioms: Vec<ComparisonAxiom>,
 }
 
@@ -89,23 +94,23 @@ impl TaskBuilder {
             preconditions,
             vec![],
             vec![],
-            1,
+            OperatorCost::new(1),
         ));
         self
     }
 
     /// A comparison axiom over two constants, so the verdict is fixed and the
     /// initial-state closure has something well-defined to compute.
-    fn comparison(mut self, affected: usize) -> Self {
+    fn comparison(mut self, affected: VariableIndex) -> Self {
         self.numeric_variables = vec![
             NumericVariable::new("left".to_string(), NumericType::Constant, None),
             NumericVariable::new("right".to_string(), NumericType::Constant, None),
         ];
-        self.numeric_state = vec![1.0, 5.0];
+        self.numeric_state = vec![NumericValue::new(1.0), NumericValue::new(5.0)];
         self.comparison_axioms.push(ComparisonAxiom::new(
             affected,
-            0,
-            1,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
             ComparisonOperator::GreaterThanOrEqual,
         ));
         self
@@ -115,7 +120,7 @@ impl TaskBuilder {
         let state = self
             .variables
             .iter()
-            .map(|variable| variable.domain_size() - 1)
+            .map(|variable| ExplicitValueIndex::new(variable.domain_size() as u32 - 1))
             .collect();
         NumericRootTask::new(NumericRootTaskParts {
             version: 1,
@@ -136,7 +141,7 @@ impl TaskBuilder {
 }
 
 /// One produced rule as `(head variable, head value, sorted body)`.
-type Rule = (usize, usize, Vec<(usize, usize)>);
+type Rule = (VariableIndex, ExplicitValueIndex, Vec<(usize, usize)>);
 
 /// The produced rules, in the order [`default_value_axioms`] returns them.
 fn rules(task: &NumericRootTask, mode: DefaultValueAxiomMode) -> Vec<Rule> {
@@ -159,7 +164,7 @@ fn rules(task: &NumericRootTask, mode: DefaultValueAxiomMode) -> Vec<Rule> {
 fn a_conjunctive_body_negates_into_one_rule_per_literal() {
     let task = TaskBuilder::new(vec![plain("a"), plain("b"), derived("d", 0)])
         .axioms(vec![proves(
-            2,
+            VariableIndex::new(2),
             vec![
                 ExplicitFact::propositional(0, 0),
                 ExplicitFact::propositional(1, 1),
@@ -170,7 +175,18 @@ fn a_conjunctive_body_negates_into_one_rule_per_literal() {
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(2, 1, vec![(0, 1)]), (2, 1, vec![(1, 0)]),]
+        vec![
+            (
+                VariableIndex::new(2),
+                ExplicitValueIndex::new(1),
+                vec![(0, 1)]
+            ),
+            (
+                VariableIndex::new(2),
+                ExplicitValueIndex::new(1),
+                vec![(1, 0)]
+            ),
+        ]
     );
 }
 
@@ -180,15 +196,25 @@ fn a_conjunctive_body_negates_into_one_rule_per_literal() {
 fn disjunctive_support_negates_into_a_conjunction() {
     let task = TaskBuilder::new(vec![plain("a"), plain("b"), derived("d", 0)])
         .axioms(vec![
-            proves(2, vec![ExplicitFact::propositional(0, 0)]),
-            proves(2, vec![ExplicitFact::propositional(1, 0)]),
+            proves(
+                VariableIndex::new(2),
+                vec![ExplicitFact::propositional(0, 0)],
+            ),
+            proves(
+                VariableIndex::new(2),
+                vec![ExplicitFact::propositional(1, 0)],
+            ),
         ])
         .goals(vec![ExplicitFact::propositional(2, 1)])
         .build();
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(2, 1, vec![(0, 1), (1, 1)])]
+        vec![(
+            VariableIndex::new(2),
+            ExplicitValueIndex::new(1),
+            vec![(0, 1), (1, 1)]
+        )]
     );
 }
 
@@ -201,13 +227,27 @@ fn disjunctive_support_negates_into_a_conjunction() {
 #[test]
 fn a_multi_valued_condition_negates_into_a_disjunction() {
     let task = TaskBuilder::new(vec![sized("a", 3), derived("d", 0)])
-        .axioms(vec![proves(1, vec![ExplicitFact::propositional(0, 0)])])
+        .axioms(vec![proves(
+            VariableIndex::new(1),
+            vec![ExplicitFact::propositional(0, 0)],
+        )])
         .goals(vec![ExplicitFact::propositional(1, 1)])
         .build();
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(1, 1, vec![(0, 1)]), (1, 1, vec![(0, 2)])]
+        vec![
+            (
+                VariableIndex::new(1),
+                ExplicitValueIndex::new(1),
+                vec![(0, 1)]
+            ),
+            (
+                VariableIndex::new(1),
+                ExplicitValueIndex::new(1),
+                vec![(0, 2)]
+            )
+        ]
     );
 }
 
@@ -220,9 +260,12 @@ fn a_dominated_hitting_set_is_dropped() {
     // hits both clauses but `b=1` is never the sole reason.
     let task = TaskBuilder::new(vec![plain("a"), plain("b"), derived("d", 0)])
         .axioms(vec![
-            proves(2, vec![ExplicitFact::propositional(0, 0)]),
             proves(
-                2,
+                VariableIndex::new(2),
+                vec![ExplicitFact::propositional(0, 0)],
+            ),
+            proves(
+                VariableIndex::new(2),
                 vec![
                     ExplicitFact::propositional(0, 0),
                     ExplicitFact::propositional(1, 0),
@@ -234,7 +277,11 @@ fn a_dominated_hitting_set_is_dropped() {
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(2, 1, vec![(0, 1)])]
+        vec![(
+            VariableIndex::new(2),
+            ExplicitValueIndex::new(1),
+            vec![(0, 1)]
+        )]
     );
 }
 
@@ -245,7 +292,7 @@ fn a_dominated_hitting_set_is_dropped() {
 #[test]
 fn an_unconditionally_proven_variable_gets_no_rule() {
     let task = TaskBuilder::new(vec![derived("always", 0)])
-        .axioms(vec![proves(0, vec![])])
+        .axioms(vec![proves(VariableIndex::new(0), vec![])])
         .goals(vec![ExplicitFact::propositional(0, 1)])
         .build();
 
@@ -258,7 +305,10 @@ fn an_unconditionally_proven_variable_gets_no_rule() {
 #[test]
 fn a_variable_read_only_at_its_nondefault_value_gets_no_rule() {
     let task = TaskBuilder::new(vec![plain("a"), derived("d", 0)])
-        .axioms(vec![proves(1, vec![ExplicitFact::propositional(0, 0)])])
+        .axioms(vec![proves(
+            VariableIndex::new(1),
+            vec![ExplicitFact::propositional(0, 0)],
+        )])
         // The goal asks for `d` proven, never for `d` refuted.
         .goals(vec![ExplicitFact::propositional(1, 0)])
         .build();
@@ -273,13 +323,20 @@ fn a_variable_read_only_at_its_nondefault_value_gets_no_rule() {
 #[test]
 fn an_operator_precondition_makes_a_default_value_relevant() {
     let task = TaskBuilder::new(vec![plain("a"), derived("d", 0)])
-        .axioms(vec![proves(1, vec![ExplicitFact::propositional(0, 0)])])
+        .axioms(vec![proves(
+            VariableIndex::new(1),
+            vec![ExplicitFact::propositional(0, 0)],
+        )])
         .operator(vec![ExplicitFact::propositional(1, 1)])
         .build();
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(1, 1, vec![(0, 1)])]
+        vec![(
+            VariableIndex::new(1),
+            ExplicitValueIndex::new(1),
+            vec![(0, 1)]
+        )]
     );
 }
 
@@ -292,15 +349,32 @@ fn an_operator_precondition_makes_a_default_value_relevant() {
 fn relevance_propagates_through_the_rules_of_an_observed_variable() {
     let task = TaskBuilder::new(vec![plain("a"), derived("low", 0), derived("high", 0)])
         .axioms(vec![
-            proves(1, vec![ExplicitFact::propositional(0, 0)]),
-            proves(2, vec![ExplicitFact::propositional(1, 0)]),
+            proves(
+                VariableIndex::new(1),
+                vec![ExplicitFact::propositional(0, 0)],
+            ),
+            proves(
+                VariableIndex::new(2),
+                vec![ExplicitFact::propositional(1, 0)],
+            ),
         ])
         .goals(vec![ExplicitFact::propositional(2, 1)])
         .build();
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(1, 1, vec![(0, 1)]), (2, 1, vec![(1, 1)])]
+        vec![
+            (
+                VariableIndex::new(1),
+                ExplicitValueIndex::new(1),
+                vec![(0, 1)]
+            ),
+            (
+                VariableIndex::new(2),
+                ExplicitValueIndex::new(1),
+                vec![(1, 1)]
+            )
+        ]
     );
 }
 
@@ -316,13 +390,16 @@ fn a_cyclic_component_is_refuted_unconditionally() {
         TaskBuilder::new(vec![plain("a"), derived("p", 0), derived("q", 0)])
             .axioms(vec![
                 proves(
-                    1,
+                    VariableIndex::new(1),
                     vec![
                         ExplicitFact::propositional(0, 0),
                         ExplicitFact::propositional(2, 0),
                     ],
                 ),
-                proves(2, vec![ExplicitFact::propositional(1, 0)]),
+                proves(
+                    VariableIndex::new(2),
+                    vec![ExplicitFact::propositional(1, 0)],
+                ),
             ])
             .goals(goals)
             .build()
@@ -337,7 +414,10 @@ fn a_cyclic_component_is_refuted_unconditionally() {
             &both_observed,
             DefaultValueAxiomMode::ApproximateNegativeCycles
         ),
-        vec![(1, 1, vec![]), (2, 1, vec![])]
+        vec![
+            (VariableIndex::new(1), ExplicitValueIndex::new(1), vec![]),
+            (VariableIndex::new(2), ExplicitValueIndex::new(1), vec![])
+        ]
     );
 
     let one_observed = cycle(vec![ExplicitFact::propositional(1, 1)]);
@@ -346,7 +426,7 @@ fn a_cyclic_component_is_refuted_unconditionally() {
             &one_observed,
             DefaultValueAxiomMode::ApproximateNegativeCycles
         ),
-        vec![(1, 1, vec![])]
+        vec![(VariableIndex::new(1), ExplicitValueIndex::new(1), vec![])]
     );
 }
 
@@ -355,7 +435,7 @@ fn a_cyclic_component_is_refuted_unconditionally() {
 fn the_trivial_mode_refutes_every_relevant_variable_unconditionally() {
     let task = TaskBuilder::new(vec![plain("a"), plain("b"), derived("d", 0)])
         .axioms(vec![proves(
-            2,
+            VariableIndex::new(2),
             vec![
                 ExplicitFact::propositional(0, 0),
                 ExplicitFact::propositional(1, 1),
@@ -366,7 +446,7 @@ fn the_trivial_mode_refutes_every_relevant_variable_unconditionally() {
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegative),
-        vec![(2, 1, vec![])]
+        vec![(VariableIndex::new(2), ExplicitValueIndex::new(1), vec![])]
     );
 }
 
@@ -380,9 +460,9 @@ fn a_condition_variable_needs_no_rule_but_is_negated_into_one() {
         condition_variable("cmp", 0),
         derived("d", 1),
     ])
-    .comparison(1)
+    .comparison(VariableIndex::new(1))
     .axioms(vec![proves(
-        2,
+        VariableIndex::new(2),
         vec![ExplicitFact::propositional(
             1,
             ConditionValue::True.as_usize(),
@@ -393,7 +473,11 @@ fn a_condition_variable_needs_no_rule_but_is_negated_into_one() {
 
     assert_eq!(
         rules(&task, DefaultValueAxiomMode::ApproximateNegativeCycles),
-        vec![(2, 1, vec![(1, ConditionValue::False.as_usize())])]
+        vec![(
+            VariableIndex::new(2),
+            ExplicitValueIndex::new(1),
+            vec![(1, ConditionValue::False.as_usize())]
+        )]
     );
 }
 
@@ -406,9 +490,9 @@ fn rule_bodies_carry_the_task_fact_namespaces() {
         condition_variable("cmp", 0),
         derived("d", 1),
     ])
-    .comparison(1)
+    .comparison(VariableIndex::new(1))
     .axioms(vec![proves(
-        2,
+        VariableIndex::new(2),
         vec![
             ExplicitFact::propositional(0, 0),
             ExplicitFact::propositional(1, ConditionValue::True.as_usize()),

@@ -1,5 +1,6 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, Operator, OperatorCost, OperatorIndex, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -27,7 +28,7 @@ fn simple_var(name: &str) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         None,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -42,22 +43,32 @@ fn simple_task() -> NumericRootTask {
             ExplicitFact::propositional(1, 1),
         ],
         mutexes: vec![],
-        state: vec![0, 0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![
             Operator::new(
                 "set-p".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 0, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                2,
+                OperatorCost::new(2),
             ),
             Operator::new(
                 "set-q".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                3,
+                OperatorCost::new(3),
             ),
         ],
         axioms: vec![],
@@ -70,7 +81,10 @@ fn simple_task() -> NumericRootTask {
 fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstraction {
     let factory = DomainAbstractionFactory::new(
         task,
-        vec![vec![0, 1], vec![0, 1]],
+        vec![
+            vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
+            vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
+        ],
         vec![2, 2],
         NumericPartitions::with_partitions(vec![]),
         vec![],
@@ -102,9 +116,9 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
 #[test]
 fn computes_max_additive_subsets_from_relevant_operators() {
     let subsets = compute_max_additive_subsets_from_relevant_operators(&[
-        [0usize].into_iter().collect(),
-        [1usize].into_iter().collect(),
-        [0usize].into_iter().collect(),
+        [OperatorIndex::new(0)].into_iter().collect(),
+        [OperatorIndex::new(1)].into_iter().collect(),
+        [OperatorIndex::new(0)].into_iter().collect(),
     ]);
 
     assert_eq!(subsets, vec![vec![0, 1], vec![1, 2]]);
@@ -116,11 +130,11 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = registry.get_initial_state();
     let mut da0 = make_abstraction(&task, vec![2.0, 0.0, 0.0, 0.0]);
-    da0.relevant_operator_ids = vec![0];
+    da0.relevant_operator_ids = vec![OperatorIndex::new(0)];
     let mut da1 = make_abstraction(&task, vec![3.0, 0.0, 0.0, 0.0]);
-    da1.relevant_operator_ids = vec![1];
+    da1.relevant_operator_ids = vec![OperatorIndex::new(1)];
     let mut da2 = make_abstraction(&task, vec![4.0, 0.0, 0.0, 0.0]);
-    da2.relevant_operator_ids = vec![0, 1];
+    da2.relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
 
     let heuristic = CanonicalAbstractionHeuristic::with_explicit_subsets(
         None,
@@ -142,7 +156,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
 
 fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionComponent<'task>> {
     let mut domain = make_abstraction(task, vec![2.0, 0.0, 2.0, 0.0]);
-    domain.relevant_operator_ids = vec![0];
+    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
 
     let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 16,
@@ -157,7 +171,7 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
     .generate(task)
     .unwrap();
 
-    let pattern = Pattern::new(vec![1], vec![]);
+    let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let projected = ProjectedTask::new(task, &pattern).unwrap();
     let pdb = PatternDatabase::new(projected, 32).unwrap();
 
@@ -193,7 +207,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
 fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() {
     let task = simple_task();
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
-    domain.relevant_operator_ids = vec![0];
+    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
     domain.metadata.solved_by_self = true;
     domain.metadata.abstraction_use = AbstractionUse::Standalone;
     let component = AbstractionComponent::domain(None, domain);
@@ -202,7 +216,7 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     assert!(!max.proves_initial_state_optimal());
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
-    domain.relevant_operator_ids = vec![0];
+    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
     domain.metadata.solved_by_self = true;
     domain.metadata.abstraction_use = AbstractionUse::Standalone;
     let canonical = CanonicalAbstractionHeuristic::new(

@@ -18,7 +18,9 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{Operator, TaskRef};
+use planforge_sas::numeric_task::{
+    ExplicitValueIndex, NumericValue, Operator, OperatorIndex, TaskRef,
+};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -145,7 +147,7 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
         self.inner.get_preferred_operators(state)
     }
 
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<u32>) {
+    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         self.inner.copy_preferred_operator_ids(out)
     }
 
@@ -167,8 +169,8 @@ struct GoalDistanceOracle<'task> {
     task: TaskRef<'task>,
     registry: StateRegistry<'task>,
     successor_generator: SuccessorTree,
-    operator_costs: Vec<f64>,
-    min_action_cost: f64,
+    operator_costs: Vec<NumericValue>,
+    min_action_cost: NumericValue,
 }
 
 impl<'task> GoalDistanceOracle<'task> {
@@ -212,7 +214,7 @@ impl<'task> GoalDistanceOracle<'task> {
         state.fill_propositional(&mut propositional);
         let propositional_values: Vec<u64> = propositional
             .into_iter()
-            .map(|value| value as u64)
+            .map(|value| value.index() as u64)
             .collect();
         let mut numeric_values = Vec::new();
         state.fill_numeric(&mut numeric_values).map_err(|error| {
@@ -235,7 +237,7 @@ impl<'task> GoalDistanceOracle<'task> {
         (0..self.task.get_num_goals()).all(|index| {
             self.task
                 .get_goal_fact(index)
-                .is_hold(self.registry.view(state))
+                .is_held(self.registry.view(state))
         })
     }
 
@@ -245,7 +247,7 @@ impl<'task> GoalDistanceOracle<'task> {
         if self.is_goal(state) {
             0.0
         } else {
-            self.min_action_cost
+            self.min_action_cost.value()
         }
     }
 
@@ -262,12 +264,16 @@ impl<'task> GoalDistanceOracle<'task> {
         let mut best_g: HashMap<StateID, f64> = HashMap::new();
         let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
         best_g.insert(start.get_id(), 0.0);
-        open.push(open_entry(self.min_action_cost, 0.0, start.get_id())?);
+        open.push(open_entry(
+            self.min_action_cost.value(),
+            0.0,
+            start.get_id(),
+        )?);
 
-        let mut propositional_values: Vec<usize> = Vec::new();
-        let mut applicable_operators: Vec<u32> = Vec::new();
-        let mut successor_numeric_values: Vec<f64> = Vec::new();
-        let mut successor_cost_values: Vec<f64> = Vec::new();
+        let mut propositional_values: Vec<ExplicitValueIndex> = Vec::new();
+        let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
+        let mut successor_numeric_values: Vec<NumericValue> = Vec::new();
+        let mut successor_cost_values: Vec<NumericValue> = Vec::new();
 
         while let Some((Reverse(_f_value), Reverse(g_value), state_id)) = open.pop() {
             let g_value = g_value.into_inner();
@@ -292,7 +298,7 @@ impl<'task> GoalDistanceOracle<'task> {
                 .get_applicable_operators(&propositional_values, &mut applicable_operators);
 
             for &applicable_id in &applicable_operators {
-                let operator_id = applicable_id as usize;
+                let operator_id = applicable_id.index();
                 let operator = &task.get_operators()[operator_id];
                 let successor = self
                     .registry
@@ -309,7 +315,7 @@ impl<'task> GoalDistanceOracle<'task> {
                             error.message
                         )
                     })?;
-                let successor_g = g_value + self.operator_costs[operator_id];
+                let successor_g = g_value + self.operator_costs[operator_id].value();
                 let successor_id = successor.get_id();
                 let successor_best = best_g.get(&successor_id).copied().unwrap_or(f64::INFINITY);
                 if successor_g + G_IMPROVEMENT_TOLERANCE >= successor_best {
@@ -343,23 +349,23 @@ fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> Result<OpenEntry
 /// Cheapest operator in the task, used as the oracle's blind estimate.
 ///
 /// Dijkstra is only correct for non-negative edge costs, so a task the oracle
-/// cannot measure exactly is rejected here rather than silently mis-measured.
-fn minimum_action_cost(operator_costs: &[f64]) -> Result<f64, String> {
+/// cannot measure exactly is rejected here rather than silently mismeasured.
+fn minimum_action_cost(operator_costs: &[NumericValue]) -> Result<NumericValue, String> {
     let mut minimum = f64::INFINITY;
     for (operator_id, &cost) in operator_costs.iter().enumerate() {
-        if !cost.is_finite() || cost < 0.0 {
+        if !cost.value().is_finite() || cost.value() < 0.0 {
             return Err(format!(
                 "`check_admissible` cannot verify a task whose operator {operator_id} costs \
                  {cost}; it needs finite non-negative costs"
             ));
         }
-        minimum = minimum.min(cost);
+        minimum = minimum.min(cost.value());
     }
     // A task without operators has no transitions at all, so zero is the
     // tightest lower bound on the remaining cost.
     Ok(if operator_costs.is_empty() {
-        0.0
+        NumericValue::new(0.0)
     } else {
-        minimum
+        NumericValue::new(minimum)
     })
 }

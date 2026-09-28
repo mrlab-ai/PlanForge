@@ -7,7 +7,9 @@ use std::collections::BinaryHeap;
 use std::fmt;
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericTaskExt, NumericValue, OperatorIndex,
+};
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
@@ -36,36 +38,39 @@ fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
 }
 
 #[inline]
-fn hash_state_components(propositional: &[usize], numeric: &[f64]) -> u64 {
+fn hash_state_components(propositional: &[ExplicitValueIndex], numeric: &[NumericValue]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     let mut hash = FNV_OFFSET;
     for value in propositional {
-        hash = hash_bytes(hash, &value.to_le_bytes());
+        hash = hash_bytes(hash, &value.index().to_le_bytes());
     }
     hash = hash_bytes(hash, &(propositional.len() as u64).to_le_bytes());
     for value in numeric {
-        hash = hash_bytes(hash, &float_tolerance::canonical_bits(*value).to_le_bytes());
+        hash = hash_bytes(
+            hash,
+            &float_tolerance::canonical_bits_nv(*value).to_le_bytes(),
+        );
     }
     hash_bytes(hash, &(numeric.len() as u64).to_le_bytes())
 }
 
 #[inline]
 fn hash_pattern_components(
-    propositional: &[usize],
-    numeric: &[f64],
+    propositional: &[ExplicitValueIndex],
+    numeric: &[NumericValue],
     pattern_regular_ids: &[usize],
     pattern_numeric_ids: &[usize],
 ) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     let mut hash = FNV_OFFSET;
     for &var_id in pattern_regular_ids {
-        hash = hash_bytes(hash, &propositional[var_id].to_le_bytes());
+        hash = hash_bytes(hash, &propositional[var_id].index().to_le_bytes());
     }
     hash = hash_bytes(hash, &(pattern_regular_ids.len() as u64).to_le_bytes());
     for &var_id in pattern_numeric_ids {
         hash = hash_bytes(
             hash,
-            &float_tolerance::canonical_bits(numeric[var_id]).to_le_bytes(),
+            &float_tolerance::canonical_bits_nv(numeric[var_id]).to_le_bytes(),
         );
     }
     hash_bytes(hash, &(pattern_numeric_ids.len() as u64).to_le_bytes())
@@ -83,14 +88,14 @@ fn build_prop_hash_multipliers(task: &ProjectedTask<'_>) -> Vec<usize> {
 }
 
 #[inline]
-fn compute_prop_hash(propositional: &[usize], multipliers: &[usize]) -> Option<usize> {
+fn compute_prop_hash(propositional: &[ExplicitValueIndex], multipliers: &[usize]) -> Option<usize> {
     if propositional.len() != multipliers.len() {
         return None;
     }
 
     let mut hash = 0usize;
     for (value, multiplier) in propositional.iter().zip(multipliers.iter()) {
-        hash = hash.saturating_add(value.saturating_mul(*multiplier));
+        hash = hash.saturating_add(value.index().saturating_mul(*multiplier));
     }
     Some(hash)
 }
@@ -111,7 +116,7 @@ fn build_compact_prop_hash_multipliers(
 
 #[inline]
 fn compute_projected_compact_prop_hash(
-    propositional: &[usize],
+    propositional: &[ExplicitValueIndex],
     pattern_regular_ids: &[usize],
     multipliers: &[usize],
 ) -> Option<usize> {
@@ -122,7 +127,7 @@ fn compute_projected_compact_prop_hash(
     let mut hash = 0usize;
     for (&projected_var_id, &multiplier) in pattern_regular_ids.iter().zip(multipliers.iter()) {
         let value = propositional.get(projected_var_id).copied()?;
-        hash = hash.saturating_add(value.saturating_mul(multiplier));
+        hash = hash.saturating_add(value.index().saturating_mul(multiplier));
     }
     Some(hash)
 }
@@ -299,8 +304,8 @@ fn build_pattern_lookup_packer(task: &ProjectedTask<'_>) -> StatePacker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct PdbState {
-    propositional: Vec<usize>,
-    numeric: Vec<f64>,
+    propositional: Vec<ExplicitValueIndex>,
+    numeric: Vec<NumericValue>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -393,8 +398,8 @@ impl PartialOrd for PdbOpenEntry {
 
 struct LmcutInnerHeuristic<'task> {
     landmark_generator: LandmarkCutLandmarks<'task>,
-    propositional_scratch: Vec<usize>,
-    numeric_scratch: Vec<f64>,
+    propositional_scratch: Vec<ExplicitValueIndex>,
+    numeric_scratch: Vec<NumericValue>,
     default_state_buffer_len: usize,
 }
 
@@ -410,8 +415,8 @@ impl<'task> LmcutInnerHeuristic<'task> {
 
     fn evaluate_from_values(
         &mut self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
         state_buffer_len: usize,
     ) -> Result<InnerHeuristicResult, String> {
         let (dead_end, value) = self.landmark_generator.compute_landmark_cost(
@@ -424,8 +429,8 @@ impl<'task> LmcutInnerHeuristic<'task> {
 
     fn evaluate_projected_values(
         &mut self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Result<InnerHeuristicResult, String> {
         self.evaluate_from_values(propositional, numeric, self.default_state_buffer_len)
     }
@@ -442,7 +447,7 @@ pub struct PatternDatabase<'task> {
     full_prop_index: HashMap<usize, Vec<usize>>,
     pub(super) distances: Vec<f64>,
     goal_state_ids: Vec<usize>,
-    transition_predecessors: Vec<Vec<(usize, usize)>>,
+    transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
     pub(super) min_operator_cost: f64,
     pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
@@ -455,8 +460,8 @@ pub struct PatternDatabase<'task> {
     compact_numeric_registry: CompactNumericDistanceIndex,
     state_dependent_numeric_projected_ids: Vec<usize>,
     failed_lookup_cache: RefCell<HashMap<u64, f64>>,
-    projection_prop_scratch: RefCell<Vec<usize>>,
-    projection_numeric_scratch: RefCell<Vec<f64>>,
+    projection_prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    projection_numeric_scratch: RefCell<Vec<NumericValue>>,
     pattern_lookup_bins_scratch: RefCell<Vec<u64>>,
     compact_numeric_bins_scratch: RefCell<Vec<u64>>,
     failed_lookup_lmcut: RefCell<Option<LmcutInnerHeuristic<'task>>>,
@@ -531,7 +536,11 @@ impl<'task> PatternDatabase<'task> {
         Ok(pdb)
     }
 
-    pub fn lookup(&self, propositional: &[usize], numeric: &[f64]) -> Option<f64> {
+    pub fn lookup(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Option<f64> {
         let full_state_lookup = propositional.len() == self.task.variables().len()
             && numeric.len() == self.task.numeric_variables().len();
         let pattern_regular_ids = self.task.pattern_regular_projected_ids();
@@ -570,7 +579,7 @@ impl<'task> PatternDatabase<'task> {
                             .numeric
                             .iter()
                             .zip(numeric.iter())
-                            .all(|(lhs, rhs)| float_tolerance::equal(*lhs, *rhs))
+                            .all(|(lhs, rhs)| float_tolerance::equal_nv(*lhs, *rhs))
                 })
                 .filter_map(|state_id| self.distances.get(state_id).copied())
                 .min_by(|lhs, rhs| lhs.total_cmp(rhs));
@@ -604,17 +613,21 @@ impl<'task> PatternDatabase<'task> {
                             state
                                 .numeric
                                 .get(var_id)
-                                .map(|value| float_tolerance::canonical_bits(*value))
+                                .map(|value| float_tolerance::canonical_bits_nv(*value))
                                 == numeric
                                     .get(pattern_index)
-                                    .map(|value| float_tolerance::canonical_bits(*value))
+                                    .map(|value| float_tolerance::canonical_bits_nv(*value))
                         })
             })
             .filter_map(|state_id| self.distances.get(state_id).copied())
             .min_by(|lhs, rhs| lhs.total_cmp(rhs))
     }
 
-    pub fn lookup_or_fallback(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
+    pub fn lookup_or_fallback(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> f64 {
         match self.lookup(propositional, numeric) {
             Some(distance) if distance.is_finite() => distance,
             Some(_) if self.is_goal_state(propositional) => 0.0,
@@ -627,8 +640,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn lookup_pattern_distance_in_projected_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Option<f64> {
         if propositional.len() != self.task.variables().len()
             || numeric.len() != self.task.numeric_variables().len()
@@ -655,7 +668,10 @@ impl<'task> PatternDatabase<'task> {
         self.lookup_packed_pattern_distance_from_projected_values(propositional, numeric)
     }
 
-    fn lookup_projected_compact_prop_hash(&self, propositional: &[usize]) -> Option<usize> {
+    fn lookup_projected_compact_prop_hash(
+        &self,
+        propositional: &[ExplicitValueIndex],
+    ) -> Option<usize> {
         compute_projected_compact_prop_hash(
             propositional,
             self.task.pattern_regular_projected_ids(),
@@ -663,7 +679,7 @@ impl<'task> PatternDatabase<'task> {
         )
     }
 
-    fn lookup_compact_prop_distance(&self, propositional: &[usize]) -> Option<f64> {
+    fn lookup_compact_prop_distance(&self, propositional: &[ExplicitValueIndex]) -> Option<f64> {
         if self.compact_prop_distances.is_empty() {
             return None;
         }
@@ -678,7 +694,10 @@ impl<'task> PatternDatabase<'task> {
             .filter(|distance| distance.is_finite())
     }
 
-    fn lookup_projected_compact_prop_distance(&self, propositional: &[usize]) -> Option<f64> {
+    fn lookup_projected_compact_prop_distance(
+        &self,
+        propositional: &[ExplicitValueIndex],
+    ) -> Option<f64> {
         if self.compact_prop_distances.is_empty() {
             return None;
         }
@@ -696,14 +715,14 @@ impl<'task> PatternDatabase<'task> {
     fn lookup_compact_numeric_distance_from_compact_values(
         &self,
         prop_hash: usize,
-        numeric: &[f64],
+        numeric: &[NumericValue],
     ) -> Option<f64> {
         let mut bins = self.compact_numeric_bins_scratch.borrow_mut();
         bins.clear();
         bins.resize(1 + numeric.len(), 0);
         bins[0] = prop_hash as u64;
         for (numeric_index, value) in numeric.iter().enumerate() {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(*value);
+            bins[numeric_index + 1] = float_tolerance::canonical_bits_nv(*value);
         }
         self.lookup_compact_numeric_distance(&bins)
     }
@@ -711,7 +730,7 @@ impl<'task> PatternDatabase<'task> {
     fn lookup_compact_numeric_distance_from_projected_values(
         &self,
         prop_hash: usize,
-        numeric: &[f64],
+        numeric: &[NumericValue],
     ) -> Option<f64> {
         let mut bins = self.compact_numeric_bins_scratch.borrow_mut();
         bins.clear();
@@ -721,15 +740,15 @@ impl<'task> PatternDatabase<'task> {
             self.task.pattern_numeric_projected_ids().iter().enumerate()
         {
             bins[numeric_index + 1] =
-                float_tolerance::canonical_bits(numeric[projected_numeric_id]);
+                float_tolerance::canonical_bits_nv(numeric[projected_numeric_id]);
         }
         self.lookup_compact_numeric_distance(&bins)
     }
 
     fn pack_pattern_values_into_bins(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
         bins: &mut Vec<u64>,
     ) -> Option<()> {
         if propositional.len() != self.task.pattern_regular_projected_ids().len()
@@ -742,14 +761,15 @@ impl<'task> PatternDatabase<'task> {
         bins.resize(self.pattern_lookup_packer.num_bins(), 0);
 
         for (var_id, value) in propositional.iter().enumerate() {
-            self.pattern_lookup_packer.set(bins, var_id, *value as u64);
+            self.pattern_lookup_packer
+                .set(bins, var_id, value.index() as u64);
         }
         let prop_len = propositional.len();
         for (numeric_index, value) in numeric.iter().enumerate() {
             self.pattern_lookup_packer.set(
                 bins,
                 prop_len + numeric_index,
-                self.pattern_lookup_packer.pack_double(*value),
+                self.pattern_lookup_packer.pack_double(value.value()),
             );
         }
 
@@ -758,8 +778,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn pack_pattern_projected_values_into_bins(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
         bins: &mut Vec<u64>,
     ) -> Option<()> {
         if propositional.len() != self.task.variables().len()
@@ -777,7 +797,7 @@ impl<'task> PatternDatabase<'task> {
             self.pattern_lookup_packer.set(
                 bins,
                 compact_index,
-                propositional[projected_var_id] as u64,
+                propositional[projected_var_id].index() as u64,
             );
         }
         let prop_len = self.task.pattern_regular_projected_ids().len();
@@ -788,7 +808,7 @@ impl<'task> PatternDatabase<'task> {
                 bins,
                 prop_len + numeric_index,
                 self.pattern_lookup_packer
-                    .pack_double(numeric[projected_numeric_id]),
+                    .pack_double(numeric[projected_numeric_id].value()),
             );
         }
 
@@ -801,8 +821,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn lookup_packed_pattern_distance_from_compact_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Option<f64> {
         let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
         self.pack_pattern_values_into_bins(propositional, numeric, &mut bins)?;
@@ -811,8 +831,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn lookup_packed_pattern_distance_from_projected_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Option<f64> {
         let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
         self.pack_pattern_projected_values_into_bins(propositional, numeric, &mut bins)?;
@@ -821,8 +841,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn lookup_pattern_distance_from_source_state_values(
         &self,
-        propositional: &[usize],
-        source_numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        source_numeric: &[NumericValue],
     ) -> Result<Option<f64>, String> {
         if self.task.pattern_numeric_projected_ids().is_empty() {
             let prop_hash = self.lookup_projection.compact_prop_hash_from_state_values(
@@ -863,8 +883,8 @@ impl<'task> PatternDatabase<'task> {
     #[inline]
     fn lookup_pattern_distance_from_source_state_values_fast(
         &self,
-        propositional: &[usize],
-        source_numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        source_numeric: &[NumericValue],
     ) -> Option<f64> {
         if self.task.pattern_numeric_projected_ids().is_empty() {
             let prop_hash = self
@@ -894,8 +914,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn lookup_pattern_or_fallback_in_projected_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> f64 {
         match self.lookup_pattern_distance_in_projected_values(propositional, numeric) {
             Some(distance) if distance.is_finite() => distance,
@@ -907,7 +927,11 @@ impl<'task> PatternDatabase<'task> {
         }
     }
 
-    fn evaluate_failed_lookup(&self, propositional: &[usize], numeric: &[f64]) -> f64 {
+    fn evaluate_failed_lookup(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> f64 {
         if self.exhausted_abstract_state_space {
             // Infinity is sound *here*, and the reason is worth stating, because
             // the same expression is unsound one line of reasoning away.
@@ -960,8 +984,8 @@ impl<'task> PatternDatabase<'task> {
 
     fn evaluate_failed_lookup_lmcut(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Result<InnerHeuristicResult, String> {
         if self.failed_lookup_lmcut.borrow().is_none() {
             let mut task_slot = self.failed_lookup_lmcut_task.borrow_mut();
@@ -993,10 +1017,10 @@ impl<'task> PatternDatabase<'task> {
             .evaluate_projected_values(propositional, numeric)
     }
 
-    pub fn is_goal_state(&self, propositional: &[usize]) -> bool {
+    pub fn is_goal_state(&self, propositional: &[ExplicitValueIndex]) -> bool {
         (0..self.task.get_num_goals()).all(|goal_index| {
             let goal = self.task.get_goal_fact(goal_index);
-            propositional.get(goal.var()).copied() == Some(goal.value())
+            propositional.get(goal.var()).copied() == Some(goal.value_index())
         })
     }
 
@@ -1004,7 +1028,11 @@ impl<'task> PatternDatabase<'task> {
         self.min_operator_cost
     }
 
-    fn lookup_exact_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Option<usize> {
+    fn lookup_exact_state_id(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Option<usize> {
         let lookup_key = hash_state_components(propositional, numeric);
         self.state_index
             .get(&lookup_key)?
@@ -1018,14 +1046,14 @@ impl<'task> PatternDatabase<'task> {
                         .numeric
                         .iter()
                         .zip(numeric.iter())
-                        .all(|(lhs, rhs)| float_tolerance::equal(*lhs, *rhs))
+                        .all(|(lhs, rhs)| float_tolerance::equal_nv(*lhs, *rhs))
             })
     }
 
     pub fn abstract_state_id_from_source_state_values(
         &self,
-        propositional: &[usize],
-        source_numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        source_numeric: &[NumericValue],
     ) -> Result<Option<usize>, String> {
         let mut projected_prop = self.projection_prop_scratch.borrow_mut();
         let mut projected_num = self.projection_numeric_scratch.borrow_mut();
@@ -1052,7 +1080,7 @@ impl<'task> PatternDatabase<'task> {
         })
     }
 
-    pub fn relevant_operator_ids(&self) -> Vec<usize> {
+    pub fn relevant_operator_ids(&self) -> Vec<OperatorIndex> {
         let mut relevant = if self.exhausted_abstract_state_space {
             self.transition_predecessors
                 .iter()
@@ -1118,9 +1146,12 @@ impl<'task> PatternDatabase<'task> {
                     .task
                     .base_operator_id(projected_operator_id)
                     .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
-                let operator_cost = *operator_costs.get(base_operator_id).ok_or_else(|| {
-                    format!("missing residual cost for operator {base_operator_id}")
-                })?;
+                let operator_cost =
+                    *operator_costs
+                        .get(base_operator_id.index())
+                        .ok_or_else(|| {
+                            format!("missing residual cost for operator {base_operator_id}")
+                        })?;
                 let alternative = distance + operator_cost;
                 if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
                     distances[parent_id] = alternative;
@@ -1194,7 +1225,7 @@ impl<'task> PatternDatabase<'task> {
                             "missing base operator id for projected operator {projected_operator_id}"
                         )
                     })?;
-                let slot = saturated_costs.get_mut(base_operator_id).ok_or_else(|| {
+                let slot = saturated_costs.get_mut(base_operator_id.index()).ok_or_else(|| {
                     format!(
                         "base operator id {base_operator_id} out of bounds for {num_operators} operators"
                     )
@@ -1214,16 +1245,16 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn abstract_state_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         self.task.project_state_values(propositional, numeric)
     }
 
     pub fn lookup_projected_or_fallback_from_state_values(
         &self,
-        propositional: &[usize],
-        numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
     ) -> Result<f64, String> {
         let mut projected_prop = self.projection_prop_scratch.borrow_mut();
         let mut projected_num = self.projection_numeric_scratch.borrow_mut();
@@ -1239,8 +1270,8 @@ impl<'task> PatternDatabase<'task> {
 
     pub fn lookup_projected_or_fallback_from_source_state_values(
         &self,
-        propositional: &[usize],
-        source_numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        source_numeric: &[NumericValue],
     ) -> Result<f64, String> {
         if let Some(distance) =
             self.lookup_pattern_distance_from_source_state_values(propositional, source_numeric)?
@@ -1265,8 +1296,8 @@ impl<'task> PatternDatabase<'task> {
 
     pub(crate) fn lookup_projected_or_fallback_from_source_state_values_fast(
         &self,
-        propositional: &[usize],
-        source_numeric: &[f64],
+        propositional: &[ExplicitValueIndex],
+        source_numeric: &[NumericValue],
     ) -> f64 {
         if let Some(distance) = self
             .lookup_pattern_distance_from_source_state_values_fast(propositional, source_numeric)
@@ -1292,11 +1323,14 @@ impl<'task> PatternDatabase<'task> {
     pub(super) fn state_propositional_values<'state>(
         &self,
         state: &'state PdbState,
-    ) -> &'state [usize] {
+    ) -> &'state [ExplicitValueIndex] {
         &state.propositional
     }
 
-    pub(super) fn state_numeric_values<'state>(&self, state: &'state PdbState) -> &'state [f64] {
+    pub(super) fn state_numeric_values<'state>(
+        &self,
+        state: &'state PdbState,
+    ) -> &'state [NumericValue] {
         &state.numeric
     }
 
@@ -1386,7 +1420,7 @@ impl<'task> PatternDatabase<'task> {
                 for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate()
                 {
                     compact_numeric_bins[numeric_index + 1] =
-                        float_tolerance::canonical_bits(state.numeric[projected_numeric_id]);
+                        float_tolerance::canonical_bits_nv(state.numeric[projected_numeric_id]);
                 }
                 let distance = self.distances[state_id];
                 self.compact_numeric_registry
@@ -1398,7 +1432,7 @@ impl<'task> PatternDatabase<'task> {
                 self.pattern_lookup_packer.set(
                     &mut packed_bins,
                     compact_index,
-                    state.propositional[projected_var_id] as u64,
+                    state.propositional[projected_var_id].index() as u64,
                 );
             }
             let prop_len = pattern_regular_ids.len();
@@ -1407,7 +1441,7 @@ impl<'task> PatternDatabase<'task> {
                     &mut packed_bins,
                     prop_len + numeric_index,
                     self.pattern_lookup_packer
-                        .pack_double(state.numeric[projected_numeric_id]),
+                        .pack_double(state.numeric[projected_numeric_id].value()),
                 );
             }
             let distance = self.distances[state_id];
@@ -1503,10 +1537,10 @@ impl<'task> PatternDatabase<'task> {
         inner_heuristic: &mut PdbInnerHeuristic<'_>,
     ) -> Result<PdbExploration, String> {
         let successor_generator = GroundedSuccessorGenerator::construct_node_from_task(&self.task);
-        let mut applicable_operators: Vec<u32> = Vec::new();
-        let mut current_propositional: Vec<usize> = Vec::new();
-        let mut successor_numeric: Vec<f64> = Vec::new();
-        let mut successor_cost_values: Vec<f64> = Vec::new();
+        let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
+        let mut current_propositional: Vec<ExplicitValueIndex> = Vec::new();
+        let mut successor_numeric: Vec<NumericValue> = Vec::new();
+        let mut successor_cost_values: Vec<NumericValue> = Vec::new();
         let mut expansion_context = ExpansionContext::default();
 
         let mut exploration = PdbExploration {
@@ -1563,11 +1597,10 @@ impl<'task> PatternDatabase<'task> {
 
             let operators = self.task.get_operators();
             for &op_id in applicable_operators.iter() {
-                let operator_id = op_id as usize;
                 let (successor_state, _) = registry
                     .apply_operator_in_context(
                         &current_registry_state,
-                        &operators[operator_id],
+                        &operators[op_id.index()],
                         &expansion_context,
                         &mut successor_numeric,
                         &mut successor_cost_values,
@@ -1578,7 +1611,7 @@ impl<'task> PatternDatabase<'task> {
                 }
                 let next_id = successor_state.get_id();
                 exploration.register_state(next_id, successor_state)?;
-                exploration.predecessors[next_id].push((state_id, operator_id));
+                exploration.predecessors[next_id].push((state_id, op_id));
 
                 if exploration.seen_or_closed[next_id] {
                     continue;
@@ -1593,7 +1626,7 @@ impl<'task> PatternDatabase<'task> {
                 if inner_h.dead_end {
                     continue;
                 }
-                let g = entry.g.into_inner() + self.task.abstract_operator_cost(operator_id);
+                let g = entry.g.into_inner() + self.task.abstract_operator_cost(op_id).value();
                 // Blind and Zero explore breadth-first: their value is a
                 // constant, so folding it into `f` would only shift every key.
                 let h = if matches!(
@@ -1668,7 +1701,7 @@ impl<'task> PatternDatabase<'task> {
     /// Backward Dijkstra over the recorded predecessor edges.
     fn propagate_distances_to_predecessors(
         &self,
-        predecessors: &[Vec<(usize, usize)>],
+        predecessors: &[Vec<(usize, OperatorIndex)>],
         distances: &mut [f64],
         heap: &mut BinaryHeap<(Reverse<NotNan<f64>>, usize)>,
     ) {
@@ -1678,7 +1711,7 @@ impl<'task> PatternDatabase<'task> {
                 continue;
             }
             for &(parent_id, operator_id) in &predecessors[state_id] {
-                let alternative = distance + self.task.abstract_operator_cost(operator_id);
+                let alternative = distance + self.task.abstract_operator_cost(operator_id).value();
                 if alternative + float_tolerance::DIJKSTRA_EPSILON < distances[parent_id] {
                     distances[parent_id] = alternative;
                     heap.push((Reverse(NotNan::new(alternative).unwrap()), parent_id));
@@ -1695,7 +1728,7 @@ struct PdbDistanceTable {
     reached_goal_states: usize,
     goal_state_ids: Vec<usize>,
     frontier_states: Vec<usize>,
-    transition_predecessors: Vec<Vec<(usize, usize)>>,
+    transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
     truncated: bool,
     exhausted_abstract_state_space: bool,
 }
@@ -1705,7 +1738,7 @@ struct PdbExploration {
     /// One concrete state per abstract state, indexed by abstract state id.
     representative_states: Vec<ConcreteState>,
     /// `predecessors[s]` are the `(parent, operator)` edges entering `s`.
-    predecessors: Vec<Vec<(usize, usize)>>,
+    predecessors: Vec<Vec<(usize, OperatorIndex)>>,
     goal_states: Vec<usize>,
     closed: Vec<bool>,
     seen_or_closed: Vec<bool>,

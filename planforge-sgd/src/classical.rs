@@ -22,7 +22,9 @@
 //! from the transcription is semantically correct rather than a convenient
 //! default. Costs are still reported, computed by the exact verifier.
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericType, VariableIndex,
+};
 
 /// Why a task cannot be transcribed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,31 +206,35 @@ pub fn check_classical<T: AbstractNumericTask + ?Sized>(task: &T) -> Result<(), 
     //    because each operator increments `total-cost`.
     for axiom in task.assignment_axioms() {
         let affected = axiom.get_affected_var_id();
-        if !is_cost.get(affected).copied().unwrap_or(false) {
+        if !is_cost.get(affected.index()).copied().unwrap_or(false) {
             problems.push(NotClassical::NumericAxiomWrite {
-                affected_var_id: affected,
+                affected_var_id: affected.index(),
             });
         }
     }
     for operator in task.get_operators() {
         for effect in operator.assignment_effects() {
             let affected = effect.affected_var_id();
-            if !is_cost.get(affected).copied().unwrap_or(false) {
+            if !is_cost.get(affected.index()).copied().unwrap_or(false) {
                 problems.push(NotClassical::NumericEffect {
                     operator: operator.name().to_string(),
-                    affected_var_id: affected,
+                    affected_var_id: affected.index(),
                     reason: NumericEffectReason::NotACostVariable,
                 });
-            } else if !is_constant.get(effect.var_id()).copied().unwrap_or(false) {
+            } else if !is_constant
+                .get(effect.var_id().index())
+                .copied()
+                .unwrap_or(false)
+            {
                 problems.push(NotClassical::NumericEffect {
                     operator: operator.name().to_string(),
-                    affected_var_id: affected,
+                    affected_var_id: affected.index(),
                     reason: NumericEffectReason::NonConstantOperand,
                 });
             } else if effect.is_conditional() || !effect.conditions().is_empty() {
                 problems.push(NotClassical::NumericEffect {
                     operator: operator.name().to_string(),
-                    affected_var_id: affected,
+                    affected_var_id: affected.index(),
                     reason: NumericEffectReason::Conditional,
                 });
             }
@@ -242,7 +248,7 @@ pub fn check_classical<T: AbstractNumericTask + ?Sized>(task: &T) -> Result<(), 
     for axiom in task.axioms() {
         if !axiom.conditions().is_empty() {
             problems.push(NotClassical::ConditionedAxiom {
-                var_id: axiom.var_id(),
+                var_id: axiom.var_id().index(),
                 conditions: axiom.conditions().len(),
             });
         }
@@ -257,7 +263,7 @@ pub fn check_classical<T: AbstractNumericTask + ?Sized>(task: &T) -> Result<(), 
             if derived {
                 problems.push(NotClassical::EffectOnDerivedVariable {
                     operator: operator.name().to_string(),
-                    var_id: effect.var_id(),
+                    var_id: effect.var_id().index(),
                 });
             }
         }
@@ -265,47 +271,48 @@ pub fn check_classical<T: AbstractNumericTask + ?Sized>(task: &T) -> Result<(), 
 
     // 6. Structural sanity: domains non-empty, every referenced value in range,
     //    and the parser's hoisting invariant.
-    let domain_size = |var_id: usize| task.get_variable_domain_size(var_id).ok();
+    let domain_size = |var_id: VariableIndex| task.get_variable_domain_size(var_id).ok();
     for var_id in 0..task.get_num_variables() {
-        if domain_size(var_id) == Some(0) {
+        if domain_size(VariableIndex::from_usize(var_id)) == Some(0) {
             problems.push(NotClassical::EmptyVariableDomain { var_id });
         }
     }
-    let check_fact = |var_id: usize, value: usize, problems: &mut Vec<NotClassical>| {
-        if let Some(size) = domain_size(var_id)
-            && value >= size
-        {
-            problems.push(NotClassical::ValueOutOfRange {
-                var_id,
-                value,
-                domain_size: size,
-            });
-        }
-    };
+    let check_fact =
+        |var_id: VariableIndex, value: ExplicitValueIndex, problems: &mut Vec<NotClassical>| {
+            if let Some(size) = domain_size(var_id)
+                && value.index() >= size
+            {
+                problems.push(NotClassical::ValueOutOfRange {
+                    var_id: var_id.index(),
+                    value: value.index(),
+                    domain_size: size,
+                });
+            }
+        };
     for index in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(index);
-        check_fact(goal.var(), goal.value(), &mut problems);
+        check_fact(goal.var_index(), goal.value_index(), &mut problems);
     }
     for operator in task.get_operators() {
         for fact in operator.preconditions() {
-            check_fact(fact.var(), fact.value(), &mut problems);
+            check_fact(fact.var_index(), fact.value_index(), &mut problems);
         }
         for effect in operator.effects() {
             check_fact(effect.var_id(), effect.value(), &mut problems);
             for fact in effect.conditions() {
-                check_fact(fact.var(), fact.value(), &mut problems);
+                check_fact(fact.var_index(), fact.value_index(), &mut problems);
             }
             if let Some(required) = effect.precondition_value() {
                 check_fact(effect.var_id(), required, &mut problems);
                 let hoisted = operator
                     .preconditions()
                     .iter()
-                    .any(|pre| pre.var() == effect.var_id() && pre.value() == required);
+                    .any(|pre| pre.var_index() == effect.var_id() && pre.value_index() == required);
                 if !hoisted {
                     problems.push(NotClassical::UnhoistedEffectPrecondition {
                         operator: operator.name().to_string(),
-                        var_id: effect.var_id(),
-                        value: required,
+                        var_id: effect.var_id().index(),
+                        value: required.index(),
                     });
                 }
             }

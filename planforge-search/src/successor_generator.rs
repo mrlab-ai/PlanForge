@@ -2,7 +2,9 @@
 mod tests;
 
 use planforge_sas::{
-    numeric_task::{AbstractNumericTask, ExplicitFact},
+    numeric_task::{
+        AbstractNumericTask, ExplicitFact, ExplicitValueIndex, OperatorIndex, VariableIndex,
+    },
     utils::errors::ConstructError,
 };
 use std::collections::VecDeque;
@@ -61,15 +63,15 @@ impl NodeId {
 /// capacity).
 #[derive(Debug)]
 struct BranchEntry {
-    var_id: u32,
-    immediate_operators: Box<[u32]>,
+    var_id: VariableIndex,
+    immediate_operators: Box<[OperatorIndex]>,
     value_children: Box<[NodeId]>,
     default_child: NodeId,
 }
 
 #[derive(Debug)]
 struct LeafEntry {
-    applicable_operators: Box<[u32]>,
+    applicable_operators: Box<[OperatorIndex]>,
 }
 
 /// Decision tree returning the ids of the operators applicable in a given
@@ -105,7 +107,9 @@ impl Debug for SuccessorTree {
 impl SuccessorTree {
     pub fn new(task: &dyn AbstractNumericTask) -> Self {
         let mut builder = TreeBuilder::new(task);
-        let mut queue: VecDeque<u32> = (0..task.get_operators().len() as u32).collect();
+        let mut queue: VecDeque<OperatorIndex> = (0..task.get_operators().len() as u32)
+            .map(OperatorIndex::new)
+            .collect();
         let root = builder
             .construct(0, &mut queue)
             .expect("successor-tree construction failed");
@@ -137,11 +141,15 @@ impl SuccessorTree {
     /// that renumbering a task's variables reshapes the tree and moves expansion
     /// counts — in either direction, and by a lot. Plan cost and plan length are
     /// what a renumbering may not touch.
-    pub fn get_applicable_operators(&self, state: &[usize], out: &mut Vec<u32>) {
+    pub fn get_applicable_operators(
+        &self,
+        state: &[ExplicitValueIndex],
+        out: &mut Vec<OperatorIndex>,
+    ) {
         self.walk(self.root, state, out);
     }
 
-    fn walk(&self, id: NodeId, state: &[usize], out: &mut Vec<u32>) {
+    fn walk(&self, id: NodeId, state: &[ExplicitValueIndex], out: &mut Vec<OperatorIndex>) {
         // Shared empty leaf is a fast no-op; many branches point to it.
         if id == self.empty_leaf {
             return;
@@ -153,8 +161,8 @@ impl SuccessorTree {
         }
         let branch = &self.branches[id.index()];
         out.extend_from_slice(&branch.immediate_operators);
-        let value = state[branch.var_id as usize];
-        if let Some(&child) = branch.value_children.get(value)
+        let value = state[branch.var_id.index()];
+        if let Some(&child) = branch.value_children.get(value.index())
             && child.is_valid()
         {
             self.walk(child, state, out);
@@ -193,7 +201,7 @@ impl<'a> TreeBuilder<'a> {
         }
 
         let leaves: Vec<LeafEntry> = vec![LeafEntry {
-            applicable_operators: Box::from([] as [u32; 0]),
+            applicable_operators: Box::from([] as [OperatorIndex; 0]),
         }];
         let empty_leaf = NodeId::leaf(0);
 
@@ -213,7 +221,7 @@ impl<'a> TreeBuilder<'a> {
         id
     }
 
-    fn push_leaf(&mut self, ops: Vec<u32>) -> NodeId {
+    fn push_leaf(&mut self, ops: Vec<OperatorIndex>) -> NodeId {
         if ops.is_empty() {
             return self.empty_leaf;
         }
@@ -227,46 +235,47 @@ impl<'a> TreeBuilder<'a> {
     fn construct(
         &mut self,
         mut branch_var_id: usize,
-        queue: &mut VecDeque<u32>,
+        queue: &mut VecDeque<OperatorIndex>,
     ) -> Result<NodeId, ConstructError> {
         if queue.is_empty() {
             return Ok(self.empty_leaf);
         }
         loop {
             if branch_var_id >= self.task.variables().len() {
-                let ops: Vec<u32> = queue.drain(..).collect();
+                let ops: Vec<OperatorIndex> = queue.drain(..).collect();
                 return Ok(self.push_leaf(ops));
             }
 
             let branch_var = &self.task.variables()[branch_var_id];
             let num_children = branch_var.domain_size();
 
-            let mut operators_for_value: Vec<VecDeque<u32>> = vec![VecDeque::new(); num_children];
-            let mut default_operators: VecDeque<u32> = VecDeque::new();
-            let mut applicable_operators: Vec<u32> = Vec::new();
+            let mut operators_for_value: Vec<VecDeque<OperatorIndex>> =
+                vec![VecDeque::new(); num_children];
+            let mut default_operators: VecDeque<OperatorIndex> = VecDeque::new();
+            let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
 
             let mut all_ops_immediate = true;
             let mut var_interesting = false;
 
             while let Some(op_id) = queue.pop_front() {
-                let op_idx = op_id as usize;
-                let condition_index = self.next_condition_by_operator[op_idx];
+                let op_idx = op_id;
+                let condition_index = self.next_condition_by_operator[op_idx.index()];
 
-                if condition_index >= self.conditions[op_idx].len() {
+                if condition_index >= self.conditions[op_idx.index()].len() {
                     var_interesting = true;
                     applicable_operators.push(op_id);
                 } else {
                     all_ops_immediate = false;
-                    let fact = &self.conditions[op_idx][condition_index];
+                    let fact = &self.conditions[op_idx.index()][condition_index];
                     if fact.var() == branch_var_id {
                         var_interesting = true;
                         let mut new_index = condition_index;
-                        while new_index < self.conditions[op_idx].len()
-                            && self.conditions[op_idx][new_index].var() == branch_var_id
+                        while new_index < self.conditions[op_idx.index()].len()
+                            && self.conditions[op_idx.index()][new_index].var() == branch_var_id
                         {
                             new_index += 1;
                         }
-                        self.next_condition_by_operator[op_idx] = new_index;
+                        self.next_condition_by_operator[op_idx.index()] = new_index;
                         operators_for_value[fact.value()].push_back(op_id);
                     } else {
                         default_operators.push_back(op_id);
@@ -288,7 +297,7 @@ impl<'a> TreeBuilder<'a> {
                     .try_into()
                     .expect("variable id overflows u32 — sas task has too many variables");
                 return Ok(self.push_branch(BranchEntry {
-                    var_id: var_id_u32,
+                    var_id: VariableIndex::new(var_id_u32),
                     immediate_operators: immediate,
                     value_children: value_children.into_boxed_slice(),
                     default_child,
@@ -330,7 +339,7 @@ impl<'a> GroundedSuccessorGenerator<'a> {
     pub fn construct(
         &mut self,
         branch_var_id: &mut usize,
-        queue: &mut VecDeque<u32>,
+        queue: &mut VecDeque<OperatorIndex>,
     ) -> Result<NodeRef, ConstructError> {
         let id = self.builder.construct(*branch_var_id, queue)?;
         Ok(NodeRef { id })

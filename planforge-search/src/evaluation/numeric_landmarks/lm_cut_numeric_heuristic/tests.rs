@@ -4,12 +4,7 @@ use planforge_sas::numeric_task::{
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
-    ExplicitVariable::new(
-        values.len(),
-        name.to_string(),
-        values.iter().map(|value| value.to_string()).collect(),
-        axiom_layer,
-        0,
+    ExplicitVariable::new(        values.len(),         name.to_string(),         values.iter().map(|value| value.to_string()).collect(),         axiom_layer, ExplicitValueIndex::new(        0,)
     )
 }
 
@@ -37,7 +32,7 @@ fn from_config_accepts_second_order_simple_flag() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -64,7 +59,7 @@ fn from_config_accepts_irmax() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -92,7 +87,7 @@ fn from_config_rejects_unimplemented_random_pcf() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -122,7 +117,7 @@ fn from_config_accepts_disable_ma() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -150,7 +145,7 @@ fn from_config_accepts_constant_assignment() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -178,7 +173,7 @@ fn from_config_accepts_bound_iterations() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],

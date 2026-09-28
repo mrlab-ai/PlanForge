@@ -1,7 +1,7 @@
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericTaskExt,
-    NumericType, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex,
+    NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::{LinearExpression, LinearNumericEffect};
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,13 +48,13 @@ impl LinearNumericCondition {
             .all(|&coefficient| coefficient == 0.0)
     }
 
-    pub(crate) fn evaluate_slack(&self, numeric_values: &[f64], epsilon: f64) -> f64 {
+    pub(crate) fn evaluate_slack(&self, numeric_values: &[NumericValue], epsilon: f64) -> f64 {
         let mut net = self.constant;
         if self.is_strictly_greater {
             net -= epsilon;
         }
         for (coefficient, value) in self.coefficients.iter().zip(numeric_values.iter()) {
-            net += coefficient * value;
+            net += coefficient * value.value();
         }
         net
     }
@@ -66,16 +66,17 @@ pub(crate) struct NumericTaskHelper {
     condition_group_condition_ids: Vec<Vec<usize>>,
     condition_group_representative_condition_ids: Vec<usize>,
     fact_to_axiom_marker: Vec<Option<usize>>,
-    numeric_variable_ids: Vec<usize>,
-    numeric_variable_index_by_task_id: Vec<Option<usize>>,
-    comparison_axiom_by_var: BTreeMap<usize, usize>,
-    comparison_fact_condition_group_ids: BTreeMap<(usize, usize), Vec<usize>>,
-    comparison_fact_conditions: BTreeMap<(usize, usize), Vec<LinearNumericCondition>>,
-    goal_helper_propositional_facts: BTreeMap<usize, Vec<ExplicitFact>>,
-    goal_helper_numeric_condition_group_ids: BTreeMap<usize, Vec<usize>>,
-    goal_helper_numeric_conditions: BTreeMap<usize, Vec<LinearNumericCondition>>,
+    numeric_variable_ids: Vec<VariableIndex>,
+    numeric_variable_index_by_task_id: Vec<Option<VariableIndex>>,
+    comparison_axiom_by_var: BTreeMap<VariableIndex, usize>,
+    comparison_fact_condition_group_ids: BTreeMap<(VariableIndex, ExplicitValueIndex), Vec<usize>>,
+    comparison_fact_conditions:
+        BTreeMap<(VariableIndex, ExplicitValueIndex), Vec<LinearNumericCondition>>,
+    goal_helper_propositional_facts: BTreeMap<VariableIndex, Vec<ExplicitFact>>,
+    goal_helper_numeric_condition_group_ids: BTreeMap<VariableIndex, Vec<usize>>,
+    goal_helper_numeric_conditions: BTreeMap<VariableIndex, Vec<LinearNumericCondition>>,
     goal_models: Vec<HelperPreconditionLists>,
-    numeric_goal_helper_vars: BTreeSet<usize>,
+    numeric_goal_helper_vars: BTreeSet<VariableIndex>,
     action_models: Vec<HelperActionModel>,
     numeric_variable_lower_bounds: Vec<f64>,
     numeric_variable_upper_bounds: Vec<f64>,
@@ -105,7 +106,7 @@ pub(crate) struct HelperConditionalExplicitFactEffect {
 pub(crate) struct HelperConditionalNumericEffect {
     pub(crate) source_assignment_effect_id: usize,
     pub(crate) preconditions: HelperPreconditionLists,
-    pub(crate) target_local_var_id: usize,
+    pub(crate) target_local_var_id: VariableIndex,
     pub(crate) delta: f64,
 }
 
@@ -114,17 +115,17 @@ pub(crate) struct HelperConditionalNumericEffect {
 pub(crate) struct HelperConditionalAssignmentEffect {
     pub(crate) source_assignment_effect_id: usize,
     pub(crate) preconditions: HelperPreconditionLists,
-    pub(crate) target_local_var_id: usize,
+    pub(crate) target_local_var_id: VariableIndex,
     pub(crate) assigned_value: f64,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct HelperLinearEffect {
     pub(crate) source_assignment_effect_id: usize,
-    pub(crate) source_var_id: usize,
+    pub(crate) source_var_id: VariableIndex,
     pub(crate) operation: AssignmentOperation,
     pub(crate) preconditions: HelperPreconditionLists,
-    pub(crate) target_local_var_id: usize,
+    pub(crate) target_local_var_id: VariableIndex,
     pub(crate) coefficients: Vec<f64>,
     pub(crate) constant: f64,
 }
@@ -203,9 +204,9 @@ impl NumericTaskHelper {
         for (local_var_id, &task_var_id) in helper.numeric_variable_ids.iter().enumerate() {
             if let Some(index) = helper
                 .numeric_variable_index_by_task_id
-                .get_mut(task_var_id)
+                .get_mut(task_var_id.index())
             {
-                *index = Some(local_var_id);
+                *index = Some(VariableIndex::from_usize(local_var_id));
             }
         }
         helper.build_numeric_conditions(task);
@@ -236,9 +237,9 @@ impl NumericTaskHelper {
         for (local_var_id, &task_var_id) in helper.numeric_variable_ids.iter().enumerate() {
             if let Some(index) = helper
                 .numeric_variable_index_by_task_id
-                .get_mut(task_var_id)
+                .get_mut(task_var_id.index())
             {
-                *index = Some(local_var_id);
+                *index = Some(VariableIndex::from_usize(local_var_id));
             }
         }
         helper.build_numeric_conditions(task);
@@ -357,13 +358,13 @@ impl NumericTaskHelper {
             self.linear_effect_for_assignment_effect(action_id, assignment_effect_id)?;
         let affected_var_id = *self
             .numeric_variable_ids
-            .get(linear_effect.target_local_var_id)?;
+            .get(linear_effect.target_local_var_id.index())?;
         let mut delta = LinearExpression::zero(self.numeric_variable_index_by_task_id.len());
         for (local_var_id, &coefficient) in linear_effect.coefficients.iter().enumerate() {
             let task_var_id = *self.numeric_variable_ids.get(local_var_id)?;
-            delta.coefficients[task_var_id] = coefficient;
+            delta.coefficients[task_var_id.index()] = coefficient;
         }
-        delta.coefficients[affected_var_id] -= 1.0;
+        delta.coefficients[affected_var_id.index()] -= 1.0;
         delta.constant = linear_effect.constant;
 
         Some(LinearNumericEffect {
@@ -407,17 +408,24 @@ impl NumericTaskHelper {
         self.condition_epsilons.get(condition_id).copied()
     }
 
-    pub(crate) fn local_numeric_var_id(&self, task_numeric_var_id: usize) -> Option<usize> {
+    pub(crate) fn local_numeric_var_id(
+        &self,
+        task_numeric_var_id: VariableIndex,
+    ) -> Option<VariableIndex> {
         self.numeric_variable_index_by_task_id
-            .get(task_numeric_var_id)
+            .get(task_numeric_var_id.index())
             .copied()
             .unwrap_or(None)
     }
 
-    pub(crate) fn get_proposition(&self, var_id: usize, value: usize) -> Option<usize> {
+    pub(crate) fn get_proposition(
+        &self,
+        var_id: VariableIndex,
+        value: ExplicitValueIndex,
+    ) -> Option<usize> {
         self.proposition_ids_by_var_value
-            .get(var_id)
-            .and_then(|values| values.get(value))
+            .get(var_id.index())
+            .and_then(|values| values.get(value.index()))
             .copied()
     }
 
@@ -435,29 +443,35 @@ impl NumericTaskHelper {
             .map(String::as_str)
     }
 
-    pub(crate) fn comparison_axiom_id_for_var(&self, variable_id: usize) -> Option<usize> {
+    pub(crate) fn comparison_axiom_id_for_var(&self, variable_id: VariableIndex) -> Option<usize> {
         self.comparison_axiom_by_var.get(&variable_id).copied()
     }
 
-    pub(crate) fn fact_to_axiom_marker(&self, variable_id: usize) -> Option<Option<usize>> {
-        self.fact_to_axiom_marker.get(variable_id).copied()
+    pub(crate) fn fact_to_axiom_marker(&self, variable_id: VariableIndex) -> Option<Option<usize>> {
+        self.fact_to_axiom_marker.get(variable_id.index()).copied()
     }
 
-    pub(crate) fn is_comparison_axiom_var(&self, variable_id: usize) -> bool {
+    pub(crate) fn is_comparison_axiom_var(&self, variable_id: VariableIndex) -> bool {
         self.comparison_axiom_by_var.contains_key(&variable_id)
     }
 
     /// A fact on `variable_id`, tagged with the namespace the helper's own
     /// comparison-axiom map puts that variable in.
-    pub(crate) fn fact(&self, variable_id: usize, value: usize) -> ExplicitFact {
+    pub(crate) fn fact(
+        &self,
+        variable_id: VariableIndex,
+        value: ExplicitValueIndex,
+    ) -> ExplicitFact {
         if self.is_comparison_axiom_var(variable_id) {
-            ExplicitFact::condition(variable_id, value)
+            ExplicitFact::condition_from_indexes(variable_id, value)
         } else {
-            ExplicitFact::propositional(variable_id, value)
+            ExplicitFact::propositional_from_indexes(variable_id, value)
         }
     }
+    /// A fact on `variable_id`, tagged with the namespace the helper's own
+    /// comparison-axiom map puts that variable in.
 
-    pub(crate) fn is_numeric_axiom_var(&self, variable_id: usize) -> bool {
+    pub(crate) fn is_numeric_axiom_var(&self, variable_id: VariableIndex) -> bool {
         self.fact_to_axiom_marker(variable_id)
             .map(|marker| marker.is_some())
             .unwrap_or(false)
@@ -465,8 +479,8 @@ impl NumericTaskHelper {
 
     pub(crate) fn comparison_fact_conditions(
         &self,
-        variable_id: usize,
-        fact_value: usize,
+        variable_id: VariableIndex,
+        fact_value: ExplicitValueIndex,
     ) -> Option<&[LinearNumericCondition]> {
         self.comparison_fact_conditions
             .get(&(variable_id, fact_value))
@@ -475,8 +489,8 @@ impl NumericTaskHelper {
 
     pub(crate) fn comparison_fact_condition_group_ids(
         &self,
-        variable_id: usize,
-        fact_value: usize,
+        variable_id: VariableIndex,
+        fact_value: ExplicitValueIndex,
     ) -> Option<&[usize]> {
         self.comparison_fact_condition_group_ids
             .get(&(variable_id, fact_value))
@@ -485,7 +499,7 @@ impl NumericTaskHelper {
 
     pub(crate) fn goal_helper_propositional_facts(
         &self,
-        variable_id: usize,
+        variable_id: VariableIndex,
     ) -> Option<&[ExplicitFact]> {
         self.goal_helper_propositional_facts
             .get(&variable_id)
@@ -494,7 +508,7 @@ impl NumericTaskHelper {
 
     pub(crate) fn goal_helper_numeric_conditions(
         &self,
-        variable_id: usize,
+        variable_id: VariableIndex,
     ) -> Option<&[LinearNumericCondition]> {
         self.goal_helper_numeric_conditions
             .get(&variable_id)
@@ -503,7 +517,7 @@ impl NumericTaskHelper {
 
     pub(crate) fn goal_helper_numeric_condition_group_ids(
         &self,
-        variable_id: usize,
+        variable_id: VariableIndex,
     ) -> Option<&[usize]> {
         self.goal_helper_numeric_condition_group_ids
             .get(&variable_id)
@@ -566,8 +580,8 @@ impl NumericTaskHelper {
 
     pub(crate) fn get_comparison_fact_condition_ids(
         &self,
-        variable_id: usize,
-        fact_value: usize,
+        variable_id: VariableIndex,
+        fact_value: ExplicitValueIndex,
     ) -> Vec<usize> {
         self.comparison_fact_condition_group_ids(variable_id, fact_value)
             .map(|group_ids| self.get_condition_ids_from_group_ids(group_ids))
@@ -617,8 +631,8 @@ impl NumericTaskHelper {
 
     pub(crate) fn comparison_fact_materialized_conditions(
         &self,
-        variable_id: usize,
-        fact_value: usize,
+        variable_id: VariableIndex,
+        fact_value: ExplicitValueIndex,
     ) -> Vec<LinearNumericCondition> {
         self.comparison_fact_condition_group_ids(variable_id, fact_value)
             .map(|group_ids| self.materialized_conditions_for_group_ids(group_ids))
@@ -684,9 +698,9 @@ impl NumericTaskHelper {
         let mut seen_numeric = BTreeSet::new();
 
         for condition in preconditions {
-            let var_id = condition.var();
+            let var_id = condition.var_index();
             if !self.is_numeric_axiom_var(var_id) {
-                if seen_propositional.insert((condition.var(), condition.value())) {
+                if seen_propositional.insert((condition.var_index(), condition.value_index())) {
                     propositional_facts.push(*condition);
                 }
                 continue;
@@ -747,8 +761,10 @@ impl NumericTaskHelper {
     }
 
     pub(crate) fn condition_group_ids_for_numeric_fact(&self, fact: &ExplicitFact) -> Vec<usize> {
-        let var_id = fact.var();
-        if let Some(group_ids) = self.comparison_fact_condition_group_ids(var_id, fact.value()) {
+        let var_id = fact.var_index();
+        if let Some(group_ids) =
+            self.comparison_fact_condition_group_ids(var_id, fact.value_index())
+        {
             return group_ids.to_vec();
         }
         if let Some(group_ids) = self.goal_helper_numeric_condition_group_ids(var_id) {
@@ -904,7 +920,7 @@ impl NumericTaskHelper {
             let action_model = self.build_action(
                 task,
                 operator,
-                operator_id,
+                OperatorIndex::from_usize(operator_id),
                 precision,
                 separate_constant_assignment,
             );
@@ -923,7 +939,7 @@ impl NumericTaskHelper {
         self.proposition_names.clear();
         for var_id in 0..task.get_num_variables() {
             let domain_size = task
-                .get_variable_domain_size(var_id)
+                .get_variable_domain_size(VariableIndex::from_usize(var_id))
                 .expect("helper proposition domain size must exist");
             let mut ids = Vec::with_capacity(domain_size);
             for value in 0..domain_size {
@@ -943,7 +959,7 @@ impl NumericTaskHelper {
         &mut self,
         task: &dyn AbstractNumericTask,
         operator: &Operator,
-        operator_id: usize,
+        operator_id: OperatorIndex,
         precision: f64,
         separate_constant_assignment: bool,
     ) -> HelperActionModel {
@@ -955,23 +971,27 @@ impl NumericTaskHelper {
             simple_effects: vec![0.0; self.numeric_variable_ids.len()],
             is_assignment: vec![false; self.numeric_variable_ids.len()],
             assignment_values: vec![0.0; self.numeric_variable_ids.len()],
-            cost: operator.cost() as f64,
+            cost: operator.cost().value() as f64,
             ..HelperActionModel::default()
         };
 
         let mut base_precondition_values = BTreeMap::new();
         for precondition in operator.preconditions() {
-            base_precondition_values.insert(precondition.var(), precondition.value());
+            base_precondition_values.insert(precondition.var_index(), precondition.value_index());
         }
 
         for effect in operator.effects() {
-            let add_fact = ExplicitFact::propositional(effect.var_id(), effect.value());
+            let add_fact =
+                ExplicitFact::propositional_from_indexes(effect.var_id(), effect.value());
             if effect.conditions().is_empty() {
                 action_model.add_facts.push(add_fact);
                 if let Some(&pre_value) = base_precondition_values.get(&(effect.var_id())) {
                     action_model
                         .del_facts
-                        .push(ExplicitFact::propositional(effect.var_id(), pre_value));
+                        .push(ExplicitFact::propositional_from_indexes(
+                            effect.var_id(),
+                            pre_value,
+                        ));
                 }
             } else {
                 let conditional_preconditions = self
@@ -982,12 +1002,15 @@ impl NumericTaskHelper {
                     );
                 let mut extended_precondition_values = base_precondition_values.clone();
                 for condition in effect.conditions() {
-                    extended_precondition_values.insert(condition.var(), condition.value());
+                    extended_precondition_values
+                        .insert(condition.var_index(), condition.value_index());
                 }
                 let del_fact = extended_precondition_values
                     .get(&(effect.var_id()))
                     .copied()
-                    .map(|pre_value| ExplicitFact::propositional(effect.var_id(), pre_value));
+                    .map(|pre_value| {
+                        ExplicitFact::propositional_from_indexes(effect.var_id(), pre_value)
+                    });
                 action_model
                     .conditional_fact_effects
                     .push(HelperConditionalExplicitFactEffect {
@@ -1054,14 +1077,18 @@ impl NumericTaskHelper {
             cost: 0.0,
             ..HelperActionModel::default()
         };
-        action_model.add_facts.push(ExplicitFact::propositional(
-            axiom.var_id(),
-            axiom.effect_value(),
-        ));
-        action_model.del_facts.push(ExplicitFact::propositional(
-            axiom.var_id(),
-            axiom.precondition_value(),
-        ));
+        action_model
+            .add_facts
+            .push(ExplicitFact::propositional_from_indexes(
+                axiom.var_id(),
+                axiom.effect_value(),
+            ));
+        action_model
+            .del_facts
+            .push(ExplicitFact::propositional_from_indexes(
+                axiom.var_id(),
+                axiom.precondition_value(),
+            ));
         action_model.pre_del_facts = intersect_fact_lists(
             &action_model.propositional_preconditions,
             &action_model.del_facts,
@@ -1112,7 +1139,7 @@ impl NumericTaskHelper {
                         delta,
                     });
             } else {
-                action_model.simple_effects[local_var_id] = delta;
+                action_model.simple_effects[local_var_id.index()] = delta;
             }
             return;
         }
@@ -1135,8 +1162,8 @@ impl NumericTaskHelper {
                     },
                 );
             } else {
-                action_model.is_assignment[local_var_id] = true;
-                action_model.assignment_values[local_var_id] = assigned_value;
+                action_model.is_assignment[local_var_id.index()] = true;
+                action_model.assignment_values[local_var_id.index()] = assigned_value;
             }
             return;
         }
@@ -1144,7 +1171,7 @@ impl NumericTaskHelper {
         let coefficients = self
             .numeric_variable_ids
             .iter()
-            .map(|&task_var_id| final_expression.coefficients[task_var_id])
+            .map(|&task_var_id| final_expression.coefficients[task_var_id.index()])
             .collect::<Vec<_>>();
         action_model.linear_effects.push(HelperLinearEffect {
             source_assignment_effect_id: assignment_effect_id,
@@ -1169,9 +1196,10 @@ impl NumericTaskHelper {
             .iter()
             .map(|&task_var_id| {
                 initial_numeric_values
-                    .get(task_var_id)
+                    .get(task_var_id.index())
                     .copied()
-                    .unwrap_or(0.0)
+                    .unwrap_or(ZERO_VALUE)
+                    .value()
             })
             .collect();
         self.numeric_variable_upper_bounds = self.numeric_variable_lower_bounds.clone();
@@ -1193,7 +1221,7 @@ impl NumericTaskHelper {
                             continue;
                         };
                         let task_var_id = self.numeric_variable_ids[local_var_id];
-                        let weight = condition.coefficients[task_var_id];
+                        let weight = condition.coefficients[task_var_id.index()];
                         if !simple_on_regular_var(
                             condition,
                             &self.numeric_variable_ids,
@@ -1236,8 +1264,9 @@ impl NumericTaskHelper {
             let mut use_default_epsilon = false;
             for action_model in self.action_models.iter().take(num_operators) {
                 for linear_effect in &action_model.linear_effects {
-                    let task_var_id = self.numeric_variable_ids[linear_effect.target_local_var_id];
-                    if condition.coefficients[task_var_id].abs() >= precision {
+                    let task_var_id =
+                        self.numeric_variable_ids[linear_effect.target_local_var_id.index()];
+                    if condition.coefficients[task_var_id.index()].abs() >= precision {
                         use_default_epsilon = true;
                         break;
                     }
@@ -1259,7 +1288,7 @@ impl NumericTaskHelper {
                     .iter()
                     .enumerate()
                     .map(|(local_var_id, &task_var_id)| {
-                        condition.coefficients[task_var_id]
+                        condition.coefficients[task_var_id.index()]
                             * action_model.simple_effects[local_var_id]
                     })
                     .sum::<f64>();
@@ -1278,7 +1307,7 @@ impl NumericTaskHelper {
             let affected_var_id = comparison_axiom.get_affected_var_id();
             self.comparison_axiom_by_var
                 .insert(affected_var_id, comparison_axiom_id);
-            if let Some(marker) = self.fact_to_axiom_marker.get_mut(affected_var_id) {
+            if let Some(marker) = self.fact_to_axiom_marker.get_mut(affected_var_id.index()) {
                 *marker = Some(comparison_axiom_id);
             }
 
@@ -1286,27 +1315,32 @@ impl NumericTaskHelper {
             // the comparison-axiom-side numeric conditions that correspond to the kept numeric
             // precondition polarity. The Rust LM-cut port currently follows the same one-sided
             // lookup and filters unsupported inequality facts earlier.
-            if let Some(conditions) =
-                self.build_conditions_for_fact_value(task, comparison_axiom, affected_var_id, 0)
-            {
+            if let Some(conditions) = self.build_conditions_for_fact_value(
+                task,
+                comparison_axiom,
+                affected_var_id,
+                ExplicitValueIndex::new(0),
+            ) {
                 let group_id = self.register_condition_group(conditions.clone());
-                self.comparison_fact_condition_group_ids
-                    .insert((affected_var_id, 0), vec![group_id]);
+                self.comparison_fact_condition_group_ids.insert(
+                    (affected_var_id, ExplicitValueIndex::new(0)),
+                    vec![group_id],
+                );
                 self.comparison_fact_conditions
-                    .insert((affected_var_id, 0), conditions);
+                    .insert((affected_var_id, ExplicitValueIndex::new(0)), conditions);
             }
         }
     }
 
     fn build_numeric_goals(&mut self, task: &dyn AbstractNumericTask, precision: f64) {
         self.goal_models = vec![HelperPreconditionLists::default(); task.get_num_goals()];
-        let mut axiom_table: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        let mut fact_table: BTreeMap<usize, Vec<ExplicitFact>> = BTreeMap::new();
+        let mut axiom_table: BTreeMap<VariableIndex, Vec<VariableIndex>> = BTreeMap::new();
+        let mut fact_table: BTreeMap<VariableIndex, Vec<ExplicitFact>> = BTreeMap::new();
 
         for axiom in task.axioms() {
             let effect_var_id = axiom.var_id();
             for precondition in axiom.conditions() {
-                let precondition_var_id = precondition.var();
+                let precondition_var_id = precondition.var_index();
                 if self.is_comparison_axiom_var(precondition_var_id) {
                     axiom_table
                         .entry(effect_var_id)
@@ -1323,7 +1357,7 @@ impl NumericTaskHelper {
 
         for goal_index in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_index);
-            let goal_var_id = goal.var();
+            let goal_var_id = goal.var_index();
             let Some(helper_numeric_vars) = axiom_table.get(&goal_var_id) else {
                 continue;
             };
@@ -1339,20 +1373,25 @@ impl NumericTaskHelper {
             let mut numeric_condition_group_ids = Vec::new();
             for &helper_numeric_var_id in helper_numeric_vars {
                 if let Some(group_ids) = self
-                    .comparison_fact_condition_group_ids(helper_numeric_var_id, 0)
+                    .comparison_fact_condition_group_ids(
+                        helper_numeric_var_id,
+                        ExplicitValueIndex::new(0),
+                    )
                     .map(|group_ids| group_ids.to_vec())
                 {
                     numeric_condition_group_ids.extend(group_ids);
                 }
                 if let Some(conditions) = self
-                    .comparison_fact_conditions(helper_numeric_var_id, 0)
+                    .comparison_fact_conditions(helper_numeric_var_id, ExplicitValueIndex::new(0))
                     .map(|conditions| conditions.to_vec())
                 {
                     for condition in conditions {
                         if !condition.is_empty(precision) {
                             numeric_conditions.push(condition);
                             self.numeric_goal_helper_vars.insert(goal_var_id);
-                            if let Some(marker) = self.fact_to_axiom_marker.get_mut(goal_var_id) {
+                            if let Some(marker) =
+                                self.fact_to_axiom_marker.get_mut(goal_var_id.index())
+                            {
                                 *marker = None;
                             }
                         }
@@ -1414,15 +1453,15 @@ impl NumericTaskHelper {
         &self,
         task: &dyn AbstractNumericTask,
         comparison_axiom: &ComparisonAxiom,
-        affected_var_id: usize,
-        fact_value: usize,
+        affected_var_id: VariableIndex,
+        fact_value: ExplicitValueIndex,
     ) -> Option<Vec<LinearNumericCondition>> {
         let operator = comparison_operator_for_fact_value(comparison_axiom, fact_value)?;
         let lhs = comparison_axiom.get_left_var_id();
         let rhs = comparison_axiom.get_right_var_id();
         // A comparison axiom's affected variable is by definition the carrier of
         // a numeric condition.
-        let fact = ExplicitFact::condition(affected_var_id, fact_value);
+        let fact = ExplicitFact::condition_from_indexes(affected_var_id, fact_value);
         let fact_name = match task.get_fact_name(&fact) {
             "" => format!("comparison fact {affected_var_id}={fact_value}"),
             name => name.to_string(),
@@ -1458,8 +1497,8 @@ impl NumericTaskHelper {
     fn build_condition(
         &self,
         task: &dyn AbstractNumericTask,
-        positive_var_id: usize,
-        negative_var_id: usize,
+        positive_var_id: VariableIndex,
+        negative_var_id: VariableIndex,
         is_strictly_greater: bool,
         name: String,
     ) -> Option<LinearNumericCondition> {
@@ -1503,14 +1542,14 @@ fn invert_comparison_operator(operator: &ComparisonOperator) -> ComparisonOperat
 
 fn comparison_operator_for_fact_value(
     comparison_axiom: &ComparisonAxiom,
-    fact_value: usize,
+    fact_value: ExplicitValueIndex,
 ) -> Option<ComparisonOperator> {
     assert!(
-        fact_value == 0 || fact_value == 1,
+        fact_value.index() == 0 || fact_value.index() == 1,
         "comparison fact value must be boolean-like, got {fact_value}"
     );
 
-    let operator = if fact_value == 0 {
+    let operator = if fact_value.index() == 0 {
         comparison_axiom.get_operator().clone()
     } else {
         invert_comparison_operator(comparison_axiom.get_operator())
@@ -1537,7 +1576,7 @@ fn final_expression_from_effect(linear_effect: &LinearNumericEffect) -> LinearEx
     let mut expression = linear_effect.delta.clone();
     if let Some(coefficient) = expression
         .coefficients
-        .get_mut(linear_effect.affected_var_id)
+        .get_mut(linear_effect.affected_var_id.index())
     {
         *coefficient += 1.0;
     }
@@ -1563,7 +1602,7 @@ fn is_constant_assignment_like_effect(
     }
     if task
         .numeric_variables()
-        .get(linear_effect.affected_var_id)
+        .get(linear_effect.affected_var_id.index())
         .map(|numeric_var| numeric_var.get_type() != &NumericType::Regular)
         .unwrap_or(true)
     {
@@ -1577,13 +1616,13 @@ fn is_constant_assignment_like_effect(
 
 fn simple_on_regular_var(
     condition: &LinearNumericCondition,
-    regular_numeric_variable_ids: &[usize],
-    target_task_var_id: usize,
+    regular_numeric_variable_ids: &[VariableIndex],
+    target_task_var_id: VariableIndex,
     precision: f64,
 ) -> bool {
     for &task_var_id in regular_numeric_variable_ids {
         if task_var_id != target_task_var_id
-            && condition.coefficients[task_var_id].abs() > precision
+            && condition.coefficients[task_var_id.index()].abs() > precision
         {
             return false;
         }

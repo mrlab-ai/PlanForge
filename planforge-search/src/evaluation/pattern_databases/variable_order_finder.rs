@@ -7,7 +7,7 @@ use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 
 use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
 
@@ -44,7 +44,7 @@ impl crate::config::FromOptionValue for GreedyVariableOrderType {
 }
 
 pub struct VariableOrderFinder {
-    remaining_vars: Vec<(usize, bool)>,
+    remaining_vars: Vec<(VariableIndex, bool)>,
     is_goal_variable: Vec<bool>,
     is_numeric_goal_variable: Vec<bool>,
     is_causal_predecessor: Vec<bool>,
@@ -69,15 +69,15 @@ impl VariableOrderFinder {
         }
         for var_id in 0..task.variables().len() {
             if task
-                .get_variable_axiom_layer(var_id)
+                .get_variable_axiom_layer(VariableIndex::from_usize(var_id))
                 .unwrap_or(None)
                 .is_none()
                 && !task
                     .comparison_axioms()
                     .iter()
-                    .any(|axiom| axiom.get_affected_var_id() == var_id)
+                    .any(|axiom| axiom.get_affected_var_id().index() == var_id)
             {
-                remaining_vars.push((var_id, false));
+                remaining_vars.push((VariableIndex::from_usize(var_id), false));
             }
         }
         if !numeric_variables_first {
@@ -103,13 +103,13 @@ impl VariableOrderFinder {
         // `validate_abstractable_goal` refuses that goal, so the comparison
         // variable is named directly and `is_goal_variable` already holds it.
         for (comparison_axiom_id, comparison_axiom) in task.comparison_axioms().iter().enumerate() {
-            if !is_goal_variable[comparison_axiom.get_affected_var_id()] {
+            if !is_goal_variable[comparison_axiom.get_affected_var_id().index()] {
                 continue;
             }
             if let Some(numeric_var_id) = causal_graph.comparison_numeric_var(comparison_axiom_id)
-                && numeric_var_id < is_numeric_goal_variable.len()
+                && numeric_var_id.index() < is_numeric_goal_variable.len()
             {
-                is_numeric_goal_variable[numeric_var_id] = true;
+                is_numeric_goal_variable[numeric_var_id.index()] = true;
             }
         }
 
@@ -131,7 +131,7 @@ impl VariableOrderFinder {
     /// The next variable in the order, or `None` when no remaining variable
     /// qualifies under the configured order type. Not `Iterator::next`: it is
     /// a hard error to call this once `done()` reports exhaustion.
-    pub fn next_variable(&mut self) -> Option<(usize, bool)> {
+    pub fn next_variable(&mut self) -> Option<(VariableIndex, bool)> {
         assert!(
             !self.done(),
             "VariableOrderFinder::next_variable called with no remaining variables"
@@ -159,7 +159,7 @@ impl VariableOrderFinder {
         None
     }
 
-    fn select_next(&mut self, position: usize) -> (usize, bool) {
+    fn select_next(&mut self, position: usize) -> (VariableIndex, bool) {
         let (var_id, is_numeric) = self.remaining_vars.remove(position);
         if is_numeric {
             let predecessors: Vec<_> = self
@@ -184,10 +184,12 @@ impl VariableOrderFinder {
     fn mark_causal_predecessor(&mut self, variable: CausalGraphVariable) {
         let index = match variable {
             CausalGraphVariable::Propositional(var_id) => var_id,
-            CausalGraphVariable::Numeric(var_id) => self.num_propositional_variables + var_id,
+            CausalGraphVariable::Numeric(var_id) => {
+                VariableIndex::from_usize(self.num_propositional_variables + var_id.index())
+            }
         };
-        if index < self.is_causal_predecessor.len() {
-            self.is_causal_predecessor[index] = true;
+        if index.index() < self.is_causal_predecessor.len() {
+            self.is_causal_predecessor[index.index()] = true;
         }
     }
 
@@ -196,12 +198,12 @@ impl VariableOrderFinder {
             .iter()
             .position(|&(var_id, is_numeric)| {
                 let index = if is_numeric {
-                    self.num_propositional_variables + var_id
+                    VariableIndex::from_usize(self.num_propositional_variables + var_id.index())
                 } else {
                     var_id
                 };
                 self.is_causal_predecessor
-                    .get(index)
+                    .get(index.index())
                     .copied()
                     .unwrap_or(false)
             })
@@ -213,17 +215,23 @@ impl VariableOrderFinder {
             .position(|&(var_id, is_numeric)| {
                 if is_numeric {
                     self.is_numeric_goal_variable
-                        .get(var_id)
+                        .get(var_id.index())
                         .copied()
                         .unwrap_or(false)
                 } else {
-                    self.is_goal_variable.get(var_id).copied().unwrap_or(false)
+                    self.is_goal_variable
+                        .get(var_id.index())
+                        .copied()
+                        .unwrap_or(false)
                 }
             })
     }
 }
 
-fn add_numeric_vars(task: &dyn AbstractNumericTask, remaining_vars: &mut Vec<(usize, bool)>) {
+fn add_numeric_vars(
+    task: &dyn AbstractNumericTask,
+    remaining_vars: &mut Vec<(VariableIndex, bool)>,
+) {
     for numeric_var_id in 0..task.numeric_variables().len() {
         let is_regular = task
             .numeric_variables()
@@ -231,7 +239,7 @@ fn add_numeric_vars(task: &dyn AbstractNumericTask, remaining_vars: &mut Vec<(us
             .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
             .unwrap_or(false);
         if is_regular {
-            remaining_vars.push((numeric_var_id, true));
+            remaining_vars.push((VariableIndex::from_usize(numeric_var_id), true));
         }
     }
 }

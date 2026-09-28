@@ -1,10 +1,12 @@
+use planforge_sas::numeric_task::VariableIndex;
+
 use super::*;
 
 #[derive(Clone, Copy)]
 pub(super) struct ComparisonBranchingLayout<'a> {
     pub(super) numeric_domain_sizes: &'a [usize],
     pub(super) hash_multipliers: &'a [usize],
-    pub(super) comparison_var_ids: &'a [usize],
+    pub(super) comparison_var_ids: &'a [VariableIndex],
 }
 
 /// The abstract state space a backward goal-distance Dijkstra runs over: the
@@ -543,8 +545,11 @@ impl DomainAbstractionFactory {
             match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
-                ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
-                let alternative_cost = d + op.cost;
+                ensure!(
+                    op.cost.value().is_finite(),
+                    "abstract operator cost must be finite"
+                );
+                let alternative_cost = d + op.cost.value();
                 let predecessor_i64 = base_state as i64 + op.hash_effect as i64;
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;

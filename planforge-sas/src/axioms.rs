@@ -5,24 +5,26 @@ use std::cell::RefCell;
 use std::cmp::max;
 use std::sync::Arc;
 
-use crate::numeric_task::{AbstractNumericTask, ExplicitFact, TaskRef};
+use crate::numeric_task::{
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, TaskRef, VariableIndex,
+};
 use crate::utils::errors::{AssignmentAxiomError, AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use crate::utils::state_packer::StatePacker;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropositionalAxiom {
     conditions: Vec<ExplicitFact>,
-    var_id: usize,
-    precondition_value: usize,
-    effect_value: usize,
+    var_id: VariableIndex,
+    precondition_value: ExplicitValueIndex,
+    effect_value: ExplicitValueIndex,
 }
 
 impl PropositionalAxiom {
     pub fn new(
         conditions: Vec<ExplicitFact>,
-        var_id: usize,
-        precondition_value: usize,
-        effect_value: usize,
+        var_id: VariableIndex,
+        precondition_value: ExplicitValueIndex,
+        effect_value: ExplicitValueIndex,
     ) -> Self {
         PropositionalAxiom {
             conditions,
@@ -32,15 +34,15 @@ impl PropositionalAxiom {
         }
     }
 
-    pub fn var_id(&self) -> usize {
+    pub fn var_id(&self) -> VariableIndex {
         self.var_id
     }
 
-    pub fn precondition_value(&self) -> usize {
+    pub fn precondition_value(&self) -> ExplicitValueIndex {
         self.precondition_value
     }
 
-    pub fn effect_value(&self) -> usize {
+    pub fn effect_value(&self) -> ExplicitValueIndex {
         self.effect_value
     }
 
@@ -64,18 +66,18 @@ pub enum CalOperator {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentAxiom {
-    pub affected_var_id: usize,
+    pub affected_var_id: VariableIndex,
     pub operator: CalOperator,
-    pub left_hand_side: usize,
-    pub right_hand_side: usize,
+    pub left_hand_side: VariableIndex,
+    pub right_hand_side: VariableIndex,
 }
 
 impl AssignmentAxiom {
     pub fn new(
-        affected_var_id: usize,
+        affected_var_id: VariableIndex,
         operator: CalOperator,
-        left_hand_side: usize,
-        right_hand_side: usize,
+        left_hand_side: VariableIndex,
+        right_hand_side: VariableIndex,
     ) -> Self {
         AssignmentAxiom {
             affected_var_id,
@@ -85,52 +87,65 @@ impl AssignmentAxiom {
         }
     }
 
-    pub fn update_values(&self, numeric_state: &mut [f64]) -> Result<f64, AssignmentAxiomError> {
+    pub fn update_values(
+        &self,
+        numeric_state: &mut [NumericValue],
+    ) -> Result<NumericValue, AssignmentAxiomError> {
         let left = self.left_hand_side;
         let right = self.right_hand_side;
-        if left >= numeric_state.len() {
+        if left.index() >= numeric_state.len() {
             return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
                 length: numeric_state.len(),
-                index: left,
+                index: left.index(),
             }));
         }
-        if right >= numeric_state.len() {
+        if right.index() >= numeric_state.len() {
             return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
                 length: numeric_state.len(),
-                index: right,
+                index: right.index(),
             }));
         }
         let affected = self.affected_var_id;
-        if affected >= numeric_state.len() {
+        if affected.index() >= numeric_state.len() {
             return Err(AssignmentAxiomError::InvalidIndex(InvalidIndex {
                 length: numeric_state.len(),
-                index: affected,
+                index: affected.index(),
             }));
         }
         let result = match self.operator {
-            CalOperator::Sum => numeric_state[left] + numeric_state[right],
-            CalOperator::Difference => numeric_state[left] - numeric_state[right],
-            CalOperator::Product => numeric_state[left] * numeric_state[right],
+            CalOperator::Sum => NumericValue::new(
+                numeric_state[left.index()].value() + numeric_state[right.index()].value(),
+            ),
+            CalOperator::Difference => NumericValue::new(
+                numeric_state[left.index()].value() - numeric_state[right.index()].value(),
+            ),
+            CalOperator::Product => NumericValue::new(
+                numeric_state[left.index()].value() * numeric_state[right.index()].value(),
+            ),
             CalOperator::Division => {
-                if numeric_state[right] == 0.0 {
-                    return Err(AssignmentAxiomError::DivisionByZero { divisor: right });
+                if numeric_state[right.index()].value() == 0.0 {
+                    return Err(AssignmentAxiomError::DivisionByZero {
+                        divisor: right.index(),
+                    });
                 }
-                numeric_state[left] / numeric_state[right]
+                NumericValue::new(
+                    numeric_state[left.index()].value() / numeric_state[right.index()].value(),
+                )
             }
         };
-        numeric_state[affected] = result;
+        numeric_state[affected.index()] = result;
         Ok(result)
     }
 
-    pub fn get_left_var_id(&self) -> usize {
+    pub fn get_left_var_id(&self) -> VariableIndex {
         self.left_hand_side
     }
 
-    pub fn get_right_var_id(&self) -> usize {
+    pub fn get_right_var_id(&self) -> VariableIndex {
         self.right_hand_side
     }
 
-    pub fn get_affected_var_id(&self) -> usize {
+    pub fn get_affected_var_id(&self) -> VariableIndex {
         self.affected_var_id
     }
 
@@ -150,8 +165,13 @@ pub enum ComparisonOperator {
 }
 
 impl ComparisonOperator {
-    pub fn compare(&self, numeric_values: &[f64], left: usize, right: usize) -> bool {
-        let (left, right) = (numeric_values[left], numeric_values[right]);
+    pub fn compare(
+        &self,
+        numeric_values: &[NumericValue],
+        left: VariableIndex,
+        right: VariableIndex,
+    ) -> bool {
+        let (left, right) = (numeric_values[left.index()], numeric_values[right.index()]);
         match self {
             ComparisonOperator::LessThan => left < right,
             ComparisonOperator::LessThanOrEqual => left <= right,
@@ -165,17 +185,17 @@ impl ComparisonOperator {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ComparisonAxiom {
-    pub affected_var_id: usize,
-    pub left_hand_side: usize,
-    pub right_hand_side: usize,
+    pub affected_var_id: VariableIndex,
+    pub left_hand_side: VariableIndex,
+    pub right_hand_side: VariableIndex,
     pub operator: ComparisonOperator,
 }
 
 impl ComparisonAxiom {
     pub fn new(
-        affected_var_id: usize,
-        left_hand_side: usize,
-        right_hand_side: usize,
+        affected_var_id: VariableIndex,
+        left_hand_side: VariableIndex,
+        right_hand_side: VariableIndex,
         operator: ComparisonOperator,
     ) -> Self {
         ComparisonAxiom {
@@ -186,9 +206,9 @@ impl ComparisonAxiom {
         }
     }
 
-    pub fn is_hold(&self, numeric_state: &[f64]) -> Result<bool, InvalidIndex> {
-        let left = self.left_hand_side;
-        let right = self.right_hand_side;
+    pub fn is_hold(&self, numeric_state: &[NumericValue]) -> Result<bool, InvalidIndex> {
+        let left = self.left_hand_side.index();
+        let right = self.right_hand_side.index();
         if left >= numeric_state.len() {
             return Err(InvalidIndex {
                 length: numeric_state.len(),
@@ -206,13 +226,13 @@ impl ComparisonAxiom {
         Ok(result)
     }
 
-    pub fn get_affected_var_id(&self) -> usize {
+    pub fn get_affected_var_id(&self) -> VariableIndex {
         self.affected_var_id
     }
-    pub fn get_left_var_id(&self) -> usize {
+    pub fn get_left_var_id(&self) -> VariableIndex {
         self.left_hand_side
     }
-    pub fn get_right_var_id(&self) -> usize {
+    pub fn get_right_var_id(&self) -> VariableIndex {
         self.right_hand_side
     }
 
@@ -223,12 +243,12 @@ impl ComparisonAxiom {
 #[derive(Debug, Clone)]
 struct AxiomRule {
     condition_count: usize,
-    effect_var: usize,
-    effect_value: usize,
+    effect_var: VariableIndex,
+    effect_value: ExplicitValueIndex,
 }
 
 impl AxiomRule {
-    pub fn new(cond_count: usize, eff_var: usize, eff_val: usize) -> Self {
+    pub fn new(cond_count: usize, eff_var: VariableIndex, eff_val: ExplicitValueIndex) -> Self {
         AxiomRule {
             condition_count: cond_count,
             effect_var: eff_var,
@@ -244,14 +264,14 @@ struct AxiomLiteral {
 
 #[derive(Debug, Clone, Copy, Default)]
 struct NegationByFailureInfo {
-    var_id: usize,
+    var_id: VariableIndex,
     /// The variable's axiom default. It is both the value that says "nothing
     /// proved this variable" and the literal the closure then announces.
-    default_value: usize,
+    default_value: ExplicitValueIndex,
 }
 
 impl NegationByFailureInfo {
-    pub fn new(var_id: usize, default_value: usize) -> Self {
+    pub fn new(var_id: VariableIndex, default_value: ExplicitValueIndex) -> Self {
         NegationByFailureInfo {
             var_id,
             default_value,
@@ -261,8 +281,8 @@ impl NegationByFailureInfo {
 
 #[derive(Debug, Clone, Copy)]
 struct LiteralRef {
-    var_id: usize,
-    value: usize,
+    var_id: VariableIndex,
+    value: ExplicitValueIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -278,7 +298,7 @@ struct AxiomEvaluatorData {
     /// Per variable, the value the closure resets it to. Copied out of the
     /// task once so the hot reset loop is an indexed load rather than a
     /// borrow of the task's shared initial state.
-    axiom_default_values: Vec<usize>,
+    axiom_default_values: Vec<ExplicitValueIndex>,
     has_numeric_axioms: bool,
     has_propositional_axioms: bool,
 }
@@ -298,8 +318,10 @@ fn build_compiled_axiom_evaluator_data(
         last_arithmetic_axiom_layer = max(last_arithmetic_axiom_layer, numeric_var.axiom_layer());
     }
 
-    for i in 0..numeric_task.get_num_variables() {
-        let axiom_layer = numeric_task.get_variable_axiom_layer(i).unwrap();
+    for i in 0..numeric_task.get_num_variables() as u32 {
+        let axiom_layer = numeric_task
+            .get_variable_axiom_layer(VariableIndex::new(i))
+            .unwrap();
         if axiom_layer.is_none() {
             continue;
         }
@@ -342,15 +364,17 @@ fn build_compiled_axiom_evaluator_data(
         vec![],
     );
 
-    let axiom_default_values: Vec<usize> = (0..numeric_task.get_num_variables())
+    let axiom_default_values: Vec<ExplicitValueIndex> = (0..numeric_task.get_num_variables()
+        as u32)
         .map(|var_id| {
             numeric_task
-                .get_variable_default_axiom_value(var_id)
+                .get_variable_default_axiom_value(VariableIndex::new(var_id))
                 .expect("variable id below the variable count is in bounds")
         })
         .collect();
     for (var_id, &default_value) in axiom_default_values.iter().enumerate() {
-        let axiom_layer = numeric_task.get_variable_axiom_layer(var_id).unwrap();
+        let var_index = VariableIndex::new(var_id as u32);
+        let axiom_layer = numeric_task.get_variable_axiom_layer(var_index).unwrap();
         // A condition variable is computed, not proven: `seed_queue_from_state`
         // already queues the verdict `evaluate_comparison_axioms` wrote for it,
         // so there is no "stayed at its default" case left to announce. Queuing
@@ -360,7 +384,7 @@ fn build_compiled_axiom_evaluator_data(
             && axiom_layer != last_propositional_axiom_layer
             && axiom_layer != comparison_axiom_layer
         {
-            nbf_info_by_layer[idx].push(NegationByFailureInfo::new(var_id, default_value));
+            nbf_info_by_layer[idx].push(NegationByFailureInfo::new(var_index, default_value));
         }
     }
 
@@ -390,7 +414,7 @@ pub struct AxiomEvaluator<'a> {
     last_propositional_axiom_layer: Option<usize>,
     last_arithmetic_axiom_layer: Option<usize>,
     nbf_info_by_layer: Vec<Vec<NegationByFailureInfo>>,
-    axiom_default_values: Vec<usize>,
+    axiom_default_values: Vec<ExplicitValueIndex>,
 }
 
 /// Scratch buffers for the propositional axiom closure.
@@ -433,7 +457,7 @@ impl<'a> AxiomEvaluator<'a> {
 
     pub fn evaluate_arithmetic_axioms(
         &self,
-        numeric_state: &mut [f64],
+        numeric_state: &mut [NumericValue],
     ) -> Result<(), AssignmentAxiomError> {
         for axiom in self.numeric_task.assignment_axioms() {
             axiom.update_values(numeric_state)?;
@@ -441,7 +465,7 @@ impl<'a> AxiomEvaluator<'a> {
 
         Ok(())
     }
-    pub fn affected_vars_by_arithmetic_axioms(&self, affected: &mut Vec<usize>) {
+    pub fn affected_vars_by_arithmetic_axioms(&self, affected: &mut Vec<VariableIndex>) {
         for axiom in self.numeric_task.assignment_axioms() {
             affected.push(axiom.get_affected_var_id());
         }
@@ -450,7 +474,7 @@ impl<'a> AxiomEvaluator<'a> {
     pub fn evaluate_comparison_axioms(
         &self,
         buffer: &mut [u64],
-        numeric_state: &mut [f64],
+        numeric_state: &mut [NumericValue],
     ) -> Result<bool, AxiomEvalError> {
         for axiom in self.numeric_task.comparison_axioms() {
             let is_hold = axiom.is_hold(numeric_state).map_err(|e| {
@@ -460,13 +484,13 @@ impl<'a> AxiomEvaluator<'a> {
                 })
             })?;
             self.state_packer
-                .set(buffer, axiom.get_affected_var_id(), !is_hold as u64);
+                .set(buffer, axiom.get_affected_var_id().index(), !is_hold as u64);
         }
 
         Ok(true)
     }
 
-    pub fn affected_vars_by_comparison_axioms(&self, affected: &mut Vec<usize>) {
+    pub fn affected_vars_by_comparison_axioms(&self, affected: &mut Vec<VariableIndex>) {
         for axiom in self.numeric_task.comparison_axioms() {
             affected.push(axiom.get_affected_var_id());
         }
@@ -534,11 +558,15 @@ impl<'a> AxiomEvaluator<'a> {
         queue: &mut Vec<LiteralRef>,
     ) -> Result<(), AxiomEvalError> {
         for var_id in 0..self.numeric_task.get_num_variables() {
-            let axiom_layer = self.numeric_task.get_variable_axiom_layer(var_id).unwrap();
+            let var_index = VariableIndex::new(var_id as u32);
+            let axiom_layer = self
+                .numeric_task
+                .get_variable_axiom_layer(var_index)
+                .unwrap();
             if axiom_layer.is_none() || axiom_layer == self.comparison_axiom_layer {
                 queue.push(LiteralRef {
-                    var_id,
-                    value: self.state_packer.get(buffer, var_id) as usize,
+                    var_id: var_index,
+                    value: ExplicitValueIndex::new(self.state_packer.get(buffer, var_id) as u32),
                 });
                 continue;
             }
@@ -550,8 +578,11 @@ impl<'a> AxiomEvaluator<'a> {
                     last_arithmetic_axiom_layer: self.last_arithmetic_axiom_layer,
                 }));
             }
-            self.state_packer
-                .set(buffer, var_id, self.axiom_default_values[var_id] as u64);
+            self.state_packer.set(
+                buffer,
+                var_id,
+                self.axiom_default_values[var_id].index() as u64,
+            );
         }
         Ok(())
     }
@@ -568,7 +599,7 @@ impl<'a> AxiomEvaluator<'a> {
         for (rule_index, rule) in self.rules.iter().enumerate() {
             unsatisfied_conditions[rule_index] = rule.condition_count;
             if rule.condition_count == 0 {
-                self.derive_literal(buffer, queue, rule.effect_var, rule.effect_value as u64);
+                self.derive_literal(buffer, queue, rule.effect_var, rule.effect_value);
             }
         }
     }
@@ -584,13 +615,14 @@ impl<'a> AxiomEvaluator<'a> {
         unsatisfied_conditions: &mut [usize],
     ) {
         while let Some(literal) = queue.pop() {
-            let dependent_rules = &self.axiom_literals[literal.var_id][literal.value].condition_of;
+            let dependent_rules =
+                &self.axiom_literals[literal.var_id.index()][literal.value.index()].condition_of;
             for &rule_index in dependent_rules {
                 let remaining = &mut unsatisfied_conditions[rule_index];
                 *remaining -= 1;
                 if *remaining == 0 {
                     let rule = &self.rules[rule_index];
-                    self.derive_literal(buffer, queue, rule.effect_var, rule.effect_value as u64);
+                    self.derive_literal(buffer, queue, rule.effect_var, rule.effect_value);
                 }
             }
         }
@@ -607,7 +639,9 @@ impl<'a> AxiomEvaluator<'a> {
         layer_no: usize,
     ) {
         for info in &self.nbf_info_by_layer[layer_no] {
-            if self.state_packer.get(buffer, info.var_id) == info.default_value as u64 {
+            if self.state_packer.get(buffer, info.var_id.index())
+                == (info.default_value.index() as u64)
+            {
                 queue.push(LiteralRef {
                     var_id: info.var_id,
                     value: info.default_value,
@@ -623,23 +657,21 @@ impl<'a> AxiomEvaluator<'a> {
         &self,
         buffer: &mut [u64],
         queue: &mut Vec<LiteralRef>,
-        var_id: usize,
-        value: u64,
+        var_id: VariableIndex,
+        value: ExplicitValueIndex,
     ) {
-        if self.state_packer.get(buffer, var_id) == value {
+        if self.state_packer.get(buffer, var_id.index()) == (value.index() as u64) {
             return;
         }
-        self.state_packer.set(buffer, var_id, value);
-        queue.push(LiteralRef {
-            var_id,
-            value: value as usize,
-        });
+        self.state_packer
+            .set(buffer, var_id.index(), value.index() as u64);
+        queue.push(LiteralRef { var_id, value });
     }
 
     pub fn evaluate(
         &self,
         buffer: &mut [u64],
-        numeric_state: &mut [f64],
+        numeric_state: &mut [NumericValue],
     ) -> Result<(), AxiomEvalError> {
         if !self.has_axioms() {
             return Ok(());
@@ -655,13 +687,13 @@ impl<'a> AxiomEvaluator<'a> {
         Ok(())
     }
 
-    pub fn affected_propositional_vars(&self, affected_prop_vars: &mut Vec<usize>) {
+    pub fn affected_propositional_vars(&self, affected_prop_vars: &mut Vec<VariableIndex>) {
         if self.has_axioms() {
             self.affected_vars_by_comparison_axioms(affected_prop_vars);
         }
     }
 
-    pub fn affected_numeric_vars(&self, affected_numeric_vars: &mut Vec<usize>) {
+    pub fn affected_numeric_vars(&self, affected_numeric_vars: &mut Vec<VariableIndex>) {
         if self.has_numeric_axioms() {
             self.affected_vars_by_arithmetic_axioms(affected_numeric_vars);
         }

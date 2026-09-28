@@ -4,7 +4,7 @@ mod tests;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 use serde::{Deserialize, Serialize};
 
 use super::pattern_collection::PatternCollection;
@@ -238,8 +238,8 @@ fn collect_seed_variables(
 ) -> Vec<CausalGraphVariable> {
     let mut seed_variables = Vec::new();
     let mut seen = BTreeSet::new();
-    let goal_var_ids: BTreeSet<usize> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var())
+    let goal_var_ids: BTreeSet<VariableIndex> = (0..task.get_num_goals())
+        .map(|goal_id| task.get_goal_fact(goal_id).var_index())
         .collect();
 
     for goal_index in 0..task.get_num_goals() {
@@ -250,7 +250,7 @@ fn collect_seed_variables(
             push_seed_variable(
                 &mut seed_variables,
                 &mut seen,
-                CausalGraphVariable::Propositional(goal.var()),
+                CausalGraphVariable::Propositional(goal.var_index()),
             );
         }
     }
@@ -294,9 +294,12 @@ fn cpp_systematic_combined_size(pattern: &Pattern, candidate: &Pattern) -> usize
         + candidate.numeric.len()
 }
 
-fn is_pattern_numeric_candidate(task: &dyn AbstractNumericTask, numeric_var_id: usize) -> bool {
+fn is_pattern_numeric_candidate(
+    task: &dyn AbstractNumericTask,
+    numeric_var_id: VariableIndex,
+) -> bool {
     task.numeric_variables()
-        .get(numeric_var_id)
+        .get(numeric_var_id.index())
         .map(|numeric_var| numeric_var.get_type() == &NumericType::Regular)
         .unwrap_or(false)
 }

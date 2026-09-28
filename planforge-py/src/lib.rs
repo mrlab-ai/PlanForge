@@ -17,8 +17,8 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueEr
 use pyo3::prelude::*;
 
 use planforge_sas::numeric_task::{
-    AssignmentOperation, Effect, ExplicitFact, NumericRootTask, NumericTaskExt, NumericType,
-    Operator, TaskRef,
+    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericTaskExt,
+    NumericType, NumericValue, Operator, TaskRef, VariableIndex,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -46,22 +46,22 @@ enum SolveError {
     FileNotFound(String),
 }
 
-type PyFact = (usize, usize);
+type PyFact = (VariableIndex, ExplicitValueIndex);
 
 #[derive(Clone)]
 struct EffectData {
     conditions: Vec<PyFact>,
-    variable: usize,
-    precondition_value: Option<usize>,
-    value: usize,
+    variable: VariableIndex,
+    precondition_value: Option<ExplicitValueIndex>,
+    value: ExplicitValueIndex,
 }
 
 #[pyclass(name = "Effect", frozen, get_all)]
 struct PyEffect {
     conditions: Vec<PyFact>,
-    variable: usize,
-    precondition_value: Option<usize>,
-    value: usize,
+    variable: VariableIndex,
+    precondition_value: Option<ExplicitValueIndex>,
+    value: ExplicitValueIndex,
 }
 
 #[pymethods]
@@ -77,18 +77,18 @@ impl PyEffect {
 #[derive(Clone)]
 struct NumericEffectData {
     conditions: Vec<PyFact>,
-    affected_variable: usize,
+    affected_variable: VariableIndex,
     operation: String,
-    source_variable: usize,
+    source_variable: VariableIndex,
     conditional: bool,
 }
 
 #[pyclass(name = "NumericEffect", frozen, get_all)]
 struct PyNumericEffect {
     conditions: Vec<PyFact>,
-    affected_variable: usize,
+    affected_variable: VariableIndex,
     operation: String,
-    source_variable: usize,
+    source_variable: VariableIndex,
     conditional: bool,
 }
 
@@ -162,9 +162,9 @@ fn split_operator_name(name: &str) -> (Option<String>, Vec<String>) {
 #[pyclass(name = "Atom", frozen, get_all)]
 struct PyAtom {
     /// Index of the finite-domain variable this atom belongs to.
-    variable: usize,
+    variable: VariableIndex,
     /// The variable's value that makes this atom true.
-    value: usize,
+    value: ExplicitValueIndex,
     /// The translator's name for the atom, e.g. `Atom at(rover1, waypoint2)`.
     name: String,
     /// The predicate, or `None` when the name is not of the form `pred(args)`.
@@ -601,12 +601,12 @@ impl PyStateSpace {
         Ok(row
             .iter()
             .enumerate()
-            .map(|(variable, &value)| (variable, value as usize))
+            .map(|(variable, &value)| (VariableIndex::from_usize(variable), value))
             .collect())
     }
 
     /// The numeric values `state` assigns, indexed by numeric variable.
-    fn get_numeric_variables(&self, state: usize) -> PyResult<Vec<f64>> {
+    fn get_numeric_variables(&self, state: usize) -> PyResult<Vec<NumericValue>> {
         let state = self.checked_state(state)?;
         let width = self.graph.num_numeric_variables;
         Ok(self.graph.numeric_values[state * width..(state + 1) * width].to_vec())
@@ -621,7 +621,7 @@ impl PyStateSpace {
             .iter()
             .enumerate()
             .filter_map(|(variable, &value)| {
-                let name = self.fact_names.get(variable)?.get(value as usize)?;
+                let name = self.fact_names.get(variable)?.get(value.index())?;
                 // A variable's negated and sentinel values are not atoms that
                 // hold; only the positive ones label the state.
                 (!name.is_empty() && !name.starts_with("NegatedAtom") && !name.starts_with('<'))
@@ -657,11 +657,14 @@ impl PyStateSpace {
                     )));
                 }
             };
-            let actual = *row.get(variable).ok_or_else(|| {
-                PyIndexError::new_err(format!(
-                    "literal names variable {variable} but the task has {width}"
-                ))
-            })? as usize;
+            let actual = row
+                .get(variable)
+                .ok_or_else(|| {
+                    PyIndexError::new_err(format!(
+                        "literal names variable {variable} but the task has {width}"
+                    ))
+                })?
+                .index();
             if (actual == value) != expected {
                 return Ok(false);
             }
@@ -858,9 +861,9 @@ impl PySearchResult {
 #[derive(Clone)]
 struct State {
     #[pyo3(get)]
-    values: Vec<usize>,
+    values: Vec<ExplicitValueIndex>,
     #[pyo3(get)]
-    numeric_values: Vec<f64>,
+    numeric_values: Vec<NumericValue>,
     registry_id: usize,
     state_id: usize,
 }
@@ -868,7 +871,7 @@ struct State {
 #[pymethods]
 impl State {
     /// Read one finite-domain variable without copying the complete snapshot.
-    fn value(&self, variable: usize) -> PyResult<usize> {
+    fn value(&self, variable: usize) -> PyResult<ExplicitValueIndex> {
         self.values.get(variable).copied().ok_or_else(|| {
             PyIndexError::new_err(format!(
                 "propositional variable {variable} is out of bounds for {} values",
@@ -878,7 +881,7 @@ impl State {
     }
 
     /// Read one numeric variable without copying the complete snapshot.
-    fn numeric_value(&self, variable: usize) -> PyResult<f64> {
+    fn numeric_value(&self, variable: usize) -> PyResult<NumericValue> {
         self.numeric_values.get(variable).copied().ok_or_else(|| {
             PyIndexError::new_err(format!(
                 "numeric variable {variable} is out of bounds for {} values",
@@ -1023,7 +1026,7 @@ fn restrict_numeric_task(
 }
 
 fn fact_to_py(fact: &planforge_sas::numeric_task::ExplicitFact) -> PyFact {
-    (fact.var(), fact.value())
+    (fact.var_index(), fact.value_index())
 }
 
 fn operation_name(operation: &AssignmentOperation) -> &'static str {
@@ -1229,7 +1232,7 @@ impl Task {
         (0..self.task.variables().len())
             .map(|i| {
                 self.task
-                    .get_variable_name(i)
+                    .get_variable_name(VariableIndex::from_usize(i))
                     .expect("variable index came from task.variables()")
                     .to_string()
             })
@@ -1286,8 +1289,8 @@ impl Task {
                 Py::new(
                     py,
                     PyAtom {
-                        variable,
-                        value,
+                        variable: VariableIndex::from_usize(variable),
+                        value: ExplicitValueIndex::from_usize(value),
                         name,
                         predicate,
                         arguments,
@@ -1330,7 +1333,7 @@ impl Task {
         let mut all = true;
         for i in 0..self.task.get_num_goals() {
             let g = self.task.get_goal_fact(i);
-            if !g.is_hold(reg.view(&cstate)) {
+            if !g.is_held(reg.view(&cstate)) {
                 all = false;
                 break;
             }
@@ -1412,7 +1415,7 @@ impl Task {
         &self,
         py: Python<'_>,
         state: &State,
-    ) -> PyResult<Vec<(Py<PyOperator>, State, f64)>> {
+    ) -> PyResult<Vec<(Py<PyOperator>, State, NumericValue)>> {
         let mut reg = self.registry.borrow_mut();
         let cstate = self.lookup(state, &reg)?;
         let ids = self.applicable_operator_ids(&cstate, &reg);
@@ -1583,7 +1586,7 @@ impl Task {
                     rust_operator.name()
                 ))
             })?;
-        Ok((State::snapshot(&successor, &registry), cost))
+        Ok((State::snapshot(&successor, &registry), cost.value()))
     }
 }
 
@@ -1687,7 +1690,7 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
         operators
             .iter()
             .map(|operator: &Operator| {
-                operator_to_py(py, operator, None, None, operator.cost() as f64)
+                operator_to_py(py, operator, None, None, operator.cost().value() as f64)
                     .expect("creating a Python Operator should not fail")
             })
             .collect()

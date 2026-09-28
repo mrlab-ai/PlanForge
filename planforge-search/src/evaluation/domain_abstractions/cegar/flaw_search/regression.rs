@@ -4,7 +4,7 @@ mod tests;
 use anyhow::Result;
 use planforge_sas::{
     axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
+    numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue, Operator, VariableIndex},
 };
 
 use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
@@ -38,7 +38,7 @@ pub fn get_regression_flaws(
     // unbounded.
     for equivalent_ops in wildcard_plan.wildcard_plan.iter().rev() {
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id) else {
+            let Some(op) = task.get_operators().get(op_id.index()) else {
                 continue;
             };
             let operator_flaws = get_regression_precondition_flaws(op, &state, step);
@@ -76,10 +76,10 @@ pub fn get_regression_precondition_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for eff in op.effects().iter() {
-        if !state.value_is_hold_for_var(eff.var_id(), eff.value()) {
+        if !state.value_is_held_for_var(eff.var_id(), eff.value()) {
             let eff_var_id = eff.var_id();
             out.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::propositional(eff_var_id, eff.value()),
+                fact: ExplicitFact::propositional_from_indexes(eff_var_id, eff.value()),
                 dependent_numeric_flaws: vec![],
                 step,
             }));
@@ -97,9 +97,9 @@ pub fn get_init_state_flaws(
     let initial_numeric_state = task.get_initial_numeric_state_values();
     let mut flaws: Vec<Flaw> = Vec::new();
     for (var, value) in initial_prop_state.iter().enumerate() {
-        if !state.value_is_hold_for_var(var, *value) {
+        if !state.value_is_held_for_var(VariableIndex::from_usize(var), *value) {
             flaws.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::propositional(var, *value),
+                fact: ExplicitFact::propositional(var, value.index()),
                 dependent_numeric_flaws: vec![],
                 step: 0,
             }));
@@ -121,6 +121,7 @@ pub fn get_init_state_flaws(
         else {
             continue;
         };
+        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
         if can_split_numeric_var(partitions, numeric_var_id, value, include_in_lower) {
             flaws.push(Flaw::Numeric(NumericFlaw {
                 numeric_var_id,
@@ -142,7 +143,7 @@ pub(crate) fn materialize_comparison_requirements(
         let Some(value) = state.concrete_prop[var] else {
             continue;
         };
-        let fact = ExplicitFact::propositional(var, value);
+        let fact = ExplicitFact::propositional(var, value.index());
         let Some((numeric_var_id, required_interval)) =
             numeric_requirement_for_comparison_fact(task, &fact)
         else {
@@ -155,17 +156,17 @@ pub(crate) fn materialize_comparison_requirements(
 
 fn split_for_missing_numeric_requirement(
     requirement: Interval,
-    initial_value: f64,
-) -> Option<(f64, bool)> {
+    initial_value: NumericValue,
+) -> Option<(NumericValue, bool)> {
     if (initial_value < requirement.lower
         || (initial_value == requirement.lower && !requirement.lower_closed))
-        && requirement.lower.is_finite()
+        && requirement.lower.value().is_finite()
     {
         return Some((requirement.lower, !requirement.lower_closed));
     }
     if (initial_value > requirement.upper
         || (initial_value == requirement.upper && !requirement.upper_closed))
-        && requirement.upper.is_finite()
+        && requirement.upper.value().is_finite()
     {
         return Some((requirement.upper, requirement.upper_closed));
     }

@@ -3,8 +3,8 @@ use super::*;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType,
-    NumericVariable,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, ZERO_VALUE,
 };
 
 /// The propositional variable a comparison axiom writes: true or false,
@@ -15,7 +15,7 @@ fn condition_variable(name: &str, layer: usize) -> ExplicitVariable {
         name.into(),
         vec!["true".into(), "false".into()],
         Some(layer),
-        ConditionValue::False.as_usize(),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
     )
 }
 
@@ -28,7 +28,12 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
         NumericVariable::new("c1".into(), NumericType::Constant, None),
     ];
 
-    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 1, ComparisonOperator::LessThan)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+        ComparisonOperator::LessThan,
+    )];
 
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -37,8 +42,10 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![ConditionValue::False.as_usize()],
-        numeric_state: vec![0.0, 10.0],
+        state: vec![ExplicitValueIndex::from_usize(
+            ConditionValue::False.as_usize(),
+        )],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(10.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms,
@@ -49,7 +56,10 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
     let conditions = task.numeric_conditions();
 
     // x0 in [0, 5], c1 is exactly 10
-    let intervals = [Interval::closed(0.0, 5.0), Interval::singleton(10.0)];
+    let intervals = [
+        Interval::closed(NumericValue::new(0.0), NumericValue::new(5.0)),
+        Interval::singleton(NumericValue::new(10.0)),
+    ];
 
     // Every value of x0 is below c1, so requiring the comparison to hold is
     // satisfiable and requiring it to fail is not.
@@ -60,7 +70,10 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
 
     // Undecided case: x0 in [0, 20] straddles c1, so both outcomes remain
     // possible and neither requirement is contradicted.
-    let intervals = [Interval::closed(0.0, 20.0), Interval::singleton(10.0)];
+    let intervals = [
+        Interval::closed(NumericValue::new(0.0), NumericValue::new(20.0)),
+        Interval::singleton(NumericValue::new(10.0)),
+    ];
     assert!(!conditions.precondition_is_contradicted(&requires_true, &intervals));
     assert!(!conditions.precondition_is_contradicted(&requires_false, &intervals));
 }
@@ -69,8 +82,8 @@ fn comparison_tree_interval_evaluates_definitely_and_undecided() {
 fn reachable_partitions_overlaps_result_interval() {
     // Two partitions: (-inf, 9) and [9, inf)
     let parts = vec![vec![
-        Interval::new(f64::NEG_INFINITY, 9.0, false, false),
-        Interval::new(9.0, f64::INFINITY, true, false),
+        Interval::new(NEG_INF_VALUE, NumericValue::new(9.0), false, false),
+        Interval::new(NumericValue::new(9.0), INF_VALUE, true, false),
     ]];
 
     let dummy_task = NumericRootTask::new(NumericRootTaskParts {
@@ -81,7 +94,7 @@ fn reachable_partitions_overlaps_result_interval() {
             "global-constraint".into(),
             vec!["true".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![NumericVariable::new(
             "x0".into(),
@@ -90,8 +103,8 @@ fn reachable_partitions_overlaps_result_interval() {
         )],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -103,19 +116,19 @@ fn reachable_partitions_overlaps_result_interval() {
 
     // From partition 0: (-inf,9) + 7 -> (-inf,16) overlaps both partitions.
     let targets = partitions.reachable_partitions(
-        0,
+        VariableIndex::from_usize(0),
         0,
         &planforge_sas::numeric_task::AssignmentOperation::Plus,
-        Interval::singleton(7.0),
+        Interval::singleton(NumericValue::new(7.0)),
     );
     assert_eq!(targets, vec![0, 1]);
 
     // From partition 1: [9,inf) + 7 -> [16,inf) overlaps only partition 1.
     let targets = partitions.reachable_partitions(
-        0,
+        VariableIndex::from_usize(0),
         1,
         &planforge_sas::numeric_task::AssignmentOperation::Plus,
-        Interval::singleton(7.0),
+        Interval::singleton(NumericValue::new(7.0)),
     );
     assert_eq!(targets, vec![1]);
 
@@ -126,17 +139,39 @@ fn reachable_partitions_overlaps_result_interval() {
 #[test]
 fn reachable_partitions_use_the_numeric_state_lattice() {
     let mut partitions = NumericPartitions::with_partitions(vec![vec![Interval::unbounded()]]);
-    assert!(partitions.split_at(0, -5.9999999999999964, true));
-    assert!(partitions.split_at(0, -5.799999999999997, true));
-    assert!(partitions.split_at(0, -5.6999999999999975, true));
+    assert!(partitions.split_at(
+        VariableIndex::from_usize(0),
+        NumericValue::new(-5.9999999999999964),
+        true
+    ));
+    assert!(partitions.split_at(
+        VariableIndex::from_usize(0),
+        NumericValue::new(-5.799999999999997),
+        true
+    ));
+    assert!(partitions.split_at(
+        VariableIndex::from_usize(0),
+        NumericValue::new(-5.6999999999999975),
+        true
+    ));
 
     assert_eq!(
-        partitions.partitions(0).unwrap(),
+        partitions.partitions(VariableIndex::from_usize(0)).unwrap(),
         &[
-            Interval::new(f64::NEG_INFINITY, -6.0, false, true),
-            Interval::new(-6.0, -5.8, false, true),
-            Interval::new(-5.8, -5.7, false, true),
-            Interval::new(-5.7, f64::INFINITY, false, false),
+            Interval::new(NEG_INF_VALUE, NumericValue::new(-6.0), false, true),
+            Interval::new(
+                NumericValue::new(-6.0),
+                NumericValue::new(-5.8),
+                false,
+                true
+            ),
+            Interval::new(
+                NumericValue::new(-5.8),
+                NumericValue::new(-5.7),
+                false,
+                true
+            ),
+            Interval::new(NumericValue::new(-5.7), INF_VALUE, false, false),
         ]
     );
 
@@ -144,10 +179,10 @@ fn reachable_partitions_use_the_numeric_state_lattice() {
     // (-6.0, -5.9]. It therefore cannot enter the partition ending at -6.0.
     assert_eq!(
         partitions.reachable_partitions(
-            0,
+            VariableIndex::from_usize(0),
             2,
             &planforge_sas::numeric_task::AssignmentOperation::Plus,
-            Interval::singleton(-0.2),
+            Interval::singleton(NumericValue::new(-0.2)),
         ),
         vec![1]
     );
@@ -168,13 +203,13 @@ fn trivial_partitions_use_singletons_for_constants() {
             "global-constraint".into(),
             vec!["true".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 7.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(7.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -184,10 +219,13 @@ fn trivial_partitions_use_singletons_for_constants() {
 
     let partitions = NumericPartitions::trivial(&task);
 
-    assert_eq!(partitions.partitions(0).unwrap(), &[Interval::unbounded()]);
     assert_eq!(
-        partitions.partitions(1).unwrap(),
-        &[Interval::singleton(7.0)]
+        partitions.partitions(VariableIndex::from_usize(0)).unwrap(),
+        &[Interval::unbounded()]
+    );
+    assert_eq!(
+        partitions.partitions(VariableIndex::from_usize(1)).unwrap(),
+        &[Interval::singleton(NumericValue::new(7.0))]
     );
 }
 
@@ -207,13 +245,13 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
             "global-constraint".into(),
             vec!["true".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![9.450000000000001],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(9.450000000000001)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -224,8 +262,8 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
     let partitions = NumericPartitions::trivial(&task);
 
     assert_eq!(
-        partitions.partitions(0).unwrap(),
-        &[Interval::singleton(9.45)]
+        partitions.partitions(VariableIndex::from_usize(0)).unwrap(),
+        &[Interval::singleton(NumericValue::new(9.45))]
     );
 }
 
@@ -238,10 +276,20 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     ];
 
     // d2 = x0 + x1
-    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+    let assignment_axioms = vec![AssignmentAxiom::new(
+        VariableIndex::from_usize(2),
+        CalOperator::Sum,
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(1),
+    )];
 
     // d2 == x0
-    let comparison_axioms = vec![ComparisonAxiom::new(0, 2, 0, ComparisonOperator::Equal)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(2),
+        VariableIndex::new(0),
+        ComparisonOperator::Equal,
+    )];
 
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -250,8 +298,10 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![ConditionValue::False.as_usize()],
-        numeric_state: vec![0.0; 3],
+        state: vec![ExplicitValueIndex::from_usize(
+            ConditionValue::False.as_usize(),
+        )],
+        numeric_state: vec![ZERO_VALUE; 3],
         operators: vec![],
         axioms: vec![],
         comparison_axioms,
@@ -263,8 +313,11 @@ fn comparison_tree_index_can_build_for_assignment_axioms() {
     // being read from the state, so the condition depends on x0 and x1 only.
     let condition = task
         .numeric_conditions()
-        .for_var(0)
+        .for_var(VariableIndex::from_usize(0))
         .expect("var 0 carries the comparison's truth value");
-    assert_eq!(condition.regular_numeric_var_dependencies(), &[0, 1]);
+    assert_eq!(
+        condition.regular_numeric_var_dependencies(),
+        &[VariableIndex::from_usize(0), VariableIndex::from_usize(1)]
+    );
     assert_eq!(condition.required_numeric_len(), 3);
 }

@@ -4,7 +4,7 @@ mod tests;
 use std::cell::RefCell;
 use std::fmt;
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue};
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -170,8 +170,8 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
 
     pub(crate) fn evaluate_projected_state_values(
         &self,
-        propositional_values: &[usize],
-        source_numeric_values: &[f64],
+        propositional_values: &[ExplicitValueIndex],
+        source_numeric_values: &[NumericValue],
         pdb_value_cache: &mut PdbValueCache,
     ) -> f64 {
         self.prepare_pdb_value_cache(pdb_value_cache);
@@ -208,8 +208,8 @@ impl<'task> CanonicalPdbCollectionInformation<'task> {
 pub struct CanonicalNumericPdbHeuristic<'task> {
     name: String,
     collection_information: CanonicalPdbCollectionInformation<'task>,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
+    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: RefCell<Vec<NumericValue>>,
     pdb_value_cache: RefCell<PdbValueCache>,
     state_value_cache: RefCell<StateValueCache>,
 }

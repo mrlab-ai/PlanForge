@@ -23,6 +23,7 @@ mod tests;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
+use crate::numeric_task::{AxiomIndex, ExplicitValueIndex, NumericValue, VariableIndex};
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The two values a propositional variable carrying a numeric condition's
@@ -67,6 +68,22 @@ impl ConditionValue {
             _ => None,
         }
     }
+
+    /// The SAS value this variant encodes.
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self as u32
+    }
+
+    /// The variant `value` encodes, or `None` when it is outside the domain.
+    #[inline]
+    pub const fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::True),
+            1 => Some(Self::False),
+            _ => None,
+        }
+    }
 }
 
 impl From<bool> for ConditionValue {
@@ -101,6 +118,15 @@ impl ArithOp {
             ArithOp::Sub => lhs - rhs,
             ArithOp::Mul => lhs * rhs,
             ArithOp::Div => lhs / rhs,
+        }
+    }
+
+    pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
+        match self {
+            ArithOp::Add => NumericValue::new(lhs.value() + rhs.value()),
+            ArithOp::Sub => NumericValue::new(lhs.value() - rhs.value()),
+            ArithOp::Mul => NumericValue::new(lhs.value() * rhs.value()),
+            ArithOp::Div => NumericValue::new(lhs.value() / rhs.value()),
         }
     }
 
@@ -152,6 +178,17 @@ impl CompOp {
         }
     }
 
+    pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> bool {
+        match self {
+            CompOp::Lt => lhs < rhs,
+            CompOp::Le => lhs <= rhs,
+            CompOp::Gt => lhs > rhs,
+            CompOp::Ge => lhs >= rhs,
+            CompOp::Eq => lhs == rhs,
+            CompOp::Ne => lhs != rhs,
+        }
+    }
+
     /// Three-valued comparison of two intervals: `Some(b)` when every pair of
     /// concrete values agrees on `b`, `None` when both outcomes are possible.
     #[inline]
@@ -165,16 +202,18 @@ impl CompOp {
         let (rmin, rmin_c) = rhs.min_bound();
         let (rmax, rmax_c) = rhs.max_bound();
 
-        let max_lt_min = |amax: f64, amax_c: bool, bmin: f64, bmin_c: bool| -> bool {
-            (amax < bmin) || (amax == bmin && (!amax_c || !bmin_c))
-        };
+        let max_lt_min =
+            |amax: NumericValue, amax_c: bool, bmin: NumericValue, bmin_c: bool| -> bool {
+                (amax < bmin) || (amax == bmin && (!amax_c || !bmin_c))
+            };
         // "Every value in A is >= every value in B." When amin == bmax the
         // answer is yes in all four open/closed combinations: no x in A is
         // below any y in B.
-        let min_ge_max = |amin: f64, bmax: f64| -> bool { amin >= bmax };
-        let min_gt_max = |amin: f64, amin_c: bool, bmax: f64, bmax_c: bool| -> bool {
-            (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
-        };
+        let min_ge_max = |amin: NumericValue, bmax: NumericValue| -> bool { amin >= bmax };
+        let min_gt_max =
+            |amin: NumericValue, amin_c: bool, bmax: NumericValue, bmax_c: bool| -> bool {
+                (amin > bmax) || (amin == bmax && (!amin_c || !bmax_c))
+            };
         let intervals_are_disjoint =
             || max_lt_min(lmax, lmax_c, rmin, rmin_c) || max_lt_min(rmax, rmax_c, lmin, lmin_c);
 
@@ -241,14 +280,14 @@ impl From<&ComparisonOperator> for CompOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConditionNode {
     Leaf {
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
     },
     Arith {
-        result_numeric_var_id: usize,
-        assignment_axiom_id: usize,
+        result_numeric_var_id: VariableIndex,
+        assignment_axiom_id: AxiomIndex,
         op: ArithOp,
-        left_numeric_var_id: usize,
-        right_numeric_var_id: usize,
+        left_numeric_var_id: VariableIndex,
+        right_numeric_var_id: VariableIndex,
         left: NodeId,
         right: NodeId,
     },
@@ -258,7 +297,7 @@ impl ConditionNode {
     /// Numeric variable this node produces: the one it reads (`Leaf`) or the
     /// one the assignment axiom defines (`Arith`).
     #[inline]
-    pub fn result_numeric_var_id(&self) -> usize {
+    pub fn result_numeric_var_id(&self) -> VariableIndex {
         match self {
             ConditionNode::Leaf { numeric_var_id } => *numeric_var_id,
             ConditionNode::Arith {
@@ -287,7 +326,7 @@ pub trait ConditionDomain: Copy {
         op: ArithOp,
         lhs: Self,
         rhs: Self,
-        result_numeric_var_id: usize,
+        result_numeric_var_id: VariableIndex,
         inputs: &[Self],
     ) -> Self;
 
@@ -300,13 +339,41 @@ impl ConditionDomain for f64 {
     /// A concrete state pins every derived variable exactly, so there is
     /// nothing in `inputs` that could sharpen the recomputed value.
     #[inline]
-    fn combine(op: ArithOp, lhs: f64, rhs: f64, _result_numeric_var_id: usize, _: &[f64]) -> f64 {
+    fn combine(
+        op: ArithOp,
+        lhs: f64,
+        rhs: f64,
+        _result_numeric_var_id: VariableIndex,
+        _: &[f64],
+    ) -> f64 {
         op.apply(lhs, rhs)
     }
 
     #[inline]
     fn compare(op: CompOp, lhs: f64, rhs: f64) -> bool {
         op.apply(lhs, rhs)
+    }
+}
+
+impl ConditionDomain for NumericValue {
+    type Verdict = bool;
+
+    /// A concrete state pins every derived variable exactly, so there is
+    /// nothing in `inputs` that could sharpen the recomputed value.
+    #[inline]
+    fn combine(
+        op: ArithOp,
+        lhs: NumericValue,
+        rhs: NumericValue,
+        _result_numeric_var_id: VariableIndex,
+        _: &[NumericValue],
+    ) -> NumericValue {
+        op.apply_nv(lhs, rhs)
+    }
+
+    #[inline]
+    fn compare(op: CompOp, lhs: NumericValue, rhs: NumericValue) -> bool {
+        op.apply_nv(lhs, rhs)
     }
 }
 
@@ -321,11 +388,11 @@ impl ConditionDomain for Interval {
         op: ArithOp,
         lhs: Interval,
         rhs: Interval,
-        result_numeric_var_id: usize,
+        result_numeric_var_id: VariableIndex,
         inputs: &[Interval],
     ) -> Interval {
         let computed = op.apply_interval(lhs, rhs);
-        let supplied = inputs[result_numeric_var_id];
+        let supplied = inputs[result_numeric_var_id.index()];
         if supplied.is_empty() {
             computed
         } else {
@@ -348,14 +415,14 @@ impl ConditionDomain for Interval {
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericCondition {
     id: NumericConditionId,
-    prop_var_id: usize,
+    prop_var_id: VariableIndex,
     op: CompOp,
-    left_numeric_var_id: usize,
-    right_numeric_var_id: usize,
+    left_numeric_var_id: VariableIndex,
+    right_numeric_var_id: VariableIndex,
     nodes: Vec<ConditionNode>,
     left_root: NodeId,
     right_root: NodeId,
-    regular_numeric_var_dependencies: Vec<usize>,
+    regular_numeric_var_dependencies: Vec<VariableIndex>,
     required_numeric_len: usize,
 }
 
@@ -370,7 +437,7 @@ impl NumericCondition {
     /// Propositional variable holding this condition's truth value, encoded as
     /// a [`ConditionValue`].
     #[inline]
-    pub fn prop_var_id(&self) -> usize {
+    pub fn prop_var_id(&self) -> VariableIndex {
         self.prop_var_id
     }
 
@@ -382,12 +449,12 @@ impl NumericCondition {
     /// Numeric variable the comparison axiom names on its left/right side,
     /// before expansion into the DAG.
     #[inline]
-    pub fn left_numeric_var_id(&self) -> usize {
+    pub fn left_numeric_var_id(&self) -> VariableIndex {
         self.left_numeric_var_id
     }
 
     #[inline]
-    pub fn right_numeric_var_id(&self) -> usize {
+    pub fn right_numeric_var_id(&self) -> VariableIndex {
         self.right_numeric_var_id
     }
 
@@ -414,7 +481,7 @@ impl NumericCondition {
     /// Sorted ids of the `Regular` numeric variables this condition reads.
     /// Derived variables are excluded: they are recomputed from these.
     #[inline]
-    pub fn regular_numeric_var_dependencies(&self) -> &[usize] {
+    pub fn regular_numeric_var_dependencies(&self) -> &[VariableIndex] {
         &self.regular_numeric_var_dependencies
     }
 
@@ -436,7 +503,7 @@ impl NumericCondition {
 
     /// Bottom-up evaluation on a concrete numeric state.
     #[inline]
-    pub fn evaluate_point(&self, values: &[f64]) -> bool {
+    pub fn evaluate_point(&self, values: &[NumericValue]) -> bool {
         self.evaluate(values)
     }
 
@@ -449,7 +516,7 @@ impl NumericCondition {
 
     fn evaluate_node<T: ConditionDomain>(&self, node_id: NodeId, inputs: &[T]) -> T {
         match self.nodes[node_id] {
-            ConditionNode::Leaf { numeric_var_id } => inputs[numeric_var_id],
+            ConditionNode::Leaf { numeric_var_id } => inputs[numeric_var_id.index()],
             ConditionNode::Arith {
                 op,
                 left,
@@ -475,7 +542,7 @@ impl NumericCondition {
 
     fn evaluate_node_and_fill(&self, node_id: NodeId, intervals: &mut [Interval]) -> Interval {
         match self.nodes[node_id] {
-            ConditionNode::Leaf { numeric_var_id } => intervals[numeric_var_id],
+            ConditionNode::Leaf { numeric_var_id } => intervals[numeric_var_id.index()],
             ConditionNode::Arith {
                 op,
                 left,
@@ -486,7 +553,7 @@ impl NumericCondition {
                 let lhs = self.evaluate_node_and_fill(left, intervals);
                 let rhs = self.evaluate_node_and_fill(right, intervals);
                 let result = Interval::combine(op, lhs, rhs, result_numeric_var_id, intervals);
-                intervals[result_numeric_var_id] = result;
+                intervals[result_numeric_var_id.index()] = result;
                 result
             }
         }
@@ -524,31 +591,31 @@ impl NumericCondition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumericConditionError {
     UnknownPropositionalVar {
-        comparison_axiom_id: usize,
-        provided: usize,
+        comparison_axiom_id: AxiomIndex,
+        provided: VariableIndex,
         num_propositional_vars: usize,
     },
     DuplicatePropositionalVar {
-        prop_var_id: usize,
-        first_comparison_axiom_id: usize,
-        second_comparison_axiom_id: usize,
+        prop_var_id: VariableIndex,
+        first_comparison_axiom_id: AxiomIndex,
+        second_comparison_axiom_id: AxiomIndex,
     },
     UnknownNumericVar {
-        provided: usize,
+        provided: VariableIndex,
         num_numeric_vars: usize,
     },
     InvalidAssignmentTarget {
-        assignment_axiom_id: usize,
-        provided: usize,
+        assignment_axiom_id: AxiomIndex,
+        provided: VariableIndex,
         num_numeric_vars: usize,
     },
     DuplicateAssignmentTarget {
-        numeric_var_id: usize,
-        first_assignment_axiom_id: usize,
-        second_assignment_axiom_id: usize,
+        numeric_var_id: VariableIndex,
+        first_assignment_axiom_id: AxiomIndex,
+        second_assignment_axiom_id: AxiomIndex,
     },
     CycleDetected {
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
     },
 }
 
@@ -635,9 +702,9 @@ impl NumericConditions {
 
         for (id, axiom) in comparison_axioms.iter().enumerate() {
             let prop_var_id = axiom.get_affected_var_id();
-            let slot = by_prop_var.get_mut(prop_var_id).ok_or(
+            let slot = by_prop_var.get_mut(prop_var_id.index()).ok_or(
                 NumericConditionError::UnknownPropositionalVar {
-                    comparison_axiom_id: id,
+                    comparison_axiom_id: AxiomIndex::new(id as u32),
                     provided: prop_var_id,
                     num_propositional_vars,
                 },
@@ -645,8 +712,8 @@ impl NumericConditions {
             if let Some(first_comparison_axiom_id) = slot.replace(id) {
                 return Err(NumericConditionError::DuplicatePropositionalVar {
                     prop_var_id,
-                    first_comparison_axiom_id,
-                    second_comparison_axiom_id: id,
+                    first_comparison_axiom_id: AxiomIndex::new(first_comparison_axiom_id as u32),
+                    second_comparison_axiom_id: AxiomIndex::new(id as u32),
                 });
             }
 
@@ -709,8 +776,8 @@ impl NumericConditions {
     /// Is `prop_var_id` the truth value of a numeric condition rather than an
     /// ordinary propositional variable?
     #[inline]
-    pub fn is_condition_var(&self, prop_var_id: usize) -> bool {
-        matches!(self.by_prop_var.get(prop_var_id), Some(Some(_)))
+    pub fn is_condition_var(&self, prop_var_id: VariableIndex) -> bool {
+        matches!(self.by_prop_var.get(prop_var_id.index()), Some(Some(_)))
     }
 
     /// Number of propositional variables the task has, condition-carrying ones
@@ -729,7 +796,7 @@ impl NumericConditions {
     /// [`assert_fact_namespaces`](crate::numeric_task::assert_fact_namespaces)
     /// rejects them before they get here.
     #[inline]
-    pub fn namespace_of(&self, prop_var_id: usize) -> FactNamespace {
+    pub fn namespace_of(&self, prop_var_id: VariableIndex) -> FactNamespace {
         if self.is_condition_var(prop_var_id) {
             FactNamespace::Condition
         } else {
@@ -742,16 +809,36 @@ impl NumericConditions {
     /// namespace it names.
     #[inline]
     pub fn fact(&self, prop_var_id: usize, value: usize) -> ExplicitFact {
-        ExplicitFact::in_namespace(self.namespace_of(prop_var_id), prop_var_id, value)
+        ExplicitFact::in_namespace(
+            self.namespace_of(VariableIndex::new(prop_var_id as u32)),
+            prop_var_id,
+            value,
+        )
+    }
+
+    /// Build a correctly tagged fact. This is the authoritative constructor
+    /// for callers that hold a variable id and cannot themselves know which
+    /// namespace it names.
+    #[inline]
+    pub fn fact_from_indexes(
+        &self,
+        prop_var_id: VariableIndex,
+        value: ExplicitValueIndex,
+    ) -> ExplicitFact {
+        ExplicitFact::in_namespace(
+            self.namespace_of(prop_var_id),
+            prop_var_id.index(),
+            value.index(),
+        )
     }
 
     #[inline]
-    pub fn id_for_var(&self, prop_var_id: usize) -> Option<NumericConditionId> {
-        *self.by_prop_var.get(prop_var_id)?
+    pub fn id_for_var(&self, prop_var_id: VariableIndex) -> Option<NumericConditionId> {
+        *self.by_prop_var.get(prop_var_id.index())?
     }
 
     #[inline]
-    pub fn for_var(&self, prop_var_id: usize) -> Option<&NumericCondition> {
+    pub fn for_var(&self, prop_var_id: VariableIndex) -> Option<&NumericCondition> {
         self.conditions.get(self.id_for_var(prop_var_id)?)
     }
 
@@ -775,7 +862,7 @@ impl NumericConditions {
         precondition: &ExplicitFact,
         numeric_intervals: &[Interval],
     ) -> bool {
-        let Some(condition) = self.for_var(precondition.var()) else {
+        let Some(condition) = self.for_var(precondition.var_index()) else {
             return false;
         };
         match ConditionValue::from_usize(precondition.value()) {
@@ -793,18 +880,18 @@ impl NumericConditions {
 pub fn assignment_axiom_lookup(
     num_numeric_vars: usize,
     assignment_axioms: &[AssignmentAxiom],
-) -> Result<Vec<Option<usize>>, NumericConditionError> {
+) -> Result<Vec<Option<AxiomIndex>>, NumericConditionError> {
     let mut by_target = vec![None; num_numeric_vars];
     for (assignment_axiom_id, axiom) in assignment_axioms.iter().enumerate() {
+        let assignment_axiom_id = AxiomIndex::new(assignment_axiom_id as u32);
         let target = axiom.get_affected_var_id();
-        let slot =
-            by_target
-                .get_mut(target)
-                .ok_or(NumericConditionError::InvalidAssignmentTarget {
-                    assignment_axiom_id,
-                    provided: target,
-                    num_numeric_vars,
-                })?;
+        let slot = by_target.get_mut(target.index()).ok_or(
+            NumericConditionError::InvalidAssignmentTarget {
+                assignment_axiom_id,
+                provided: target,
+                num_numeric_vars,
+            },
+        )?;
         if let Some(first_assignment_axiom_id) = slot.replace(assignment_axiom_id) {
             return Err(NumericConditionError::DuplicateAssignmentTarget {
                 numeric_var_id: target,
@@ -823,7 +910,7 @@ struct DagBuilder {
     nodes: Vec<ConditionNode>,
     memo: Vec<Option<NodeId>>,
     on_stack: Vec<bool>,
-    memoised: Vec<usize>,
+    memoised: Vec<VariableIndex>,
 }
 
 impl DagBuilder {
@@ -840,7 +927,7 @@ impl DagBuilder {
     fn restart(&mut self) {
         self.nodes.clear();
         for numeric_var_id in self.memoised.drain(..) {
-            self.memo[numeric_var_id] = None;
+            self.memo[numeric_var_id.index()] = None;
         }
     }
 
@@ -850,29 +937,28 @@ impl DagBuilder {
 
     fn expand(
         &mut self,
-        numeric_var_id: usize,
-        definitions: &[Option<usize>],
+        numeric_var_id: VariableIndex,
+        definitions: &[Option<AxiomIndex>],
         assignment_axioms: &[AssignmentAxiom],
     ) -> Result<NodeId, NumericConditionError> {
-        let definition =
-            *definitions
-                .get(numeric_var_id)
-                .ok_or(NumericConditionError::UnknownNumericVar {
-                    provided: numeric_var_id,
-                    num_numeric_vars: definitions.len(),
-                })?;
+        let definition = *definitions.get(numeric_var_id.index()).ok_or(
+            NumericConditionError::UnknownNumericVar {
+                provided: numeric_var_id,
+                num_numeric_vars: definitions.len(),
+            },
+        )?;
 
-        if let Some(node_id) = self.memo[numeric_var_id] {
+        if let Some(node_id) = self.memo[numeric_var_id.index()] {
             return Ok(node_id);
         }
-        if self.on_stack[numeric_var_id] {
+        if self.on_stack[numeric_var_id.index()] {
             return Err(NumericConditionError::CycleDetected { numeric_var_id });
         }
-        self.on_stack[numeric_var_id] = true;
+        self.on_stack[numeric_var_id.index()] = true;
 
         let node = match definition {
             Some(assignment_axiom_id) => {
-                let axiom = &assignment_axioms[assignment_axiom_id];
+                let axiom = &assignment_axioms[assignment_axiom_id.index()];
                 let left_numeric_var_id = axiom.get_left_var_id();
                 let right_numeric_var_id = axiom.get_right_var_id();
                 let left = self.expand(left_numeric_var_id, definitions, assignment_axioms)?;
@@ -895,8 +981,8 @@ impl DagBuilder {
         let node_id = self.nodes.len();
         self.nodes.push(node);
 
-        self.on_stack[numeric_var_id] = false;
-        self.memo[numeric_var_id] = Some(node_id);
+        self.on_stack[numeric_var_id.index()] = false;
+        self.memo[numeric_var_id.index()] = Some(node_id);
         self.memoised.push(numeric_var_id);
         Ok(node_id)
     }
@@ -905,12 +991,12 @@ impl DagBuilder {
 fn regular_leaf_dependencies(
     nodes: &[ConditionNode],
     numeric_variables: &[NumericVariable],
-) -> Vec<usize> {
-    let mut dependencies: Vec<usize> = nodes
+) -> Vec<VariableIndex> {
+    let mut dependencies: Vec<VariableIndex> = nodes
         .iter()
         .filter_map(|node| match node {
             ConditionNode::Leaf { numeric_var_id } => numeric_variables
-                .get(*numeric_var_id)
+                .get(numeric_var_id.index())
                 .filter(|variable| variable.get_type() == &NumericType::Regular)
                 .map(|_| *numeric_var_id),
             ConditionNode::Arith { .. } => None,
@@ -928,5 +1014,5 @@ fn required_numeric_len(nodes: &[ConditionNode]) -> usize {
         .iter()
         .map(ConditionNode::result_numeric_var_id)
         .max()
-        .map_or(0, |max_id| max_id + 1)
+        .map_or(0, |max_id| max_id.index() + 1)
 }

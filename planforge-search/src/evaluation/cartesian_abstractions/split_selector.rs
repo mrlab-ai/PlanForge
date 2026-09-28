@@ -1,20 +1,22 @@
+use planforge_sas::numeric_task::{INF_VALUE, NEG_INF_VALUE};
+
 use super::*;
 
 pub(super) fn numeric_split_choice_key(
     variable_name: &str,
-    boundary: f64,
+    boundary: NumericValue,
     lower_closed: bool,
 ) -> u64 {
-    mix_seed(stable_text_seed(variable_name) ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
+    mix_seed(stable_text_seed(variable_name) ^ boundary.value().to_bits())
+        ^ (u64::from(lower_closed) << 63)
 }
 
 pub(super) fn split_choice_key(semantics: &CartesianSemantics<'_>, split: &Split) -> u64 {
     match split {
         Split::Propositional { var_id, wanted, .. } => {
-            let var_id = u64::try_from(*var_id).expect("split variable id does not fit u64");
-            wanted
-                .iter()
-                .fold(var_id, |key, value| mix_seed(key ^ u64::from(*value)))
+            wanted.iter().fold(var_id.index() as u64, |key, value| {
+                mix_seed(key ^ (value.index() as u64))
+            })
         }
         Split::Numeric {
             var_id,
@@ -22,7 +24,7 @@ pub(super) fn split_choice_key(semantics: &CartesianSemantics<'_>, split: &Split
             lower_includes_boundary,
             ..
         } => {
-            let variable_name = semantics.task().numeric_variables()[*var_id].name();
+            let variable_name = semantics.task().numeric_variables()[var_id.index()].name();
             numeric_split_choice_key(variable_name, *boundary, *lower_includes_boundary)
         }
     }
@@ -45,7 +47,7 @@ fn split_child_regions(
         } => {
             let current = parent
                 .propositions()
-                .get(*var_id)
+                .get(var_id.index())
                 .with_context(|| format!("split references missing prop var {var_id}"))?;
             ensure!(
                 wanted.windows(2).all(|values| values[0] < values[1]),
@@ -86,7 +88,7 @@ fn split_child_regions(
         } => {
             let current = *parent
                 .numeric
-                .get(*var_id)
+                .get(var_id.index())
                 .with_context(|| format!("split references missing numeric var {var_id}"))?;
             ensure!(
                 current.can_split_at(*boundary, *lower_includes_boundary),
@@ -104,9 +106,9 @@ fn split_child_regions(
                 "numeric split does not place witness {witness_value} in exactly one child"
             );
             let mut lower_region = parent.clone();
-            Arc::make_mut(&mut lower_region.numeric)[*var_id] = lower;
+            Arc::make_mut(&mut lower_region.numeric)[var_id.index()] = lower;
             let mut upper_region = parent.clone();
-            Arc::make_mut(&mut upper_region.numeric)[*var_id] = upper;
+            Arc::make_mut(&mut upper_region.numeric)[var_id.index()] = upper;
             Ok(if witness_is_lower {
                 (lower_region, upper_region)
             } else {
@@ -118,19 +120,30 @@ fn split_child_regions(
 
 pub(super) fn numeric_split_intervals(
     parent: Interval,
-    boundary: f64,
+    boundary: NumericValue,
     lower_includes_boundary: bool,
     integer_lattice: bool,
 ) -> Result<(Interval, Interval)> {
     let (lower_bound, upper_bound, lower_closed, upper_closed) = if integer_lattice {
         ensure!(
-            boundary.is_finite() && approximately_equal(boundary, boundary.round()),
+            boundary.value().is_finite()
+                && approximately_equal(boundary.value(), boundary.value().round()),
             "integer Cartesian split has non-integer boundary {boundary}"
         );
         if lower_includes_boundary {
-            (boundary, boundary + 1.0, true, true)
+            (
+                boundary,
+                NumericValue::new(boundary.value() + 1.0),
+                true,
+                true,
+            )
         } else {
-            (boundary - 1.0, boundary, true, true)
+            (
+                NumericValue::new(boundary.value() - 1.0),
+                boundary,
+                true,
+                true,
+            )
         }
     } else {
         (
@@ -141,17 +154,12 @@ pub(super) fn numeric_split_intervals(
         )
     };
     let lower = parent.intersection(&Interval::new(
-        f64::NEG_INFINITY,
+        NEG_INF_VALUE,
         lower_bound,
         false,
         lower_closed,
     ));
-    let upper = parent.intersection(&Interval::new(
-        upper_bound,
-        f64::INFINITY,
-        upper_closed,
-        false,
-    ));
+    let upper = parent.intersection(&Interval::new(upper_bound, INF_VALUE, upper_closed, false));
     ensure!(
         !lower.is_empty() && !upper.is_empty(),
         "non-strict numeric Cartesian split at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
@@ -320,18 +328,18 @@ fn select_least_refined_split(
         .iter()
         .map(|split| match split.dimension() {
             SplitDimension::Propositional(var_id) => {
-                working.propositional_refinement_counts()[var_id]
+                working.propositional_refinement_counts()[var_id.index()]
             }
-            SplitDimension::Numeric(var_id) => working.numeric_refinement_counts()[var_id],
+            SplitDimension::Numeric(var_id) => working.numeric_refinement_counts()[var_id.index()],
         })
         .min()
         .expect("nonempty Cartesian candidate set has no minimum");
     candidates.retain(|split| {
         let count = match split.dimension() {
             SplitDimension::Propositional(var_id) => {
-                working.propositional_refinement_counts()[var_id]
+                working.propositional_refinement_counts()[var_id.index()]
             }
-            SplitDimension::Numeric(var_id) => working.numeric_refinement_counts()[var_id],
+            SplitDimension::Numeric(var_id) => working.numeric_refinement_counts()[var_id.index()],
         };
         count == minimum
     });
@@ -357,15 +365,15 @@ fn additive_step_distance(
         return Ok(None);
     }
     let (_, desired_region) = split_child_regions(working, split)?;
-    let desired = desired_region.numeric[*var_id];
+    let desired = desired_region.numeric[var_id.index()];
     let (distance, positive_direction) = if *witness_value < desired.lower
         || (*witness_value == desired.lower && !desired.lower_closed)
     {
-        (desired.lower - *witness_value, true)
+        (desired.lower.value() - witness_value.value(), true)
     } else if *witness_value > desired.upper
         || (*witness_value == desired.upper && !desired.upper_closed)
     {
-        (*witness_value - desired.upper, false)
+        (witness_value.value() - desired.upper.value(), false)
     } else {
         bail!(
             "numeric refinement witness {witness_value} is inside its purported desired child {desired:?}"
@@ -375,17 +383,17 @@ fn additive_step_distance(
         distance.is_finite() && distance >= 0.0,
         "invalid additive refinement distance {distance}"
     );
-    let maximum_progress = semantics.additive_effect_deltas()[*var_id]
+    let maximum_progress = semantics.additive_effect_deltas()[var_id.index()]
         .iter()
         .copied()
         .filter(|delta| {
             if positive_direction {
-                *delta > float_tolerance::SEARCH_EPSILON
+                delta.value() > float_tolerance::SEARCH_EPSILON
             } else {
-                *delta < -float_tolerance::SEARCH_EPSILON
+                delta.value() < -float_tolerance::SEARCH_EPSILON
             }
         })
-        .map(f64::abs)
+        .map(|a| a.value().abs())
         .max_by(f64::total_cmp);
     Ok(maximum_progress.map(|progress| (distance / progress).max(1.0)))
 }
@@ -425,7 +433,7 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
         Split::Propositional { var_id, wanted, .. } => {
             let current = parent
                 .propositions()
-                .get(*var_id)
+                .get(var_id.index())
                 .with_context(|| format!("split references missing prop var {var_id}"))?;
             let wanted_count = current
                 .iter()
@@ -448,12 +456,12 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
             } else {
                 other_region
             };
-            let desired = desired_region.numeric[*var_id];
-            if !desired.lower.is_finite() || !desired.upper.is_finite() {
+            let desired = desired_region.numeric[var_id.index()];
+            if !desired.lower.value().is_finite() || !desired.upper.value().is_finite() {
                 return Ok(f64::INFINITY);
             }
-            let current = parent.numeric[*var_id];
-            if !current.lower.is_finite() || !current.upper.is_finite() {
+            let current = parent.numeric[var_id.index()];
+            if !current.lower.value().is_finite() || !current.upper.value().is_finite() {
                 return Ok(f64::INFINITY);
             }
             let current_values = integer_interval_cardinality(current);
@@ -463,7 +471,8 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
                 unwanted_values >= 0.0,
                 "ICAPS 2026 desired interval contains more integer values than its parent"
             );
-            let unwanted_width = (current.upper - current.lower) - (desired.upper - desired.lower);
+            let unwanted_width = (current.upper.value() - current.lower.value())
+                - (desired.upper.value() - desired.lower.value());
             ensure!(
                 unwanted_width >= 0.0,
                 "ICAPS 2026 desired interval is wider than its parent"
@@ -482,16 +491,16 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
 }
 
 fn integer_interval_cardinality(interval: Interval) -> f64 {
-    debug_assert!(interval.lower.is_finite() && interval.upper.is_finite());
+    debug_assert!(interval.lower.value().is_finite() && interval.upper.value().is_finite());
     let first = if interval.lower_closed {
-        interval.lower.ceil()
+        interval.lower.value().ceil()
     } else {
-        interval.lower.floor() + 1.0
+        interval.lower.value().floor() + 1.0
     };
     let last = if interval.upper_closed {
-        interval.upper.floor()
+        interval.upper.value().floor()
     } else {
-        interval.upper.ceil() - 1.0
+        interval.upper.value().ceil() - 1.0
     };
     (last - first + 1.0).max(0.0)
 }

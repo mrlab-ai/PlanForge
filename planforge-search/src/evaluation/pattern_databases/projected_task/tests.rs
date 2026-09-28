@@ -3,8 +3,9 @@ use planforge_sas::axioms::{
 };
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericTaskExt, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -15,7 +16,7 @@ fn variable(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         axiom_layer,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -30,7 +31,7 @@ fn restricted_sample_task() -> NumericRootTask {
                 "cmp".to_string(),
                 vec!["cmp-true".to_string(), "cmp-false".to_string()],
                 Some(0),
-                ConditionValue::False.as_usize(),
+                ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
             ),
             variable("goal-marker", Some(1)),
         ],
@@ -40,31 +41,35 @@ fn restricted_sample_task() -> NumericRootTask {
         ],
         goals: vec![ExplicitFact::propositional(1, 0)],
         mutexes: vec![],
-        state: vec![0, 2, 1],
-        numeric_state: vec![10.0, 0.0],
+        state: vec![
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(2),
+            ExplicitValueIndex::new(1),
+        ],
+        numeric_state: vec![NumericValue::new(10.0), NumericValue::new(0.0)],
         operators: vec![Operator::new(
             "inc-x".to_string(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(1, 0)],
-            2,
-            1,
-            0,
+            VariableIndex::from_usize(2),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
         )],
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            1,
-            0,
+            VariableIndex::new(1),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -78,8 +83,8 @@ fn projection_builds_a_compact_restricted_transition_system() {
     let projected = ProjectedTask::new(
         &task,
         &Pattern {
-            regular: vec![0],
-            numeric: vec![1],
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(1)],
         },
     )
     .unwrap();
@@ -90,7 +95,10 @@ fn projection_builds_a_compact_restricted_transition_system() {
     assert_eq!(projected.get_num_cmp_axioms(), 1);
     assert_eq!(projected.get_num_axioms(), 0);
     assert_eq!(projected.get_num_goals(), 1);
-    assert_eq!(projected.get_initial_numeric_state_values(), &[0.0, 10.0]);
+    assert_eq!(
+        projected.get_initial_numeric_state_values(),
+        &[NumericValue::new(0.0), NumericValue::new(10.0)]
+    );
 }
 
 #[test]
@@ -99,8 +107,8 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
     let projected = ProjectedTask::new(
         &task,
         &Pattern {
-            regular: vec![0],
-            numeric: vec![1],
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(1)],
         },
     )
     .unwrap();
@@ -122,8 +130,8 @@ fn borrowed_task_extension_methods_preserve_projected_overrides() {
 
     assert_eq!(actual, expected);
     assert_eq!(
-        forwarded.abstract_operator_cost(0),
-        projected.abstract_operator_cost(0)
+        forwarded.abstract_operator_cost(OperatorIndex::new(0)),
+        projected.abstract_operator_cost(OperatorIndex::new(0))
     );
 }
 
@@ -151,16 +159,25 @@ fn projection_rejects_an_unrestricted_task() {
         goals: vec![ExplicitFact::propositional(2, 0)],
         mutexes: vec![],
         state: task.get_initial_propositional_state_values().to_vec(),
-        numeric_state: vec![10.0, 0.0, 0.0],
+        numeric_state: vec![
+            NumericValue::new(10.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
         operators: task.get_operators().clone(),
         axioms: task.axioms().clone(),
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            2,
-            0,
+            VariableIndex::new(1),
+            VariableIndex::new(2),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 1, 0)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(2),
+            CalOperator::Sum,
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(0),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
@@ -168,7 +185,7 @@ fn projection_rejects_an_unrestricted_task() {
         &unrestricted,
         &Pattern {
             regular: vec![],
-            numeric: vec![1],
+            numeric: vec![VariableIndex::from_usize(1)],
         },
     );
     assert!(matches!(
@@ -190,12 +207,21 @@ fn projection_rejects_derived_pattern_variables() {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![1.0, 0.0, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
-        assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(2),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
@@ -203,13 +229,14 @@ fn projection_rejects_derived_pattern_variables() {
         &task,
         &Pattern {
             regular: vec![],
-            numeric: vec![2],
+            numeric: vec![VariableIndex::from_usize(2)],
         },
     );
+    let _numeric_var_id = VariableIndex::from_usize(2);
     assert!(matches!(
         result,
         Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
-            numeric_var_id: 2,
+            numeric_var_id: _numeric_var_id,
             numeric_type: NumericType::Derived,
         })
     ));
@@ -227,20 +254,20 @@ fn projection_closes_over_numeric_effect_sources() {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![1.0, 2.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(2.0)],
         operators: vec![Operator::new(
             "increase".to_string(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -252,7 +279,7 @@ fn projection_closes_over_numeric_effect_sources() {
         &task,
         &Pattern {
             regular: vec![],
-            numeric: vec![0],
+            numeric: vec![VariableIndex::from_usize(0)],
         },
     )
     .unwrap();
@@ -260,8 +287,8 @@ fn projection_closes_over_numeric_effect_sources() {
     assert_eq!(projected.numeric_variables().len(), 2);
     assert_eq!(projected.pattern_numeric_projected_ids(), &[0]);
     let effect = &projected.get_operators()[0].assignment_effects()[0];
-    assert_eq!(effect.affected_var_id(), 0);
-    assert_eq!(effect.var_id(), 1);
+    assert_eq!(effect.affected_var_id(), VariableIndex::from_usize(0));
+    assert_eq!(effect.var_id(), VariableIndex::from_usize(1));
 }
 
 #[test]
@@ -277,34 +304,38 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 1.0, 2.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+        ],
         operators: vec![
             Operator::new(
                 "update-y-first".to_string(),
                 vec![],
                 vec![],
                 vec![AssignmentEffect::new(
-                    1,
+                    VariableIndex::new(1),
                     AssignmentOperation::Plus,
-                    2,
+                    VariableIndex::new(2),
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "update-x-second".to_string(),
                 vec![],
                 vec![],
                 vec![AssignmentEffect::new(
-                    0,
+                    VariableIndex::new(0),
                     AssignmentOperation::Plus,
-                    1,
+                    VariableIndex::new(1),
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
         ],
         axioms: vec![],
@@ -317,7 +348,7 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
         &task,
         &Pattern {
             regular: vec![],
-            numeric: vec![0],
+            numeric: vec![VariableIndex::from_usize(0)],
         },
     )
     .unwrap();
@@ -326,7 +357,7 @@ fn projection_computes_transitive_numeric_effect_source_closure() {
     assert_eq!(projected.get_num_operators(), 2);
     assert_eq!(
         projected.get_operators()[0].assignment_effects()[0].var_id(),
-        2
+        VariableIndex::from_usize(2)
     );
 }
 
@@ -340,7 +371,7 @@ fn projection_closes_over_selected_comparison_operands() {
             "cmp".to_string(),
             vec!["true".to_string(), "false".to_string()],
             Some(0),
-            ConditionValue::False.as_usize(),
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".to_string(), NumericType::Regular, None),
@@ -348,14 +379,14 @@ fn projection_closes_over_selected_comparison_operands() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![2],
-        numeric_state: vec![1.0, 5.0],
+        state: vec![ExplicitValueIndex::new(2)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(5.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            0,
-            1,
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -365,7 +396,7 @@ fn projection_closes_over_selected_comparison_operands() {
     let projected = ProjectedTask::new(
         &task,
         &Pattern {
-            regular: vec![0],
+            regular: vec![VariableIndex::from_usize(0)],
             numeric: vec![],
         },
     )
@@ -399,7 +430,7 @@ fn task_reading_a_failed_comparison() -> NumericRootTask {
                 "cmp".to_string(),
                 vec!["cmp-true".to_string(), "cmp-false".to_string()],
                 Some(0),
-                ConditionValue::False.as_usize(),
+                ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
             ),
             variable("blocker", None),
             variable("refuted", Some(1)),
@@ -415,25 +446,36 @@ fn task_reading_a_failed_comparison() -> NumericRootTask {
         )],
         mutexes: vec![],
         // `blocker` is 1, so the `blocker=0` condition of `unproven` never holds.
-        state: vec![0, ConditionValue::False.as_usize(), 1, 1, 1],
-        numeric_state: vec![1.0, 5.0],
+        state: vec![
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+        ],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(5.0)],
         operators: vec![],
         axioms: vec![
-            PropositionalAxiom::new(vec![ExplicitFact::propositional(1, 1)], 3, 1, 0),
+            PropositionalAxiom::new(
+                vec![ExplicitFact::propositional(1, 1)],
+                VariableIndex::from_usize(3),
+                ExplicitValueIndex::from_usize(1),
+                ExplicitValueIndex::new(0),
+            ),
             PropositionalAxiom::new(
                 vec![
                     ExplicitFact::propositional(1, 1),
                     ExplicitFact::propositional(2, 0),
                 ],
-                4,
-                1,
-                0,
+                VariableIndex::from_usize(4),
+                ExplicitValueIndex::new(1),
+                ExplicitValueIndex::new(0),
             ),
         ],
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            0,
-            1,
+            VariableIndex::new(1),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -456,8 +498,14 @@ fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
     let projected = ProjectedTask::new(
         &task,
         &Pattern {
-            regular: vec![0, 1, 2, 3, 4],
-            numeric: vec![0],
+            regular: vec![
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(2),
+                VariableIndex::from_usize(3),
+                VariableIndex::from_usize(4),
+            ],
+            numeric: vec![VariableIndex::from_usize(0)],
         },
     )
     .unwrap();
@@ -475,15 +523,17 @@ fn a_failed_comparison_verdict_reaches_the_horn_rules_once() {
     let (values, _numeric) = projected.evaluated_initial_state_values().unwrap();
     assert_eq!(
         values[1],
-        ConditionValue::False.as_usize(),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
         "1 >= 5 is false"
     );
     assert_eq!(
-        values[3], 0,
+        values[3],
+        ExplicitValueIndex::new(0),
         "the refuting rule reads the verdict and fires"
     );
     assert_eq!(
-        values[4], 1,
+        values[4],
+        ExplicitValueIndex::new(1),
         "`blocker=0` is not satisfied, so the two-condition rule must not fire"
     );
 }
@@ -501,14 +551,18 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(2, 0)],
         mutexes: vec![],
-        state: vec![0, 1, 1],
+        state: vec![
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+        ],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 0)],
-            1,
-            1,
-            0,
+            VariableIndex::from_usize(1),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
         )],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
@@ -518,7 +572,7 @@ fn projected_axioms_drop_omitted_conditions_admissibly() {
     let projected = ProjectedTask::new(
         &task,
         &Pattern {
-            regular: vec![1],
+            regular: vec![VariableIndex::from_usize(1)],
             numeric: vec![],
         },
     )
@@ -538,13 +592,17 @@ fn source_state_projection_is_a_direct_index_mapping() {
     let projected = ProjectedTask::new(
         &task,
         &Pattern {
-            regular: vec![0],
-            numeric: vec![1],
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(1)],
         },
     )
     .unwrap();
-    let propositional = vec![1, 2, 1];
-    let numeric = vec![10.0, 7.0];
+    let propositional = vec![
+        ExplicitValueIndex::new(1),
+        ExplicitValueIndex::new(2),
+        ExplicitValueIndex::new(1),
+    ];
+    let numeric = vec![NumericValue::new(10.0), NumericValue::new(7.0)];
 
     let expected = projected
         .project_state_values(&propositional, &numeric)

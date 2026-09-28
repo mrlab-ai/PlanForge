@@ -1,6 +1,7 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    NumericType, NumericVariable, Operator,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    VariableIndex,
 };
 
 use super::*;
@@ -12,7 +13,7 @@ fn simple_var(name: &str) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         None,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -31,22 +32,32 @@ fn sample_task() -> NumericRootTask {
             ExplicitFact::propositional(1, 1),
         ],
         mutexes: vec![],
-        state: vec![0, 0],
-        numeric_state: vec![0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0)],
         operators: vec![
             Operator::new(
                 "set-p".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 0, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                2,
+                OperatorCost::new(2),
             ),
             Operator::new(
                 "set-q".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                3,
+                OperatorCost::new(3),
             ),
         ],
         axioms: vec![],
@@ -62,8 +73,8 @@ fn collection_information_builds_pdbs_and_additive_subsets() {
     let info = PatternCollectionInformation::new(
         &task,
         PatternCollection::new(vec![
-            Pattern::new(vec![0], vec![]),
-            Pattern::new(vec![1], vec![]),
+            Pattern::new(vec![VariableIndex::from_usize(0)], vec![]),
+            Pattern::new(vec![VariableIndex::from_usize(1)], vec![]),
         ]),
         32,
     );

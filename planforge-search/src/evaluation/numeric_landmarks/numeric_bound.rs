@@ -1,6 +1,9 @@
 use super::numeric_helper::NumericTaskHelper;
 use planforge_sas::axioms::PropositionalAxiom;
-use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericTaskExt};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, ExplicitValueIndex, NumericTaskExt, NumericValue,
+    OperatorIndex, VariableIndex,
+};
 use planforge_sas::utils::linear_effects::LinearExpression;
 
 #[derive(Debug, Clone)]
@@ -12,7 +15,7 @@ struct BoundCondition {
 
 #[derive(Debug, Clone)]
 struct PreparedLinearEffect {
-    lhs: usize,
+    lhs: VariableIndex,
     coefficients: Vec<f64>,
     constant: f64,
 }
@@ -23,7 +26,7 @@ pub struct NumericBound {
     precision: f64,
     epsilon: f64,
     numeric_helper: NumericTaskHelper,
-    numeric_variable_ids: Vec<usize>,
+    numeric_variable_ids: Vec<VariableIndex>,
     num_numeric_variables: usize,
     num_actions: usize,
     operator_conditions: Vec<Vec<BoundCondition>>,
@@ -112,7 +115,29 @@ impl NumericBound {
         self.epsilon = epsilon;
     }
 
-    pub fn calculate_bounds(&mut self, _state: &[f64], iterations: usize) {
+    pub fn calculate_bounds(&mut self, _state: &[NumericValue], iterations: usize) {
+        assert!(
+            self.initialized,
+            "numeric bound must be initialized before use"
+        );
+        assert!(
+            iterations <= i32::MAX as usize,
+            "bound iterations exceed supported range"
+        );
+        self.prepare();
+        self.update_before_action_bounds();
+        let mut completed_iterations = 0usize;
+
+        while completed_iterations < iterations
+            && (self.update_variable_bounds(_state)
+                || self.update_action_bounds()
+                || self.update_before_action_bounds())
+        {
+            completed_iterations += 1;
+        }
+    }
+
+    pub fn calculate_bounds_nv(&mut self, _state: &[NumericValue], iterations: usize) {
         assert!(
             self.initialized,
             "numeric bound must be initialized before use"
@@ -138,62 +163,86 @@ impl NumericBound {
         self.precision
     }
 
-    pub fn get_variable_before_action_has_ub(&self, var_id: usize, op_id: usize) -> bool {
-        self.variable_before_action_has_ub[var_id][op_id]
+    pub fn get_variable_before_action_has_ub(
+        &self,
+        var_id: VariableIndex,
+        op_id: OperatorIndex,
+    ) -> bool {
+        self.variable_before_action_has_ub[var_id.index()][op_id.index()]
     }
 
-    pub fn get_variable_before_action_has_lb(&self, var_id: usize, op_id: usize) -> bool {
-        self.variable_before_action_has_lb[var_id][op_id]
+    pub fn get_variable_before_action_has_lb(
+        &self,
+        var_id: VariableIndex,
+        op_id: OperatorIndex,
+    ) -> bool {
+        self.variable_before_action_has_lb[var_id.index()][op_id.index()]
     }
 
-    pub fn get_variable_before_action_ub(&self, var_id: usize, op_id: usize) -> f64 {
-        self.variable_before_action_ub[var_id][op_id]
+    pub fn get_variable_before_action_ub(
+        &self,
+        var_id: VariableIndex,
+        op_id: OperatorIndex,
+    ) -> f64 {
+        self.variable_before_action_ub[var_id.index()][op_id.index()]
     }
 
-    pub fn get_variable_before_action_lb(&self, var_id: usize, op_id: usize) -> f64 {
-        self.variable_before_action_lb[var_id][op_id]
+    pub fn get_variable_before_action_lb(
+        &self,
+        var_id: VariableIndex,
+        op_id: OperatorIndex,
+    ) -> f64 {
+        self.variable_before_action_lb[var_id.index()][op_id.index()]
     }
 
-    pub fn get_effect_has_ub(&self, op_id: usize, var_id: usize) -> bool {
-        self.effect_has_ub[op_id][var_id]
+    pub fn get_effect_has_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
+        self.effect_has_ub[op_id.index()][var_id.index()]
     }
 
-    pub fn get_effect_has_lb(&self, op_id: usize, var_id: usize) -> bool {
-        self.effect_has_lb[op_id][var_id]
+    pub fn get_effect_has_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
+        self.effect_has_lb[op_id.index()][var_id.index()]
     }
 
-    pub fn get_effect_ub(&self, op_id: usize, var_id: usize) -> f64 {
-        self.effect_ub[op_id][var_id]
+    pub fn get_effect_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
+        self.effect_ub[op_id.index()][var_id.index()]
     }
 
-    pub fn get_effect_lb(&self, op_id: usize, var_id: usize) -> f64 {
-        self.effect_lb[op_id][var_id]
+    pub fn get_effect_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
+        self.effect_lb[op_id.index()][var_id.index()]
     }
 
-    pub fn get_assignment_has_ub(&self, op_id: usize, var_id: usize) -> bool {
-        self.assignment_has_ub[op_id][var_id]
+    pub fn get_assignment_has_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
+        self.assignment_has_ub[op_id.index()][var_id.index()]
     }
 
-    pub fn get_assignment_has_lb(&self, op_id: usize, var_id: usize) -> bool {
-        self.assignment_has_lb[op_id][var_id]
+    pub fn get_assignment_has_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> bool {
+        self.assignment_has_lb[op_id.index()][var_id.index()]
     }
 
-    pub fn get_assignment_ub(&self, op_id: usize, var_id: usize) -> f64 {
-        self.assignment_ub[op_id][var_id]
+    pub fn get_assignment_ub(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
+        self.assignment_ub[op_id.index()][var_id.index()]
     }
 
-    pub fn get_assignment_lb(&self, op_id: usize, var_id: usize) -> f64 {
-        self.assignment_lb[op_id][var_id]
+    pub fn get_assignment_lb(&self, op_id: OperatorIndex, var_id: VariableIndex) -> f64 {
+        self.assignment_lb[op_id.index()][var_id.index()]
     }
 
-    pub fn has_no_increasing_assignment_effect(&self, op_id: usize, var_id: usize) -> bool {
+    pub fn has_no_increasing_assignment_effect(
+        &self,
+        op_id: OperatorIndex,
+        var_id: VariableIndex,
+    ) -> bool {
         self.get_variable_before_action_has_lb(var_id, op_id)
             && self.get_assignment_has_ub(op_id, var_id)
             && self.get_variable_before_action_lb(var_id, op_id)
                 >= self.get_assignment_ub(op_id, var_id)
     }
 
-    pub fn has_no_decreasing_assignment_effect(&self, op_id: usize, var_id: usize) -> bool {
+    pub fn has_no_decreasing_assignment_effect(
+        &self,
+        op_id: OperatorIndex,
+        var_id: VariableIndex,
+    ) -> bool {
         self.get_variable_before_action_has_ub(var_id, op_id)
             && self.get_assignment_has_lb(op_id, var_id)
             && self.get_variable_before_action_ub(var_id, op_id)
@@ -229,14 +278,14 @@ impl NumericBound {
 
             for linear_effect in &self.prepared_linear_effects[op_id] {
                 let lhs = linear_effect.lhs;
-                self.effect_has_ub[op_id][lhs] = false;
-                self.effect_has_lb[op_id][lhs] = false;
-                self.effect_ub[op_id][lhs] = f64::MAX;
-                self.effect_lb[op_id][lhs] = f64::MIN;
-                self.assignment_has_ub[op_id][lhs] = false;
-                self.assignment_has_lb[op_id][lhs] = false;
-                self.assignment_ub[op_id][lhs] = f64::MAX;
-                self.assignment_lb[op_id][lhs] = f64::MIN;
+                self.effect_has_ub[op_id][lhs.index()] = false;
+                self.effect_has_lb[op_id][lhs.index()] = false;
+                self.effect_ub[op_id][lhs.index()] = f64::MAX;
+                self.effect_lb[op_id][lhs.index()] = f64::MIN;
+                self.assignment_has_ub[op_id][lhs.index()] = false;
+                self.assignment_has_lb[op_id][lhs.index()] = false;
+                self.assignment_ub[op_id][lhs.index()] = f64::MAX;
+                self.assignment_lb[op_id][lhs.index()] = f64::MIN;
             }
         }
 
@@ -346,14 +395,14 @@ impl NumericBound {
         change
     }
 
-    fn update_variable_bounds(&mut self, state: &[f64]) -> bool {
+    fn update_variable_bounds(&mut self, state: &[NumericValue]) -> bool {
         let mut change = false;
 
         for var_id in 0..self.num_numeric_variables {
             let mut has_ub = true;
             let mut has_lb = true;
             let actual_var_id = self.numeric_variable_ids[var_id];
-            let mut ub = *state.get(actual_var_id).unwrap_or_else(|| {
+            let mut ub = *state.get(actual_var_id.index()).unwrap_or_else(|| {
                 panic!("numeric bound state is missing numeric variable {actual_var_id}")
             });
             let mut lb = ub;
@@ -382,7 +431,7 @@ impl NumericBound {
                     }
 
                     if has_effect {
-                        ub = ub.max(local_ub);
+                        ub = NumericValue::new(ub.value().max(local_ub));
                     }
                     if !upper_bounded {
                         has_ub = false;
@@ -412,7 +461,7 @@ impl NumericBound {
                     }
 
                     if has_effect {
-                        lb = lb.min(local_lb);
+                        lb = NumericValue::new(lb.value().min(local_lb));
                     }
                     if !lower_bounded {
                         has_lb = false;
@@ -427,23 +476,23 @@ impl NumericBound {
             if has_ub {
                 if !change
                     && (!self.variable_has_ub[var_id]
-                        || (self.variable_ub[var_id] - ub).abs() >= self.precision)
+                        || (self.variable_ub[var_id] - ub.value()).abs() >= self.precision)
                 {
                     change = true;
                 }
                 self.variable_has_ub[var_id] = true;
-                self.variable_ub[var_id] = ub;
+                self.variable_ub[var_id] = ub.value();
             }
 
             if has_lb {
                 if !change
                     && (!self.variable_has_lb[var_id]
-                        || (self.variable_lb[var_id] - lb).abs() >= self.precision)
+                        || (self.variable_lb[var_id] - lb.value()).abs() >= self.precision)
                 {
                     change = true;
                 }
                 self.variable_has_lb[var_id] = true;
-                self.variable_lb[var_id] = lb;
+                self.variable_lb[var_id] = lb.value();
             }
         }
 
@@ -464,7 +513,7 @@ impl NumericBound {
                 let mut lb = constant;
 
                 for (var_id, &weight) in coefficients.iter().enumerate() {
-                    if var_id == lhs {
+                    if var_id == lhs.index() {
                         continue;
                     }
 
@@ -511,29 +560,31 @@ impl NumericBound {
                 let mut new_effect_lb = f64::MIN;
 
                 if has_ub {
-                    if coefficients[lhs].abs() < self.precision {
+                    if coefficients[lhs.index()].abs() < self.precision {
                         new_assignment_has_ub = true;
                         new_assignment_ub = ub;
-                    } else if coefficients[lhs] >= self.precision
-                        && self.variable_before_action_has_ub[lhs][op_id]
+                    } else if coefficients[lhs.index()] >= self.precision
+                        && self.variable_before_action_has_ub[lhs.index()][op_id]
                     {
                         new_assignment_has_ub = true;
-                        new_assignment_ub =
-                            ub + coefficients[lhs] * self.variable_before_action_ub[lhs][op_id];
-                    } else if coefficients[lhs] <= -self.precision
-                        && self.variable_before_action_has_lb[lhs][op_id]
+                        new_assignment_ub = ub
+                            + coefficients[lhs.index()]
+                                * self.variable_before_action_ub[lhs.index()][op_id];
+                    } else if coefficients[lhs.index()] <= -self.precision
+                        && self.variable_before_action_has_lb[lhs.index()][op_id]
                     {
                         new_assignment_has_ub = true;
-                        new_assignment_ub =
-                            ub + coefficients[lhs] * self.variable_before_action_lb[lhs][op_id];
+                        new_assignment_ub = ub
+                            + coefficients[lhs.index()]
+                                * self.variable_before_action_lb[lhs.index()][op_id];
                     }
 
-                    let increment_coefficient = coefficients[lhs] - 1.0;
+                    let increment_coefficient = coefficients[lhs.index()] - 1.0;
                     if increment_coefficient.abs() < self.precision {
                         new_effect_has_ub = true;
                         new_effect_ub = ub;
                     } else if increment_coefficient >= self.precision
-                        && self.variable_before_action_has_ub[lhs][op_id]
+                        && self.variable_before_action_has_ub[lhs.index()][op_id]
                     {
                         new_effect_has_ub = true;
                         // PARITY(numeric-fd): the reference implementation uses the boolean
@@ -541,40 +592,43 @@ impl NumericBound {
                         // rather than the numeric upper bound itself.
                         new_effect_ub = ub
                             + increment_coefficient
-                                * f64::from(self.variable_before_action_has_ub[lhs][op_id]);
+                                * f64::from(self.variable_before_action_has_ub[lhs.index()][op_id]);
                     } else if increment_coefficient <= -self.precision
-                        && self.variable_before_action_has_lb[lhs][op_id]
+                        && self.variable_before_action_has_lb[lhs.index()][op_id]
                     {
                         new_effect_has_ub = true;
-                        new_effect_ub =
-                            ub + increment_coefficient * self.variable_before_action_lb[lhs][op_id];
+                        new_effect_ub = ub
+                            + increment_coefficient
+                                * self.variable_before_action_lb[lhs.index()][op_id];
                     }
                 }
 
                 if has_lb {
-                    if coefficients[lhs].abs() < self.precision {
+                    if coefficients[lhs.index()].abs() < self.precision {
                         new_assignment_has_lb = true;
                         new_assignment_lb = lb;
-                    } else if coefficients[lhs] >= self.precision
-                        && self.variable_before_action_has_lb[lhs][op_id]
+                    } else if coefficients[lhs.index()] >= self.precision
+                        && self.variable_before_action_has_lb[lhs.index()][op_id]
                     {
                         new_assignment_has_lb = true;
-                        new_assignment_lb =
-                            lb + coefficients[lhs] * self.variable_before_action_lb[lhs][op_id];
-                    } else if coefficients[lhs] <= -self.precision
-                        && self.variable_before_action_has_ub[lhs][op_id]
+                        new_assignment_lb = lb
+                            + coefficients[lhs.index()]
+                                * self.variable_before_action_lb[lhs.index()][op_id];
+                    } else if coefficients[lhs.index()] <= -self.precision
+                        && self.variable_before_action_has_ub[lhs.index()][op_id]
                     {
                         new_assignment_has_lb = true;
-                        new_assignment_lb =
-                            lb + coefficients[lhs] * self.variable_before_action_ub[lhs][op_id];
+                        new_assignment_lb = lb
+                            + coefficients[lhs.index()]
+                                * self.variable_before_action_ub[lhs.index()][op_id];
                     }
 
-                    let increment_coefficient = coefficients[lhs] - 1.0;
+                    let increment_coefficient = coefficients[lhs.index()] - 1.0;
                     if increment_coefficient.abs() < self.precision {
                         new_effect_has_lb = true;
                         new_effect_lb = lb;
                     } else if increment_coefficient >= self.precision
-                        && self.variable_before_action_has_lb[lhs][op_id]
+                        && self.variable_before_action_has_lb[lhs.index()][op_id]
                     {
                         new_effect_has_lb = true;
                         // PARITY(numeric-fd): same reference quirk as the upper-bound branch:
@@ -582,18 +636,21 @@ impl NumericBound {
                         // instead of the numeric lower bound value.
                         new_effect_lb = lb
                             + increment_coefficient
-                                * f64::from(self.variable_before_action_has_lb[lhs][op_id]);
+                                * f64::from(self.variable_before_action_has_lb[lhs.index()][op_id]);
                     } else if increment_coefficient <= -self.precision
-                        && self.variable_before_action_has_ub[lhs][op_id]
+                        && self.variable_before_action_has_ub[lhs.index()][op_id]
                     {
                         new_effect_has_lb = true;
-                        new_effect_lb =
-                            lb + increment_coefficient * self.variable_before_action_ub[lhs][op_id];
+                        new_effect_lb = lb
+                            + increment_coefficient
+                                * self.variable_before_action_ub[lhs.index()][op_id];
                     }
                 }
 
-                let assignment_result =
-                    self.check_coefficient_in_preconditions(&coefficients, op_id);
+                let assignment_result = self.check_coefficient_in_preconditions(
+                    &coefficients,
+                    OperatorIndex::from_usize(op_id),
+                );
                 if assignment_result.0.0 {
                     new_assignment_has_ub = true;
                     new_assignment_ub = new_assignment_ub.min(assignment_result.1.0 + constant);
@@ -604,9 +661,11 @@ impl NumericBound {
                 }
 
                 let mut increment_coefficients = coefficients.clone();
-                increment_coefficients[lhs] -= 1.0;
-                let increment_result =
-                    self.check_coefficient_in_preconditions(&increment_coefficients, op_id);
+                increment_coefficients[lhs.index()] -= 1.0;
+                let increment_result = self.check_coefficient_in_preconditions(
+                    &increment_coefficients,
+                    OperatorIndex::from_usize(op_id),
+                );
                 if increment_result.0.0 {
                     new_effect_has_ub = true;
                     new_effect_ub = new_effect_ub.min(increment_result.1.0 + constant);
@@ -617,41 +676,43 @@ impl NumericBound {
                 }
 
                 if new_assignment_has_ub
-                    && (!self.assignment_has_ub[op_id][lhs]
-                        || (new_assignment_ub - self.assignment_ub[op_id][lhs]).abs()
+                    && (!self.assignment_has_ub[op_id][lhs.index()]
+                        || (new_assignment_ub - self.assignment_ub[op_id][lhs.index()]).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.assignment_has_ub[op_id][lhs] = true;
-                    self.assignment_ub[op_id][lhs] = new_assignment_ub;
+                    self.assignment_has_ub[op_id][lhs.index()] = true;
+                    self.assignment_ub[op_id][lhs.index()] = new_assignment_ub;
                 }
 
                 if new_assignment_has_lb
-                    && (!self.assignment_has_lb[op_id][lhs]
-                        || (new_assignment_lb - self.assignment_lb[op_id][lhs]).abs()
+                    && (!self.assignment_has_lb[op_id][lhs.index()]
+                        || (new_assignment_lb - self.assignment_lb[op_id][lhs.index()]).abs()
                             >= self.precision)
                 {
                     change = true;
-                    self.assignment_has_lb[op_id][lhs] = true;
-                    self.assignment_lb[op_id][lhs] = new_assignment_lb;
+                    self.assignment_has_lb[op_id][lhs.index()] = true;
+                    self.assignment_lb[op_id][lhs.index()] = new_assignment_lb;
                 }
 
                 if new_effect_has_ub
-                    && (!self.effect_has_ub[op_id][lhs]
-                        || (new_effect_ub - self.effect_ub[op_id][lhs]).abs() >= self.precision)
+                    && (!self.effect_has_ub[op_id][lhs.index()]
+                        || (new_effect_ub - self.effect_ub[op_id][lhs.index()]).abs()
+                            >= self.precision)
                 {
                     change = true;
-                    self.effect_has_ub[op_id][lhs] = true;
-                    self.effect_ub[op_id][lhs] = new_effect_ub;
+                    self.effect_has_ub[op_id][lhs.index()] = true;
+                    self.effect_ub[op_id][lhs.index()] = new_effect_ub;
                 }
 
                 if new_effect_has_lb
-                    && (!self.effect_has_lb[op_id][lhs]
-                        || (new_effect_lb - self.effect_lb[op_id][lhs]).abs() >= self.precision)
+                    && (!self.effect_has_lb[op_id][lhs.index()]
+                        || (new_effect_lb - self.effect_lb[op_id][lhs.index()]).abs()
+                            >= self.precision)
                 {
                     change = true;
-                    self.effect_has_lb[op_id][lhs] = true;
-                    self.effect_lb[op_id][lhs] = new_effect_lb;
+                    self.effect_has_lb[op_id][lhs.index()] = true;
+                    self.effect_lb[op_id][lhs.index()] = new_effect_lb;
                 }
             }
         }
@@ -662,14 +723,14 @@ impl NumericBound {
     fn check_coefficient_in_preconditions(
         &self,
         coefficients: &[f64],
-        op_id: usize,
+        op_id: OperatorIndex,
     ) -> ((bool, bool), (f64, f64)) {
         let mut has_ub = false;
         let mut has_lb = false;
         let mut ub = f64::MAX;
         let mut lb = f64::MIN;
 
-        for condition in &self.operator_conditions[op_id] {
+        for condition in &self.operator_conditions[op_id.index()] {
             let mut has_scale = true;
             let mut scale_initialized = false;
             let mut scale = 0.0;
@@ -718,7 +779,7 @@ impl NumericBound {
                 panic!("operator id {operator_id} is out of bounds for numeric bound effects")
             });
             let linearized_effects = task
-                .linearized_assignment_effects(operator_id)
+                .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
                 .unwrap_or_else(|error| {
                     panic!(
                         "failed to linearize numeric bound effects for operator {operator_id}: {error}"
@@ -737,7 +798,7 @@ impl NumericBound {
                 let assignment_expression = self.assignment_expression(linearized_effect, lhs);
 
                 if self.is_simple_effect(assignment_effect, &assignment_expression, lhs) {
-                    self.prepared_simple_effects[operator_id][lhs] =
+                    self.prepared_simple_effects[operator_id][lhs.index()] =
                         Some(assignment_expression.constant);
                     continue;
                 }
@@ -764,7 +825,7 @@ impl NumericBound {
     fn assignment_expression(
         &self,
         linearized_effect: &planforge_sas::utils::linear_effects::LinearNumericEffect,
-        lhs: usize,
+        lhs: VariableIndex,
     ) -> LinearExpression {
         LinearExpression::variable(self.num_numeric_variables, lhs).add(&LinearExpression {
             coefficients: self.project_coefficients(&linearized_effect.delta.coefficients),
@@ -776,7 +837,7 @@ impl NumericBound {
         &self,
         assignment_effect: &planforge_sas::numeric_task::AssignmentEffect,
         assignment_expression: &LinearExpression,
-        lhs: usize,
+        lhs: VariableIndex,
     ) -> bool {
         if !matches!(
             assignment_effect.operation(),
@@ -790,7 +851,7 @@ impl NumericBound {
         }
 
         for (var_id, &coefficient) in assignment_expression.coefficients.iter().enumerate() {
-            let expected = if var_id == lhs { 1.0 } else { 0.0 };
+            let expected = if var_id == lhs.index() { 1.0 } else { 0.0 };
             if (coefficient - expected).abs() >= self.precision {
                 return false;
             }
@@ -816,7 +877,7 @@ impl NumericBound {
 
             if let Some(helper_conditions) = self
                 .numeric_helper
-                .comparison_fact_conditions(precondition.var(), 0)
+                .comparison_fact_conditions(precondition.var_index(), ExplicitValueIndex::new(0))
             {
                 conditions.extend(helper_conditions.iter().map(|condition| BoundCondition {
                     coefficients: self.project_coefficients(&condition.coefficients),
@@ -833,16 +894,22 @@ impl NumericBound {
         conditions
     }
 
-    fn local_numeric_var_id(&self, actual_numeric_var_id: usize) -> Option<usize> {
+    fn local_numeric_var_id(&self, actual_numeric_var_id: VariableIndex) -> Option<VariableIndex> {
         self.numeric_variable_ids
             .iter()
             .position(|&numeric_var_id| numeric_var_id == actual_numeric_var_id)
+            .map(VariableIndex::from_usize)
     }
 
     fn project_coefficients(&self, coefficients: &[f64]) -> Vec<f64> {
         self.numeric_variable_ids
             .iter()
-            .map(|&numeric_var_id| coefficients.get(numeric_var_id).copied().unwrap_or(0.0))
+            .map(|&numeric_var_id| {
+                coefficients
+                    .get(numeric_var_id.index())
+                    .copied()
+                    .unwrap_or(0.0)
+            })
             .collect()
     }
 }

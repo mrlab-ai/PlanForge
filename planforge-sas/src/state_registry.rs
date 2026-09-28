@@ -21,7 +21,8 @@ mod tests;
 
 use crate::axioms::AxiomEvaluator;
 use crate::numeric_task::{
-    AssignmentOperation, Effect, ExplicitFact, Operator, RepeatedTarget, TaskRef,
+    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericValue, Operator,
+    RepeatedTarget, TaskRef, VariableIndex,
 };
 use crate::utils::errors::{
     AssignmentAxiomError, AxiomEvalError, InvalidIndex, StateInsertError, StateNotFoundError,
@@ -93,7 +94,7 @@ type RegisteredStates = HashTable<(u64, u32)>;
 
 #[derive(Debug)]
 struct DenseCostInformation {
-    values: Vec<f64>,
+    values: Vec<NumericValue>,
     num_cost_variables: usize,
 }
 
@@ -105,7 +106,7 @@ impl DenseCostInformation {
         }
     }
 
-    fn get(&self, state_id: StateID) -> &[f64] {
+    fn get(&self, state_id: StateID) -> &[NumericValue] {
         if self.num_cost_variables == 0 {
             return &[];
         }
@@ -118,7 +119,7 @@ impl DenseCostInformation {
         })
     }
 
-    fn set(&mut self, state_id: StateID, values: &[f64]) {
+    fn set(&mut self, state_id: StateID, values: &[NumericValue]) {
         assert_eq!(
             values.len(),
             self.num_cost_variables,
@@ -131,10 +132,10 @@ impl DenseCostInformation {
             .checked_add(self.num_cost_variables)
             .expect("cost-information index overflow");
         if self.values.len() < end {
-            self.values.resize(end, 0.0);
+            self.values.resize(end, NumericValue::new(0.0));
         }
         for (target, &value) in self.values[start..end].iter_mut().zip(values) {
-            *target = float_tolerance::canonicalize(value);
+            *target = float_tolerance::canonicalize_nv(value);
         }
     }
 }
@@ -166,15 +167,15 @@ pub struct ConcreteStateView<'a> {
 
 #[derive(Clone, Copy)]
 enum ConcreteStateViewBacking<'a> {
-    Decoded(&'a [f64]),
+    Decoded(&'a [NumericValue]),
     Registered {
         state_id: StateID,
-        numeric_template: &'a [f64],
+        numeric_template: &'a [NumericValue],
         regular_numeric_slots: &'a [(usize, usize)],
         cost_numeric_indices: &'a [(usize, usize)],
         numeric_var_types: &'a [NumericType],
         numeric_indices: &'a [Option<usize>],
-        numeric_constants: &'a [f64],
+        numeric_constants: &'a [NumericValue],
         compact_numeric_values: &'a RefCell<CompactNumericValues>,
         cost_info: &'a RefCell<DenseCostInformation>,
         axiom_evaluator: &'a AxiomEvaluator<'a>,
@@ -182,7 +183,11 @@ enum ConcreteStateViewBacking<'a> {
 }
 
 impl<'a> ConcreteStateView<'a> {
-    pub fn from_decoded(packer: &'a StatePacker, prop: &'a [u64], numeric: &'a [f64]) -> Self {
+    pub fn from_decoded(
+        packer: &'a StatePacker,
+        prop: &'a [u64],
+        numeric: &'a [NumericValue],
+    ) -> Self {
         Self {
             packer,
             prop,
@@ -192,7 +197,7 @@ impl<'a> ConcreteStateView<'a> {
 }
 
 impl ExplicitFact {
-    pub fn is_hold(&self, state: ConcreteStateView<'_>) -> bool {
+    pub fn is_held(&self, state: ConcreteStateView<'_>) -> bool {
         let value = state.packer().get(state.propositional(), self.var());
         value == self.value() as u64
     }
@@ -202,7 +207,7 @@ impl Effect {
     pub fn conditions_met(&self, state: ConcreteStateView<'_>) -> bool {
         self.conditions()
             .iter()
-            .all(|condition| condition.is_hold(state))
+            .all(|condition| condition.is_held(state))
     }
 }
 
@@ -215,22 +220,23 @@ impl<'a> ConcreteStateView<'a> {
         self.prop
     }
 
-    pub fn fill_propositional(self, output: &mut Vec<usize>) {
+    pub fn fill_propositional(self, output: &mut Vec<ExplicitValueIndex>) {
         output.clear();
         output.extend(
-            (0..self.packer.numeric_slot_offset())
-                .map(|slot| self.packer.get(self.prop, slot) as usize),
+            (0..self.packer.numeric_slot_offset()).map(|slot| {
+                ExplicitValueIndex::from_usize(self.packer.get(self.prop, slot) as usize)
+            }),
         );
     }
 
-    pub fn decoded_numeric(self) -> Option<&'a [f64]> {
+    pub fn decoded_numeric(self) -> Option<&'a [NumericValue]> {
         match self.backing {
             ConcreteStateViewBacking::Decoded(values) => Some(values),
             ConcreteStateViewBacking::Registered { .. } => None,
         }
     }
 
-    pub fn fill_numeric(self, output: &mut Vec<f64>) -> Result<(), AssignmentAxiomError> {
+    pub fn fill_numeric(self, output: &mut Vec<NumericValue>) -> Result<(), AssignmentAxiomError> {
         match self.backing {
             ConcreteStateViewBacking::Decoded(values) => {
                 output.clear();
@@ -247,7 +253,7 @@ impl<'a> ConcreteStateView<'a> {
                 axiom_evaluator,
                 ..
             } => {
-                output.resize(numeric_template.len(), 0.0);
+                output.resize(numeric_template.len(), NumericValue::new(0.0));
                 output.copy_from_slice(numeric_template);
                 let interned = compact_numeric_values.borrow();
                 for &(out_idx, packed_slot) in regular_numeric_slots {
@@ -270,11 +276,14 @@ impl<'a> ConcreteStateView<'a> {
         }
     }
 
-    pub fn numeric_value_unevaluated(self, var_id: usize) -> Result<f64, InvalidIndex> {
+    pub fn numeric_value_unevaluated(
+        self,
+        var_id: VariableIndex,
+    ) -> Result<NumericValue, InvalidIndex> {
         match self.backing {
             ConcreteStateViewBacking::Decoded(values) => {
-                values.get(var_id).copied().ok_or(InvalidIndex {
-                    index: var_id,
+                values.get(var_id.index()).copied().ok_or(InvalidIndex {
+                    index: var_id.index(),
                     length: values.len(),
                 })
             }
@@ -287,28 +296,32 @@ impl<'a> ConcreteStateView<'a> {
                 cost_info,
                 ..
             } => {
-                let Some(&numeric_type) = numeric_var_types.get(var_id) else {
+                let Some(&numeric_type) = numeric_var_types.get(var_id.index()) else {
                     return Err(InvalidIndex {
-                        index: var_id,
+                        index: var_id.index(),
                         length: numeric_var_types.len(),
                     });
                 };
                 let value = match numeric_type {
                     NumericType::Cost => {
-                        let cost_idx = numeric_indices[var_id].unwrap();
+                        let cost_idx = numeric_indices[var_id.index()].unwrap();
                         cost_info.borrow().get(state_id)[cost_idx]
                     }
-                    NumericType::Constant => numeric_constants[numeric_indices[var_id].unwrap()],
+                    NumericType::Constant => {
+                        numeric_constants[numeric_indices[var_id.index()].unwrap()]
+                    }
                     NumericType::Regular => {
-                        let id =
-                            self.packer.get(self.prop, numeric_indices[var_id].unwrap()) as usize;
+                        let id = self
+                            .packer
+                            .get(self.prop, numeric_indices[var_id.index()].unwrap())
+                            as usize;
                         *compact_numeric_values
                             .borrow()
                             .values
                             .get(id)
                             .unwrap_or_else(|| panic!("missing compact numeric value ID {id}"))
                     }
-                    NumericType::Derived => 0.0,
+                    NumericType::Derived => NumericValue::new(0.0),
                 };
                 Ok(value)
             }
@@ -329,7 +342,7 @@ impl ConcreteState {
     }
 
     /// Get the propositional state values as a vector.
-    pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<usize> {
+    pub fn get_state(&self, state_registry: &StateRegistry) -> Vec<ExplicitValueIndex> {
         let mut values =
             Vec::with_capacity(state_registry.global_state_packer.numeric_slot_offset());
         self.fill_state(state_registry, &mut values);
@@ -337,15 +350,17 @@ impl ConcreteState {
     }
 
     /// Fill `output` with the propositional state values without allocating a new vector.
-    pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<usize>) {
+    pub fn fill_state(&self, state_registry: &StateRegistry, output: &mut Vec<ExplicitValueIndex>) {
         let buffer = state_registry.get_buffer(self.pool_offset);
         let state_packer = &state_registry.global_state_packer;
 
-        output.resize(state_packer.numeric_slot_offset(), 0);
-        output
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, x)| *x = state_packer.get(buffer, i) as usize);
+        output.resize(
+            state_packer.numeric_slot_offset(),
+            ExplicitValueIndex::new(0),
+        );
+        output.iter_mut().enumerate().for_each(|(i, x)| {
+            *x = ExplicitValueIndex::from_usize(state_packer.get(buffer, i) as usize)
+        });
     }
 
     pub fn get_propositional_value(
@@ -366,7 +381,7 @@ impl ConcreteState {
     }
 
     /// Get the numeric state values for regular variables.
-    pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<f64> {
+    pub fn get_numeric_state(&self, state_registry: &StateRegistry) -> Vec<NumericValue> {
         state_registry
             .task
             .numeric_variables()
@@ -465,9 +480,9 @@ fn bins_eq_masked(left: &[u64], right: &[u64], mask: &[u64]) -> bool {
 /// re-reading the same parent on every operator application.
 #[derive(Debug, Default, Clone)]
 pub struct ExpansionContext {
-    pub parent_numeric: Vec<f64>,
-    pub parent_cost: Vec<f64>,
-    pub parent_metric: f64,
+    pub parent_numeric: Vec<NumericValue>,
+    pub parent_cost: Vec<NumericValue>,
+    pub parent_metric: NumericValue,
 }
 
 /// The parent and successor views one operator application reads and writes.
@@ -478,11 +493,11 @@ pub struct ExpansionContext {
 struct NumericTransition<'a> {
     /// The parent state's numeric values. Every effect operand is read from
     /// here, so the reads stay independent of effect order.
-    parent_values: &'a [f64],
+    parent_values: &'a [NumericValue],
     /// The successor's numeric values, updated in place.
-    current_values: &'a mut [f64],
+    current_values: &'a mut [NumericValue],
     /// This operator's contribution to each cost variable.
-    cost_part: &'a mut [f64],
+    cost_part: &'a mut [NumericValue],
     /// The successor's packed buffer, updated in place.
     next_buffer: &'a mut [u64],
     /// The parent's packed buffer, read for effect conditions and operands.
@@ -511,14 +526,14 @@ pub struct StateRegistry<'a> {
     /// Pool of state data, each entry is a packed state representation.
     state_data_pool: DataStorage,
     /// Constants for numeric variables.
-    numeric_constants: Vec<f64>,
+    numeric_constants: Vec<NumericValue>,
     /// Mapping from numeric variable index to packed state index.
     numeric_indices: Vec<Option<usize>>,
     /// Registered state IDs indexed by the hash of their packed state. The
     /// table stores no duplicate hash key: lookup always verifies the exact
     /// packed state, so distinct states remain sound under hash collisions.
     registered_states: RegisteredStates,
-    /// Dense row-major `f64` cost values indexed by state ID. Cost variables
+    /// Dense row-major `NumericValue` cost values indexed by state ID. Cost variables
     /// are not part of state identity, but storing one allocation per state is
     /// unnecessary because state IDs are dense.
     cost_info: RefCell<DenseCostInformation>,
@@ -529,7 +544,7 @@ pub struct StateRegistry<'a> {
     /// Initial numeric row with immutable constants in place and every
     /// state-dependent or derived entry zeroed. Numeric-state materialization
     /// copies this row before filling the two state-dependent layouts below.
-    numeric_template: Vec<f64>,
+    numeric_template: Vec<NumericValue>,
     /// `(numeric variable id, packed-state slot)` for regular variables.
     regular_numeric_slots: Vec<(usize, usize)>,
     /// `(numeric variable id, dense cost-row slot)` for cost variables.
@@ -556,7 +571,7 @@ pub struct StateRegistry<'a> {
     /// successor flow defers comparison/propositional axiom evaluation until
     /// after dedup so we can skip it entirely on duplicate states.
     has_axiom_derived_bits: bool,
-    /// Exact canonical-f64 interning for compact state storage. Regular
+    /// Exact canonical-NumericValue interning for compact state storage. Regular
     /// numeric values are represented by checked 32-bit IDs in the packer.
     compact_numeric_values: RefCell<CompactNumericValues>,
 }
@@ -564,7 +579,7 @@ pub struct StateRegistry<'a> {
 #[derive(Debug, Default)]
 struct CompactNumericValues {
     ids_by_bits: HashMap<u64, u32, MixedHasherBuilder>,
-    values: Vec<f64>,
+    values: Vec<NumericValue>,
 }
 
 impl<'a> StateRegistry<'a> {
@@ -620,7 +635,7 @@ impl<'a> StateRegistry<'a> {
             numeric_var_types.len(),
             "initial numeric state must contain one value per numeric variable"
         );
-        let mut numeric_template = vec![0.0; number_numeric_vars];
+        let mut numeric_template = vec![NumericValue::new(0.0); number_numeric_vars];
         let mut regular_numeric_slots = Vec::new();
         let mut cost_numeric_indices = Vec::new();
         let mut next_regular_slot = global_state_packer.numeric_slot_offset();
@@ -629,7 +644,7 @@ impl<'a> StateRegistry<'a> {
             match ty {
                 NumericType::Constant => {
                     numeric_template[numeric_var_id] =
-                        float_tolerance::canonicalize(initial_numeric_values[numeric_var_id]);
+                        float_tolerance::canonicalize_nv(initial_numeric_values[numeric_var_id]);
                 }
                 NumericType::Regular => {
                     regular_numeric_slots.push((numeric_var_id, next_regular_slot));
@@ -649,9 +664,9 @@ impl<'a> StateRegistry<'a> {
         let metric_use_metric = task.metric().use_metric();
         let metric_var = task.metric().var_id().and_then(|var_id| {
             numeric_var_types
-                .get(var_id)
+                .get(var_id.index())
                 .copied()
-                .map(|ty| (var_id, ty))
+                .map(|ty| (var_id.index(), ty))
         });
 
         // Collect packer slots for the non-derived (input) variables. The
@@ -667,7 +682,7 @@ impl<'a> StateRegistry<'a> {
         let mut has_propositional_derived = false;
         for var_id in 0..numeric_slot_offset {
             let axiom_layer = task
-                .get_variable_axiom_layer(var_id)
+                .get_variable_axiom_layer(VariableIndex::from_usize(var_id))
                 .expect("variable id below the packer's numeric offset must exist in the task");
             match axiom_layer {
                 None => non_derived_var_ids.push(var_id),
@@ -716,9 +731,9 @@ impl<'a> StateRegistry<'a> {
         }
     }
 
-    fn pack_regular_numeric(&self, value: f64) -> u64 {
-        let canonical = float_tolerance::canonicalize(value);
-        let bits = canonical.to_bits();
+    fn pack_regular_numeric(&self, value: NumericValue) -> u64 {
+        let canonical = float_tolerance::canonicalize_nv(value);
+        let bits = canonical.value().to_bits();
         let mut interner = self.compact_numeric_values.borrow_mut();
         if let Some(&id) = interner.ids_by_bits.get(&bits) {
             return id as u64;
@@ -734,7 +749,7 @@ impl<'a> StateRegistry<'a> {
         id as u64
     }
 
-    fn unpack_regular_numeric(&self, packed: u64) -> f64 {
+    fn unpack_regular_numeric(&self, packed: u64) -> NumericValue {
         let id = usize::try_from(packed).expect("compact numeric value ID exceeds usize");
         *self
             .compact_numeric_values
@@ -920,9 +935,14 @@ impl<'a> StateRegistry<'a> {
     }
 
     /// Pack propositional variables into the state buffer.
-    fn pack_propositional_variables(&self, buffer: &mut [u64], initial_values: &[usize]) {
+    fn pack_propositional_variables(
+        &self,
+        buffer: &mut [u64],
+        initial_values: &[ExplicitValueIndex],
+    ) {
         for (i, &value) in initial_values.iter().enumerate() {
-            self.global_state_packer.set(buffer, i, value as u64);
+            self.global_state_packer
+                .set(buffer, i, value.index() as u64);
         }
     }
 
@@ -930,8 +950,8 @@ impl<'a> StateRegistry<'a> {
     fn process_numeric_variables(
         &mut self,
         buffer: &mut [u64],
-        initial_numeric_values: &[f64],
-    ) -> Vec<f64> {
+        initial_numeric_values: &[NumericValue],
+    ) -> Vec<NumericValue> {
         let mut numeric_var_index = self.global_state_packer.numeric_slot_offset();
         let mut constant_index = 0;
         let mut cost_variables = Vec::new();
@@ -942,12 +962,12 @@ impl<'a> StateRegistry<'a> {
             match numeric_var.get_type() {
                 NumericType::Cost => {
                     self.numeric_indices[i] = Some(cost_variables.len());
-                    cost_variables.push(float_tolerance::canonicalize(value));
+                    cost_variables.push(float_tolerance::canonicalize_nv(value));
                 }
                 NumericType::Constant => {
                     self.numeric_indices[i] = Some(constant_index);
                     self.numeric_constants
-                        .push(float_tolerance::canonicalize(value));
+                        .push(float_tolerance::canonicalize_nv(value));
                     constant_index += 1;
                 }
                 NumericType::Derived => {
@@ -970,9 +990,9 @@ impl<'a> StateRegistry<'a> {
     fn evaluate_axioms(
         &self,
         buffer: &mut [u64],
-        numeric_state: &mut [f64],
+        numeric_state: &mut [NumericValue],
     ) -> Result<(), StateInsertError> {
-        canonicalize_numeric_values(numeric_state);
+        canonicalize_numeric_values_nv(numeric_state);
         self.axiom_evaluator
             .evaluate(buffer, numeric_state)
             .map_err(|e| StateInsertError {
@@ -984,7 +1004,7 @@ impl<'a> StateRegistry<'a> {
 
     /// Log initial state information in debug builds.
     #[cfg(debug_assertions)]
-    fn log_initial_state_info(&self, cost_variables: &[f64]) {
+    fn log_initial_state_info(&self, cost_variables: &[NumericValue]) {
         use tracing::info;
 
         // Regular numeric variables are the ones whose recorded index is a
@@ -1028,7 +1048,7 @@ impl<'a> StateRegistry<'a> {
     pub fn register_state(
         &mut self,
         values: Vec<u64>,
-        numeric_values: Vec<f64>,
+        numeric_values: Vec<NumericValue>,
     ) -> Result<ConcreteState, StateInsertError> {
         self.register_state_with_status(values, numeric_values)
             .map(|(state, _is_new)| state)
@@ -1037,7 +1057,7 @@ impl<'a> StateRegistry<'a> {
     pub fn register_state_with_status(
         &mut self,
         values: Vec<u64>,
-        numeric_values: Vec<f64>,
+        numeric_values: Vec<NumericValue>,
     ) -> Result<(ConcreteState, bool), StateInsertError> {
         let mut buffer = vec![0; self.global_state_packer.num_bins()];
 
@@ -1096,8 +1116,8 @@ impl<'a> StateRegistry<'a> {
     fn process_register_numeric_variables(
         &mut self,
         buffer: &mut [u64],
-        numeric_values: &[f64],
-    ) -> Result<Vec<f64>, StateInsertError> {
+        numeric_values: &[NumericValue],
+    ) -> Result<Vec<NumericValue>, StateInsertError> {
         let mut regular_index = self.global_state_packer.numeric_slot_offset();
         let mut cost_variables = Vec::new();
 
@@ -1116,7 +1136,7 @@ impl<'a> StateRegistry<'a> {
                     if self.numeric_indices[i].is_none() {
                         self.numeric_indices[i] = Some(cost_variables.len());
                     }
-                    cost_variables.push(float_tolerance::canonicalize(value));
+                    cost_variables.push(float_tolerance::canonicalize_nv(value));
                 }
                 NumericType::Regular => {
                     // Initialize the index if not set.
@@ -1146,7 +1166,7 @@ impl<'a> StateRegistry<'a> {
                             ),
                         }
                     })?;
-                    if !float_tolerance::equal(registered, value) {
+                    if !float_tolerance::equal_nv(registered, value) {
                         return Err(StateInsertError {
                             message: format!(
                                 "Constant numeric variable {i} is {registered} in this registry, but the state to register has {value}"
@@ -1195,8 +1215,8 @@ impl<'a> StateRegistry<'a> {
         &mut self,
         current_state: &ConcreteState,
         operator: &Operator,
-        successor_values: &mut Vec<f64>,
-        cost_values: &mut Vec<f64>,
+        successor_values: &mut Vec<NumericValue>,
+        cost_values: &mut Vec<NumericValue>,
     ) -> Result<ConcreteState, StateInsertError> {
         self.get_successor_state_with_buffers_and_cost(
             current_state,
@@ -1211,9 +1231,9 @@ impl<'a> StateRegistry<'a> {
         &mut self,
         current_state: &ConcreteState,
         operator: &Operator,
-        successor_values: &mut Vec<f64>,
-        cost_values: &mut Vec<f64>,
-    ) -> Result<(ConcreteState, f64), StateInsertError> {
+        successor_values: &mut Vec<NumericValue>,
+        cost_values: &mut Vec<NumericValue>,
+    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
         let mut ctx = ExpansionContext::default();
         self.build_expansion_context(current_state, &mut ctx)?;
         self.apply_operator_in_context(current_state, operator, &ctx, successor_values, cost_values)
@@ -1235,7 +1255,8 @@ impl<'a> StateRegistry<'a> {
         self.fill_cost_information(parent, &mut ctx.parent_cost);
         let expected_cost_vars = self.count_cost_variables();
         if ctx.parent_cost.len() < expected_cost_vars {
-            ctx.parent_cost.resize(expected_cost_vars, 0.0);
+            ctx.parent_cost
+                .resize(expected_cost_vars, NumericValue::new(0.0));
         }
         ctx.parent_metric = if self.metric_use_metric {
             self.evaluate_metric(&ctx.parent_numeric)
@@ -1243,7 +1264,7 @@ impl<'a> StateRegistry<'a> {
                     message: format!("Failed to evaluate metric for parent state: {e:?}"),
                 })?
         } else {
-            0.0
+            NumericValue::new(0.0)
         };
         Ok(())
     }
@@ -1257,9 +1278,9 @@ impl<'a> StateRegistry<'a> {
         parent: &ConcreteState,
         operator: &Operator,
         ctx: &ExpansionContext,
-        successor_values: &mut Vec<f64>,
-        cost_values: &mut Vec<f64>,
-    ) -> Result<(ConcreteState, f64), StateInsertError> {
+        successor_values: &mut Vec<NumericValue>,
+        cost_values: &mut Vec<NumericValue>,
+    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
         // Seed successor scratch from the cached parent values; the numeric
         // and cost effects below will mutate them in place.
         successor_values.clear();
@@ -1311,12 +1332,12 @@ impl<'a> StateRegistry<'a> {
                     message: format!("Failed to evaluate metric: {e:?}"),
                 })?
         } else {
-            0.0
+            NumericValue::new(0.0)
         };
         let op_cost = if self.metric_use_metric {
-            new_metric - ctx.parent_metric
+            NumericValue::new(new_metric.value() - ctx.parent_metric.value())
         } else {
-            1.0
+            NumericValue::new(1.0)
         };
 
         let (id, is_new_state) = self.insert_id_or_pop_state();
@@ -1365,9 +1386,9 @@ impl<'a> StateRegistry<'a> {
                         }
                     })?;
                     if self.metric_is_min {
-                        old_metric < new_metric
+                        old_metric.value() < new_metric.value()
                     } else {
-                        old_metric > new_metric
+                        old_metric.value() > new_metric.value()
                     }
                 };
 
@@ -1403,8 +1424,8 @@ impl<'a> StateRegistry<'a> {
         for effect in operator.effects() {
             if self.assignment_conditions_met(effect.conditions(), previous_buffer) {
                 let var_id = effect.var_id();
-                let value = effect.value() as u64;
-                self.global_state_packer.set(buffer, var_id, value);
+                let value = effect.value().index() as u64;
+                self.global_state_packer.set(buffer, var_id.index(), value);
             }
         }
     }
@@ -1424,7 +1445,7 @@ impl<'a> StateRegistry<'a> {
     /// Validate the cost-variable-to-row mapping when the initial state fixes
     /// the registry's numeric layout. Every later row has the same length,
     /// enforced by [`DenseCostInformation::set`].
-    fn assert_cost_layout(&self, cost_variables: &[f64]) {
+    fn assert_cost_layout(&self, cost_variables: &[NumericValue]) {
         assert_eq!(
             cost_variables.len(),
             self.cost_variable_count,
@@ -1442,10 +1463,10 @@ impl<'a> StateRegistry<'a> {
         }
     }
 
-    fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<f64>) {
+    fn fill_cost_information(&self, state: &ConcreteState, output: &mut Vec<NumericValue>) {
         let cost_info_borrow = self.cost_info.borrow();
         let cost_info_data = cost_info_borrow.get(state.get_id());
-        output.resize(cost_info_data.len(), 0.0);
+        output.resize(cost_info_data.len(), NumericValue::new(0.0));
         output.copy_from_slice(cost_info_data);
     }
 
@@ -1459,8 +1480,8 @@ impl<'a> StateRegistry<'a> {
     pub fn get_numeric_vars(
         &self,
         state: &ConcreteState,
-    ) -> Result<Vec<f64>, AssignmentAxiomError> {
-        let mut result = vec![0.0; self.task.numeric_variables().len()];
+    ) -> Result<Vec<NumericValue>, AssignmentAxiomError> {
+        let mut result = vec![NumericValue::new(0.0); self.task.numeric_variables().len()];
         self.fill_numeric_vars(state, &mut result)?;
         Ok(result)
     }
@@ -1468,8 +1489,8 @@ impl<'a> StateRegistry<'a> {
     pub fn fill_state_and_numeric_vars(
         &self,
         state: &ConcreteState,
-        propositional_output: &mut Vec<usize>,
-        numeric_output: &mut Vec<f64>,
+        propositional_output: &mut Vec<ExplicitValueIndex>,
+        numeric_output: &mut Vec<NumericValue>,
     ) -> Result<(), AssignmentAxiomError> {
         self.fill_state_and_numeric_vars_with_options(
             state,
@@ -1482,8 +1503,8 @@ impl<'a> StateRegistry<'a> {
     pub fn fill_state_and_numeric_vars_with_options(
         &self,
         state: &ConcreteState,
-        propositional_output: &mut Vec<usize>,
-        numeric_output: &mut Vec<f64>,
+        propositional_output: &mut Vec<ExplicitValueIndex>,
+        numeric_output: &mut Vec<NumericValue>,
         evaluate_arithmetic_axioms: bool,
     ) -> Result<(), AssignmentAxiomError> {
         let buffer = state.buffer(self);
@@ -1491,12 +1512,13 @@ impl<'a> StateRegistry<'a> {
 
         propositional_output.clear();
         propositional_output.extend(
-            (0..state_packer.numeric_slot_offset())
-                .map(|slot| state_packer.get(buffer, slot) as usize),
+            (0..state_packer.numeric_slot_offset()).map(|slot| {
+                ExplicitValueIndex::from_usize(state_packer.get(buffer, slot) as usize)
+            }),
         );
 
         numeric_output.clear();
-        numeric_output.resize(self.task.numeric_variables().len(), 0.0);
+        numeric_output.resize(self.task.numeric_variables().len(), NumericValue::new(0.0));
 
         let cost_info_borrow = self.cost_info.borrow();
         let cost_variables = cost_info_borrow.get(state.get_id());
@@ -1509,7 +1531,7 @@ impl<'a> StateRegistry<'a> {
                     state_packer.get(buffer, self.numeric_indices[i].unwrap()),
                 ),
                 // Axioms fill derived values after this input-state pass.
-                NumericType::Derived => 0.0,
+                NumericType::Derived => NumericValue::new(0.0),
             };
         }
 
@@ -1533,7 +1555,7 @@ impl<'a> StateRegistry<'a> {
         &self,
         state: &ConcreteState,
         numeric_var_id: usize,
-    ) -> Result<f64, InvalidIndex> {
+    ) -> Result<NumericValue, InvalidIndex> {
         let Some(numeric_var) = self.task.numeric_variables().get(numeric_var_id) else {
             return Err(InvalidIndex {
                 index: numeric_var_id,
@@ -1555,7 +1577,7 @@ impl<'a> StateRegistry<'a> {
                     .get(buffer, self.numeric_indices[numeric_var_id].unwrap()),
             ),
             // Axioms fill derived values after this input-state pass.
-            NumericType::Derived => 0.0,
+            NumericType::Derived => NumericValue::new(0.0),
         };
 
         Ok(value)
@@ -1564,9 +1586,9 @@ impl<'a> StateRegistry<'a> {
     pub fn fill_numeric_vars(
         &self,
         state: &ConcreteState,
-        output: &mut Vec<f64>,
+        output: &mut Vec<NumericValue>,
     ) -> Result<(), AssignmentAxiomError> {
-        output.resize(self.numeric_template.len(), 0.0);
+        output.resize(self.numeric_template.len(), NumericValue::new(0.0));
         output.copy_from_slice(&self.numeric_template);
 
         let buffer = state.buffer(self);
@@ -1652,12 +1674,12 @@ impl<'a> StateRegistry<'a> {
             let assignment_var_id = effect.var_id();
             let affected_var_id = effect.affected_var_id();
 
-            if assignment_var_id >= parent_values.len() {
+            if assignment_var_id.index() >= parent_values.len() {
                 return Err(StateInsertError {
                     message: format!("Assignment variable ID {} out of bounds", assignment_var_id),
                 });
             }
-            if affected_var_id >= parent_values.len() {
+            if affected_var_id.index() >= parent_values.len() {
                 return Err(StateInsertError {
                     message: format!("Affected variable ID {} out of bounds", affected_var_id),
                 });
@@ -1671,48 +1693,48 @@ impl<'a> StateRegistry<'a> {
             }
 
             let assignment_value =
-                if self.numeric_var_types[assignment_var_id] == NumericType::Regular {
+                if self.numeric_var_types[assignment_var_id.index()] == NumericType::Regular {
                     self.unpack_regular_numeric(self.global_state_packer.get(
                         previous_buffer,
-                        self.numeric_indices[assignment_var_id].unwrap(),
+                        self.numeric_indices[assignment_var_id.index()].unwrap(),
                     ))
                 } else {
-                    parent_values[assignment_var_id]
+                    parent_values[assignment_var_id.index()]
                 };
 
             // Accumulate additive deltas; every other operand reads the parent.
             // The target classification is immutable operator data computed
             // once at construction.
             let left_value = match repeated_target {
-                RepeatedTarget::First => parent_values[affected_var_id],
-                RepeatedTarget::Additive => current_values[affected_var_id],
+                RepeatedTarget::First => parent_values[affected_var_id.index()],
+                RepeatedTarget::Additive => current_values[affected_var_id.index()],
             };
 
-            let result = float_tolerance::canonicalize(AssignmentOperation::apply(
+            let result = float_tolerance::canonicalize_nv(AssignmentOperation::apply(
                 left_value,
                 effect.operation(),
                 assignment_value,
             ));
 
-            match self.numeric_var_types[affected_var_id] {
+            match self.numeric_var_types[affected_var_id.index()] {
                 NumericType::Cost => {
-                    let cost_index = self.numeric_indices[affected_var_id].unwrap();
+                    let cost_index = self.numeric_indices[affected_var_id.index()].unwrap();
                     if cost_index >= cost_part.len() {
                         return Err(StateInsertError {
                             message: format!("Cost variable index {} out of bounds", cost_index),
                         });
                     }
                     cost_part[cost_index] = result;
-                    current_values[affected_var_id] = result;
+                    current_values[affected_var_id.index()] = result;
                 }
                 NumericType::Regular => {
                     let packed_result = self.pack_regular_numeric(result);
                     self.global_state_packer.set(
                         next_buffer,
-                        self.numeric_indices[affected_var_id].unwrap(),
+                        self.numeric_indices[affected_var_id.index()].unwrap(),
                         packed_result,
                     );
-                    current_values[affected_var_id] = result;
+                    current_values[affected_var_id.index()] = result;
                 }
                 affected_ty => {
                     return Err(StateInsertError {
@@ -1746,7 +1768,10 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This corresponds to the C++ evaluate_metric function that retrieves
     /// the value of the metric fluent from the numeric state.
-    pub fn evaluate_metric(&self, numeric_state: &[f64]) -> Result<f64, InvalidIndex> {
+    pub fn evaluate_metric(
+        &self,
+        numeric_state: &[NumericValue],
+    ) -> Result<NumericValue, InvalidIndex> {
         match self.metric_var {
             Some((metric, _)) => {
                 if metric < numeric_state.len() {
@@ -1758,7 +1783,7 @@ impl<'a> StateRegistry<'a> {
                     })
                 }
             }
-            None => Ok(0.0),
+            None => Ok(NumericValue::new(0.0)),
         }
     }
 
@@ -1771,10 +1796,10 @@ impl<'a> StateRegistry<'a> {
         &self,
         state: &ConcreteState,
         operator: &Operator,
-    ) -> Result<f64, StateInsertError> {
+    ) -> Result<NumericValue, StateInsertError> {
         if !self.task.metric().use_metric() {
             // Numeric-FD treats non-metric tasks as unit-cost.
-            return Ok(1.0);
+            return Ok(NumericValue::new(1.0));
         }
 
         let old_metric = self
@@ -1795,7 +1820,7 @@ impl<'a> StateRegistry<'a> {
         self.fill_cost_information(state, &mut cost_values);
         let expected_cost_vars = self.count_cost_variables();
         if cost_values.len() < expected_cost_vars {
-            cost_values.resize(expected_cost_vars, 0.0);
+            cost_values.resize(expected_cost_vars, NumericValue::new(0.0));
         }
 
         // `successor_numeric_values` still holds `state`'s values here, so this
@@ -1820,12 +1845,15 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate metric after applying operator: {e:?}"),
             })?;
 
-        Ok(new_metric - old_metric)
+        Ok(NumericValue::new(new_metric.value() - old_metric.value()))
     }
 
-    fn metric_value_for_state(&self, state: &ConcreteState) -> Result<f64, AxiomEvalError> {
+    fn metric_value_for_state(
+        &self,
+        state: &ConcreteState,
+    ) -> Result<NumericValue, AxiomEvalError> {
         let Some((metric_fluent_id, metric_type)) = self.metric_var else {
-            return Ok(0.0);
+            return Ok(NumericValue::new(0.0));
         };
         if metric_fluent_id >= self.numeric_var_types.len() {
             return Err(AxiomEvalError::InvalidIndex(InvalidIndex {
@@ -1870,7 +1898,7 @@ impl<'a> StateRegistry<'a> {
     fn should_keep_old_cost_information(
         &self,
         existing_state: &ConcreteState,
-        successor_numeric_vals: &[f64],
+        successor_numeric_vals: &[NumericValue],
     ) -> Result<bool, AxiomEvalError> {
         if !self.task.metric().use_metric() {
             return Ok(false);
@@ -1879,12 +1907,13 @@ impl<'a> StateRegistry<'a> {
         let old_metric_val = self.metric_value_for_state(existing_state)?;
         let new_metric_val = self
             .evaluate_metric(successor_numeric_vals)
-            .map_err(AxiomEvalError::InvalidIndex)?;
+            .map_err(AxiomEvalError::InvalidIndex)?
+            .value();
 
         Ok(if self.task.metric().is_min() {
-            old_metric_val < new_metric_val
+            old_metric_val.value() < new_metric_val
         } else {
-            old_metric_val > new_metric_val
+            old_metric_val.value() > new_metric_val
         })
     }
 
@@ -1892,7 +1921,7 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This corresponds to the C++ `g_cost_information[state]` access pattern.
     /// Return an empty vector if no cost information is stored for the state.
-    pub fn get_cost_information(&self, state: &ConcreteState) -> Vec<f64> {
+    pub fn get_cost_information(&self, state: &ConcreteState) -> Vec<NumericValue> {
         self.cost_info.borrow().get(state.get_id()).to_vec()
     }
 
@@ -1900,13 +1929,13 @@ impl<'a> StateRegistry<'a> {
     ///
     /// This corresponds to the C++ g_cost_information[state] = values assignment.
     /// It uses `RefCell` for interior mutability to resolve borrowing conflicts.
-    fn set_cost_information(&self, state: &ConcreteState, values: &[f64]) {
+    fn set_cost_information(&self, state: &ConcreteState, values: &[NumericValue]) {
         self.cost_info.borrow_mut().set(state.get_id(), values);
     }
 }
 
-fn canonicalize_numeric_values(values: &mut [f64]) {
+fn canonicalize_numeric_values_nv(values: &mut [NumericValue]) {
     for value in values {
-        *value = float_tolerance::canonicalize(*value);
+        *value = float_tolerance::canonicalize_nv(*value);
     }
 }

@@ -82,7 +82,7 @@ pub fn print_plan_result(result: &SearchResult) {
             if let Some(plan) = result.plan.as_ref() {
                 let plan_cost = result
                     .solution_cost
-                    .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum());
+                    .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum());
 
                 for (i, op) in plan.iter().enumerate() {
                     info!("  {}: {}", i + 1, op.name());

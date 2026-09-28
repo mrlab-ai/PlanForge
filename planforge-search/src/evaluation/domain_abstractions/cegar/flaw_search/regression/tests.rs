@@ -5,8 +5,9 @@ use crate::evaluation::domain_abstractions::{
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    OperatorCost, OperatorIndex,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -15,11 +16,19 @@ use crate::evaluation::domain_abstractions::cegar::flaw_search::single_switch_ta
 
 #[test]
 fn regression_flaws_find_precondition_violation() {
-    let task = single_switch_task(3, 2, vec![0]);
+    let task = single_switch_task(
+        3,
+        ExplicitValueIndex::new(2),
+        vec![ExplicitValueIndex::new(0)],
+    );
 
     let (mut domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     // Put 1 and 2 in the same mapping group.
-    domain_mapping[0] = vec![0, 1, 1];
+    domain_mapping[0] = vec![
+        ExplicitValueIndex::new(0),
+        ExplicitValueIndex::new(1),
+        ExplicitValueIndex::new(1),
+    ];
     let partitions = NumericPartitions::trivial(&task);
     let numeric_domain_sizes: Vec<usize> = vec![];
     let factory = DomainAbstractionFactory::new(
@@ -48,7 +57,11 @@ fn regression_flaws_find_precondition_violation() {
 
 #[test]
 fn regression_flaws_find_initial_state_violation() {
-    let task = single_switch_task(3, 1, vec![0]);
+    let task = single_switch_task(
+        3,
+        ExplicitValueIndex::new(1),
+        vec![ExplicitValueIndex::new(0)],
+    );
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::trivial(&task);
@@ -68,7 +81,11 @@ fn regression_flaws_find_initial_state_violation() {
 
     // The same task started at `v=1` violates the plan's initial-state
     // requirement `v=0`.
-    let flawed_task = single_switch_task(3, 1, vec![1]);
+    let flawed_task = single_switch_task(
+        3,
+        ExplicitValueIndex::new(1),
+        vec![ExplicitValueIndex::new(1)],
+    );
     let flaws = get_regression_flaws(
         &flawed_task,
         factory.partitions(),
@@ -90,7 +107,7 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         "cmp".into(),
         vec!["true".into(), "false".into()],
         Some(0),
-        ConditionValue::False.as_usize(),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -98,9 +115,9 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         NumericVariable::new("threshold".into(), NumericType::Constant, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        0,
-        2,
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(2),
         ComparisonOperator::GreaterThanOrEqual,
     )];
     let op = Operator::new(
@@ -108,13 +125,13 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Plus,
-            1,
+            VariableIndex::from_usize(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -123,8 +140,12 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![1],
-        numeric_state: vec![0.0, 3.0, 10.0],
+        state: vec![ExplicitValueIndex::new(1)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(3.0),
+            NumericValue::new(10.0),
+        ],
         operators: vec![op],
         axioms: vec![],
         comparison_axioms,
@@ -135,8 +156,8 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::with_partitions(vec![
         vec![Interval::unbounded()],
-        vec![Interval::singleton(3.0)],
-        vec![Interval::singleton(10.0)],
+        vec![Interval::singleton(NumericValue::new(3.0))],
+        vec![Interval::singleton(NumericValue::new(10.0))],
     ]);
     let numeric_domain_sizes: Vec<usize> = vec![1, 1, 1];
     let factory = DomainAbstractionFactory::new(
@@ -148,7 +169,7 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
     )
     .unwrap();
     let plan = WildcardPlanResult {
-        wildcard_plan: vec![vec![0]],
+        wildcard_plan: vec![vec![OperatorIndex::new(0)]],
         abstract_state_hashes: vec![],
         abstract_prop_states: vec![],
         abstract_numeric_states: vec![],
@@ -156,15 +177,16 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
 
     let flaws =
         get_regression_flaws(&task, factory.partitions(), factory.domain_mapping(), &plan).unwrap();
+    let _numeric_var_id = VariableIndex::from_usize(0);
     assert!(
         flaws.iter().any(|flaw| matches!(
-            flaw,
-            Flaw::Numeric(NumericFlaw {
-                numeric_var_id: 0,
-                value,
-                include_in_lower: false,
-                step: 0,
-            }) if *value == 7.0
+        flaw,
+        Flaw::Numeric(NumericFlaw {
+            numeric_var_id: _numeric_var_id,
+            value,
+            include_in_lower: false,
+            step: 0,
+        }) if *value == NumericValue::new(7.0)
         )),
         "expected split x >= 7 after regressing x >= 10 through x += 3, got {flaws:?}"
     );

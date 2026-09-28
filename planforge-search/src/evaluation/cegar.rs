@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, ensure};
 use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::numeric_task::{AssignmentOperation, Operator};
+use planforge_sas::numeric_task::{AssignmentOperation, NumericValue, Operator};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use serde::{Deserialize, Serialize};
@@ -54,7 +54,7 @@ pub fn progress_concrete_state(
     axiom_evaluator: &AxiomEvaluator,
     packer: &StatePacker,
     prop_state: &mut [u64],
-    numeric_state: &mut [f64],
+    numeric_state: &mut [NumericValue],
 ) -> Result<()> {
     for effect in op.effects() {
         if effect
@@ -62,7 +62,11 @@ pub fn progress_concrete_state(
             .iter()
             .all(|condition| packer.get(prop_state, condition.var()) == condition.value() as u64)
         {
-            packer.set(prop_state, effect.var_id(), effect.value() as u64);
+            packer.set(
+                prop_state,
+                effect.var_id().index(),
+                effect.value().index() as u64,
+            );
         }
     }
 
@@ -77,16 +81,17 @@ pub fn progress_concrete_state(
         let source_var = effect.var_id();
         let affected_var = effect.affected_var_id();
         ensure!(
-            source_var < numeric_state.len() && affected_var < numeric_state.len(),
+            source_var.index() < numeric_state.len() && affected_var.index() < numeric_state.len(),
             "operator {} numeric effect references vars ({source_var}, {affected_var}) outside {} numeric variables",
             op.name(),
             numeric_state.len()
         );
-        numeric_state[affected_var] = float_tolerance::canonicalize(AssignmentOperation::apply(
-            numeric_state[affected_var],
-            effect.operation(),
-            numeric_state[source_var],
-        ));
+        numeric_state[affected_var.index()] =
+            float_tolerance::canonicalize_nv(AssignmentOperation::apply(
+                numeric_state[affected_var.index()],
+                effect.operation(),
+                numeric_state[source_var.index()],
+            ));
     }
 
     axiom_evaluator

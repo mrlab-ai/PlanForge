@@ -1,8 +1,10 @@
+use planforge_sas::numeric_task::{NumericValue, OperatorIndex, VariableIndex};
+
 use super::*;
 
 pub(super) fn precise_operator_region_for_transition(
     transition: &AbstractTransition,
-    concrete_op_id: usize,
+    concrete_op_id: OperatorIndex,
     source_state_region: &StateRegion,
     abstract_operator_regions: &[AbstractOperatorRegions],
 ) -> Result<OperatorRegion> {
@@ -47,15 +49,15 @@ struct DeterministicNumericEffectImage {
 
 #[derive(Debug, Clone, Copy)]
 enum DeterministicNumericEffectInverse {
-    Additive { delta: f64 },
-    AssignmentConstant { value: f64 },
+    Additive { delta: NumericValue },
+    AssignmentConstant { value: NumericValue },
 }
 
 impl DeterministicNumericEffectImage {
     fn is_noop_for_source(&self, source_interval: Interval) -> bool {
         match self.inverse {
             DeterministicNumericEffectInverse::Additive { delta } => {
-                delta.abs() <= float_tolerance::DIJKSTRA_EPSILON
+                delta.value().abs() <= float_tolerance::DIJKSTRA_EPSILON
             }
             DeterministicNumericEffectInverse::AssignmentConstant { value } => {
                 interval_is_singleton(source_interval) && source_interval.contains(value)
@@ -65,9 +67,10 @@ impl DeterministicNumericEffectImage {
 
     fn inverse_source_for_target(&self, target_interval: Interval) -> Option<Interval> {
         match self.inverse {
-            DeterministicNumericEffectInverse::Additive { delta } => {
-                Some(shift_interval(target_interval, -delta))
-            }
+            DeterministicNumericEffectInverse::Additive { delta } => Some(shift_interval(
+                target_interval,
+                NumericValue::new(-delta.value()),
+            )),
             DeterministicNumericEffectInverse::AssignmentConstant { value } => target_interval
                 .contains(value)
                 .then_some(Interval::unbounded()),
@@ -78,7 +81,7 @@ impl DeterministicNumericEffectImage {
 fn deterministic_numeric_effect_image(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
     source_interval: Interval,
 ) -> Option<DeterministicNumericEffectImage> {
     let initial_numeric = task.get_initial_numeric_state_values();
@@ -93,13 +96,13 @@ fn deterministic_numeric_effect_image(
         if effect.is_conditional() || !effect.conditions().is_empty() {
             return None;
         }
-        let rhs_value = match task.numeric_variables()[effect.var_id()].get_type() {
+        let rhs_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
             NumericType::Constant | NumericType::Cost => {
-                float_tolerance::canonicalize(*initial_numeric.get(effect.var_id())?)
+                float_tolerance::canonicalize_nv(*initial_numeric.get(effect.var_id().index())?)
             }
             _ => return None,
         };
-        if !rhs_value.is_finite() {
+        if !rhs_value.value().is_finite() {
             return None;
         }
         match effect.operation() {
@@ -107,14 +110,14 @@ fn deterministic_numeric_effect_image(
                 if assignment.is_some() {
                     return None;
                 }
-                delta = float_tolerance::canonicalize(delta + rhs_value);
+                delta = float_tolerance::canonicalize(delta + rhs_value.value());
                 touched = true;
             }
             AssignmentOperation::Minus => {
                 if assignment.is_some() {
                     return None;
                 }
-                delta = float_tolerance::canonicalize(delta - rhs_value);
+                delta = float_tolerance::canonicalize(delta - rhs_value.value());
                 touched = true;
             }
             AssignmentOperation::Assign => {
@@ -134,8 +137,10 @@ fn deterministic_numeric_effect_image(
         })
     } else if touched && delta.abs() > float_tolerance::DIJKSTRA_EPSILON {
         Some(DeterministicNumericEffectImage {
-            image: shift_interval(source_interval, delta),
-            inverse: DeterministicNumericEffectInverse::Additive { delta },
+            image: shift_interval(source_interval, NumericValue::new(delta)),
+            inverse: DeterministicNumericEffectInverse::Additive {
+                delta: NumericValue::new(delta),
+            },
         })
     } else {
         None
@@ -145,14 +150,14 @@ fn deterministic_numeric_effect_image(
 fn deterministic_affected_regular_numeric_vars(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     let mut deltas = vec![0.0; task.numeric_variables().len()];
     let mut assignments = Vec::new();
     for effect in operator.assignment_effects() {
         let affected_var_id = effect.affected_var_id();
         if task
             .numeric_variables()
-            .get(affected_var_id)
+            .get(affected_var_id.index())
             .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
         {
             continue;
@@ -167,36 +172,42 @@ fn deterministic_affected_regular_numeric_vars(
             continue;
         }
         if !matches!(
-            task.numeric_variables()[effect.var_id()].get_type(),
+            task.numeric_variables()[effect.var_id().index()].get_type(),
             NumericType::Constant | NumericType::Cost
         ) {
             continue;
         }
-        let Some(&rhs_value) = task.get_initial_numeric_state_values().get(effect.var_id()) else {
+        let Some(&rhs_value) = task
+            .get_initial_numeric_state_values()
+            .get(effect.var_id().index())
+        else {
             continue;
         };
-        let rhs_value = float_tolerance::canonicalize(rhs_value);
-        if !rhs_value.is_finite() {
+        let rhs_value = float_tolerance::canonicalize_nv(rhs_value);
+        if !rhs_value.value().is_finite() {
             continue;
         }
         match effect.operation() {
             AssignmentOperation::Plus => {
-                deltas[affected_var_id] =
-                    float_tolerance::canonicalize(deltas[affected_var_id] + rhs_value)
+                deltas[affected_var_id.index()] = float_tolerance::canonicalize(
+                    deltas[affected_var_id.index()] + rhs_value.value(),
+                )
             }
             AssignmentOperation::Minus => {
-                deltas[affected_var_id] =
-                    float_tolerance::canonicalize(deltas[affected_var_id] - rhs_value)
+                deltas[affected_var_id.index()] = float_tolerance::canonicalize(
+                    deltas[affected_var_id.index()] - rhs_value.value(),
+                )
             }
             AssignmentOperation::Assign => assignments.push(affected_var_id),
             AssignmentOperation::Times | AssignmentOperation::Divide => unreachable!(),
         }
     }
-    let mut vars: Vec<usize> = deltas
+    let mut vars: Vec<VariableIndex> = deltas
         .iter()
         .enumerate()
         .filter_map(|(var_id, &delta)| {
-            (delta.abs() > float_tolerance::DIJKSTRA_EPSILON).then_some(var_id)
+            (delta.abs() > float_tolerance::DIJKSTRA_EPSILON)
+                .then_some(VariableIndex::from_usize(var_id))
         })
         .collect();
     vars.extend(assignments);
@@ -205,10 +216,10 @@ fn deterministic_affected_regular_numeric_vars(
     vars
 }
 
-fn shift_interval(interval: Interval, delta: f64) -> Interval {
+fn shift_interval(interval: Interval, delta: NumericValue) -> Interval {
     Interval::new(
-        interval.lower + delta,
-        interval.upper + delta,
+        NumericValue::new(interval.lower.value() + delta.value()),
+        NumericValue::new(interval.upper.value() + delta.value()),
         interval.lower_closed,
         interval.upper_closed,
     )
@@ -245,11 +256,14 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         abstract_operator: &AbstractOperator,
-        concrete_op_id: usize,
+        concrete_op_id: OperatorIndex,
     ) -> Result<OperatorRegion> {
-        let concrete_operator = task.get_operators().get(concrete_op_id).with_context(|| {
-            format!("abstract operator references missing concrete operator {concrete_op_id}")
-        })?;
+        let concrete_operator = task
+            .get_operators()
+            .get(concrete_op_id.index())
+            .with_context(|| {
+                format!("abstract operator references missing concrete operator {concrete_op_id}")
+            })?;
         let abstract_source_region =
             self.state_region_from_facts(task, &abstract_operator.preconditions)?;
         // `state_region_from_facts` already initializes numeric intervals to
@@ -274,9 +288,10 @@ impl DomainAbstractionFactory {
             deterministic_affected_regular_numeric_vars(task, concrete_operator);
         for (numeric_var_id, view) in self.additive_numeric_views.iter() {
             if self.numeric_domain_sizes[numeric_var_id] > 1
-                && view.operator_delta(concrete_op_id)?.abs() >= float_tolerance::DIJKSTRA_EPSILON
+                && view.operator_delta(concrete_op_id)?.value().abs()
+                    >= float_tolerance::DIJKSTRA_EPSILON
             {
-                affected_numeric_dimensions.push(numeric_var_id);
+                affected_numeric_dimensions.push(VariableIndex::from_usize(numeric_var_id));
             }
         }
         affected_numeric_dimensions.sort_unstable();
@@ -284,25 +299,26 @@ impl DomainAbstractionFactory {
 
         for numeric_var_id in affected_numeric_dimensions {
             ensure!(
-                numeric_var_id < abstract_source_region.numeric.len(),
+                numeric_var_id.index() < abstract_source_region.numeric.len(),
                 "abstract operator references affected numeric var {numeric_var_id}, but operator region has {} numeric vars",
                 abstract_source_region.numeric.len()
             );
-            let source_interval = abstract_source_region.numeric[numeric_var_id];
-            let effect_image = if let Some(view) = self.additive_numeric_views.get(numeric_var_id) {
-                let delta = view.operator_delta(concrete_op_id)?;
-                Some(DeterministicNumericEffectImage {
-                    image: shift_interval(source_interval, delta),
-                    inverse: DeterministicNumericEffectInverse::Additive { delta },
-                })
-            } else {
-                deterministic_numeric_effect_image(
-                    task,
-                    concrete_operator,
-                    numeric_var_id,
-                    source_interval,
-                )
-            };
+            let source_interval = abstract_source_region.numeric[numeric_var_id.index()];
+            let effect_image =
+                if let Some(view) = self.additive_numeric_views.get(numeric_var_id.index()) {
+                    let delta = view.operator_delta(concrete_op_id)?;
+                    Some(DeterministicNumericEffectImage {
+                        image: shift_interval(source_interval, delta),
+                        inverse: DeterministicNumericEffectInverse::Additive { delta },
+                    })
+                } else {
+                    deterministic_numeric_effect_image(
+                        task,
+                        concrete_operator,
+                        numeric_var_id,
+                        source_interval,
+                    )
+                };
             let effect_image = effect_image.with_context(|| {
                 format!(
                     "restricted SNP operator {concrete_op_id} has no exact deterministic effect image for numeric variable {numeric_var_id}"
@@ -316,7 +332,7 @@ impl DomainAbstractionFactory {
                 "restricted SNP operator {concrete_op_id} has an empty effect image for numeric variable {numeric_var_id}: source={source_interval:?}, image={:?}",
                 effect_image.image,
             );
-            let target_interval = target_region.numeric[numeric_var_id];
+            let target_interval = target_region.numeric[numeric_var_id.index()];
             let inverse_source = effect_image
                 .inverse_source_for_target(target_interval)
                 .with_context(|| {
@@ -331,7 +347,8 @@ impl DomainAbstractionFactory {
                 effect_image.image,
             );
             if regressed_source != source_interval {
-                Arc::make_mut(&mut source_region.numeric)[numeric_var_id] = regressed_source;
+                Arc::make_mut(&mut source_region.numeric)[numeric_var_id.index()] =
+                    regressed_source;
             }
         }
 

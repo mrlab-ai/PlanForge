@@ -4,7 +4,7 @@ mod tests;
 use std::cell::RefCell;
 use std::fmt;
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue};
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -85,8 +85,8 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     task: &'task dyn AbstractNumericTask,
     config: LmCutNumericConfig,
     landmark_generator: RefCell<LandmarkCutLandmarks<'task>>,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
+    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: RefCell<Vec<NumericValue>>,
     state_value_cache: RefCell<StateValueCache>,
 }
 
@@ -144,10 +144,10 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         })
     }
 
-    fn is_goal_state(&self, propositional_values: &[usize]) -> bool {
+    fn is_goal_state(&self, propositional_values: &[ExplicitValueIndex]) -> bool {
         (0..self.task.get_num_goals()).all(|goal_index| {
             let goal = self.task.get_goal_fact(goal_index);
-            propositional_values.get(goal.var()).copied() == Some(goal.value())
+            propositional_values.get(goal.var()).copied() == Some(goal.value_index())
         })
     }
 

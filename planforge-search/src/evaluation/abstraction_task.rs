@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericType,
-    NumericVariable, Operator,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
+    VariableIndex, ZERO_VALUE,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -70,19 +71,22 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.get_num_variables()
     }
 
-    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
+    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str> {
         self.base.get_variable_name(index)
     }
 
-    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
+    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str> {
         self.base.get_variable_domain_size(index)
     }
 
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
+    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str> {
         self.base.get_variable_axiom_layer(index)
     }
 
-    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
+    fn get_variable_default_axiom_value(
+        &self,
+        index: VariableIndex,
+    ) -> Result<ExplicitValueIndex, &str> {
         self.base.get_variable_default_axiom_value(index)
     }
 
@@ -102,11 +106,11 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         std::slice::from_ref(&self.goal)
     }
 
-    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
+    fn get_operator_cost(&self, index: OperatorIndex, is_axiom: bool) -> OperatorCost {
         self.base.get_operator_cost(index, is_axiom)
     }
 
-    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
+    fn get_operator_name(&self, index: OperatorIndex, is_axiom: bool) -> &str {
         self.base.get_operator_name(index, is_axiom)
     }
 
@@ -114,13 +118,13 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         self.base.get_num_operators()
     }
 
-    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
+    fn get_num_operator_preconditions(&self, index: OperatorIndex, is_axiom: bool) -> usize {
         self.base.get_num_operator_preconditions(index, is_axiom)
     }
 
     fn get_operator_precondition(
         &self,
-        index: usize,
+        index: OperatorIndex,
         precond_index: usize,
         is_axiom: bool,
     ) -> &ExplicitFact {
@@ -128,13 +132,13 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
             .get_operator_precondition(index, precond_index, is_axiom)
     }
 
-    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
+    fn get_num_operator_effects(&self, index: OperatorIndex, is_axiom: bool) -> usize {
         self.base.get_num_operator_effects(index, is_axiom)
     }
 
     fn get_num_operator_effect_conditions(
         &self,
-        index: usize,
+        index: OperatorIndex,
         eff_index: usize,
         is_axiom: bool,
     ) -> usize {
@@ -144,7 +148,7 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
 
     fn get_operator_effect_condition(
         &self,
-        index: usize,
+        index: OperatorIndex,
         eff_index: usize,
         cond_index: usize,
         is_axiom: bool,
@@ -153,11 +157,20 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
             .get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
     }
 
-    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact {
+    fn get_operator_effect(
+        &self,
+        index: OperatorIndex,
+        eff_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
         self.base.get_operator_effect(index, eff_index, is_axiom)
     }
 
-    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask) {
+    fn convert_operator_index(
+        &self,
+        index: OperatorIndex,
+        ancestor_task: &dyn AbstractNumericTask,
+    ) {
         self.base.convert_operator_index(index, ancestor_task)
     }
 
@@ -174,11 +187,11 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
         &self.goal
     }
 
-    fn get_initial_propositional_state_values(&self) -> &[usize] {
+    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex] {
         self.base.get_initial_propositional_state_values()
     }
 
-    fn get_initial_numeric_state_values(&self) -> &[f64] {
+    fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
         self.base.get_initial_numeric_state_values()
     }
 
@@ -197,18 +210,20 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
 
     fn project_state_values(
         &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        propositional_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         self.base
             .project_state_values(propositional_values, numeric_values)
     }
 
-    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+    fn evaluate_initial_state_values(
+        &self,
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         self.base.evaluate_initial_state_values()
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64 {
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
         self.base.operator_cost_for_abstraction(operator_id)
     }
 }
@@ -219,12 +234,12 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
 pub(crate) fn validate_abstraction_operator(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
-    operator_id: usize,
+    operator_id: OperatorIndex,
 ) -> Result<()> {
     let mut propositional_effect_by_var = vec![None; task.get_num_variables()];
     for (effect_id, effect) in operator.effects().iter().enumerate() {
         ensure!(
-            effect.var_id() < task.get_num_variables(),
+            effect.var_id().index() < task.get_num_variables(),
             "operator {operator_id} ({}) propositional effect {effect_id} targets missing variable {}",
             operator.name(),
             effect.var_id()
@@ -234,7 +249,7 @@ pub(crate) fn validate_abstraction_operator(
             "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstraction generation"
         );
         ensure!(
-            propositional_effect_by_var[effect.var_id()]
+            propositional_effect_by_var[effect.var_id().index()]
                 .replace(effect_id)
                 .is_none(),
             "operator {operator_id} ({}) has multiple propositional effects on variable {}",
@@ -252,20 +267,20 @@ pub(crate) fn validate_abstraction_operator(
             "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstraction generation"
         );
         ensure!(
-            effect.affected_var_id() < numeric_variables.len(),
+            effect.affected_var_id().index() < numeric_variables.len(),
             "operator {operator_id} ({}) numeric effect {effect_id} targets missing variable {}",
             operator.name(),
             effect.affected_var_id()
         );
         ensure!(
-            numeric_effect_by_var[effect.affected_var_id()]
+            numeric_effect_by_var[effect.affected_var_id().index()]
                 .replace(effect_id)
                 .is_none(),
             "operator {operator_id} ({}) has multiple numeric effects on variable {}",
             operator.name(),
             effect.affected_var_id()
         );
-        let affected_type = numeric_variables[effect.affected_var_id()].get_type();
+        let affected_type = numeric_variables[effect.affected_var_id().index()].get_type();
         ensure!(
             matches!(affected_type, NumericType::Regular | NumericType::Cost),
             "operator {operator_id} ({}) numeric effect {effect_id} targets {:?} variable {}",
@@ -274,7 +289,7 @@ pub(crate) fn validate_abstraction_operator(
             effect.affected_var_id()
         );
         let rhs_var_id = effect.var_id();
-        let rhs_variable = numeric_variables.get(rhs_var_id).with_context(|| {
+        let rhs_variable = numeric_variables.get(rhs_var_id.index()).with_context(|| {
             format!(
                 "operator {operator_id} ({}) numeric effect {effect_id} reads missing RHS variable {rhs_var_id}",
                 operator.name()
@@ -286,16 +301,16 @@ pub(crate) fn validate_abstraction_operator(
             rhs_variable.get_type(),
             rhs_var_id
         );
-        let rhs = *initial_numeric.get(rhs_var_id).with_context(|| {
+        let rhs = *initial_numeric.get(rhs_var_id.index()).with_context(|| {
             format!("missing initial value for constant numeric variable {rhs_var_id}")
         })?;
         ensure!(
-            rhs.is_finite(),
+            rhs.value().is_finite(),
             "operator {operator_id} ({}) numeric effect {effect_id} has non-finite constant RHS {rhs}",
             operator.name()
         );
         ensure!(
-            !matches!(effect.operation(), AssignmentOperation::Divide) || rhs != 0.0,
+            !matches!(effect.operation(), AssignmentOperation::Divide) || rhs != ZERO_VALUE,
             "operator {operator_id} ({}) numeric effect {effect_id} divides by zero",
             operator.name()
         );

@@ -1,13 +1,26 @@
-use std::{fmt, hash::Hash};
+use core::f64;
+use std::{
+    fmt::{self, Display},
+    hash::Hash,
+};
+
+pub const ZERO_OP_COST: OperatorCost = OperatorCost(0);
+pub const ZERO_VALUE: NumericValue = NumericValue(0.0);
+pub const ONE_VALUE: NumericValue = NumericValue(1.0);
+pub const INF_VALUE: NumericValue = NumericValue(f64::INFINITY);
+pub const NEG_INF_VALUE: NumericValue = NumericValue(f64::NEG_INFINITY);
+pub const NAN_VALUE: NumericValue = NumericValue(f64::NAN);
+pub const MAX_VALUE: NumericValue = NumericValue(f64::MAX);
+pub const MIN_VALUE: NumericValue = NumericValue(f64::MIN);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Metric {
     is_min: bool,
-    var_id: Option<usize>,
+    var_id: Option<VariableIndex>,
 }
 
 impl Metric {
-    pub fn new(is_min: bool, var_id: Option<usize>) -> Self {
+    pub fn new(is_min: bool, var_id: Option<VariableIndex>) -> Self {
         Metric { is_min, var_id }
     }
 
@@ -15,7 +28,7 @@ impl Metric {
         self.is_min
     }
 
-    pub fn var_id(&self) -> Option<usize> {
+    pub fn var_id(&self) -> Option<VariableIndex> {
         self.var_id
     }
 
@@ -41,7 +54,7 @@ pub struct ExplicitVariable {
     ///
     /// A non-derived variable is never reset, so this field is not read for
     /// one; it then just repeats the variable's initial value.
-    pub(super) axiom_default_value: usize,
+    pub(super) axiom_default_value: ExplicitValueIndex,
 }
 
 impl ExplicitVariable {
@@ -50,7 +63,7 @@ impl ExplicitVariable {
         name: String,
         fact_names: Vec<String>,
         axiom_layer: Option<usize>,
-        axiom_default_value: usize,
+        axiom_default_value: ExplicitValueIndex,
     ) -> Self {
         ExplicitVariable {
             domain_size,
@@ -162,6 +175,116 @@ impl FactNamespace {
     }
 }
 
+/// Struct used to avoid confusions with other numeric values, representing
+/// a variable index used in facts and other structs.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct VariableIndex(u32);
+
+impl VariableIndex {
+    #[inline(always)]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    #[inline(always)]
+    pub const fn index(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for VariableIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Struct used to avoid confusions with other numeric values, representing
+/// a value index (the index of the value in a domain of a variable) used in
+/// facts and other structs.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct ExplicitValueIndex(u32);
+
+impl ExplicitValueIndex {
+    #[inline(always)]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    #[inline(always)]
+    pub const fn index(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for ExplicitValueIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Struct used to avoid confusions with other numeric values, representing
+/// a numeric value for numeric variables.
+/// Currently a `f64` but in the future smarter types could be used to avoid
+/// precision errors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct NumericValue(f64);
+
+impl NumericValue {
+    #[inline(always)]
+    pub fn new(value: f64) -> Self {
+        Self(value)
+    }
+
+    #[inline(always)]
+    pub fn value(&self) -> f64 {
+        self.0
+    }
+}
+
+impl Display for NumericValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Struct used to avoid confusions with other numeric values, representing
+/// a variable index used in facts and other structs.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct AxiomIndex(u32);
+
+impl AxiomIndex {
+    #[inline(always)]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    #[inline(always)]
+    pub const fn index(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for AxiomIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Variable/value pair, tagged with the variable's [`FactNamespace`].
 ///
 /// `u32` fields halve the storage per fact compared to `usize` on 64-bit
@@ -176,8 +299,8 @@ impl FactNamespace {
 #[derive(Clone, Copy)]
 pub struct ExplicitFact {
     /// `namespace << (32 - FactNamespace::BITS) | var`.
-    var_id: u32,
-    value_id: u32,
+    var_id: VariableIndex,
+    value_id: ExplicitValueIndex,
 }
 
 impl ExplicitFact {
@@ -192,11 +315,21 @@ impl ExplicitFact {
     pub fn propositional(var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::Propositional, var, value)
     }
+    /// Fact on a genuine propositional variable.
+    #[inline]
+    pub fn propositional_from_indexes(var: VariableIndex, value: ExplicitValueIndex) -> Self {
+        Self::in_namespace_from_indexes(FactNamespace::Propositional, var, value)
+    }
 
     /// Fact on the variable carrying a numeric condition's truth value.
     #[inline]
     pub fn condition(var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::Condition, var, value)
+    }
+    /// Fact on the variable carrying a numeric condition's truth value.
+    #[inline]
+    pub fn condition_from_indexes(var: VariableIndex, value: ExplicitValueIndex) -> Self {
+        Self::in_namespace_from_indexes(FactNamespace::Condition, var, value)
     }
 
     /// Fact on a numeric variable in a domain abstraction's id space.
@@ -207,6 +340,13 @@ impl ExplicitFact {
     #[inline]
     pub fn numeric_variable(abstraction_var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::NumericVariable, abstraction_var, value)
+    }
+    #[inline]
+    pub fn numeric_variable_from_indexes(
+        abstraction_var: VariableIndex,
+        value: ExplicitValueIndex,
+    ) -> Self {
+        Self::in_namespace_from_indexes(FactNamespace::NumericVariable, abstraction_var, value)
     }
 
     /// Constructors accept `usize` to minimize call-site churn; values are
@@ -223,8 +363,23 @@ impl ExplicitFact {
             "ExplicitFact value {value} > u32::MAX"
         );
         ExplicitFact {
-            var_id: (namespace as u32) << Self::VAR_BITS | var as u32,
-            value_id: value as u32,
+            var_id: VariableIndex((namespace as u32) << Self::VAR_BITS | var as u32),
+            value_id: ExplicitValueIndex(value as u32),
+        }
+    }
+    pub fn in_namespace_from_indexes(
+        namespace: FactNamespace,
+        var: VariableIndex,
+        value: ExplicitValueIndex,
+    ) -> Self {
+        assert!(
+            var.index() <= Self::MAX_VAR_ID,
+            "ExplicitFact var {var} exceeds the {} packed variable-id bits",
+            Self::VAR_BITS
+        );
+        ExplicitFact {
+            var_id: VariableIndex((namespace as u32) << Self::VAR_BITS | var.index() as u32),
+            value_id: value,
         }
     }
 
@@ -234,14 +389,16 @@ impl ExplicitFact {
     #[must_use]
     pub fn with_namespace(self, namespace: FactNamespace) -> Self {
         ExplicitFact {
-            var_id: (namespace as u32) << Self::VAR_BITS | (self.var_id & Self::VAR_MASK),
+            var_id: VariableIndex(
+                (namespace as u32) << Self::VAR_BITS | (self.var_id.0 & Self::VAR_MASK),
+            ),
             value_id: self.value_id,
         }
     }
 
     #[inline(always)]
     pub fn namespace(&self) -> FactNamespace {
-        FactNamespace::from_tag(self.var_id >> Self::VAR_BITS)
+        FactNamespace::from_tag(self.var_id.0 >> Self::VAR_BITS)
     }
 
     #[inline(always)]
@@ -250,12 +407,20 @@ impl ExplicitFact {
     }
 
     #[inline(always)]
-    pub fn var(&self) -> usize {
-        (self.var_id & Self::VAR_MASK) as usize
+    pub const fn var(&self) -> usize {
+        (self.var_id.0 & Self::VAR_MASK) as usize
     }
     #[inline(always)]
-    pub fn value(&self) -> usize {
-        self.value_id as usize
+    pub const fn value(&self) -> usize {
+        self.value_id.index()
+    }
+    #[inline(always)]
+    pub const fn var_index(&self) -> VariableIndex {
+        VariableIndex(self.var_id.0 & Self::VAR_MASK)
+    }
+    #[inline(always)]
+    pub const fn value_index(&self) -> ExplicitValueIndex {
+        ExplicitValueIndex(self.value_id.index() as u32)
     }
 }
 
@@ -317,17 +482,17 @@ impl fmt::Debug for ExplicitFact {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Effect {
     pub(super) conditions: Vec<ExplicitFact>,
-    var_id: usize,
-    precondition_value: Option<usize>,
-    effect_value: usize,
+    var_id: VariableIndex,
+    precondition_value: Option<ExplicitValueIndex>,
+    effect_value: ExplicitValueIndex,
 }
 
 impl Effect {
     pub fn new(
         conditions: Vec<ExplicitFact>,
-        var_id: usize,
-        precondition_value: Option<usize>,
-        effect_value: usize,
+        var_id: VariableIndex,
+        precondition_value: Option<ExplicitValueIndex>,
+        effect_value: ExplicitValueIndex,
     ) -> Self {
         Effect {
             conditions,
@@ -337,11 +502,11 @@ impl Effect {
         }
     }
 
-    pub fn var_id(&self) -> usize {
+    pub fn var_id(&self) -> VariableIndex {
         self.var_id
     }
 
-    pub fn precondition_value(&self) -> Option<usize> {
+    pub fn precondition_value(&self) -> Option<ExplicitValueIndex> {
         self.precondition_value
     }
 
@@ -349,7 +514,7 @@ impl Effect {
         &self.conditions
     }
 
-    pub fn value(&self) -> usize {
+    pub fn value(&self) -> ExplicitValueIndex {
         self.effect_value
     }
 }
@@ -364,17 +529,21 @@ pub enum AssignmentOperation {
 }
 
 impl AssignmentOperation {
-    pub fn apply(left: f64, operation: &AssignmentOperation, right: f64) -> f64 {
+    pub fn apply(
+        left: NumericValue,
+        operation: &AssignmentOperation,
+        right: NumericValue,
+    ) -> NumericValue {
         match operation {
             AssignmentOperation::Assign => right,
-            AssignmentOperation::Plus => left + right,
-            AssignmentOperation::Minus => left - right,
-            AssignmentOperation::Times => left * right,
+            AssignmentOperation::Plus => NumericValue(left.value() + right.value()),
+            AssignmentOperation::Minus => NumericValue(left.value() - right.value()),
+            AssignmentOperation::Times => NumericValue(left.value() * right.value()),
             AssignmentOperation::Divide => {
-                if right == 0.0 {
+                if right.value() == 0.0 {
                     panic!("Division by zero is not allowed");
                 }
-                left / right
+                NumericValue(left.value() / right.value())
             }
         }
     }
@@ -382,18 +551,18 @@ impl AssignmentOperation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentEffect {
-    affected_var_id: usize,
+    affected_var_id: VariableIndex,
     operation: AssignmentOperation,
-    var_id: usize,
+    var_id: VariableIndex,
     is_conditional: bool,
     pub(super) conditions: Vec<ExplicitFact>,
 }
 
 impl AssignmentEffect {
     pub fn new(
-        affected_var_id: usize,
+        affected_var_id: VariableIndex,
         operation: AssignmentOperation,
-        var_id: usize,
+        var_id: VariableIndex,
         is_conditional: bool,
         conditions: Vec<ExplicitFact>,
     ) -> Self {
@@ -406,10 +575,10 @@ impl AssignmentEffect {
         }
     }
 
-    pub fn affected_var_id(&self) -> usize {
+    pub fn affected_var_id(&self) -> VariableIndex {
         self.affected_var_id
     }
-    pub fn var_id(&self) -> usize {
+    pub fn var_id(&self) -> VariableIndex {
         self.var_id
     }
 
@@ -426,6 +595,62 @@ impl AssignmentEffect {
     }
 }
 
+/// Struct used to avoid confusions with other numeric values, representing
+/// an operator index.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct OperatorIndex(u32);
+
+impl OperatorIndex {
+    #[inline(always)]
+    pub const fn new(index: u32) -> Self {
+        Self(index)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    #[inline(always)]
+    pub const fn index(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for OperatorIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Struct used to avoid confusions with other numeric values, representing
+/// the cost of an operator.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct OperatorCost(u64);
+
+impl OperatorCost {
+    #[inline(always)]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    #[inline(always)]
+    pub const fn from_usize(index: usize) -> Self {
+        Self(index as u64)
+    }
+
+    #[inline(always)]
+    pub const fn value(&self) -> u64 {
+        self.0
+    }
+}
+
+impl Display for OperatorCost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operator {
     name: Box<str>,
@@ -433,7 +658,7 @@ pub struct Operator {
     pub(super) effects: Vec<Effect>,
     pub(super) assignment_effects: Vec<AssignmentEffect>,
     repeated_assignment_targets: Box<[RepeatedTarget]>,
-    cost: u64,
+    cost: OperatorCost,
 }
 
 /// Whether an assignment effect is the first write to its target within its
@@ -450,7 +675,7 @@ impl Operator {
         preconditions: Vec<ExplicitFact>,
         effects: Vec<Effect>,
         assignment_effects: Vec<AssignmentEffect>,
-        cost: u64,
+        cost: OperatorCost,
     ) -> Self {
         let mut repeated_assignment_targets = Vec::with_capacity(assignment_effects.len());
         let mut target_is_additive = std::collections::HashMap::new();
@@ -470,8 +695,9 @@ impl Operator {
                 }
                 Some(_) => {
                     panic!(
-                        "operator {name} writes numeric variable {affected_var_id} more than once \
-                         with a non-additive assignment, which has no order-independent result"
+                        "operator {name} writes numeric variable {} more than once \
+                         with a non-additive assignment, which has no order-independent result",
+                        affected_var_id.index()
                     );
                 }
             }
@@ -512,7 +738,7 @@ impl Operator {
         &self.preconditions
     }
 
-    pub fn cost(&self) -> u64 {
+    pub fn cost(&self) -> OperatorCost {
         self.cost
     }
 }

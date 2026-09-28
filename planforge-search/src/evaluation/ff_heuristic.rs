@@ -65,24 +65,25 @@ use planforge_sas::axioms::{CalOperator, ComparisonOperator, PropositionalAxiom}
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericType,
-    Operator, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
+    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue, Operator,
+    OperatorIndex, VariableIndex, ZERO_VALUE, metric_operator_cost_from_initial_values,
 };
 
 type FactId = usize;
-type OpId = usize;
-type NumVarId = usize;
-type AxiomIdx = usize;
+type OpId = OperatorIndex;
+type NumVarId = VariableIndex;
+type AxiomIdx = AxiomIndex;
 
 /// Monotonic-relaxation envelope for one numeric variable.
 #[derive(Debug, Clone, Copy)]
 struct NumericRange {
-    max: f64,
-    min: f64,
+    max: NumericValue,
+    min: NumericValue,
 }
 
 impl NumericRange {
-    const fn singleton(v: f64) -> Self {
+    const fn singleton(v: NumericValue) -> Self {
         Self { max: v, min: v }
     }
 
@@ -101,8 +102,8 @@ impl NumericRange {
         // Use bit-pattern inequality rather than `> self.max + EPSILON` so
         // `+∞ vs finite max` reads as "widened" without an arithmetic-on-
         // infinity ambiguity.
-        let changed =
-            new_max.to_bits() != self.max.to_bits() || new_min.to_bits() != self.min.to_bits();
+        let changed = new_max.value().to_bits() != self.max.value().to_bits()
+            || new_min.value().to_bits() != self.min.value().to_bits();
         self.max = new_max;
         self.min = new_min;
         changed
@@ -176,7 +177,7 @@ struct ScratchBuffers {
     /// Ineligible ops are skipped throughout the BFS and ignored as
     /// achievers during relaxed-plan extraction.
     op_eligible: Vec<bool>,
-    numeric_raw: Vec<f64>,
+    numeric_raw: Vec<NumericValue>,
     numeric: Vec<NumericRange>,
     axiom_first_layer: Vec<i32>,
     /// Reusable Vec for "numeric vars dirtied during the current
@@ -195,7 +196,7 @@ struct ScratchBuffers {
     /// Reused propositional-state buffer for layer-0 fact resolution.
     /// Eliminates the per-fact `state_packer.get` call by reading the
     /// entire packed state once and indexing into the resulting Vec.
-    prop_state_values: Vec<usize>,
+    prop_state_values: Vec<ExplicitValueIndex>,
 }
 
 impl ScratchBuffers {
@@ -210,7 +211,7 @@ impl ScratchBuffers {
             in_plan: vec![false; num_ops],
             op_eligible: vec![true; num_ops],
             numeric_raw: Vec::with_capacity(num_numeric),
-            numeric: vec![NumericRange::singleton(0.0); num_numeric],
+            numeric: vec![NumericRange::singleton(NumericValue::new(0.0)); num_numeric],
             axiom_first_layer: vec![-1; num_axioms],
             dirty_vars_scratch: Vec::new(),
             dirty_axioms_scratch: Vec::new(),
@@ -272,7 +273,7 @@ struct FactUniverse {
     /// Flat `FactId` table, with one offset per propositional variable.
     fact_id_by_var_value: Vec<Option<FactId>>,
     fact_id_offsets: Vec<usize>,
-    var_value: Vec<(usize, usize)>,
+    var_value: Vec<(VariableIndex, ExplicitValueIndex)>,
     /// `to_axiom[fid]` is `Some(axiom_idx)` iff `fid` is a comparison axiom's
     /// TRUE fact.
     to_axiom: Vec<Option<AxiomIdx>>,
@@ -290,17 +291,23 @@ impl FactUniverse {
                 .ok_or_else(|| "FF fact table size overflow".to_string())?;
         }
         let mut fact_id_by_var_value = vec![None; flat_len];
-        let mut var_value: Vec<(usize, usize)> = Vec::new();
+        let mut var_value: Vec<(VariableIndex, ExplicitValueIndex)> = Vec::new();
         let mut to_axiom: Vec<Option<AxiomIdx>> = Vec::new();
 
         for (var_id, variable) in task.variables().iter().enumerate() {
-            if task.numeric_conditions().is_condition_var(var_id) {
+            if task
+                .numeric_conditions()
+                .is_condition_var(VariableIndex::from_usize(var_id))
+            {
                 continue;
             }
             let offset = fact_id_offsets[var_id];
             for value in 0..variable.domain_size() {
                 fact_id_by_var_value[offset + value] = Some(var_value.len());
-                var_value.push((var_id, value));
+                var_value.push((
+                    VariableIndex::from_usize(var_id),
+                    ExplicitValueIndex::from_usize(value),
+                ));
                 to_axiom.push(None);
             }
         }
@@ -309,25 +316,25 @@ impl FactUniverse {
         let mut descs = Vec::with_capacity(comparison_axioms.len());
         for (axiom_idx, axiom) in comparison_axioms.iter().enumerate() {
             let affected = axiom.get_affected_var_id();
-            let &offset = fact_id_offsets.get(affected).ok_or_else(|| {
+            let &offset = fact_id_offsets.get(affected.index()).ok_or_else(|| {
                 format!("comparison axiom {axiom_idx} affects out-of-range variable {affected}")
             })?;
-            let true_value = ConditionValue::True.as_usize();
-            let domain_size = task.variables()[affected].domain_size();
-            if true_value >= domain_size {
+            let true_value = ExplicitValueIndex::from_usize(ConditionValue::True.as_usize());
+            let domain_size = task.variables()[affected.index()].domain_size();
+            if true_value.index() >= domain_size {
                 return Err(format!(
                     "comparison axiom {axiom_idx} affected variable has no TRUE value"
                 ));
             }
             let slot = fact_id_by_var_value
-                .get_mut(offset + true_value)
+                .get_mut(offset + true_value.index())
                 .ok_or_else(|| {
                     format!("comparison axiom {axiom_idx} affected variable has no TRUE value")
                 })?;
             let fid = var_value.len();
             *slot = Some(fid);
             var_value.push((affected, true_value));
-            to_axiom.push(Some(axiom_idx));
+            to_axiom.push(Some(AxiomIndex::from_usize(axiom_idx)));
             descs.push(ComparisonAxiomDesc {
                 true_fact: fid,
                 left_var: axiom.get_left_var_id(),
@@ -423,7 +430,7 @@ impl RelaxedOperators {
         self.state_deps.push(op.state_deps);
         self.effects.push(op.effects);
         self.numeric_effects.push(op.numeric_effects);
-        op_id
+        OperatorIndex::from_usize(op_id)
     }
 
     fn len(&self) -> usize {
@@ -434,7 +441,9 @@ impl RelaxedOperators {
 /// Initial value of every `Constant` numeric variable, `None` for the rest.
 ///
 /// Captured at construction so effect directions can be classified statically.
-fn constant_numeric_values(task: &dyn AbstractNumericTask) -> Result<Vec<Option<f64>>, String> {
+fn constant_numeric_values(
+    task: &dyn AbstractNumericTask,
+) -> Result<Vec<Option<NumericValue>>, String> {
     let initial_numeric = task.get_initial_numeric_state_values();
     task.numeric_variables()
         .iter()
@@ -458,19 +467,19 @@ fn constant_numeric_values(task: &dyn AbstractNumericTask) -> Result<Vec<Option<
 fn direction_of_effect(
     op: &AssignmentOperation,
     rhs: NumVarId,
-    constant_value: &[Option<f64>],
+    constant_value: &[Option<NumericValue>],
 ) -> EffectDirection {
-    let rhs_const = constant_value.get(rhs).copied().flatten();
+    let rhs_const = constant_value.get(rhs.index()).copied().flatten();
     match op {
         AssignmentOperation::Plus => match rhs_const {
-            Some(v) if v > 0.0 => EffectDirection::GrowMax,
-            Some(v) if v < 0.0 => EffectDirection::ShrinkMin,
+            Some(v) if v > ZERO_VALUE => EffectDirection::GrowMax,
+            Some(v) if v < ZERO_VALUE => EffectDirection::ShrinkMin,
             // Exact zero — no movement.
             Some(_) | None => EffectDirection::Both,
         },
         AssignmentOperation::Minus => match rhs_const {
-            Some(v) if v > 0.0 => EffectDirection::ShrinkMin,
-            Some(v) if v < 0.0 => EffectDirection::GrowMax,
+            Some(v) if v > ZERO_VALUE => EffectDirection::ShrinkMin,
+            Some(v) if v < ZERO_VALUE => EffectDirection::GrowMax,
             Some(_) | None => EffectDirection::Both,
         },
         AssignmentOperation::Assign => EffectDirection::Both,
@@ -484,7 +493,7 @@ fn direction_of_effect(
 /// reports those with the context it has.
 fn assignment_effect_desc(
     assign: &AssignmentEffect,
-    constant_value: &[Option<f64>],
+    constant_value: &[Option<NumericValue>],
 ) -> Option<AssignmentEffectDesc> {
     match assign.operation() {
         AssignmentOperation::Plus | AssignmentOperation::Minus | AssignmentOperation::Assign => {
@@ -506,7 +515,7 @@ fn assignment_effect_desc(
 fn add_task_operator(
     ops: &mut RelaxedOperators,
     universe: &FactUniverse,
-    constant_value: &[Option<f64>],
+    constant_value: &[Option<NumericValue>],
     task: &dyn AbstractNumericTask,
     op_idx: usize,
     op: &Operator,
@@ -524,8 +533,10 @@ fn add_task_operator(
         if !eff.conditions().is_empty() {
             continue;
         }
-        if let Some(fid) = universe.fact_id(&ExplicitFact::propositional(eff.var_id(), eff.value()))
-        {
+        if let Some(fid) = universe.fact_id(&ExplicitFact::propositional_from_indexes(
+            eff.var_id(),
+            eff.value(),
+        )) {
             parent_effects.push(fid);
         }
     }
@@ -550,7 +561,9 @@ fn add_task_operator(
     let parent_op_id = ops.push(RelaxedOperator {
         task_idx: Some(op_idx),
         parent: None,
-        cost: metric_operator_cost_from_initial_values(task, op).max(0.0),
+        cost: metric_operator_cost_from_initial_values(task, op)
+            .value()
+            .max(0.0),
         preconditions: parent_preconds.clone(),
         state_deps: parent_state_deps.clone(),
         effects: parent_effects,
@@ -565,7 +578,10 @@ fn add_task_operator(
         let mut state_deps = parent_state_deps.clone();
         universe.split_conditions(eff.conditions(), &mut preconditions, &mut state_deps);
         let effects = universe
-            .fact_id(&ExplicitFact::propositional(eff.var_id(), eff.value()))
+            .fact_id(&ExplicitFact::propositional_from_indexes(
+                eff.var_id(),
+                eff.value(),
+            ))
             .into_iter()
             .collect();
         ops.push(RelaxedOperator {
@@ -624,7 +640,7 @@ fn add_propositional_axiom_operator(
     // An out-of-universe effect means the axiom drives a value of a
     // numeric-axiom variable, which the relaxation cannot represent.
     let effect_fid = universe
-        .fact_id(&ExplicitFact::propositional(
+        .fact_id(&ExplicitFact::propositional_from_indexes(
             axiom.var_id(),
             axiom.effect_value(),
         ))
@@ -642,7 +658,7 @@ fn add_propositional_axiom_operator(
     let mut state_deps: Vec<StateDependentPrecond> = Vec::new();
     universe.split_conditions(axiom.conditions(), &mut preconditions, &mut state_deps);
     universe.split_conditions(
-        &[ExplicitFact::propositional(
+        &[ExplicitFact::propositional_from_indexes(
             axiom.var_id(),
             axiom.precondition_value(),
         )],
@@ -672,7 +688,7 @@ fn add_propositional_axiom_operator(
 fn collect_relaxed_operators(
     task: &dyn AbstractNumericTask,
     universe: &FactUniverse,
-    constant_value: &[Option<f64>],
+    constant_value: &[Option<NumericValue>],
 ) -> Result<RelaxedOperators, String> {
     let mut ops = RelaxedOperators::default();
     for (op_idx, op) in task.get_operators().iter().enumerate() {
@@ -701,16 +717,16 @@ fn index_comparison_axioms_by_numeric_var(
 ) -> Result<Vec<Vec<AxiomIdx>>, String> {
     let mut by_var: Vec<Vec<AxiomIdx>> = vec![Vec::new(); num_numeric];
     for (idx, ax) in comparison_axioms.iter().enumerate() {
-        if ax.left_var >= num_numeric || ax.right_var >= num_numeric {
+        if ax.left_var.index() >= num_numeric || ax.right_var.index() >= num_numeric {
             return Err(format!(
                 "comparison axiom {idx} references out-of-range numeric variable \
                  (left={}, right={}, num_numeric={num_numeric})",
                 ax.left_var, ax.right_var
             ));
         }
-        by_var[ax.left_var].push(idx);
+        by_var[ax.left_var.index()].push(AxiomIndex::from_usize(idx));
         if ax.right_var != ax.left_var {
-            by_var[ax.right_var].push(idx);
+            by_var[ax.right_var.index()].push(AxiomIndex::from_usize(idx));
         }
     }
     Ok(by_var)
@@ -729,7 +745,10 @@ fn collect_assignment_axioms(
             let affected = axiom.get_affected_var_id();
             let left = axiom.get_left_var_id();
             let right = axiom.get_right_var_id();
-            if affected >= num_numeric || left >= num_numeric || right >= num_numeric {
+            if affected.index() >= num_numeric
+                || left.index() >= num_numeric
+                || right.index() >= num_numeric
+            {
                 return Err(format!(
                     "assignment axiom {axiom_idx} references out-of-range numeric variable \
                      (affected={affected}, left={left}, right={right}, num_numeric={num_numeric})"
@@ -764,10 +783,12 @@ fn comparison_axioms_via_derived_vars(
     let mut via_derived: Vec<Vec<AxiomIdx>> = vec![Vec::new(); num_numeric];
     for (idx, ax) in comparison_axioms.iter().enumerate() {
         for side in [ax.left_var, ax.right_var] {
-            for &base in &depends_on[side] {
-                if base != ax.left_var && base != ax.right_var && !via_derived[base].contains(&idx)
+            for &base in &depends_on[side.index()] {
+                if base != ax.left_var
+                    && base != ax.right_var
+                    && !via_derived[base.index()].contains(&AxiomIndex::from_usize(idx))
                 {
-                    via_derived[base].push(idx);
+                    via_derived[base.index()].push(AxiomIndex::from_usize(idx));
                 }
             }
         }
@@ -797,7 +818,7 @@ fn build_achiever_index(
     let mut achievers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
     for (op_id, effs) in operators.effects.iter().enumerate() {
         for &fid in effs {
-            achievers[fid].push(op_id);
+            achievers[fid].push(OperatorIndex::from_usize(op_id));
         }
     }
 
@@ -809,20 +830,23 @@ fn build_achiever_index(
 
     for (op_id, numeric_effs) in operators.numeric_effects.iter().enumerate() {
         for eff in numeric_effs {
-            if eff.affected_var >= num_numeric {
+            if eff.affected_var.index() >= num_numeric {
                 return Err(format!(
                     "operator {op_id} effect on out-of-range numeric variable {}",
                     eff.affected_var
                 ));
             }
-            for &axiom_idx in &axioms_touching_var[eff.affected_var] {
-                let axiom = &comparison_axioms[axiom_idx];
+            for &axiom_idx in &axioms_touching_var[eff.affected_var.index()] {
+                let axiom = &comparison_axioms[axiom_idx.index()];
                 if axiom_needs_direction(eff.affected_var, eff.direction, axiom) {
-                    register(axiom.true_fact, op_id);
+                    register(axiom.true_fact, OperatorIndex::from_usize(op_id));
                 }
             }
-            for &axiom_idx in &axioms_via_derived[eff.affected_var] {
-                register(comparison_axioms[axiom_idx].true_fact, op_id);
+            for &axiom_idx in &axioms_via_derived[eff.affected_var.index()] {
+                register(
+                    comparison_axioms[axiom_idx.index()].true_fact,
+                    OperatorIndex::from_usize(op_id),
+                );
             }
         }
     }
@@ -855,7 +879,7 @@ fn build_consumer_index(operators: &RelaxedOperators, num_facts: usize) -> Vec<V
     let mut consumers: Vec<Vec<OpId>> = vec![Vec::new(); num_facts];
     for (op_id, prec) in operators.preconditions.iter().enumerate() {
         for &fid in prec {
-            consumers[fid].push(op_id);
+            consumers[fid].push(OperatorIndex::from_usize(op_id));
         }
     }
     consumers
@@ -922,7 +946,7 @@ pub struct FfHeuristic<'task> {
     /// clones. `get_preferred_operators` (the `Operator`-returning trait
     /// method) is still implemented by cloning from the task on demand,
     /// for callers that want full operator objects.
-    last_helpful_action_ids: RefCell<Vec<u32>>,
+    last_helpful_action_ids: RefCell<Vec<OperatorIndex>>,
 }
 
 impl<'task> FfHeuristic<'task> {
@@ -999,7 +1023,7 @@ impl<'task> FfHeuristic<'task> {
     fn fill_initial_numeric_state(
         &self,
         eval_state: &EvaluationState<'_, '_>,
-        raw: &mut Vec<f64>,
+        raw: &mut Vec<NumericValue>,
         ranges: &mut Vec<NumericRange>,
     ) -> Result<(), EvaluationError> {
         eval_state
@@ -1019,7 +1043,10 @@ impl<'task> FfHeuristic<'task> {
                 self.num_numeric
             )));
         }
-        ranges.resize(self.num_numeric, NumericRange::singleton(0.0));
+        ranges.resize(
+            self.num_numeric,
+            NumericRange::singleton(NumericValue::new(0.0)),
+        );
         for (range, &value) in ranges.iter_mut().zip(raw.iter()) {
             *range = NumericRange::singleton(value);
         }
@@ -1042,16 +1069,16 @@ impl<'task> FfHeuristic<'task> {
         loop {
             let mut changed = false;
             for ax in &self.assignment_axioms {
-                let l = numeric[ax.left_var];
-                let r = numeric[ax.right_var];
+                let l = numeric[ax.left_var.index()];
+                let r = numeric[ax.right_var.index()];
                 let new = match ax.op {
                     CalOperator::Sum => NumericRange {
-                        max: l.max + r.max,
-                        min: l.min + r.min,
+                        max: NumericValue::new(l.max.value() + r.max.value()),
+                        min: NumericValue::new(l.min.value() + r.min.value()),
                     },
                     CalOperator::Difference => NumericRange {
-                        max: l.max - r.min,
-                        min: l.min - r.max,
+                        max: NumericValue::new(l.max.value() - r.min.value()),
+                        min: NumericValue::new(l.min.value() - r.max.value()),
                     },
                     // Sign-aware interval multiplication for `d := l * r`.
                     // With l ∈ [l.min, l.max] and r ∈ [r.min, r.max], the
@@ -1061,13 +1088,13 @@ impl<'task> FfHeuristic<'task> {
                     // four. The monotonic-relaxation join is a union with
                     // the existing envelope, so widening is admissible.
                     CalOperator::Product => {
-                        let p1 = l.min * r.min;
-                        let p2 = l.min * r.max;
-                        let p3 = l.max * r.min;
-                        let p4 = l.max * r.max;
+                        let p1 = l.min.value() * r.min.value();
+                        let p2 = l.min.value() * r.max.value();
+                        let p3 = l.max.value() * r.min.value();
+                        let p4 = l.max.value() * r.max.value();
                         NumericRange {
-                            max: p1.max(p2).max(p3).max(p4),
-                            min: p1.min(p2).min(p3).min(p4),
+                            max: NumericValue::new(p1.max(p2).max(p3).max(p4)),
+                            min: NumericValue::new(p1.min(p2).min(p3).min(p4)),
                         }
                     }
                     // Sign-aware interval division for `d := l / r`. If
@@ -1076,26 +1103,26 @@ impl<'task> FfHeuristic<'task> {
                     // Otherwise the four corner quotients bracket the
                     // result the same way Product does.
                     CalOperator::Division => {
-                        if r.min <= 0.0 && 0.0 <= r.max {
+                        if r.min <= ZERO_VALUE && ZERO_VALUE <= r.max {
                             NumericRange {
-                                max: f64::INFINITY,
-                                min: f64::NEG_INFINITY,
+                                max: INF_VALUE,
+                                min: NEG_INF_VALUE,
                             }
                         } else {
-                            let q1 = l.min / r.min;
-                            let q2 = l.min / r.max;
-                            let q3 = l.max / r.min;
-                            let q4 = l.max / r.max;
+                            let q1 = l.min.value() / r.min.value();
+                            let q2 = l.min.value() / r.max.value();
+                            let q3 = l.max.value() / r.min.value();
+                            let q4 = l.max.value() / r.max.value();
                             NumericRange {
-                                max: q1.max(q2).max(q3).max(q4),
-                                min: q1.min(q2).min(q3).min(q4),
+                                max: NumericValue::new(q1.max(q2).max(q3).max(q4)),
+                                min: NumericValue::new(q1.min(q2).min(q3).min(q4)),
                             }
                         }
                     }
                 };
-                if numeric[ax.affected_var].join(new) {
-                    if !dirty_mark[ax.affected_var] {
-                        dirty_mark[ax.affected_var] = true;
+                if numeric[ax.affected_var.index()].join(new) {
+                    if !dirty_mark[ax.affected_var.index()] {
+                        dirty_mark[ax.affected_var.index()] = true;
                         dirty_out.push(ax.affected_var);
                     }
                     changed = true;
@@ -1112,8 +1139,8 @@ impl<'task> FfHeuristic<'task> {
     fn evaluate_axiom(&self, axiom: &ComparisonAxiomDesc, numeric: &[NumericRange]) -> bool {
         // `axiom.left_var` / `right_var` were range-checked at construction
         // (see step 3); a panic here would mean a corrupt heuristic.
-        let l = numeric[axiom.left_var];
-        let r = numeric[axiom.right_var];
+        let l = numeric[axiom.left_var.index()];
+        let r = numeric[axiom.right_var.index()];
         match axiom.op {
             ComparisonOperator::LessThan => l.min < r.max,
             ComparisonOperator::LessThanOrEqual => l.min <= r.max,
@@ -1140,30 +1167,30 @@ impl<'task> FfHeuristic<'task> {
         //
         // `Assign(var, rhs)` is *not* iterable in the same sense — it
         // overwrites once — so it stays at the range-union semantics.
-        let rhs = numeric[eff.rhs_var];
-        let prev = numeric[eff.affected_var];
+        let rhs = numeric[eff.rhs_var.index()];
+        let prev = numeric[eff.affected_var.index()];
         let new = match eff.operation {
             AssignmentOperation::Assign => NumericRange {
-                max: prev.max.max(rhs.max),
-                min: prev.min.min(rhs.min),
+                max: NumericValue::new(prev.max.value().max(rhs.max.value())),
+                min: NumericValue::new(prev.min.value().min(rhs.min.value())),
             },
             AssignmentOperation::Plus => {
                 let mut next = prev;
-                if rhs.max > 0.0 {
-                    next.max = f64::INFINITY;
+                if rhs.max > ZERO_VALUE {
+                    next.max = INF_VALUE;
                 }
-                if rhs.min < 0.0 {
-                    next.min = f64::NEG_INFINITY;
+                if rhs.min < ZERO_VALUE {
+                    next.min = NEG_INF_VALUE;
                 }
                 next
             }
             AssignmentOperation::Minus => {
                 let mut next = prev;
-                if rhs.min < 0.0 {
-                    next.max = f64::INFINITY;
+                if rhs.min < ZERO_VALUE {
+                    next.max = INF_VALUE;
                 }
-                if rhs.max > 0.0 {
-                    next.min = f64::NEG_INFINITY;
+                if rhs.max > ZERO_VALUE {
+                    next.min = NEG_INF_VALUE;
                 }
                 next
             }
@@ -1173,7 +1200,7 @@ impl<'task> FfHeuristic<'task> {
                 );
             }
         };
-        numeric[eff.affected_var].join(new)
+        numeric[eff.affected_var.index()].join(new)
     }
 
     fn build_rpg(
@@ -1194,7 +1221,7 @@ impl<'task> FfHeuristic<'task> {
         let registry = eval_state.state_registry();
         for (op_id, deps) in &self.state_dep_ops {
             let eligible = deps.iter().all(|&(var, value)| {
-                ExplicitFact::propositional(var, value).is_hold(registry.view(live_state))
+                ExplicitFact::propositional(var, value).is_held(registry.view(live_state))
             });
             scratch.op_eligible[*op_id] = eligible;
         }
@@ -1217,7 +1244,7 @@ impl<'task> FfHeuristic<'task> {
             &mut scratch.dirty_var_mark,
         );
         for &v in &scratch.dirty_vars_scratch {
-            scratch.dirty_var_mark[v] = false;
+            scratch.dirty_var_mark[v.index()] = false;
         }
         scratch.dirty_vars_scratch.clear();
 
@@ -1235,10 +1262,10 @@ impl<'task> FfHeuristic<'task> {
                 .get(var + 1)
                 .copied()
                 .unwrap_or(self.fact_id_by_var_value.len());
-            if value >= end - offset {
+            if value.index() >= end - offset {
                 continue;
             }
-            let Some(fid) = self.fact_id_by_var_value[offset + value] else {
+            let Some(fid) = self.fact_id_by_var_value[offset + value.index()] else {
                 continue;
             };
             if self.fact_to_axiom[fid].is_none() {
@@ -1266,7 +1293,7 @@ impl<'task> FfHeuristic<'task> {
         for (op_id, prec) in self.op_preconditions.iter().enumerate() {
             scratch.op_remaining_preconditions.push(prec.len() as i32);
             if prec.is_empty() && scratch.op_eligible[op_id] {
-                self.fire_operator(op_id, 0, scratch);
+                self.fire_operator(OperatorIndex::from_usize(op_id), 0, scratch);
             }
         }
         if self.goal_satisfied(scratch) {
@@ -1282,10 +1309,10 @@ impl<'task> FfHeuristic<'task> {
         while let Some(fid) = scratch.queue.pop_front() {
             let fact_layer = scratch.fact_first_layer[fid];
             for &op_id in &self.consumers[fid] {
-                if !scratch.op_eligible[op_id] {
+                if !scratch.op_eligible[op_id.index()] {
                     continue;
                 }
-                let remaining = &mut scratch.op_remaining_preconditions[op_id];
+                let remaining = &mut scratch.op_remaining_preconditions[op_id.index()];
                 if *remaining > 0 {
                     *remaining -= 1;
                     if *remaining == 0 {
@@ -1306,20 +1333,20 @@ impl<'task> FfHeuristic<'task> {
     }
 
     fn fire_operator(&self, op_id: OpId, layer: i32, scratch: &mut ScratchBuffers) {
-        if scratch.op_first_layer[op_id] >= 0 {
+        if scratch.op_first_layer[op_id.index()] >= 0 {
             return;
         }
-        scratch.op_first_layer[op_id] = layer;
+        scratch.op_first_layer[op_id.index()] = layer;
 
         // Propositional adds.
-        for &fid in &self.op_effects[op_id] {
+        for &fid in &self.op_effects[op_id.index()] {
             if scratch.fact_first_layer[fid] < 0 {
                 scratch.fact_first_layer[fid] = layer;
                 scratch.queue.push_back(fid);
             }
         }
 
-        let numeric_effects = &self.op_numeric_effects[op_id];
+        let numeric_effects = &self.op_numeric_effects[op_id.index()];
         if numeric_effects.is_empty() {
             // Skip the dirty-var / dirty-axiom plumbing entirely — the
             // common case for purely-propositional operators.
@@ -1334,9 +1361,9 @@ impl<'task> FfHeuristic<'task> {
         scratch.dirty_axioms_scratch.clear();
         for eff in numeric_effects {
             if self.apply_numeric_effect(eff, &mut scratch.numeric)
-                && !scratch.dirty_var_mark[eff.affected_var]
+                && !scratch.dirty_var_mark[eff.affected_var.index()]
             {
-                scratch.dirty_var_mark[eff.affected_var] = true;
+                scratch.dirty_var_mark[eff.affected_var.index()] = true;
                 scratch.dirty_vars_scratch.push(eff.affected_var);
             }
         }
@@ -1354,9 +1381,9 @@ impl<'task> FfHeuristic<'task> {
         );
         // Collect distinct comparison-axiom indices touched.
         for &var in &scratch.dirty_vars_scratch {
-            for &ax in &self.axioms_touching_var[var] {
-                if !scratch.dirty_axiom_mark[ax] {
-                    scratch.dirty_axiom_mark[ax] = true;
+            for &ax in &self.axioms_touching_var[var.index()] {
+                if !scratch.dirty_axiom_mark[ax.index()] {
+                    scratch.dirty_axiom_mark[ax.index()] = true;
                     scratch.dirty_axioms_scratch.push(ax);
                 }
             }
@@ -1365,10 +1392,10 @@ impl<'task> FfHeuristic<'task> {
         // scratch buffers stay clean for the next firing.
         for i in 0..scratch.dirty_axioms_scratch.len() {
             let axiom_idx = scratch.dirty_axioms_scratch[i];
-            if scratch.axiom_first_layer[axiom_idx] < 0 {
-                let axiom = &self.comparison_axioms[axiom_idx];
+            if scratch.axiom_first_layer[axiom_idx.index()] < 0 {
+                let axiom = &self.comparison_axioms[axiom_idx.index()];
                 if self.evaluate_axiom(axiom, &scratch.numeric) {
-                    scratch.axiom_first_layer[axiom_idx] = layer;
+                    scratch.axiom_first_layer[axiom_idx.index()] = layer;
                     if scratch.fact_first_layer[axiom.true_fact] < 0 {
                         scratch.fact_first_layer[axiom.true_fact] = layer;
                         scratch.queue.push_back(axiom.true_fact);
@@ -1378,10 +1405,10 @@ impl<'task> FfHeuristic<'task> {
         }
         // Reset the marks we set this firing.
         for &var in &scratch.dirty_vars_scratch {
-            scratch.dirty_var_mark[var] = false;
+            scratch.dirty_var_mark[var.index()] = false;
         }
         for &ax in &scratch.dirty_axioms_scratch {
-            scratch.dirty_axiom_mark[ax] = false;
+            scratch.dirty_axiom_mark[ax.index()] = false;
         }
     }
 
@@ -1402,7 +1429,7 @@ impl<'task> FfHeuristic<'task> {
     fn extract_relaxed_plan(
         &self,
         scratch: &mut ScratchBuffers,
-        helpful_action_ids: &mut Vec<u32>,
+        helpful_action_ids: &mut Vec<OperatorIndex>,
     ) -> f64 {
         let max_layer = self.goal_max_layer(scratch);
         if max_layer < 0 {
@@ -1451,11 +1478,11 @@ impl<'task> FfHeuristic<'task> {
                 let mut best_op: Option<OpId> = None;
                 let mut best_cost = f64::INFINITY;
                 for &op_id in &self.achievers[fid] {
-                    let op_layer = scratch.op_first_layer[op_id];
+                    let op_layer = scratch.op_first_layer[op_id.index()];
                     if op_layer < 0 || op_layer > target_op_layer {
                         continue;
                     }
-                    if !scratch.op_eligible[op_id] {
+                    if !scratch.op_eligible[op_id.index()] {
                         continue;
                     }
                     // Effective cost for plan-picking: synthetic ops are
@@ -1463,12 +1490,12 @@ impl<'task> FfHeuristic<'task> {
                     // here when not already in the plan is what FF does to
                     // avoid the "free synthetic" loophole. Tie-breaking
                     // still prefers the literally-cheapest op.
-                    let effective_cost = if let Some(parent) = self.op_parent[op_id]
-                        && !scratch.in_plan[parent]
+                    let effective_cost = if let Some(parent) = self.op_parent[op_id.index()]
+                        && !scratch.in_plan[parent.index()]
                     {
-                        self.op_cost[parent]
+                        self.op_cost[parent.index()]
                     } else {
-                        self.op_cost[op_id]
+                        self.op_cost[op_id.index()]
                     };
                     if effective_cost < best_cost {
                         best_cost = effective_cost;
@@ -1478,32 +1505,33 @@ impl<'task> FfHeuristic<'task> {
                 let Some(op_id) = best_op else {
                     continue;
                 };
-                if scratch.in_plan[op_id] {
+                if scratch.in_plan[op_id.index()] {
                     continue;
                 }
-                scratch.in_plan[op_id] = true;
-                if (0..=1).contains(&scratch.op_first_layer[op_id])
-                    && let Some(task_idx) = self.op_task_idx[op_id]
+                scratch.in_plan[op_id.index()] = true;
+                if (0..=1).contains(&scratch.op_first_layer[op_id.index()])
+                    && let Some(task_idx) = self.op_task_idx[op_id.index()]
                 {
-                    helpful_action_ids
-                        .push(u32::try_from(task_idx).expect("task operator id must fit in u32"));
+                    helpful_action_ids.push(OperatorIndex::new(
+                        u32::try_from(task_idx).expect("task operator id must fit in u32"),
+                    ));
                 }
-                plan_cost += self.op_cost[op_id];
+                plan_cost += self.op_cost[op_id.index()];
                 // Synthetic ops pull their parent in for cost accounting.
-                if let Some(parent) = self.op_parent[op_id]
-                    && !scratch.in_plan[parent]
+                if let Some(parent) = self.op_parent[op_id.index()]
+                    && !scratch.in_plan[parent.index()]
                 {
-                    scratch.in_plan[parent] = true;
-                    if (0..=1).contains(&scratch.op_first_layer[parent])
-                        && let Some(task_idx) = self.op_task_idx[parent]
+                    scratch.in_plan[parent.index()] = true;
+                    if (0..=1).contains(&scratch.op_first_layer[parent.index()])
+                        && let Some(task_idx) = self.op_task_idx[parent.index()]
                     {
-                        helpful_action_ids.push(
+                        helpful_action_ids.push(OperatorIndex::new(
                             u32::try_from(task_idx).expect("task operator id must fit in u32"),
-                        );
+                        ));
                     }
-                    plan_cost += self.op_cost[parent];
+                    plan_cost += self.op_cost[parent.index()];
                 }
-                for &pre_fid in &self.op_preconditions[op_id] {
+                for &pre_fid in &self.op_preconditions[op_id.index()] {
                     if scratch.seen[pre_fid] {
                         continue;
                     }
@@ -1539,7 +1567,7 @@ fn compute_numeric_dependency_closure(
     let mut sets: Vec<HashSet<NumVarId>> = (0..num_numeric)
         .map(|v| {
             let mut s = HashSet::new();
-            s.insert(v);
+            s.insert(VariableIndex::from_usize(v));
             s
         })
         .collect();
@@ -1551,9 +1579,9 @@ fn compute_numeric_dependency_closure(
             // `sets` mutably for the destination while also reading from
             // it for the sources would need split-borrow gymnastics that
             // aren't worth it for a one-shot construction step.
-            let left = sets[ax.left_var].clone();
-            let right = sets[ax.right_var].clone();
-            let dst = &mut sets[ax.affected_var];
+            let left = sets[ax.left_var.index()].clone();
+            let right = sets[ax.right_var.index()].clone();
+            let dst = &mut sets[ax.affected_var.index()];
             for v in left.into_iter().chain(right) {
                 if dst.insert(v) {
                     changed = true;
@@ -1642,11 +1670,11 @@ impl<'task> Heuristic for FfHeuristic<'task> {
         let ids = self.last_helpful_action_ids.borrow();
         let task_ops = self.task.get_operators();
         ids.iter()
-            .filter_map(|&task_idx| task_ops.get(task_idx as usize).cloned())
+            .filter_map(|&task_idx| task_ops.get(task_idx.index()).cloned())
             .collect()
     }
 
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<u32>) {
+    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         out.clear();
         out.extend_from_slice(&self.last_helpful_action_ids.borrow());
     }

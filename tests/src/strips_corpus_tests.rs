@@ -12,7 +12,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType, Operator};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, NumericRootTask, NumericType, Operator, VariableIndex,
+};
 use planforge_sas::plan_verification::{PlanRejection, ReplayOutcome, replay_plan};
 use planforge_sas::state_registry::StateRegistry;
 
@@ -239,7 +241,7 @@ fn pure_strips_task_shape_is_as_the_sgd_engine_expects() {
     for op in task.get_operators() {
         for effect in op.assignment_effects() {
             assert!(
-                cost_var_ids.contains(&effect.affected_var_id()),
+                cost_var_ids.contains(&effect.affected_var_id().index()),
                 "operator {:?} writes non-cost numeric variable {}",
                 op.name(),
                 effect.affected_var_id()
@@ -277,7 +279,7 @@ fn pure_strips_task_shape_is_as_the_sgd_engine_expects() {
     // at once" is not representable in a per-variable simplex.
     let domain_sizes: Vec<usize> = (0..task.get_num_variables())
         .map(|v| {
-            task.get_variable_domain_size(v)
+            task.get_variable_domain_size(VariableIndex::from_usize(v))
                 .expect("variable is in range")
         })
         .collect();

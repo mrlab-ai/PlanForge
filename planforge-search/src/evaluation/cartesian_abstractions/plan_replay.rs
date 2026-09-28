@@ -2,7 +2,7 @@ use super::*;
 
 #[derive(Debug)]
 pub(super) struct ConcretePlan {
-    operator_ids: Vec<usize>,
+    operator_ids: Vec<OperatorIndex>,
     cost: f64,
 }
 
@@ -11,7 +11,7 @@ impl ConcretePlan {
         self.cost
     }
 
-    pub(super) fn into_operator_ids(self) -> Vec<usize> {
+    pub(super) fn into_operator_ids(self) -> Vec<OperatorIndex> {
         self.operator_ids
     }
 }
@@ -55,7 +55,7 @@ fn concrete_is_goal(
     propositions: &[u64],
 ) -> bool {
     (0..semantics.task().get_num_goals()).all(|goal_id| {
-        fact_is_hold(
+        fact_is_held(
             semantics.task().get_goal_fact(goal_id),
             state_packer,
             propositions,
@@ -86,7 +86,7 @@ pub(super) fn replay_optimal_abstract_trace(
         return Ok(PlanCheck::AbstractDeadEnd(initial_abstract_state));
     }
     let abstract_plan_cost = shortest_paths.distance(initial_abstract_state);
-    let mut operator_ids = Vec::new();
+    let mut operator_ids: Vec<OperatorIndex> = Vec::new();
     let mut concrete_cost = 0.0;
     let mut selected_plan_pos = 0usize;
 
@@ -112,7 +112,7 @@ pub(super) fn replay_optimal_abstract_trace(
             }
             let failed_goals = (0..semantics.task().get_num_goals())
                 .map(|goal_id| semantics.task().get_goal_fact(goal_id))
-                .filter(|goal| !fact_is_hold(goal, state_packer, &propositions))
+                .filter(|goal| !fact_is_held(goal, state_packer, &propositions))
                 .collect::<Vec<_>>();
             ensure!(
                 !failed_goals.is_empty(),
@@ -178,11 +178,11 @@ pub(super) fn replay_optimal_abstract_trace(
             "Cartesian shortest path references missing transition {transition:?}"
         );
         let op_id = transition.concrete_op_id;
-        let op = &semantics.task().get_operators()[op_id];
+        let op = &semantics.task().get_operators()[op_id.index()];
         let failed_preconditions = op
             .preconditions()
             .iter()
-            .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
+            .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
             .collect::<Vec<_>>();
         if !failed_preconditions.is_empty() {
             let candidates = if use_desired_region_candidates {
@@ -249,15 +249,15 @@ pub(super) fn replay_optimal_abstract_trace(
             )?));
         }
 
-        let op_cost = semantics.operator_costs()[op_id];
+        let op_cost = semantics.operator_costs()[op_id.index()];
         ensure!(
             approximately_equal(
-                op_cost + shortest_paths.distance(transition.target),
+                op_cost.value() + shortest_paths.distance(transition.target),
                 abstract_distance
             ),
             "Cartesian generating transition is not distance preserving"
         );
-        concrete_cost += op_cost;
+        concrete_cost += op_cost.value();
         operator_ids.push(op_id);
         selected_plan_pos += usize::from(selected_plan.is_some());
     }
@@ -317,7 +317,7 @@ pub(super) fn replay_entire_optimal_abstract_trace(
             }
             for goal_id in 0..semantics.task().get_num_goals() {
                 let goal = semantics.task().get_goal_fact(goal_id);
-                if !fact_is_hold(goal, state_packer, &propositions) {
+                if !fact_is_held(goal, state_packer, &propositions) {
                     let split = split_failed_fact(
                         working,
                         semantics,
@@ -348,7 +348,7 @@ pub(super) fn replay_entire_optimal_abstract_trace(
         );
         ensure!(
             approximately_equal(
-                semantics.operator_costs()[transition.concrete_op_id]
+                semantics.operator_costs()[transition.concrete_op_id.index()].value()
                     + shortest_paths.distance(transition.target),
                 abstract_distance
             ),
@@ -356,11 +356,11 @@ pub(super) fn replay_entire_optimal_abstract_trace(
         );
 
         let op_id = transition.concrete_op_id;
-        let op = &semantics.task().get_operators()[op_id];
+        let op = &semantics.task().get_operators()[op_id.index()];
         for failed in op
             .preconditions()
             .iter()
-            .filter(|fact| !fact_is_hold(fact, state_packer, &propositions))
+            .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
         {
             let split = split_failed_fact(
                 working,
@@ -403,7 +403,7 @@ pub(super) fn replay_entire_optimal_abstract_trace(
             }
         }
 
-        concrete_cost += semantics.operator_costs()[op_id];
+        concrete_cost += semantics.operator_costs()[op_id.index()].value();
         operator_ids.push(op_id);
     }
 }
@@ -422,11 +422,11 @@ pub(super) fn validate_concrete_plan(
         let op = semantics
             .task()
             .get_operators()
-            .get(op_id)
+            .get(op_id.index())
             .with_context(|| format!("concrete plan step {step} has invalid operator {op_id}"))?;
         for precondition in op.preconditions() {
             ensure!(
-                fact_is_hold(precondition, state_packer, &propositions),
+                fact_is_held(precondition, state_packer, &propositions),
                 "concrete plan operator {op_id} ({}) has false precondition {precondition:?} at step {step}",
                 op.name()
             );
@@ -438,7 +438,7 @@ pub(super) fn validate_concrete_plan(
             &mut propositions,
             &mut numeric,
         )?;
-        cost += semantics.operator_costs()[op_id];
+        cost += semantics.operator_costs()[op_id.index()].value();
     }
     ensure!(
         concrete_is_goal(semantics, state_packer, &propositions),

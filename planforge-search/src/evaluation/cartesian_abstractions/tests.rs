@@ -7,8 +7,10 @@ use planforge_sas::axioms::{
 };
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType,
+    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
+    ZERO_VALUE,
 };
 
 use super::icaps26::{ArtifactMt19937, Icaps26SplitSelection};
@@ -36,52 +38,67 @@ fn operator_bitsets_preserve_exact_membership_and_intersections() {
     let mut left = OperatorBitSet::empty(130);
     let mut right = OperatorBitSet::empty(130);
     for operator_id in [0, 1, 63, 64, 65, 129] {
-        assert!(left.insert(operator_id));
+        assert!(left.insert(OperatorIndex::new(operator_id)));
     }
-    assert!(!left.insert(64));
+    assert!(!left.insert(OperatorIndex::new(64)));
     for operator_id in [1, 64, 127, 129] {
-        assert!(right.insert(operator_id));
+        assert!(right.insert(OperatorIndex::new(operator_id)));
     }
 
     assert_eq!(
         left.intersection_iter(&right).collect::<Vec<_>>(),
-        vec![1, 64, 129]
+        vec![
+            OperatorIndex::new(1),
+            OperatorIndex::new(64),
+            OperatorIndex::new(129)
+        ]
     );
     let difference = left.clone_without(&right);
     for operator_id in [0, 63, 65] {
-        assert!(difference.contains(operator_id));
+        assert!(difference.contains(OperatorIndex::new(operator_id)));
     }
     for operator_id in [1, 64, 129] {
-        assert!(!difference.contains(operator_id));
+        assert!(!difference.contains(OperatorIndex::new(operator_id)));
     }
 }
 
 #[test]
 fn numeric_split_keys_include_semantic_identity_and_boundary() {
-    let key = numeric_split_choice_key("x(b0)", 1.0, true);
-    assert_ne!(key, numeric_split_choice_key("x(b1)", 1.0, true));
-    assert_ne!(key, numeric_split_choice_key("x(b0)", 2.0, true));
-    assert_ne!(key, numeric_split_choice_key("x(b0)", 1.0, false));
+    let key = numeric_split_choice_key("x(b0)", NumericValue::new(1.0), true);
+    assert_ne!(
+        key,
+        numeric_split_choice_key("x(b1)", NumericValue::new(1.0), true)
+    );
+    assert_ne!(
+        key,
+        numeric_split_choice_key("x(b0)", NumericValue::new(2.0), true)
+    );
+    assert_ne!(
+        key,
+        numeric_split_choice_key("x(b0)", NumericValue::new(1.0), false)
+    );
 }
 
 #[test]
 fn icaps_numeric_splits_preserve_integer_lattices_without_dropping_continuous_values() {
     let (integer_lower, integer_upper) =
-        numeric_split_intervals(Interval::unbounded(), 0.0, false, true).unwrap();
-    assert!(integer_lower.contains(-1.0));
-    assert!(integer_upper.contains(0.0));
-    assert!(!integer_lower.contains(-0.5));
-    assert!(!integer_upper.contains(-0.5));
+        numeric_split_intervals(Interval::unbounded(), NumericValue::new(0.0), false, true)
+            .unwrap();
+    assert!(integer_lower.contains(NumericValue::new(-1.0)));
+    assert!(integer_upper.contains(NumericValue::new(0.0)));
+    assert!(!integer_lower.contains(NumericValue::new(-0.5)));
+    assert!(!integer_upper.contains(NumericValue::new(-0.5)));
 
     let (continuous_lower, continuous_upper) =
-        numeric_split_intervals(Interval::unbounded(), 0.0, false, false).unwrap();
-    assert!(continuous_lower.contains(-0.5));
-    assert!(!continuous_lower.contains(0.0));
-    assert!(continuous_upper.contains(0.0));
+        numeric_split_intervals(Interval::unbounded(), NumericValue::new(0.0), false, false)
+            .unwrap();
+    assert!(continuous_lower.contains(NumericValue::new(-0.5)));
+    assert!(!continuous_lower.contains(NumericValue::new(0.0)));
+    assert!(continuous_upper.contains(NumericValue::new(0.0)));
 
-    let integer_parent = Interval::new(f64::NEG_INFINITY, 1.0, false, false);
+    let integer_parent = Interval::new(NEG_INF_VALUE, ONE_VALUE, false, false);
     assert!(
-        numeric_split_intervals(integer_parent, 0.0, true, true).is_err(),
+        numeric_split_intervals(integer_parent, ZERO_VALUE, true, true).is_err(),
         "an integer split must reject a child containing only values in (0, 1)"
     );
 }
@@ -96,30 +113,38 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
             "position".into(),
             vec!["left".into(), "right".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "prevail-left".into(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let source = StateRegion::with_all_props_constrained(vec![vec![0, 1]], vec![]);
-    let target = StateRegion::with_all_props_constrained(vec![vec![1]], vec![]);
+    let source = StateRegion::with_all_props_constrained(
+        vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
+        vec![],
+    );
+    let target =
+        StateRegion::with_all_props_constrained(vec![vec![ExplicitValueIndex::new(1)]], vec![]);
 
     let native = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
-    assert!(native.may_transition(&source, 0, &target).unwrap());
+    assert!(
+        native
+            .may_transition(&source, OperatorIndex::new(0), &target)
+            .unwrap()
+    );
 
     let icaps = CartesianSemantics::new(
         &task,
@@ -129,40 +154,60 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
         },
     )
     .unwrap();
-    assert!(!icaps.may_transition(&source, 0, &target).unwrap());
+    assert!(
+        !icaps
+            .may_transition(&source, OperatorIndex::new(0), &target)
+            .unwrap()
+    );
 }
 
 #[test]
 fn icaps_split_preserves_artifact_loop_and_arc_order() {
     let operators = vec![
-        Operator::new("independent".into(), vec![], vec![], vec![], 1),
+        Operator::new(
+            "independent".into(),
+            vec![],
+            vec![],
+            vec![],
+            OperatorCost::new(1),
+        ),
         Operator::new(
             "set-right".into(),
             vec![],
-            vec![Effect::new(vec![], 0, None, 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::from_usize(0),
+                None,
+                ExplicitValueIndex::new(1),
+            )],
             vec![],
-            1,
+            OperatorCost::new(1),
         ),
         Operator::new(
             "set-left".into(),
             vec![],
-            vec![Effect::new(vec![], 0, None, 0)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::from_usize(0),
+                None,
+                ExplicitValueIndex::new(0),
+            )],
             vec![],
-            1,
+            OperatorCost::new(1),
         ),
         Operator::new(
             "prevail-left".into(),
             vec![ExplicitFact::propositional(0, 0)],
             vec![],
             vec![],
-            1,
+            OperatorCost::new(1),
         ),
         Operator::new(
             "prevail-right".into(),
             vec![ExplicitFact::propositional(0, 1)],
             vec![],
             vec![],
-            1,
+            OperatorCost::new(1),
         ),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
@@ -173,12 +218,12 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
             "position".into(),
             vec!["left".into(), "right".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators,
         axioms: vec![],
@@ -195,11 +240,14 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
     )
     .unwrap();
     let mut working = WorkingAbstraction::new_icaps26(
-        StateRegion::with_all_props_constrained(vec![vec![0, 1]], vec![]),
+        StateRegion::with_all_props_constrained(
+            vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
+            vec![],
+        ),
         5,
     );
     for op_id in 0..5 {
-        working.add_transition(0, op_id, 0);
+        working.add_transition(0, OperatorIndex::new(op_id), 0);
     }
 
     working
@@ -207,9 +255,9 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
             &semantics,
             Split::Propositional {
                 state_id: 0,
-                var_id: 0,
-                wanted: vec![1],
-                witness_value: 0,
+                var_id: VariableIndex::from_usize(0),
+                wanted: vec![ExplicitValueIndex::new(1)],
+                witness_value: ExplicitValueIndex::new(0),
                 description: String::new(),
             },
         )
@@ -217,7 +265,18 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
 
     assert_eq!(
         working.icaps_self_loop_order.as_ref().unwrap(),
-        &vec![vec![0, 2, 3], vec![0, 1, 4]]
+        &vec![
+            vec![
+                OperatorIndex::new(0),
+                OperatorIndex::new(2),
+                OperatorIndex::new(3)
+            ],
+            vec![
+                OperatorIndex::new(0),
+                OperatorIndex::new(1),
+                OperatorIndex::new(4)
+            ]
+        ]
     );
     let arcs = working
         .active_transition_ids()
@@ -230,17 +289,20 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(arcs, HashSet::from([(0, 1, 1), (1, 2, 0)]));
+    assert_eq!(
+        arcs,
+        HashSet::from([(0, OperatorIndex::new(1), 1), (1, OperatorIndex::new(2), 0)])
+    );
 }
 
 #[test]
 fn whole_plan_candidates_deduplicate_identical_refinements() {
     let split = Split::Numeric {
         state_id: 3,
-        var_id: 1,
-        boundary: 2.0,
+        var_id: VariableIndex::from_usize(1),
+        boundary: NumericValue::new(2.0),
         lower_includes_boundary: true,
-        witness_value: 1.0,
+        witness_value: NumericValue::new(1.0),
         desired_contains_witness: false,
         integer_lattice: false,
         description: "first witness".into(),
@@ -268,7 +330,7 @@ fn min_growth_uses_projected_transition_count() {
             "goal".into(),
             vec!["true".into(), "false".into()],
             None,
-            1,
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -277,20 +339,24 @@ fn min_growth_uses_projected_transition_count() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 0.0, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![Operator::new(
             "increment-x".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                2,
+                VariableIndex::from_usize(2),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -300,31 +366,38 @@ fn min_growth_uses_projected_transition_count() {
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
         StateRegion::with_all_props_constrained(
-            vec![vec![0, 1]],
+            vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![
                 Interval::unbounded(),
                 Interval::unbounded(),
-                Interval::singleton(1.0),
+                Interval::singleton(NumericValue::new(1.0)),
             ],
         ),
         1,
     );
-    working.add_transition(0, 0, 0);
+    working.add_transition(0, OperatorIndex::new(0), 0);
     let split = |var_id| Split::Numeric {
         state_id: 0,
         var_id,
-        boundary: 0.0,
+        boundary: NumericValue::new(0.0),
         lower_includes_boundary: true,
-        witness_value: 0.0,
+        witness_value: NumericValue::new(0.0),
         desired_contains_witness: false,
         integer_lattice: false,
         description: String::new(),
     };
 
-    let mut candidates = vec![split(0), split(1)];
+    let _saved_candidate = VariableIndex::from_usize(1);
+    let mut candidates = vec![split(VariableIndex::from_usize(0)), split(_saved_candidate)];
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
-    assert!(matches!(candidates[0], Split::Numeric { var_id: 1, .. }));
+    assert!(matches!(
+        candidates[0],
+        Split::Numeric {
+            var_id: _saved_candidate,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -337,7 +410,7 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
             "goal".into(),
             vec!["true".into(), "false".into()],
             None,
-            1,
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![
             NumericVariable::new("long".into(), NumericType::Regular, None),
@@ -347,34 +420,39 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![-10.0, -2.0, 0.5, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(-10.0),
+            NumericValue::new(-2.0),
+            NumericValue::new(0.5),
+            NumericValue::new(1.0),
+        ],
         operators: vec![
             Operator::new(
                 "increment-long".into(),
                 vec![],
                 vec![],
                 vec![AssignmentEffect::new(
-                    0,
+                    VariableIndex::from_usize(0),
                     AssignmentOperation::Plus,
-                    2,
+                    VariableIndex::from_usize(2),
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "increment-short".into(),
                 vec![],
                 vec![],
                 vec![AssignmentEffect::new(
-                    1,
+                    VariableIndex::from_usize(1),
                     AssignmentOperation::Plus,
-                    3,
+                    VariableIndex::from_usize(3),
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
         ],
         axioms: vec![],
@@ -389,12 +467,12 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
     let semantics = CartesianSemantics::new(&task, &config).unwrap();
     let mut working = WorkingAbstraction::new(semantics.trivial_region().unwrap(), 2);
     for op_id in 0..2 {
-        working.add_transition(0, op_id, 0);
+        working.add_transition(0, OperatorIndex::new(op_id), 0);
     }
     let split = |var_id, witness_value| Split::Numeric {
         state_id: 0,
         var_id,
-        boundary: 0.0,
+        boundary: NumericValue::new(0.0),
         lower_includes_boundary: true,
         witness_value,
         desired_contains_witness: false,
@@ -402,14 +480,24 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
         description: String::new(),
     };
 
+    let _saved_candidate = VariableIndex::from_usize(0);
     let selected = select_refinement_split(
         &working,
         &semantics,
-        vec![split(0, -10.0), split(1, -2.0)],
+        vec![
+            split(_saved_candidate, NumericValue::new(-10.0)),
+            split(VariableIndex::from_usize(1), NumericValue::new(-2.0)),
+        ],
         0,
     )
     .unwrap();
-    assert!(matches!(selected, Split::Numeric { var_id: 0, .. }));
+    assert!(matches!(
+        selected,
+        Split::Numeric {
+            var_id: _saved_candidate,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -422,7 +510,7 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
             "location".into(),
             vec!["left".into(), "right".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -430,20 +518,20 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(1.0)],
         operators: vec![Operator::new(
             "increment-x".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -455,15 +543,15 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
     let region = semantics.trivial_region().unwrap();
     let mut indexed = WorkingAbstraction::new(region.clone(), 1);
     let mut icaps = WorkingAbstraction::new_icaps26(region, 1);
-    indexed.add_transition(0, 0, 0);
-    icaps.add_transition(0, 0, 0);
+    indexed.add_transition(0, OperatorIndex::new(0), 0);
+    icaps.add_transition(0, OperatorIndex::new(0), 0);
 
     let numeric_split = Split::Numeric {
         state_id: 0,
-        var_id: 0,
-        boundary: 0.0,
+        var_id: VariableIndex::new(0),
+        boundary: NumericValue::new(0.0),
         lower_includes_boundary: true,
-        witness_value: 0.0,
+        witness_value: NumericValue::new(0.0),
         desired_contains_witness: true,
         integer_lattice: false,
         description: String::new(),
@@ -475,9 +563,9 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
 
     let propositional_split = Split::Propositional {
         state_id: 0,
-        var_id: 0,
-        wanted: vec![0],
-        witness_value: 0,
+        var_id: VariableIndex::from_usize(0),
+        wanted: vec![ExplicitValueIndex::new(0)],
+        witness_value: ExplicitValueIndex::new(0),
         description: String::new(),
     };
     indexed
@@ -525,16 +613,26 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
 fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tails() {
     let working = WorkingAbstraction::new(
         StateRegion::with_all_props_constrained(
-            vec![vec![0, 1, 2, 3]],
-            vec![Interval::new(-10.0, 10.0, true, true)],
+            vec![vec![
+                ExplicitValueIndex::new(0),
+                ExplicitValueIndex::new(1),
+                ExplicitValueIndex::new(2),
+                ExplicitValueIndex::new(3),
+            ]],
+            vec![Interval::new(
+                NumericValue::new(-10.0),
+                NumericValue::new(10.0),
+                true,
+                true,
+            )],
         ),
         0,
     );
     let propositional = Split::Propositional {
         state_id: 0,
-        var_id: 0,
-        wanted: vec![2, 3],
-        witness_value: 0,
+        var_id: VariableIndex::from_usize(0),
+        wanted: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(3)],
+        witness_value: ExplicitValueIndex::new(0),
         description: String::new(),
     };
     assert_eq!(
@@ -544,10 +642,10 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
 
     let finite_numeric = Split::Numeric {
         state_id: 0,
-        var_id: 0,
-        boundary: 4.0,
+        var_id: VariableIndex::new(0),
+        boundary: NumericValue::new(4.0),
         lower_includes_boundary: false,
-        witness_value: 8.0,
+        witness_value: NumericValue::new(8.0),
         desired_contains_witness: false,
         integer_lattice: false,
         description: String::new(),
@@ -571,15 +669,18 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let open_tail = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(vec![vec![0, 1]], vec![Interval::unbounded()]),
+        StateRegion::with_all_props_constrained(
+            vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
+            vec![Interval::unbounded()],
+        ),
         0,
     );
     let desired_open_tail = Split::Numeric {
         state_id: 0,
-        var_id: 0,
-        boundary: 4.0,
+        var_id: VariableIndex::new(0),
+        boundary: NumericValue::new(4.0),
         lower_includes_boundary: false,
-        witness_value: 8.0,
+        witness_value: NumericValue::new(8.0),
         desired_contains_witness: false,
         integer_lattice: false,
         description: String::new(),
@@ -592,17 +693,22 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
 
     let fractional = WorkingAbstraction::new(
         StateRegion::with_all_props_constrained(
-            vec![vec![0, 1]],
-            vec![Interval::new(0.0, 0.5, true, true)],
+            vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
+            vec![Interval::new(
+                NumericValue::new(0.0),
+                NumericValue::new(0.5),
+                true,
+                true,
+            )],
         ),
         0,
     );
     let fractional_split = Split::Numeric {
         state_id: 0,
-        var_id: 0,
-        boundary: 0.25,
+        var_id: VariableIndex::new(0),
+        boundary: NumericValue::new(0.25),
         lower_includes_boundary: true,
-        witness_value: 0.0,
+        witness_value: NumericValue::new(0.0),
         desired_contains_witness: true,
         integer_lattice: false,
         description: String::new(),
@@ -614,17 +720,22 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
 
     let open_integer_interval = WorkingAbstraction::new(
         StateRegion::with_all_props_constrained(
-            vec![vec![0, 1]],
-            vec![Interval::new(5.0, 10.0, false, true)],
+            vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
+            vec![Interval::new(
+                NumericValue::new(5.0),
+                NumericValue::new(10.0),
+                false,
+                true,
+            )],
         ),
         0,
     );
     let open_integer_split = Split::Numeric {
         state_id: 0,
-        var_id: 0,
-        boundary: 7.0,
+        var_id: VariableIndex::new(0),
+        boundary: NumericValue::new(7.0),
         lower_includes_boundary: false,
-        witness_value: 6.0,
+        witness_value: NumericValue::new(6.0),
         desired_contains_witness: false,
         integer_lattice: false,
         description: String::new(),
@@ -645,12 +756,12 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
             "location".into(),
             vec!["a".into(), "b".into(), "c".into(), "d".into()],
             None,
-            3,
+            ExplicitValueIndex::new(3),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -665,19 +776,31 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     let mut semantics = CartesianSemantics::new(&task, &config).unwrap();
     let working = WorkingAbstraction::new(
         StateRegion::with_all_props_constrained(
-            vec![vec![0, 1, 2, 3]],
+            vec![vec![
+                ExplicitValueIndex::new(0),
+                ExplicitValueIndex::new(1),
+                ExplicitValueIndex::new(2),
+                ExplicitValueIndex::new(3),
+            ]],
             semantics.trivial_region().unwrap().numeric.to_vec(),
         ),
         0,
     );
     let split = |wanted| Split::Propositional {
         state_id: 0,
-        var_id: 0,
+        var_id: VariableIndex::from_usize(0),
         wanted,
-        witness_value: 0,
+        witness_value: ExplicitValueIndex::new(0),
         description: String::new(),
     };
-    let candidates = vec![split(vec![1]), split(vec![1, 2, 3])];
+    let candidates = vec![
+        split(vec![ExplicitValueIndex::new(1)]),
+        split(vec![
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(2),
+            ExplicitValueIndex::new(3),
+        ]),
+    ];
     let selected = select_refinement_split(&working, &semantics, candidates.clone(), 0).unwrap();
     assert!(matches!(selected, Split::Propositional { wanted, .. } if wanted.len() == 3));
 
@@ -696,7 +819,14 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
                 let selected = select_refinement_split(
                     &working,
                     semantics,
-                    vec![split(vec![1]), split(vec![1, 2, 3])],
+                    vec![
+                        split(vec![ExplicitValueIndex::new(1)]),
+                        split(vec![
+                            ExplicitValueIndex::new(1),
+                            ExplicitValueIndex::new(2),
+                            ExplicitValueIndex::new(3),
+                        ]),
+                    ],
                     0,
                 )
                 .unwrap();
@@ -718,19 +848,25 @@ fn native_random_and_least_refined_selectors_are_independent() {
         version: 1,
         metric: Metric::new(true, None),
         variables: vec![
-            ExplicitVariable::new(2, "left".into(), vec!["zero".into(), "one".into()], None, 0),
+            ExplicitVariable::new(
+                2,
+                "left".into(),
+                vec!["zero".into(), "one".into()],
+                None,
+                ExplicitValueIndex::new(0),
+            ),
             ExplicitVariable::new(
                 2,
                 "right".into(),
                 vec!["zero".into(), "one".into()],
                 None,
-                0,
+                ExplicitValueIndex::new(0),
             ),
         ],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0, 0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -741,11 +877,14 @@ fn native_random_and_least_refined_selectors_are_independent() {
     let split = |var_id| Split::Propositional {
         state_id: 0,
         var_id,
-        wanted: vec![1],
-        witness_value: 0,
+        wanted: vec![ExplicitValueIndex::new(1)],
+        witness_value: ExplicitValueIndex::new(0),
         description: String::new(),
     };
-    let candidates = vec![split(0), split(1)];
+    let candidates = vec![
+        split(VariableIndex::from_usize(0)),
+        split(VariableIndex::from_usize(1)),
+    ];
 
     let random_config = CartesianAbstractionConfig {
         split_selection: CartesianSplitSelection::Random,
@@ -755,7 +894,13 @@ fn native_random_and_least_refined_selectors_are_independent() {
     let random_a = CartesianSemantics::new(&task, &random_config).unwrap();
     let random_b = CartesianSemantics::new(&task, &random_config).unwrap();
     let working = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(vec![vec![0, 1], vec![0, 1]], vec![]),
+        StateRegion::with_all_props_constrained(
+            vec![
+                vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
+                vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
+            ],
+            vec![],
+        ),
         0,
     );
     let draw = |semantics: &CartesianSemantics<'_>| {
@@ -769,8 +914,8 @@ fn native_random_and_least_refined_selectors_are_independent() {
     };
     let sequence = draw(&random_a);
     assert_eq!(sequence, draw(&random_b));
-    assert!(sequence.contains(&SplitDimension::Propositional(0)));
-    assert!(sequence.contains(&SplitDimension::Propositional(1)));
+    assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(0))));
+    assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(1))));
 
     let least_refined_config = CartesianAbstractionConfig {
         split_selection: CartesianSplitSelection::LeastRefined,
@@ -780,7 +925,10 @@ fn native_random_and_least_refined_selectors_are_independent() {
     let mut unbalanced = working;
     unbalanced.propositional_refinement_counts[0] = 3;
     let selected = select_refinement_split(&unbalanced, &least_refined, candidates, 0).unwrap();
-    assert_eq!(selected.dimension(), SplitDimension::Propositional(1));
+    assert_eq!(
+        selected.dimension(),
+        SplitDimension::Propositional(VariableIndex::from_usize(1))
+    );
 }
 
 #[test]
@@ -804,7 +952,7 @@ fn unchanged_transition_operator_regions_share_state_dimensions() {
             "position".into(),
             vec!["same".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -812,20 +960,20 @@ fn unchanged_transition_operator_regions_share_state_dimensions() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(1.0)],
         operators: vec![Operator::new(
             "increment-x".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -834,12 +982,12 @@ fn unchanged_transition_operator_regions_share_state_dimensions() {
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let source = StateRegion::with_all_props_constrained(
-        vec![vec![0]],
-        vec![Interval::unbounded(), Interval::singleton(1.0)],
+        vec![vec![ExplicitValueIndex::new(0)]],
+        vec![Interval::unbounded(), Interval::singleton(ONE_VALUE)],
     );
 
     let operator_region = semantics
-        .operator_region_source_for_transition(&source, 0, &source)
+        .operator_region_source_for_transition(&source, OperatorIndex::new(0), &source)
         .unwrap()
         .unwrap();
 
@@ -860,14 +1008,20 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
             "goal".into(),
             vec!["true".into(), "false".into()],
             None,
-            1,
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
-        operators: vec![Operator::new("self-loop".into(), vec![], vec![], vec![], 1)],
+        operators: vec![Operator::new(
+            "self-loop".into(),
+            vec![],
+            vec![],
+            vec![],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
@@ -898,19 +1052,24 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
             "goal".into(),
             vec!["false".into(), "true".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "achieve".into(),
             vec![ExplicitFact::propositional(0, 0)],
-            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::from_usize(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
             vec![],
-            3,
+            OperatorCost::new(3),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -960,7 +1119,7 @@ fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     working
         .self_loop_operator_ids
         .push(OperatorBitSet::empty(8));
-    working.add_transition(0, 7, 1);
+    working.add_transition(0, OperatorIndex::new(7), 1);
     assert_eq!(working.transitions.len(), 1);
 
     let removed = working.remove_incident_transitions(0);
@@ -969,7 +1128,7 @@ fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     assert!(working.incoming[0].is_empty());
     assert!(working.transitions[0].is_none());
 
-    working.add_transition(0, 7, 1);
+    working.add_transition(0, OperatorIndex::new(7), 1);
     assert_eq!(working.transitions.len(), 1);
     assert_eq!(working.outgoing[0], vec![0]);
     assert_eq!(working.incoming[1], vec![0]);
@@ -980,12 +1139,12 @@ fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
 fn shortest_path_dependency_positions_survive_swap_removal() {
     let first = TransitionKey {
         source: 0,
-        concrete_op_id: 0,
+        concrete_op_id: OperatorIndex::new(0),
         target: 2,
     };
     let second = TransitionKey {
         source: 1,
-        concrete_op_id: 1,
+        concrete_op_id: OperatorIndex::new(1),
         target: 2,
     };
     let mut shortest_paths = ShortestPaths::for_test(
@@ -1016,7 +1175,7 @@ fn refines_through_a_comparison_goal() {
         "x-at-limit".into(),
         vec!["true".into(), "false".into()],
         Some(0),
-        1,
+        ExplicitValueIndex::new(1),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -1028,13 +1187,13 @@ fn refines_through_a_comparison_goal() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Plus,
-            2,
+            VariableIndex::from_usize(2),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 1,
@@ -1043,14 +1202,18 @@ fn refines_through_a_comparison_goal() {
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![1],
-        numeric_state: vec![0.0, 2.0, 1.0],
+        state: vec![ExplicitValueIndex::new(1)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![increment],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            0,
-            1,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -1090,26 +1253,36 @@ fn supports_snp_assignment_axiom_comparisons() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Plus,
-            1,
+            VariableIndex::from_usize(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task = numeric_goal_task(
         variables,
         numeric_variables,
-        vec![0.0, 1.0, 0.0, 3.0],
+        vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(3.0),
+        ],
         vec![increment],
         vec![ComparisonAxiom::new(
-            0,
-            2,
-            3,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(2),
+            VariableIndex::from_usize(3),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(2),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
     );
 
     assert_solved_with_h(&task, 2.0);
@@ -1133,11 +1306,11 @@ fn desired_region_uses_additive_snp_coordinate() {
             vec![AssignmentEffect::new(
                 var_id,
                 AssignmentOperation::Plus,
-                2,
+                VariableIndex::from_usize(2),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )
     };
     let task = numeric_goal_task(
@@ -1145,15 +1318,29 @@ fn desired_region_uses_additive_snp_coordinate() {
         numeric_variables,
         // The stored value of the derived sum is intentionally stale. The
         // Cartesian initial-state hash must use the axiom-evaluated value 3.
-        vec![2.0, 1.0, 1.0, 0.0, 4.0],
-        vec![increment("increment-x", 0), increment("increment-y", 1)],
+        vec![
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(4.0),
+        ],
+        vec![
+            increment("increment-x", VariableIndex::from_usize(0)),
+            increment("increment-y", VariableIndex::from_usize(1)),
+        ],
         vec![ComparisonAxiom::new(
-            0,
-            3,
-            4,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(3, CalOperator::Sum, 0, 1)],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
     );
 
     for abstract_plan_selection in [
@@ -1196,23 +1383,46 @@ fn supports_nonlinear_snp_assignment_axiom_comparisons() {
         vec![],
         vec![],
         vec![
-            AssignmentEffect::new(0, AssignmentOperation::Plus, 2, false, vec![]),
-            AssignmentEffect::new(1, AssignmentOperation::Plus, 2, false, vec![]),
+            AssignmentEffect::new(
+                VariableIndex::new(0),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
+            AssignmentEffect::new(
+                VariableIndex::new(1),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
         ],
-        1,
+        OperatorCost::new(1),
     );
     let task = numeric_goal_task(
         variables,
         numeric_variables,
-        vec![1.0, 1.0, 1.0, 0.0, 9.0],
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(9.0),
+        ],
         vec![increment_both],
         vec![ComparisonAxiom::new(
-            0,
-            3,
-            4,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(3, CalOperator::Product, 0, 1)],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Product,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
     );
 
     assert_solved_with_h(&task, 2.0);
@@ -1231,24 +1441,47 @@ fn desired_region_rejects_non_additive_snp_coordinate() {
     let task = numeric_goal_task(
         variables,
         numeric_variables,
-        vec![1.0, 1.0, 1.0, 0.0, 9.0],
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(9.0),
+        ],
         vec![Operator::new(
             "increment-both".into(),
             vec![],
             vec![],
             vec![
-                AssignmentEffect::new(0, AssignmentOperation::Plus, 2, false, vec![]),
-                AssignmentEffect::new(1, AssignmentOperation::Plus, 2, false, vec![]),
+                AssignmentEffect::new(
+                    VariableIndex::new(0),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(2),
+                    false,
+                    vec![],
+                ),
+                AssignmentEffect::new(
+                    VariableIndex::new(1),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(2),
+                    false,
+                    vec![],
+                ),
             ],
-            1,
+            OperatorCost::new(1),
         )],
         vec![ComparisonAxiom::new(
-            0,
-            3,
-            4,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(3, CalOperator::Product, 0, 1)],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Product,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
     );
     let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 32,
@@ -1283,23 +1516,27 @@ fn supports_comparisons_between_regular_variables() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Plus,
-            2,
+            VariableIndex::from_usize(2),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task = numeric_goal_task(
         variables,
         numeric_variables,
-        vec![0.0, 2.0, 1.0],
+        vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+        ],
         vec![increment],
         vec![ComparisonAxiom::new(
-            0,
-            0,
-            1,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
@@ -1321,23 +1558,27 @@ fn supports_multiplicative_numeric_effects() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Times,
-            1,
+            VariableIndex::from_usize(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task = numeric_goal_task(
         variables,
         numeric_variables,
-        vec![1.0, 2.0, 4.0],
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(4.0),
+        ],
         vec![double],
         vec![ComparisonAxiom::new(
-            0,
-            0,
-            2,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(2),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
@@ -1355,7 +1596,7 @@ fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTa
             "dummy".into(),
             vec!["value".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -1363,14 +1604,20 @@ fn affine_effect_task(operation: AssignmentOperation, rhs: f64) -> NumericRootTa
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, rhs],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(rhs)],
         operators: vec![Operator::new(
             "affine".into(),
             vec![],
             vec![],
-            vec![AssignmentEffect::new(0, operation, 1, false, vec![])],
-            1,
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                operation,
+                VariableIndex::from_usize(1),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -1386,10 +1633,14 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&plus, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         plus_semantics
-            .numeric_effect_preimage(Interval::new(5.0, 10.0, false, true), 0, 0)
+            .numeric_effect_preimage(
+                Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
+                OperatorIndex::new(0),
+                VariableIndex::new(0)
+            )
             .unwrap()
             .unwrap(),
-        Interval::new(4.0, 9.0, false, true)
+        Interval::new(NumericValue::new(4.0), NumericValue::new(9.0), false, true)
     );
 
     let times = affine_effect_task(AssignmentOperation::Times, -2.0);
@@ -1397,10 +1648,19 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&times, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         times_semantics
-            .numeric_effect_preimage(Interval::new(-10.0, -4.0, false, true), 0, 0)
+            .numeric_effect_preimage(
+                Interval::new(
+                    NumericValue::new(-10.0),
+                    NumericValue::new(-4.0),
+                    false,
+                    true
+                ),
+                OperatorIndex::new(0),
+                VariableIndex::new(0)
+            )
             .unwrap()
             .unwrap(),
-        Interval::new(2.0, 5.0, true, false)
+        Interval::new(NumericValue::new(2.0), NumericValue::new(5.0), true, false)
     );
 
     let divide = affine_effect_task(AssignmentOperation::Divide, -2.0);
@@ -1408,10 +1668,19 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&divide, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         divide_semantics
-            .numeric_effect_preimage(Interval::new(-5.0, -2.0, false, true), 0, 0)
+            .numeric_effect_preimage(
+                Interval::new(
+                    NumericValue::new(-5.0),
+                    NumericValue::new(-2.0),
+                    false,
+                    true
+                ),
+                OperatorIndex::new(0),
+                VariableIndex::new(0)
+            )
             .unwrap()
             .unwrap(),
-        Interval::new(4.0, 10.0, true, false)
+        Interval::new(NumericValue::new(4.0), NumericValue::new(10.0), true, false)
     );
 }
 
@@ -1421,14 +1690,22 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         semantics
-            .numeric_effect_preimage(Interval::new(2.0, 3.0, true, true), 0, 0)
+            .numeric_effect_preimage(
+                Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, true),
+                OperatorIndex::new(0),
+                VariableIndex::new(0)
+            )
             .unwrap()
             .unwrap(),
         Interval::unbounded()
     );
     assert!(
         semantics
-            .numeric_effect_preimage(Interval::new(2.0, 3.0, true, false), 0, 0)
+            .numeric_effect_preimage(
+                Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, false),
+                OperatorIndex::new(0),
+                VariableIndex::new(0)
+            )
             .unwrap()
             .is_none()
     );
@@ -1440,12 +1717,17 @@ fn assignment_outside_target_is_not_a_cartesian_transition() {
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let source = semantics.trivial_region().unwrap();
     let mut target = source.clone();
-    Arc::make_mut(&mut target.numeric)[0] = Interval::new(2.0, 3.0, true, false);
+    Arc::make_mut(&mut target.numeric)[0] =
+        Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, false);
 
-    assert!(!semantics.may_transition(&source, 0, &target).unwrap());
+    assert!(
+        !semantics
+            .may_transition(&source, OperatorIndex::new(0), &target)
+            .unwrap()
+    );
     assert!(
         semantics
-            .operator_region_source_for_transition(&source, 0, &target)
+            .operator_region_source_for_transition(&source, OperatorIndex::new(0), &target)
             .unwrap()
             .is_none()
     );
@@ -1462,21 +1744,32 @@ fn assignment_outside_target_is_not_a_cartesian_transition() {
 #[test]
 fn a_derived_goal_is_refused_by_name() {
     let variables = vec![
-        ExplicitVariable::new(2, "base".into(), vec!["on".into(), "off".into()], None, 0),
+        ExplicitVariable::new(
+            2,
+            "base".into(),
+            vec!["on".into(), "off".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
         ExplicitVariable::new(
             2,
             "derived".into(),
             vec!["active".into(), "default".into()],
             Some(0),
-            1,
+            ExplicitValueIndex::new(1),
         ),
     ];
     let turn_off = Operator::new(
         "turn-off".into(),
         vec![],
-        vec![Effect::new(vec![], 0, None, 1)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            None,
+            ExplicitValueIndex::new(1),
+        )],
         vec![],
-        1,
+        OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 1,
@@ -1485,14 +1778,14 @@ fn a_derived_goal_is_refused_by_name() {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![0, 1],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
         numeric_state: vec![],
         operators: vec![turn_off],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 0)],
-            1,
-            1,
-            0,
+            VariableIndex::from_usize(1),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
         )],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
@@ -1528,26 +1821,36 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Plus,
-            1,
+            VariableIndex::from_usize(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task = numeric_goal_task(
         variables,
         numeric_variables,
-        vec![0.0, 1.0, 0.0, 3.0],
+        vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(3.0),
+        ],
         vec![increment],
         vec![ComparisonAxiom::new(
-            0,
-            2,
-            3,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(2),
+            VariableIndex::from_usize(3),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(2),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
     );
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
@@ -1588,26 +1891,26 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                2,
+                VariableIndex::from_usize(2),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         ),
         Operator::new(
             "increment-y".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                2,
+                VariableIndex::from_usize(2),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         ),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
@@ -1620,13 +1923,29 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
             ExplicitFact::propositional(1, 0),
         ],
         mutexes: vec![],
-        state: vec![2, 2],
-        numeric_state: vec![0.0, 0.0, 1.0, 2.0, 3.0],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+        ],
         operators,
         axioms: vec![],
         comparison_axioms: vec![
-            ComparisonAxiom::new(0, 0, 3, ComparisonOperator::GreaterThanOrEqual),
-            ComparisonAxiom::new(1, 1, 4, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(3),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(4),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
         ],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -1757,25 +2076,40 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
             ExplicitFact::propositional(1, 0),
         ],
         mutexes: vec![],
-        state: vec![2, 2],
-        numeric_state: vec![0.0, 1.0, 2.0, 4.0],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(4.0),
+        ],
         operators: vec![Operator::new(
             "increment".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![
-            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
-            ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(2),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::new(1),
+                VariableIndex::new(0),
+                VariableIndex::new(3),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
         ],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -1834,8 +2168,16 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
         "a goal first refined from a checkpoint also needs an initial-root specialist"
     );
     for x in 0..=4 {
-        let propositions = vec![usize::from(x < 2), usize::from(x < 4)];
-        let numeric = vec![x as f64, 1.0, 2.0, 4.0];
+        let propositions = vec![
+            ExplicitValueIndex::from_usize(usize::from(x < 2)),
+            ExplicitValueIndex::from_usize(usize::from(x < 4)),
+        ];
+        let numeric = vec![
+            NumericValue::new(x as f64),
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(4.0),
+        ];
         let true_distance = (4 - x) as f64;
         for (kind, abstraction) in [
             ("checkpoint-rooted", &abstractions[1]),
@@ -1873,25 +2215,40 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             ExplicitFact::propositional(1, 0),
         ],
         mutexes: vec![],
-        state: vec![2, 2],
-        numeric_state: vec![0.0, 1.0, 4.0, 2.0],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(4.0),
+            NumericValue::new(2.0),
+        ],
         operators: vec![Operator::new(
             "increment".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![
-            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
-            ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(2),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::new(1),
+                VariableIndex::new(0),
+                VariableIndex::new(3),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
         ],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -1964,25 +2321,39 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
             ExplicitFact::propositional(1, 0),
         ],
         mutexes: vec![],
-        state: vec![2, 2],
-        numeric_state: vec![0.0, 1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![Operator::new(
             "increment".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![
-            ComparisonAxiom::new(0, 0, 1, ComparisonOperator::GreaterThanOrEqual),
-            ComparisonAxiom::new(1, 0, 2, ComparisonOperator::LessThanOrEqual),
+            ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(1),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::new(1),
+                VariableIndex::new(0),
+                VariableIndex::new(2),
+                ComparisonOperator::LessThanOrEqual,
+            ),
         ],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -2031,7 +2402,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
             .metadata
             .concrete_plan_operator_ids
             .as_deref(),
-        Some([0].as_slice())
+        Some([OperatorIndex::new(0)].as_slice())
     );
     assert_eq!(
         abstractions[1]
@@ -2064,25 +2435,40 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
             ExplicitFact::propositional(1, 0),
         ],
         mutexes: vec![],
-        state: vec![2, 2],
-        numeric_state: vec![0.0, 1.0, 4.0, 2.0],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(4.0),
+            NumericValue::new(2.0),
+        ],
         operators: vec![Operator::new(
             "increment".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![
-            ComparisonAxiom::new(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
-            ComparisonAxiom::new(1, 0, 3, ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(2),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::new(1),
+                VariableIndex::new(0),
+                VariableIndex::new(3),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
         ],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -2139,8 +2525,16 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
 
     for abstraction in &abstractions {
         for x in 0..=4 {
-            let propositions = vec![usize::from(x < 4), usize::from(x < 2)];
-            let numeric = vec![x as f64, 1.0, 4.0, 2.0];
+            let propositions = vec![
+                ExplicitValueIndex::from_usize(usize::from(x < 4)),
+                ExplicitValueIndex::from_usize(usize::from(x < 2)),
+            ];
+            let numeric = vec![
+                NumericValue::new(x as f64),
+                NumericValue::new(1.0),
+                NumericValue::new(4.0),
+                NumericValue::new(2.0),
+            ];
             let state_id = abstraction
                 .abstract_state_id(&propositions, &numeric)
                 .unwrap();
@@ -2164,24 +2558,28 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("three".into(), NumericType::Constant, None),
         ],
-        vec![0.0, 1.0, 3.0],
+        vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(3.0),
+        ],
         vec![Operator::new(
             "increment".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         vec![ComparisonAxiom::new(
-            0,
-            0,
-            2,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(2),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
@@ -2209,11 +2607,11 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
 
     assert_eq!(
         first_numeric_boundary(CartesianRefinementDirection::Progression),
-        0.0
+        NumericValue::new(0.0)
     );
     assert_eq!(
         first_numeric_boundary(CartesianRefinementDirection::Regression),
-        3.0
+        NumericValue::new(3.0)
     );
 }
 
@@ -2242,12 +2640,12 @@ fn goal_collection_preserves_empty_goal_tasks() {
             "value".into(),
             vec!["zero".into(), "one".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -2281,24 +2679,28 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             NumericVariable::new("one".into(), NumericType::Constant, None),
             NumericVariable::new("three".into(), NumericType::Constant, None),
         ],
-        vec![0.0, 1.0, 3.0],
+        vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(3.0),
+        ],
         vec![Operator::new(
             "increment".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         vec![ComparisonAxiom::new(
-            0,
-            0,
-            2,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(2),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         vec![],
@@ -2335,14 +2737,14 @@ fn comparison_variable(name: &str) -> ExplicitVariable {
         name.into(),
         vec!["true".into(), "false".into()],
         Some(0),
-        ConditionValue::False.as_usize(),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
     )
 }
 
 fn numeric_goal_task(
     variables: Vec<ExplicitVariable>,
     numeric_variables: Vec<NumericVariable>,
-    initial_numeric: Vec<f64>,
+    initial_numeric: Vec<NumericValue>,
     operators: Vec<Operator>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -2354,7 +2756,7 @@ fn numeric_goal_task(
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![2],
+        state: vec![ExplicitValueIndex::new(2)],
         numeric_state: initial_numeric,
         operators,
         axioms: vec![],
