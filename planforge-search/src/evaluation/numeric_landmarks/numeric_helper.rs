@@ -470,7 +470,6 @@ impl NumericTaskHelper {
     }
     /// A fact on `variable_id`, tagged with the namespace the helper's own
     /// comparison-axiom map puts that variable in.
-
     pub(crate) fn is_numeric_axiom_var(&self, variable_id: VariableIndex) -> bool {
         self.fact_to_axiom_marker(variable_id)
             .map(|marker| marker.is_some())

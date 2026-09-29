@@ -29,7 +29,7 @@ fn derived(name: &str, layer: usize) -> ExplicitVariable {
     ExplicitVariable::new(
         2,
         name.to_string(),
-        vec![format!("{name}"), format!("not {name}")],
+        vec![name.to_string(), format!("not {name}")],
         Some(layer),
         ExplicitValueIndex::new(1),
     )
@@ -39,7 +39,7 @@ fn condition_variable(name: &str, layer: usize) -> ExplicitVariable {
     ExplicitVariable::new(
         ConditionValue::DOMAIN_SIZE,
         name.to_string(),
-        vec![format!("{name}"), format!("not {name}")],
+        vec![name.to_string(), format!("not {name}")],
         Some(layer),
         ExplicitValueIndex::new(ConditionValue::False.as_u32()),
     )

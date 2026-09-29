@@ -1383,7 +1383,6 @@ impl Task {
         let task_id = reg.id();
         ids.into_iter()
             .map(|operator_id| {
-                let operator_id = operator_id as usize;
                 let operator = self
                     .task
                     .get_operators()
@@ -1457,7 +1456,7 @@ impl Task {
         let mut out = Vec::with_capacity(ids.len());
         let (mut b1, mut b2) = (Vec::new(), Vec::new());
         for op_id in ids {
-            let operator_id = op_id as usize;
+            let operator_id = op_id;
             let op = operators.get(operator_id).unwrap_or_else(|| {
                 panic!("successor generator returned invalid operator id {operator_id}")
             });

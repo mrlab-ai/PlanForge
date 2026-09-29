@@ -222,29 +222,17 @@ impl ScratchBuffers {
     }
 
     fn reset(&mut self) {
-        for v in &mut self.fact_first_layer {
-            *v = -1;
-        }
+        self.fact_first_layer.fill(-1);
         self.op_remaining_preconditions.clear();
-        for v in &mut self.op_first_layer {
-            *v = -1;
-        }
+        self.op_first_layer.fill(-1);
         self.queue.clear();
         for goals in &mut self.goals_at_layer {
             goals.clear();
         }
-        for v in &mut self.seen {
-            *v = false;
-        }
-        for v in &mut self.in_plan {
-            *v = false;
-        }
-        for v in &mut self.op_eligible {
-            *v = true;
-        }
-        for v in &mut self.axiom_first_layer {
-            *v = -1;
-        }
+        self.seen.fill(false);
+        self.in_plan.fill(false);
+        self.op_eligible.fill(true);
+        self.axiom_first_layer.fill(-1);
     }
 }
 
@@ -1442,12 +1430,8 @@ impl<'task> FfHeuristic<'task> {
         while scratch.goals_at_layer.len() < needed_layers {
             scratch.goals_at_layer.push(Vec::new());
         }
-        for v in &mut scratch.seen {
-            *v = false;
-        }
-        for v in &mut scratch.in_plan {
-            *v = false;
-        }
+        scratch.seen.fill(false);
+        scratch.in_plan.fill(false);
 
         for &gid in &self.goal_facts {
             let layer = scratch.fact_first_layer[gid];
