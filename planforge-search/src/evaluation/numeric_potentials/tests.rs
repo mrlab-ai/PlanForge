@@ -139,7 +139,12 @@ fn one_step_classical_potential_equals_optimal_cost() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(            2,             "location".into(),             vec!["start".into(), "goal".into()],             None, ExplicitValueIndex::new(            0,)
+        variables: vec![ExplicitVariable::new(
+            2,
+            "location".into(),
+            vec!["start".into(), "goal".into()],
+            None,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
@@ -147,12 +152,17 @@ fn one_step_classical_potential_equals_optimal_cost() {
         state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
-                "finish".into(),
-                vec![ExplicitFact::propositional(0, 0)],
-                vec![Effect::new(vec![], VariableIndex::new(0), Some(ExplicitValueIndex::new(0)), ExplicitValueIndex::new(1))],
+            "finish".into(),
+            vec![ExplicitFact::propositional(0, 0)],
+            vec![Effect::new(
                 vec![],
-                OperatorCost::new(1),
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
             )],
+            vec![],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
@@ -167,7 +177,12 @@ fn additive_numeric_potential_equals_two_required_increments() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(            2,             "x-at-least-two".into(),             vec!["true".into(), "false".into()],             Some(0), ExplicitValueIndex::new(            1,)
+        variables: vec![ExplicitVariable::new(
+            2,
+            "x-at-least-two".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -177,22 +192,30 @@ fn additive_numeric_potential_equals_two_required_increments() {
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(1)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(2.0), NumericValue::new(1.0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![Operator::new(
-                "increment".into(),
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
                 vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(0),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(2),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
             )],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            0), VariableIndex::new(            1),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -249,7 +272,12 @@ fn thirty_deterministic_random_duality_instances() {
         let task = NumericRootTask::new(NumericRootTaskParts {
             version: 4,
             metric: Metric::new(false, None),
-            variables: vec![ExplicitVariable::new(                2,                 "x-at-target".into(),                 vec!["true".into(), "false".into()],                 Some(0), ExplicitValueIndex::new(                1,)
+            variables: vec![ExplicitVariable::new(
+                2,
+                "x-at-target".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
             )],
             numeric_variables,
             goals: vec![ExplicitFact::propositional(0, 0)],
@@ -258,7 +286,11 @@ fn thirty_deterministic_random_duality_instances() {
             numeric_state: initial_numeric,
             operators,
             axioms: vec![],
-            comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(                0), VariableIndex::new(                0), VariableIndex::new(                1),                 ComparisonOperator::GreaterThanOrEqual,
+            comparison_axioms: vec![ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(1),
+                ComparisonOperator::GreaterThanOrEqual,
             )],
             assignment_axioms: vec![],
             global_constraint: ExplicitFact::propositional(0, 0),
@@ -278,11 +310,26 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
         version: 4,
         metric: Metric::new(false, None),
         variables: vec![
-            ExplicitVariable::new(                2,                 "x-at-least-two".into(),                 vec!["true".into(), "false".into()],                 Some(0), ExplicitValueIndex::new(                1,)
+            ExplicitVariable::new(
+                2,
+                "x-at-least-two".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
             ),
-            ExplicitVariable::new(                2,                 "y-at-least-three".into(),                 vec!["true".into(), "false".into()],                 Some(0), ExplicitValueIndex::new(                1,)
+            ExplicitVariable::new(
+                2,
+                "y-at-least-three".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
             ),
-            ExplicitVariable::new(                2,                 "numeric-goal".into(),                 vec!["true".into(), "false".into()],                 Some(1), ExplicitValueIndex::new(                1,)
+            ExplicitVariable::new(
+                2,
+                "numeric-goal".into(),
+                vec!["true".into(), "false".into()],
+                Some(1),
+                ExplicitValueIndex::new(1),
             ),
         ],
         numeric_variables: vec![
@@ -334,8 +381,18 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
             0,
         )],
         comparison_axioms: vec![
-            ComparisonAxiom::new(VariableIndex::new(0), VariableIndex::new(0), VariableIndex::new(2), ComparisonOperator::GreaterThanOrEqual),
-            ComparisonAxiom::new(VariableIndex::new(1), VariableIndex::new(1), VariableIndex::new(3), ComparisonOperator::GreaterThanOrEqual),
+            ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(2),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::new(1),
+                VariableIndex::new(1),
+                VariableIndex::new(3),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
         ],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(2, 0),
@@ -350,9 +407,19 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
         version: 4,
         metric: Metric::new(false, None),
         variables: vec![
-            ExplicitVariable::new(                2,                 "x-at-least-zero".into(),                 vec!["true".into(), "false".into()],                 Some(0), ExplicitValueIndex::new(                1,)
+            ExplicitVariable::new(
+                2,
+                "x-at-least-zero".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
             ),
-            ExplicitVariable::new(                2,                 "done".into(),                 vec!["true".into(), "false".into()],                 None, ExplicitValueIndex::new(                0,)
+            ExplicitVariable::new(
+                2,
+                "done".into(),
+                vec!["true".into(), "false".into()],
+                None,
+                ExplicitValueIndex::new(0),
             ),
         ],
         numeric_variables: vec![
@@ -369,12 +436,21 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
                 ExplicitFact::propositional(0, 0),
                 ExplicitFact::propositional(1, 1),
             ],
-            vec![Effect::new(vec![], VariableIndex::new(1), Some(ExplicitValueIndex::new(1)), ExplicitValueIndex::new(0))],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::new(1)),
+                ExplicitValueIndex::new(0),
+            )],
             vec![],
             OperatorCost::new(1),
         )],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            0), VariableIndex::new(            1),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(1, 0),
@@ -400,7 +476,12 @@ fn ocp_retains_stuttering_action_constraints() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(            2,             "x-at-least-two".into(),             vec!["true".into(), "false".into()],             Some(0), ExplicitValueIndex::new(            1,)
+        variables: vec![ExplicitVariable::new(
+            2,
+            "x-at-least-two".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -410,22 +491,30 @@ fn ocp_retains_stuttering_action_constraints() {
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(1)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(2.0), NumericValue::new(1.0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![Operator::new(
-                "increment".into(),
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
                 vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(0),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(2),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
             )],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            0), VariableIndex::new(            1),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -478,9 +567,19 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
         version: 4,
         metric: Metric::new(false, None),
         variables: vec![
-            ExplicitVariable::new(                2,                 "x-at-least-two".into(),                 vec!["true".into(), "false".into()],                 Some(0), ExplicitValueIndex::new(                1,)
+            ExplicitVariable::new(
+                2,
+                "x-at-least-two".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
             ),
-            ExplicitVariable::new(                2,                 "goal".into(),                 vec!["true".into(), "false".into()],                 None, ExplicitValueIndex::new(                0,)
+            ExplicitVariable::new(
+                2,
+                "goal".into(),
+                vec!["true".into(), "false".into()],
+                None,
+                ExplicitValueIndex::new(0),
             ),
         ],
         numeric_variables: vec![
@@ -491,7 +590,11 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
         goals: vec![ExplicitFact::propositional(1, 0)],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(2.0), NumericValue::new(1.0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![
             Operator::new(
                 "increment".into(),
@@ -512,13 +615,22 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
                     ExplicitFact::propositional(0, 0),
                     ExplicitFact::propositional(1, 1),
                 ],
-                vec![Effect::new(vec![], VariableIndex::new(1), Some(ExplicitValueIndex::new(1)), ExplicitValueIndex::new(0))],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(1)),
+                    ExplicitValueIndex::new(0),
+                )],
                 vec![],
                 OperatorCost::new(1),
             ),
         ],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            0), VariableIndex::new(            1),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(1, 0),
@@ -577,7 +689,12 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
         let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
             version: 4,
             metric: Metric::new(false, None),
-            variables: vec![ExplicitVariable::new(                2,                 "x-at-least-two".into(),                 vec!["true".into(), "false".into()],                 Some(0), ExplicitValueIndex::new(                1,)
+            variables: vec![ExplicitVariable::new(
+                2,
+                "x-at-least-two".into(),
+                vec!["true".into(), "false".into()],
+                Some(0),
+                ExplicitValueIndex::new(1),
             )],
             numeric_variables: vec![
                 NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -587,7 +704,11 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
             goals: vec![ExplicitFact::propositional(0, 0)],
             mutexes: vec![],
             state: vec![ExplicitValueIndex::new(1)],
-            numeric_state: vec![NumericValue::new(0.0), NumericValue::new(2.0), NumericValue::new(1.0)],
+            numeric_state: vec![
+                NumericValue::new(0.0),
+                NumericValue::new(2.0),
+                NumericValue::new(1.0),
+            ],
             operators: vec![Operator::new(
                 "increment".into(),
                 vec![],
@@ -602,7 +723,11 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
                 1,
             )],
             axioms: vec![],
-            comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(                0), VariableIndex::new(                0), VariableIndex::new(                1),                 ComparisonOperator::GreaterThanOrEqual,
+            comparison_axioms: vec![ComparisonAxiom::new(
+                VariableIndex::new(0),
+                VariableIndex::new(0),
+                VariableIndex::new(1),
+                ComparisonOperator::GreaterThanOrEqual,
             )],
             assignment_axioms: vec![],
             global_constraint: ExplicitFact::propositional(0, 0),
@@ -627,7 +752,12 @@ fn exact_ray_certifies_numeric_dead_end() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(            2,             "x-at-least-two".into(),             vec!["true".into(), "false".into()],             Some(0), ExplicitValueIndex::new(            1,)
+        variables: vec![ExplicitVariable::new(
+            2,
+            "x-at-least-two".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -637,22 +767,30 @@ fn exact_ray_certifies_numeric_dead_end() {
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(1)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(2.0), NumericValue::new(-1.0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(-1.0),
+        ],
         operators: vec![Operator::new(
-                "decrement".into(),
+            "decrement".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
                 vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(0),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(2),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
             )],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            0), VariableIndex::new(            1),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -684,7 +822,12 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(            2,             "done".into(),             vec!["true".into(), "false".into()],             None, ExplicitValueIndex::new(            0,)
+        variables: vec![ExplicitVariable::new(
+            2,
+            "done".into(),
+            vec!["true".into(), "false".into()],
+            None,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![
             NumericVariable::new("resource".into(), NumericType::Regular, None),
@@ -695,18 +838,23 @@ fn ray_goal_intervals_use_provider_bounds_for_goal_free_resources() {
         state: vec![ExplicitValueIndex::new(1)],
         numeric_state: vec![NumericValue::new(3.0), NumericValue::new(1.0)],
         operators: vec![Operator::new(
-                "increase-and-finish".into(),
-                vec![ExplicitFact::propositional(0, 1)],
-                vec![Effect::new(vec![], VariableIndex::new(0), Some(ExplicitValueIndex::new(1)), ExplicitValueIndex::new(0))],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(0),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(1),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
+            "increase-and-finish".into(),
+            vec![ExplicitFact::propositional(0, 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(1)),
+                ExplicitValueIndex::new(0),
             )],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(1),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
@@ -728,7 +876,12 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
     let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(            2,             "x-at-least-two".into(),             vec!["true".into(), "false".into()],             Some(0), ExplicitValueIndex::new(            1,)
+        variables: vec![ExplicitVariable::new(
+            2,
+            "x-at-least-two".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -738,22 +891,30 @@ fn impossible_reachable_bounds_skip_the_ordinary_lp() {
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(1)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(2.0), NumericValue::new(-1.0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(-1.0),
+        ],
         operators: vec![Operator::new(
-                "decrement".into(),
+            "decrement".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
                 vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(0),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(2),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
             )],
+            OperatorCost::new(1),
+        )],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            0), VariableIndex::new(            1),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -781,9 +942,19 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
         version: 4,
         metric: Metric::new(false, None),
         variables: vec![
-            ExplicitVariable::new(                2,                 "difference-at-least-zero".into(),                 vec!["true".into(), "false".into()],                 Some(2), ExplicitValueIndex::new(                1,)
+            ExplicitVariable::new(
+                2,
+                "difference-at-least-zero".into(),
+                vec!["true".into(), "false".into()],
+                Some(2),
+                ExplicitValueIndex::new(1),
             ),
-            ExplicitVariable::new(                2,                 "done".into(),                 vec!["true".into(), "false".into()],                 None, ExplicitValueIndex::new(                0,)
+            ExplicitVariable::new(
+                2,
+                "done".into(),
+                vec!["true".into(), "false".into()],
+                None,
+                ExplicitValueIndex::new(0),
             ),
         ],
         numeric_variables: vec![
@@ -819,7 +990,12 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
                     ExplicitFact::propositional(0, 0),
                     ExplicitFact::propositional(1, 1),
                 ],
-                vec![Effect::new(vec![], VariableIndex::new(1), Some(ExplicitValueIndex::new(1)), ExplicitValueIndex::new(0))],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(1)),
+                    ExplicitValueIndex::new(0),
+                )],
                 vec![],
                 OperatorCost::new(1),
             ),
@@ -851,7 +1027,11 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             ),
         ],
         axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(VariableIndex::new(            0), VariableIndex::new(            4), VariableIndex::new(            5),             ComparisonOperator::GreaterThanOrEqual,
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(4),
+            VariableIndex::new(5),
+            ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![
             AssignmentAxiom::new(3, CalOperator::Sum, 2, 1),

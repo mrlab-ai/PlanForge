@@ -4,7 +4,12 @@ use planforge_sas::numeric_task::{
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
-    ExplicitVariable::new(        values.len(),         name.to_string(),         values.iter().map(|value| value.to_string()).collect(),         axiom_layer, ExplicitValueIndex::new(        0,)
+    ExplicitVariable::new(
+        values.len(),
+        name.to_string(),
+        values.iter().map(|value| value.to_string()).collect(),
+        axiom_layer,
+        ExplicitValueIndex::new(0),
     )
 }
 
