@@ -88,7 +88,7 @@ fn a_guarded_numeric_effect_survives_the_whole_pipeline() {
             .assignment_effects()
             .iter()
             .filter(|effect| {
-                task.numeric_variables()[effect.affected_var_id()]
+                task.numeric_variables()[effect.affected_var_id().index()]
                     .name()
                     .contains("fuel")
             })

@@ -6,8 +6,8 @@ use std::fmt;
 use crate::axioms::{AssignmentAxiom, CalOperator};
 use crate::numeric_conditions::NumericConditionError;
 use crate::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, NumericTaskExt,
-    NumericType,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
+    NumericTaskExt, NumericType, NumericValue, OperatorIndex, VariableIndex,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,9 +24,9 @@ impl LinearExpression {
         }
     }
 
-    pub fn variable(num_numeric_vars: usize, numeric_var_id: usize) -> Self {
+    pub fn variable(num_numeric_vars: usize, numeric_var_id: VariableIndex) -> Self {
         let mut coefficients = vec![0.0; num_numeric_vars];
-        coefficients[numeric_var_id] = 1.0;
+        coefficients[numeric_var_id.index()] = 1.0;
         Self {
             coefficients,
             constant: 0.0,
@@ -73,21 +73,23 @@ impl LinearExpression {
         result
     }
 
-    pub fn evaluate(&self, numeric_values: &[f64]) -> f64 {
-        self.constant
-            + self
-                .coefficients
-                .iter()
-                .zip(numeric_values.iter())
-                .map(|(coefficient, value)| coefficient * value)
-                .sum::<f64>()
+    pub fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
+        NumericValue::new(
+            self.constant
+                + self
+                    .coefficients
+                    .iter()
+                    .zip(numeric_values.iter())
+                    .map(|(coefficient, value)| coefficient * value.value())
+                    .sum::<f64>(),
+        )
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinearNumericEffect {
-    pub affected_var_id: usize,
-    pub source_var_id: usize,
+    pub affected_var_id: VariableIndex,
+    pub source_var_id: VariableIndex,
     pub operation: AssignmentOperation,
     pub conditions: Vec<ExplicitFact>,
     pub is_conditional: bool,
@@ -197,7 +199,7 @@ impl fmt::Display for LinearizationError {
 
 pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
 ) -> Result<LinearExpression, LinearizationError> {
     let assignment_lookup = task
         .assignment_axiom_lookup()
@@ -215,15 +217,16 @@ pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
 
 pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    operator_id: usize,
+    operator_id: OperatorIndex,
 ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
     let operators = task.get_operators();
-    let operator = operators
-        .get(operator_id)
-        .ok_or(LinearizationError::InvalidOperatorId {
-            operator_id,
-            len: operators.len(),
-        })?;
+    let operator =
+        operators
+            .get(operator_id.index())
+            .ok_or(LinearizationError::InvalidOperatorId {
+                operator_id: operator_id.index(),
+                len: operators.len(),
+            })?;
     let assignment_lookup = task
         .assignment_axiom_lookup()
         .map_err(LinearizationError::InvalidAssignmentAxiomLayout)?;
@@ -244,7 +247,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
             &mut visiting,
         )?;
         let affected_var_id = assignment_effect.affected_var_id();
-        if affected_var_id >= num_numeric_vars {
+        if affected_var_id.index() >= num_numeric_vars {
             return Err(LinearizationError::InvalidAssignmentEffectId {
                 assignment_effect_id,
                 len: operator.assignment_effects().len(),
@@ -272,42 +275,48 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
 
 fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    numeric_var_id: usize,
-    assignment_lookup: &[Option<usize>],
-    initial_numeric_values: &[f64],
+    numeric_var_id: VariableIndex,
+    assignment_lookup: &[Option<AxiomIndex>],
+    initial_numeric_values: &[NumericValue],
     visiting: &mut [bool],
 ) -> Result<LinearExpression, LinearizationError> {
     let num_numeric_vars = task.numeric_variables().len();
-    if numeric_var_id >= num_numeric_vars {
+    if numeric_var_id.index() >= num_numeric_vars {
         return Err(LinearizationError::InvalidNumericVarId {
-            numeric_var_id,
+            numeric_var_id: numeric_var_id.index(),
             len: num_numeric_vars,
         });
     }
-    if visiting[numeric_var_id] {
-        return Err(LinearizationError::CycleDetected { numeric_var_id });
+    if visiting[numeric_var_id.index()] {
+        return Err(LinearizationError::CycleDetected {
+            numeric_var_id: numeric_var_id.index(),
+        });
     }
 
-    let numeric_var = &task.numeric_variables()[numeric_var_id];
+    let numeric_var = &task.numeric_variables()[numeric_var_id.index()];
     match numeric_var.get_type() {
         NumericType::Regular => Ok(LinearExpression::variable(num_numeric_vars, numeric_var_id)),
         NumericType::Constant | NumericType::Cost => {
-            let value = initial_numeric_values.get(numeric_var_id).ok_or(
+            let value = initial_numeric_values.get(numeric_var_id.index()).ok_or(
                 LinearizationError::InitialNumericStateTooShort {
-                    numeric_var_id,
+                    numeric_var_id: numeric_var_id.index(),
                     len: initial_numeric_values.len(),
                 },
             )?;
-            Ok(LinearExpression::constant(num_numeric_vars, *value))
+            Ok(LinearExpression::constant(num_numeric_vars, value.value()))
         }
         NumericType::Derived => {
-            let axiom_id = assignment_lookup[numeric_var_id]
-                .ok_or(LinearizationError::MissingAssignmentAxiom { numeric_var_id })?;
-            let axiom = task
-                .assignment_axioms()
-                .get(axiom_id)
-                .ok_or(LinearizationError::MissingAssignmentAxiom { numeric_var_id })?;
-            visiting[numeric_var_id] = true;
+            let axiom_id = assignment_lookup[numeric_var_id.index()].ok_or(
+                LinearizationError::MissingAssignmentAxiom {
+                    numeric_var_id: numeric_var_id.index(),
+                },
+            )?;
+            let axiom = task.assignment_axioms().get(axiom_id.index()).ok_or(
+                LinearizationError::MissingAssignmentAxiom {
+                    numeric_var_id: numeric_var_id.index(),
+                },
+            )?;
+            visiting[numeric_var_id.index()] = true;
             let lhs = linearize_numeric_var_with_lookup(
                 task,
                 axiom.get_left_var_id(),
@@ -322,14 +331,14 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
                 initial_numeric_values,
                 visiting,
             )?;
-            visiting[numeric_var_id] = false;
+            visiting[numeric_var_id.index()] = false;
             linearize_assignment_axiom_expr(numeric_var_id, axiom, &lhs, &rhs)
         }
     }
 }
 
 fn linearize_assignment_axiom_expr(
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
     axiom: &AssignmentAxiom,
     lhs: &LinearExpression,
     rhs: &LinearExpression,
@@ -344,7 +353,7 @@ fn linearize_assignment_axiom_expr(
                 Ok(lhs.scale(rhs.constant))
             } else {
                 Err(LinearizationError::NonLinearAssignmentAxiom {
-                    numeric_var_id,
+                    numeric_var_id: numeric_var_id.index(),
                     operator: "*",
                 })
             }
@@ -352,12 +361,14 @@ fn linearize_assignment_axiom_expr(
         CalOperator::Division => {
             if !rhs.is_constant() {
                 return Err(LinearizationError::NonLinearAssignmentAxiom {
-                    numeric_var_id,
+                    numeric_var_id: numeric_var_id.index(),
                     operator: "/",
                 });
             }
             if rhs.constant.abs() < 1e-12 {
-                return Err(LinearizationError::DivisionByZeroConstant { numeric_var_id });
+                return Err(LinearizationError::DivisionByZeroConstant {
+                    numeric_var_id: numeric_var_id.index(),
+                });
             }
             Ok(lhs.scale(1.0 / rhs.constant))
         }
@@ -366,7 +377,7 @@ fn linearize_assignment_axiom_expr(
 
 fn linearize_assignment_delta(
     num_numeric_vars: usize,
-    affected_var_id: usize,
+    affected_var_id: VariableIndex,
     assignment_effect: &AssignmentEffect,
     source_expression: &LinearExpression,
 ) -> Result<LinearExpression, LinearizationError> {
@@ -378,7 +389,7 @@ fn linearize_assignment_delta(
         AssignmentOperation::Times => {
             if !source_expression.is_constant() {
                 return Err(LinearizationError::NonLinearAssignmentEffect {
-                    affected_var_id,
+                    affected_var_id: affected_var_id.index(),
                     operator: "*",
                 });
             }
@@ -387,13 +398,13 @@ fn linearize_assignment_delta(
         AssignmentOperation::Divide => {
             if !source_expression.is_constant() {
                 return Err(LinearizationError::NonLinearAssignmentEffect {
-                    affected_var_id,
+                    affected_var_id: affected_var_id.index(),
                     operator: "/",
                 });
             }
             if source_expression.constant.abs() < 1e-12 {
                 return Err(LinearizationError::DivisionByZeroConstant {
-                    numeric_var_id: affected_var_id,
+                    numeric_var_id: affected_var_id.index(),
                 });
             }
             Ok(target_expression.scale(1.0 / source_expression.constant - 1.0))

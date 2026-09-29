@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::ExplicitFact;
+use planforge_sas::numeric_task::{ExplicitFact, OperatorIndex};
 use planforge_sas::utils::float_tolerance;
 
 use super::TransitionResidualCosts;
@@ -15,7 +15,7 @@ use super::region::StateRegion;
 pub struct AbstractTransition {
     pub transition_id: usize,
     pub abstract_op_id: usize,
-    pub concrete_op_ids: Vec<usize>,
+    pub concrete_op_ids: Vec<OperatorIndex>,
     pub source_hash: usize,
     pub target_hash: usize,
 }
@@ -27,7 +27,7 @@ pub struct AbstractOperatorRegions {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct OperatorRegion {
-    pub concrete_op_id: usize,
+    pub concrete_op_id: OperatorIndex,
     pub source: Arc<StateRegion>,
 }
 
@@ -96,9 +96,12 @@ pub fn build_explicit_label_cost_partitioning_table(
                 .concrete_op_ids
                 .iter()
                 .map(|&operator_id| {
-                    operator_costs.get(operator_id).copied().with_context(|| {
-                        format!("missing residual cost for concrete operator {operator_id}")
-                    })
+                    operator_costs
+                        .get(operator_id.index())
+                        .copied()
+                        .with_context(|| {
+                            format!("missing residual cost for concrete operator {operator_id}")
+                        })
                 })
                 .collect::<Result<Vec<_>>>()
                 .map(|costs| costs.into_iter().fold(f64::INFINITY, f64::min))
@@ -124,7 +127,7 @@ pub fn build_explicit_label_cost_partitioning_table(
             transition
                 .concrete_op_ids
                 .iter()
-                .map(|&operator_id| saturated[operator_id])
+                .map(|&operator_id| saturated[operator_id.index()])
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();
@@ -375,7 +378,7 @@ fn saturated_label_costs(
             continue;
         };
         for &operator_id in &transition.concrete_op_ids {
-            let slot = saturated.get_mut(operator_id).with_context(|| {
+            let slot = saturated.get_mut(operator_id.index()).with_context(|| {
                 format!("transition references missing concrete operator {operator_id}")
             })?;
             *slot = slot.max(needed);

@@ -1,8 +1,12 @@
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashMap;
 
 use anyhow::{Result, bail, ensure};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, Operator,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, NumericValue,
+    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
@@ -17,34 +21,36 @@ const EPSILON: f64 = 1e-12;
 #[derive(Clone, Debug)]
 pub(crate) struct AdditiveNumericView {
     expression: LinearExpression,
-    operator_deltas: Vec<f64>,
+    operator_deltas: Vec<NumericValue>,
 }
 
 impl AdditiveNumericView {
-    pub(crate) fn operator_delta(&self, operator_id: usize) -> Result<f64> {
+    pub(crate) fn operator_delta(&self, operator_id: OperatorIndex) -> Result<NumericValue> {
         self.operator_deltas
-            .get(operator_id)
+            .get(operator_id.index())
             .copied()
             .ok_or_else(|| {
                 anyhow::anyhow!("missing additive-view delta for operator {operator_id}")
             })
     }
 
-    pub(crate) fn operator_deltas(&self) -> &[f64] {
+    pub(crate) fn operator_deltas(&self) -> &[NumericValue] {
         &self.operator_deltas
     }
 
-    pub(crate) fn evaluate(&self, numeric_values: &[f64]) -> f64 {
+    pub(crate) fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
         self.expression.evaluate(numeric_values)
     }
 }
 
 pub(crate) fn initial_numeric_values_with_additive_views(
     task: &dyn AbstractNumericTask,
-) -> Vec<f64> {
+) -> Vec<NumericValue> {
     let mut values = task.get_initial_numeric_state_values().to_vec();
     for numeric_var_id in 0..task.numeric_variables().len() {
-        let Some(view) = analyze_additive_numeric_view(task, numeric_var_id) else {
+        let Some(view) =
+            analyze_additive_numeric_view(task, VariableIndex::from_usize(numeric_var_id))
+        else {
             continue;
         };
         values[numeric_var_id] = view.evaluate(&values);
@@ -74,7 +80,8 @@ impl AdditiveNumericViews {
             if task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Derived {
                 continue;
             }
-            let view = analyze_additive_numeric_view(task, numeric_var_id);
+            let view =
+                analyze_additive_numeric_view(task, VariableIndex::from_usize(numeric_var_id));
             if domain_size > 1 && view.is_none() {
                 bail!(
                     "derived numeric variable {numeric_var_id} ({}) was refined, but is not an affine coordinate with deterministic additive operator effects",
@@ -102,9 +109,14 @@ impl AdditiveNumericViews {
 
 pub(crate) fn analyze_additive_numeric_view(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
 ) -> Option<AdditiveNumericView> {
-    if task.numeric_variables().get(numeric_var_id)?.get_type() != &NumericType::Derived {
+    if task
+        .numeric_variables()
+        .get(numeric_var_id.index())?
+        .get_type()
+        != &NumericType::Derived
+    {
         return None;
     }
     if numeric_expression_depends_on_cost(task, numeric_var_id) {
@@ -144,17 +156,21 @@ pub(crate) fn analyze_additive_numeric_view(
 
 fn numeric_expression_depends_on_cost(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
 ) -> bool {
-    fn visit(task: &dyn AbstractNumericTask, numeric_var_id: usize, visiting: &mut [bool]) -> bool {
-        let Some(variable) = task.numeric_variables().get(numeric_var_id) else {
+    fn visit(
+        task: &dyn AbstractNumericTask,
+        numeric_var_id: VariableIndex,
+        visiting: &mut [bool],
+    ) -> bool {
+        let Some(variable) = task.numeric_variables().get(numeric_var_id.index()) else {
             return true;
         };
         match variable.get_type() {
             NumericType::Cost => true,
             NumericType::Regular | NumericType::Constant => false,
             NumericType::Derived => {
-                if visiting[numeric_var_id] {
+                if visiting[numeric_var_id.index()] {
                     return true;
                 }
                 let mut axioms = task
@@ -167,10 +183,10 @@ fn numeric_expression_depends_on_cost(
                 if axioms.next().is_some() {
                     return true;
                 }
-                visiting[numeric_var_id] = true;
+                visiting[numeric_var_id.index()] = true;
                 let depends_on_cost = visit(task, axiom.get_left_var_id(), visiting)
                     || visit(task, axiom.get_right_var_id(), visiting);
-                visiting[numeric_var_id] = false;
+                visiting[numeric_var_id.index()] = false;
                 depends_on_cost
             }
         }
@@ -185,10 +201,10 @@ fn numeric_expression_depends_on_cost(
 
 pub(crate) fn is_refinable_numeric_dimension(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
 ) -> bool {
     task.numeric_variables()
-        .get(numeric_var_id)
+        .get(numeric_var_id.index())
         .is_some_and(|variable| match variable.get_type() {
             NumericType::Regular => true,
             NumericType::Derived => analyze_additive_numeric_view(task, numeric_var_id).is_some(),
@@ -202,7 +218,7 @@ pub(crate) fn is_refinable_numeric_dimension(
 pub(crate) fn comparison_refinement_dimensions(
     task: &dyn AbstractNumericTask,
     tree: &NumericCondition,
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     let mut direct = [tree.left_numeric_var_id(), tree.right_numeric_var_id()]
         .into_iter()
         .filter(|&numeric_var_id| is_refinable_numeric_dimension(task, numeric_var_id))
@@ -220,14 +236,14 @@ pub(crate) fn active_comparison_dimensions(
     tree: &NumericCondition,
     numeric_domain_sizes: &[usize],
     additive_views: &AdditiveNumericViews,
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     let mut dimensions = tree
         .regular_numeric_var_dependencies()
         .iter()
         .copied()
         .filter(|&numeric_var_id| {
             numeric_domain_sizes
-                .get(numeric_var_id)
+                .get(numeric_var_id.index())
                 .is_some_and(|&size| size > 1)
         })
         .collect::<Vec<_>>();
@@ -240,9 +256,9 @@ pub(crate) fn active_comparison_dimensions(
             continue;
         };
         if numeric_domain_sizes
-            .get(*result_numeric_var_id)
+            .get(result_numeric_var_id.index())
             .is_some_and(|&size| size > 1)
-            && additive_views.get(*result_numeric_var_id).is_some()
+            && additive_views.get(result_numeric_var_id.index()).is_some()
         {
             dimensions.push(*result_numeric_var_id);
         }
@@ -252,15 +268,18 @@ pub(crate) fn active_comparison_dimensions(
     dimensions
 }
 
-pub(crate) fn numeric_effect_deltas(task: &dyn AbstractNumericTask) -> HashMap<usize, Vec<f64>> {
-    let mut deltas: HashMap<usize, Vec<f64>> = HashMap::new();
+pub(crate) fn numeric_effect_deltas(
+    task: &dyn AbstractNumericTask,
+) -> HashMap<VariableIndex, Vec<NumericValue>> {
+    let mut deltas: HashMap<VariableIndex, Vec<NumericValue>> = HashMap::new();
     for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
+        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
         match numeric_var.get_type() {
             NumericType::Regular => {
                 for operator in task.get_operators() {
                     if let Some(delta) =
                         regular_additive_delta_for_operator(task, numeric_var_id, operator)
-                        && delta.abs() >= EPSILON
+                        && delta.value().abs() >= EPSILON
                     {
                         deltas.entry(numeric_var_id).or_default().push(delta);
                     }
@@ -271,7 +290,7 @@ pub(crate) fn numeric_effect_deltas(task: &dyn AbstractNumericTask) -> HashMap<u
                     continue;
                 };
                 for delta in view.operator_deltas {
-                    if delta.abs() >= EPSILON {
+                    if delta.value().abs() >= EPSILON {
                         deltas.entry(numeric_var_id).or_default().push(delta);
                     }
                 }
@@ -280,18 +299,22 @@ pub(crate) fn numeric_effect_deltas(task: &dyn AbstractNumericTask) -> HashMap<u
         }
     }
     for values in deltas.values_mut() {
-        values.sort_by(|left, right| left.total_cmp(right));
-        values.dedup_by(|left, right| (*left - *right).abs() < EPSILON);
+        values.sort_by(|left, right| left.value().total_cmp(&right.value()));
+        values.dedup_by(|left, right| (left.value() - right.value()).abs() < EPSILON);
     }
     deltas
 }
 
 pub(crate) fn numeric_dimension_delta_for_operator(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
     operator: &Operator,
-) -> Option<f64> {
-    match task.numeric_variables().get(numeric_var_id)?.get_type() {
+) -> Option<NumericValue> {
+    match task
+        .numeric_variables()
+        .get(numeric_var_id.index())?
+        .get_type()
+    {
         NumericType::Regular => regular_additive_delta_for_operator(task, numeric_var_id, operator),
         NumericType::Derived => {
             let view = analyze_additive_numeric_view(task, numeric_var_id)?;
@@ -303,14 +326,14 @@ pub(crate) fn numeric_dimension_delta_for_operator(
 
 pub(crate) fn is_operator_invariant_regular_dimension(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
 ) -> bool {
     task.numeric_variables()
-        .get(numeric_var_id)
+        .get(numeric_var_id.index())
         .is_some_and(|variable| variable.get_type() == &NumericType::Regular)
         && task.get_operators().iter().all(|operator| {
             regular_additive_delta_for_operator(task, numeric_var_id, operator)
-                .is_some_and(|delta| delta.abs() < EPSILON)
+                .is_some_and(|delta| delta.value().abs() < EPSILON)
         })
 }
 
@@ -318,28 +341,34 @@ fn additive_view_delta_for_operator(
     task: &dyn AbstractNumericTask,
     expression: &LinearExpression,
     operator: &Operator,
-) -> Option<f64> {
-    let mut delta = 0.0;
+) -> Option<NumericValue> {
+    let mut delta: f64 = 0.0;
     for (numeric_var_id, &coefficient) in expression.coefficients.iter().enumerate() {
         if coefficient.abs() < EPSILON {
             continue;
         }
-        delta += coefficient * regular_additive_delta_for_operator(task, numeric_var_id, operator)?;
+        delta += coefficient
+            * regular_additive_delta_for_operator(
+                task,
+                VariableIndex::from_usize(numeric_var_id),
+                operator,
+            )?
+            .value();
     }
-    delta.is_finite().then_some(delta)
+    delta.is_finite().then_some(NumericValue::new(delta))
 }
 
 fn regular_additive_delta_for_operator(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
     operator: &Operator,
-) -> Option<f64> {
+) -> Option<NumericValue> {
     let mut matching = operator
         .assignment_effects()
         .iter()
         .filter(|effect| effect.affected_var_id() == numeric_var_id);
     let Some(effect) = matching.next() else {
-        return Some(0.0);
+        return Some(ZERO_VALUE);
     };
     if matching.next().is_some() || effect.is_conditional() || !effect.conditions().is_empty() {
         return None;
@@ -347,111 +376,25 @@ fn regular_additive_delta_for_operator(
     constant_effect_delta(task, effect)
 }
 
-fn constant_effect_delta(task: &dyn AbstractNumericTask, effect: &AssignmentEffect) -> Option<f64> {
-    let rhs_variable = task.numeric_variables().get(effect.var_id())?;
+fn constant_effect_delta(
+    task: &dyn AbstractNumericTask,
+    effect: &AssignmentEffect,
+) -> Option<NumericValue> {
+    let rhs_variable = task.numeric_variables().get(effect.var_id().index())?;
     if rhs_variable.get_type() != &NumericType::Constant {
         return None;
     }
     let rhs = *task
         .get_initial_numeric_state_values()
-        .get(effect.var_id())?;
-    if !rhs.is_finite() {
+        .get(effect.var_id().index())?;
+    if !rhs.value().is_finite() {
         return None;
     }
     match effect.operation() {
         AssignmentOperation::Plus => Some(rhs),
-        AssignmentOperation::Minus => Some(-rhs),
+        AssignmentOperation::Minus => Some(NumericValue::new(-rhs.value())),
         AssignmentOperation::Assign | AssignmentOperation::Times | AssignmentOperation::Divide => {
             None
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
-    use planforge_sas::numeric_task::{
-        AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric,
-        NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
-    };
-
-    use super::*;
-
-    fn global_constraint_variable() -> ExplicitVariable {
-        ExplicitVariable::new(1, "global-constraint".into(), vec!["true".into()], None, 0)
-    }
-
-    fn affine_sum_task(operation: AssignmentOperation) -> NumericRootTask {
-        let numeric_variables = vec![
-            NumericVariable::new("x".into(), NumericType::Regular, None),
-            NumericVariable::new("y".into(), NumericType::Regular, None),
-            NumericVariable::new("x_plus_y".into(), NumericType::Derived, None),
-            NumericVariable::new("one".into(), NumericType::Constant, None),
-        ];
-        let operator = Operator::new(
-            "change-x".into(),
-            vec![],
-            vec![],
-            vec![AssignmentEffect::new(0, operation, 3, false, vec![])],
-            1,
-        );
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 4,
-            metric: Metric::new(true, None),
-            variables: vec![global_constraint_variable()],
-            numeric_variables,
-            goals: vec![],
-            mutexes: vec![],
-            state: vec![0],
-            numeric_state: vec![0.0, 0.0, 0.0, 1.0],
-            operators: vec![operator],
-            axioms: vec![],
-            comparison_axioms: vec![],
-            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-
-    #[test]
-    fn affine_sum_is_an_exact_additive_coordinate() {
-        let task = affine_sum_task(AssignmentOperation::Plus);
-        let view = analyze_additive_numeric_view(&task, 2).expect("x+y should be additive");
-
-        assert_eq!(view.expression.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
-        assert_eq!(view.operator_delta(0).unwrap(), 1.0);
-    }
-
-    #[test]
-    fn non_additive_effect_rejects_affine_coordinate() {
-        let task = affine_sum_task(AssignmentOperation::Assign);
-
-        assert!(analyze_additive_numeric_view(&task, 2).is_none());
-        assert!(AdditiveNumericViews::for_active_dimensions(&task, &[1, 1, 2, 1]).is_err());
-    }
-
-    #[test]
-    fn cost_dependent_expression_is_not_an_additive_view() {
-        let numeric_variables = vec![
-            NumericVariable::new("x".into(), NumericType::Regular, None),
-            NumericVariable::new("accumulated-cost".into(), NumericType::Cost, None),
-            NumericVariable::new("x-plus-cost".into(), NumericType::Derived, None),
-        ];
-        let task = NumericRootTask::new(NumericRootTaskParts {
-            version: 4,
-            metric: Metric::new(true, Some(1)),
-            variables: vec![global_constraint_variable()],
-            numeric_variables,
-            goals: vec![],
-            mutexes: vec![],
-            state: vec![0],
-            numeric_state: vec![0.0, 0.0, 0.0],
-            operators: vec![],
-            axioms: vec![],
-            comparison_axioms: vec![],
-            assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-            global_constraint: ExplicitFact::propositional(0, 0),
-        });
-
-        assert!(analyze_additive_numeric_view(&task, 2).is_none());
     }
 }

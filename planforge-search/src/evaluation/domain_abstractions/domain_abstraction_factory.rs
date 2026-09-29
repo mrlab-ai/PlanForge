@@ -15,7 +15,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::debug;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator, VariableIndex,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
@@ -105,7 +105,7 @@ impl DomainAbstractionFactory {
             );
 
             let concrete_size = task
-                .get_variable_domain_size(var)
+                .get_variable_domain_size(VariableIndex::from_usize(var))
                 .map_err(|e| anyhow!(e.to_string()))
                 .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
             ensure!(
@@ -125,14 +125,17 @@ impl DomainAbstractionFactory {
 
             for (val, &mapped) in domain_mapping[var].iter().enumerate() {
                 ensure!(
-                    mapped < abs_size,
+                    mapped.index() < abs_size,
                     "domain_mapping[{var}][{val}]={mapped} out of range for abstract size {abs_size}"
                 );
             }
         }
         for (n, &parts) in numeric_domain_sizes.iter().enumerate() {
             ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");
-            let actual = partitions.partitions(n).map(|p| p.len()).unwrap_or(0);
+            let actual = partitions
+                .partitions(VariableIndex::from_usize(n))
+                .map(|p| p.len())
+                .unwrap_or(0);
             ensure!(
                 actual == parts,
                 "numeric_domain_sizes[{n}]={parts} does not match partitions len {actual}"
@@ -142,7 +145,7 @@ impl DomainAbstractionFactory {
         let cached_operator_costs: Arc<[f64]> = task
             .get_operators()
             .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
+            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
             .collect();
         let additive_numeric_views =
             AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;

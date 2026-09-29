@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use super::abstract_operator_generator::AbstractOperator;
 use super::cegar::{Cegar, CegarConfig, CegarStopReason};
@@ -22,7 +22,7 @@ pub struct DomainAbstraction {
     pub distance_table: AbstractDistanceTable,
     pub hash_multipliers: Vec<usize>,
     pub combine_labels: bool,
-    pub relevant_operator_ids: Vec<usize>,
+    pub relevant_operator_ids: Vec<OperatorIndex>,
     pub abstract_operators: Vec<AbstractOperator>,
     pub abstract_operator_regions: Vec<AbstractOperatorRegions>,
     pub(crate) regional_transition_system: RefCell<Option<AbstractTransitionSystem>>,

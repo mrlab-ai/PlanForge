@@ -1,8 +1,11 @@
-use planforge_sas::state_registry::ExpansionContext;
+use planforge_sas::{
+    numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex},
+    state_registry::ExpansionContext,
+};
 use std::time::Duration;
 
 pub(crate) struct SearchConfig {
-    pub(crate) operator_costs: Vec<f64>,
+    pub(crate) operator_costs: Vec<NumericValue>,
     pub(crate) use_metric: bool,
     pub(crate) time_limit: Option<Duration>,
     pub(crate) max_memory_bytes: Option<u64>,
@@ -10,11 +13,11 @@ pub(crate) struct SearchConfig {
 
 #[derive(Default)]
 pub(crate) struct ExpansionScratch {
-    pub(crate) state_values: Vec<usize>,
-    pub(crate) applicable_operators: Vec<u32>,
-    pub(crate) successor_numeric: Vec<f64>,
-    pub(crate) successor_cost: Vec<f64>,
-    pub(crate) preferred_ids: Vec<u32>,
+    pub(crate) state_values: Vec<ExplicitValueIndex>,
+    pub(crate) applicable_operators: Vec<OperatorIndex>,
+    pub(crate) successor_numeric: Vec<NumericValue>,
+    pub(crate) successor_cost: Vec<NumericValue>,
+    pub(crate) preferred_ids: Vec<OperatorIndex>,
     pub(crate) expansion_context: ExpansionContext,
 }
 

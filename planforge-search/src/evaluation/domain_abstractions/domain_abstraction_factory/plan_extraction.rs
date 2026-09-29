@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+
 use super::*;
 
 /// A solved abstraction a wildcard plan can be read back from: the task and the
@@ -11,13 +13,13 @@ pub(super) struct SolvedAbstraction<'a> {
     pub(super) operators: &'a [AbstractOperator],
     pub(super) table: &'a AbstractDistanceTable,
     pub(super) match_tree: &'a MatchTree,
-    pub(super) comparison_var_ids: &'a [usize],
+    pub(super) comparison_var_ids: &'a [VariableIndex],
 }
 
 #[derive(Debug, Clone)]
 pub struct WildcardPlanResult {
     // Per-step set of concrete operator IDs.
-    pub wildcard_plan: Vec<Vec<usize>>,
+    pub wildcard_plan: Vec<Vec<OperatorIndex>>,
     // Path of abstract state hashes (`len = steps+1`).
     pub abstract_state_hashes: Vec<usize>,
     // Decoded propositional values along path.
@@ -178,7 +180,7 @@ impl DomainAbstractionFactory {
             return Ok(None);
         }
 
-        let mut wildcard_plan: Vec<Vec<usize>> = Vec::new();
+        let mut wildcard_plan: Vec<Vec<OperatorIndex>> = Vec::new();
         let mut abstract_state_hashes: Vec<usize> = vec![current_hash];
         let mut seen_states: Vec<usize> = Vec::new();
 
@@ -251,7 +253,7 @@ impl DomainAbstractionFactory {
                 // 0/!=0 so canonicalization-snapped near-zero costs (state_registry.rs:1661 grid)
                 // don't fall through both branches. Mirrors numeric-fd's tolerant if/else
                 // structure (domain_abstraction_factory.cc:1500/1524).
-                let is_zero_cost = op.cost.abs() <= float_tolerance::ABS_EPSILON;
+                let is_zero_cost = op.cost.value().abs() <= float_tolerance::ABS_EPSILON;
                 let valid_progress = if is_zero_cost {
                     (cd - cur_d).abs() <= 1e-9
                 } else {
@@ -291,19 +293,19 @@ impl DomainAbstractionFactory {
                 "successor hash out of range: {successor_hash}"
             );
             ensure!(
-                (lowest_so_far - cur_d + op.cost).abs() <= 1e-6,
+                (lowest_so_far - cur_d + op.cost.value()).abs() <= 1e-6,
                 "chosen successor violates plan-extraction distance relation"
             );
             let required_cost = op.cost;
 
-            let mut step: Vec<usize> = Vec::new();
+            let mut step: Vec<OperatorIndex> = Vec::new();
             let mut applicable_operator_ids: Vec<usize> = Vec::new();
             match_tree.get_applicable_operator_ids(base_successor, &mut applicable_operator_ids);
             for &cand_op_id in &applicable_operator_ids {
                 let cand_op = operators
                     .get(cand_op_id)
                     .with_context(|| format!("candidate op id out of bounds: {cand_op_id}"))?;
-                if (cand_op.cost - required_cost).abs() > 1e-9 {
+                if (cand_op.cost.value() - required_cost.value()).abs() > 1e-9 {
                     continue;
                 }
                 let cand_pred_i64 = base_successor as i64 + cand_op.hash_effect as i64;

@@ -21,7 +21,7 @@
 use std::path::Path;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, NumericRootTask, assert_fact_namespaces,
+    AbstractNumericTask, ExplicitFact, NumericRootTask, VariableIndex, assert_fact_namespaces,
 };
 use planforge_translate::{translate_to_sas_string, translate_to_task};
 
@@ -183,8 +183,8 @@ fn assert_tasks_are_equivalent(direct: &NumericRootTask, parsed: &NumericRootTas
             "{what}: variable {var_id}"
         );
         assert_eq!(
-            direct.get_variable_default_axiom_value(var_id),
-            parsed.get_variable_default_axiom_value(var_id),
+            direct.get_variable_default_axiom_value(VariableIndex::from_usize(var_id)),
+            parsed.get_variable_default_axiom_value(VariableIndex::from_usize(var_id)),
             "{what}: axiom default of variable {var_id}"
         );
     }

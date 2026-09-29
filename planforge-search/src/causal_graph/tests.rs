@@ -2,8 +2,9 @@ use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -14,7 +15,7 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         axiom_layer,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -31,7 +32,7 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
                 "cmp".to_string(),
                 vec!["t".to_string(), "f".to_string(), "u".to_string()],
                 Some(0),
-                2,
+                ExplicitValueIndex::new(2),
             ),
         ],
         numeric_variables: vec![
@@ -40,8 +41,12 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
         ],
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![0, 0, 2],
-        numeric_state: vec![1.0, 0.0],
+        state: vec![
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(2),
+        ],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
         operators: vec![Operator::new(
             "advance".to_string(),
             vec![
@@ -50,29 +55,29 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
             ],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
-                1,
-                Some(0),
-                1,
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
             )],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 1)],
-            1,
-            0,
-            1,
+            VariableIndex::from_usize(1),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(1),
         )],
         comparison_axioms: vec![ComparisonAxiom::new(
-            2,
-            1,
-            0,
+            VariableIndex::new(2),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -83,22 +88,32 @@ fn causal_graph_collects_operator_and_axiom_dependencies() {
 
     assert!(
         graph
-            .predecessors_of(CausalGraphVariable::Propositional(1))
+            .predecessors_of(CausalGraphVariable::Propositional(
+                VariableIndex::from_usize(1)
+            ))
             .collect::<Vec<_>>()
-            .contains(&CausalGraphVariable::Propositional(0))
+            .contains(&CausalGraphVariable::Propositional(
+                VariableIndex::from_usize(0)
+            ))
     );
     assert_eq!(
         graph
-            .predecessors_of(CausalGraphVariable::Propositional(2))
+            .predecessors_of(CausalGraphVariable::Propositional(
+                VariableIndex::from_usize(2)
+            ))
             .collect::<Vec<_>>(),
         Vec::<CausalGraphVariable>::new()
     );
     assert_eq!(
-        graph.goal_distance(CausalGraphVariable::Propositional(1)),
+        graph.goal_distance(CausalGraphVariable::Propositional(
+            VariableIndex::from_usize(1)
+        )),
         Some(0)
     );
     assert_eq!(
-        graph.goal_distance(CausalGraphVariable::Propositional(0)),
+        graph.goal_distance(CausalGraphVariable::Propositional(
+            VariableIndex::from_usize(0)
+        )),
         Some(1)
     );
 }
@@ -115,20 +130,20 @@ fn restricted_causal_graph_tracks_numeric_effect_sources() {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(1.0)],
         operators: vec![Operator::new(
             "update-x".to_string(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                1,
+                VariableIndex::from_usize(1),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -138,10 +153,13 @@ fn restricted_causal_graph_tracks_numeric_effect_sources() {
 
     let graph = RestrictedCausalGraph::new(&task).unwrap();
     let predecessors = graph
-        .predecessors_of(CausalGraphVariable::Numeric(0))
+        .predecessors_of(CausalGraphVariable::Numeric(VariableIndex::from_usize(0)))
         .collect::<Vec<_>>();
 
-    assert_eq!(predecessors, vec![CausalGraphVariable::Numeric(1)]);
+    assert_eq!(
+        predecessors,
+        vec![CausalGraphVariable::Numeric(VariableIndex::from_usize(1))]
+    );
 }
 
 #[test]
@@ -156,7 +174,7 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
                 "cmp".to_string(),
                 vec!["t".to_string(), "f".to_string(), "u".to_string()],
                 Some(1),
-                2,
+                ExplicitValueIndex::new(2),
             ),
         ],
         numeric_variables: vec![
@@ -167,42 +185,62 @@ fn causal_graph_bypasses_comparison_propositions_for_operator_preconditions() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0, 2],
-        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(5.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
-                0,
-                Some(1),
-                0,
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(1)),
+                ExplicitValueIndex::new(0),
             )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            3,
-            0,
+            VariableIndex::new(1),
+            VariableIndex::new(3),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(2),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
     let graph = SnpCausalGraph::new(&task).unwrap();
     let helper_var_id = task.numeric_variables().len();
     let predecessors = graph
-        .predecessors_of(CausalGraphVariable::Propositional(0))
+        .predecessors_of(CausalGraphVariable::Propositional(
+            VariableIndex::from_usize(0),
+        ))
         .collect::<Vec<_>>();
 
-    assert!(predecessors.contains(&CausalGraphVariable::Numeric(helper_var_id)));
-    assert!(!predecessors.contains(&CausalGraphVariable::Propositional(1)));
+    assert!(
+        predecessors.contains(&CausalGraphVariable::Numeric(VariableIndex::from_usize(
+            helper_var_id
+        )))
+    );
+    assert!(!predecessors.contains(&CausalGraphVariable::Propositional(
+        VariableIndex::from_usize(1)
+    )));
     assert!(
         graph
-            .predecessors_of(CausalGraphVariable::Numeric(helper_var_id))
+            .predecessors_of(CausalGraphVariable::Numeric(VariableIndex::from_usize(
+                helper_var_id
+            )))
             .collect::<Vec<_>>()
             .is_empty()
     );
@@ -220,7 +258,7 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
                 "cmp".to_string(),
                 vec!["t".to_string(), "f".to_string(), "u".to_string()],
                 Some(1),
-                2,
+                ExplicitValueIndex::new(2),
             ),
         ],
         numeric_variables: vec![
@@ -233,30 +271,47 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0, 2],
-        numeric_state: vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(5.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
-                0,
-                Some(1),
-                0,
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(1)),
+                ExplicitValueIndex::new(0),
             )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            5,
-            0,
+            VariableIndex::new(1),
+            VariableIndex::new(5),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![
-            AssignmentAxiom::new(4, CalOperator::Sum, 1, 2),
-            AssignmentAxiom::new(5, CalOperator::Sum, 4, 3),
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(4),
+                CalOperator::Sum,
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(2),
+            ),
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(5),
+                CalOperator::Sum,
+                VariableIndex::from_usize(4),
+                VariableIndex::from_usize(3),
+            ),
         ],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
@@ -265,9 +320,15 @@ fn causal_graph_flattens_helper_predecessors_to_regular_leaves() {
     let root_helper_id = task.numeric_variables().len() + 1;
     let intermediate_helper_id = task.numeric_variables().len();
     let predecessors = graph
-        .predecessors_of(CausalGraphVariable::Numeric(root_helper_id))
+        .predecessors_of(CausalGraphVariable::Numeric(VariableIndex::from_usize(
+            root_helper_id,
+        )))
         .collect::<Vec<_>>();
 
     assert!(predecessors.is_empty());
-    assert!(!predecessors.contains(&CausalGraphVariable::Numeric(intermediate_helper_id)));
+    assert!(
+        !predecessors.contains(&CausalGraphVariable::Numeric(VariableIndex::from_usize(
+            intermediate_helper_id
+        )))
+    );
 }

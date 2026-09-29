@@ -2,8 +2,9 @@ use super::*;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    NumericType, NumericVariable, Operator, TaskRef,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    TaskRef, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 use std::cell::Cell;
@@ -15,14 +16,14 @@ use std::time::Duration;
 fn test_compute_effective_operator_costs_plus_constants() {
     // Metric var 0 (cost), incremented by constants 1 and 2.
     let version = 4;
-    let metric = Metric::new(true, Some(0));
+    let metric = Metric::new(true, Some(VariableIndex::from_usize(0)));
 
     let variables = vec![ExplicitVariable::new(
         2,
         "v".to_string(),
         vec!["a".to_string(), "b".to_string()],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
 
     let numeric_variables = vec![
@@ -36,26 +37,26 @@ fn test_compute_effective_operator_costs_plus_constants() {
         vec![],
         vec![],
         vec![planforge_sas::numeric_task::AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             planforge_sas::numeric_task::AssignmentOperation::Plus,
-            1,
+            VariableIndex::from_usize(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let op2 = Operator::new(
         "op2".to_string(),
         vec![],
         vec![],
         vec![planforge_sas::numeric_task::AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             planforge_sas::numeric_task::AssignmentOperation::Plus,
-            2,
+            VariableIndex::from_usize(2),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
 
     let task = NumericRootTask::new(NumericRootTaskParts {
@@ -65,8 +66,12 @@ fn test_compute_effective_operator_costs_plus_constants() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 0.5, 0.002],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.5),
+            NumericValue::new(0.002),
+        ],
         operators: vec![op1, op2],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -84,17 +89,17 @@ fn test_compute_effective_operator_costs_plus_constants() {
     let d1 = state_registry
         .metric_delta_applying_operator(&initial_state, &task.get_operators()[1])
         .unwrap();
-    assert!((d0 - 0.5).abs() < 1e-12);
-    assert!((d1 - 0.002).abs() < 1e-12);
+    assert!((d0.value() - 0.5).abs() < 1e-12);
+    assert!((d1.value() - 0.002).abs() < 1e-12);
 
     let operator_costs = compute_effective_operator_costs(&*task);
     assert_eq!(operator_costs.len(), 2);
-    assert!((operator_costs[0] - 0.5).abs() < 1e-12);
-    assert!((operator_costs[1] - 0.002).abs() < 1e-12);
+    assert!((operator_costs[0].value() - 0.5).abs() < 1e-12);
+    assert!((operator_costs[1].value() - 0.002).abs() < 1e-12);
     let min_cost = operator_costs
         .iter()
         .copied()
-        .fold(f64::INFINITY, |left, right| left.min(right));
+        .fold(f64::INFINITY, |left, right| left.min(right.value()));
     assert!((min_cost - 0.002).abs() < 1e-12);
 }
 
@@ -164,12 +169,12 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
             "v".to_string(),
             vec!["value".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
         axioms: vec![],
@@ -236,19 +241,24 @@ fn one_step_task() -> TaskRef<'static> {
             "location".to_string(),
             vec!["start".to_string(), "goal".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "finish".to_string(),
             vec![ExplicitFact::propositional(0, 0)],
-            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::from_usize(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],

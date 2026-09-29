@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericType};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, NAN_VALUE, NumericType, NumericValue, VariableIndex,
+};
 use planforge_sas::utils::float_tolerance;
 
 use super::utils::EquispacedPartitioning;
@@ -28,10 +30,10 @@ impl NumericPartitions {
             .enumerate()
             .map(|(i, v)| match v.get_type() {
                 NumericType::Constant => {
-                    let value = float_tolerance::canonicalize(
-                        *initial_numeric_values.get(i).unwrap_or(&f64::NAN),
+                    let value = float_tolerance::canonicalize_nv(
+                        *initial_numeric_values.get(i).unwrap_or(&NAN_VALUE),
                     );
-                    if value.is_finite() {
+                    if value.value().is_finite() {
                         vec![Interval::singleton(value)]
                     } else {
                         vec![Interval::unbounded()]
@@ -55,9 +57,9 @@ impl NumericPartitions {
         }
     }
 
-    pub fn partitions(&self, numeric_var_id: usize) -> Option<&[Interval]> {
+    pub fn partitions(&self, numeric_var_id: VariableIndex) -> Option<&[Interval]> {
         self.partitions_by_numeric_var
-            .get(numeric_var_id)
+            .get(numeric_var_id.index())
             .map(|v| v.as_slice())
     }
 
@@ -73,25 +75,28 @@ impl NumericPartitions {
     /// descriptor is still maintained on `split_at`; a future fix that makes
     /// `EquispacedPartitioning::lookup` boundary-aware can re-enable it.
     #[allow(dead_code)]
-    pub(crate) fn equispaced(&self, numeric_var_id: usize) -> Option<&EquispacedPartitioning> {
+    pub(crate) fn equispaced(
+        &self,
+        numeric_var_id: VariableIndex,
+    ) -> Option<&EquispacedPartitioning> {
         self.equispaced_by_numeric_var
-            .get(numeric_var_id)
+            .get(numeric_var_id.index())
             .and_then(Option::as_ref)
     }
 
     pub fn partition_interval(
         &self,
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
         partition_id: usize,
     ) -> Option<Interval> {
         self.partitions_by_numeric_var
-            .get(numeric_var_id)
+            .get(numeric_var_id.index())
             .and_then(|parts| parts.get(partition_id).copied())
     }
 
     pub fn reachable_partitions(
         &self,
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
         source_partition: usize,
         operation: &AssignmentOperation,
         rhs: Interval,
@@ -129,12 +134,20 @@ impl NumericPartitions {
     /// Splits the partition that contains `value` into two partitions.
     ///
     /// Returns `true` if a split was applied.
-    pub fn split_at(&mut self, numeric_var_id: usize, value: f64, include_in_lower: bool) -> bool {
+    pub fn split_at(
+        &mut self,
+        numeric_var_id: VariableIndex,
+        value: NumericValue,
+        include_in_lower: bool,
+    ) -> bool {
         // Numeric states use the canonical ABS_EPSILON lattice. Storing an
         // uncanonicalized flaw/regression value as a partition boundary makes
         // forward image and inverse-image overlap tests disagree.
-        let value = float_tolerance::canonicalize(value);
-        let Some(parts) = self.partitions_by_numeric_var.get_mut(numeric_var_id) else {
+        let value = float_tolerance::canonicalize_nv(value);
+        let Some(parts) = self
+            .partitions_by_numeric_var
+            .get_mut(numeric_var_id.index())
+        else {
             return false;
         };
         let Some(part_id) = parts.iter().position(|iv| iv.contains(value)) else {
@@ -155,8 +168,8 @@ impl NumericPartitions {
         parts[part_id] = lower;
         parts.insert(part_id + 1, upper);
         // Cache is per-var; recompute only the affected entry.
-        self.equispaced_by_numeric_var[numeric_var_id] =
-            EquispacedPartitioning::detect(&self.partitions_by_numeric_var[numeric_var_id]);
+        self.equispaced_by_numeric_var[numeric_var_id.index()] =
+            EquispacedPartitioning::detect(&self.partitions_by_numeric_var[numeric_var_id.index()]);
         true
     }
 }

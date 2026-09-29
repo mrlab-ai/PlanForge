@@ -13,8 +13,8 @@ use planforge_sas::numeric_conditions::ConditionValue;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType,
-    NumericVariable, Operator,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericType, NumericVariable, Operator, OperatorCost,
 };
 
 #[test]
@@ -24,7 +24,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         "v".into(),
         vec!["v0".into(), "v1".into()],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
     let goals = vec![ExplicitFact::propositional(0, 1)];
@@ -33,12 +33,12 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         vec![ExplicitFact::propositional(0, 0)],
         vec![planforge_sas::numeric_task::Effect::new(
             vec![],
-            0,
-            Some(0),
-            1,
+            VariableIndex::from_usize(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
         )],
         vec![],
-        1,
+        OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -47,7 +47,7 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         numeric_variables,
         goals,
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![op],
         axioms: vec![],
@@ -100,7 +100,7 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         "g".into(),
         vec!["g0".into(), "g1".into()],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
     let numeric_variables = vec![NumericVariable::new("x".into(), NumericType::Regular, None)];
     let task = NumericRootTask::new(NumericRootTaskParts {
@@ -110,8 +110,8 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![3.5],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(3.5)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -124,10 +124,10 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
         ..Default::default()
     };
     config.init_split_method = InitSplitMethod::Identity;
-    config.init_split_var_ids = Some(HashSet::from([1usize]));
+    config.init_split_var_ids = Some(HashSet::from([VariableIndex::new(1)]));
 
     let mut rng = SmallRng::seed_from_u64(7);
-    let mut domain_mapping = vec![vec![0, 0]];
+    let mut domain_mapping = vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)]];
     let mut domain_sizes = vec![1];
     let mut partitions = NumericPartitions::trivial(&task);
     let mut numeric_domain_sizes = vec![1];
@@ -148,9 +148,9 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
     .unwrap();
 
     assert_eq!(numeric_domain_sizes, vec![2]);
-    let parts = partitions.partitions(0).unwrap();
+    let parts = partitions.partitions(VariableIndex::from_usize(0)).unwrap();
     assert_eq!(parts.len(), 2);
-    assert!(parts[0].contains(3.5) || parts[1].contains(3.5));
+    assert!(parts[0].contains(NumericValue::new(3.5)) || parts[1].contains(NumericValue::new(3.5)));
 }
 
 #[test]
@@ -160,16 +160,16 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         "cmp".into(),
         vec!["true".into(), "false".into()],
         Some(0),
-        ConditionValue::False.as_usize(),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        0,
-        1,
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(1),
         ComparisonOperator::GreaterThan,
     )];
     let task = NumericRootTask::new(NumericRootTaskParts {
@@ -179,8 +179,8 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![2],
-        numeric_state: vec![1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(2)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms,
@@ -194,9 +194,18 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
     };
     let mut rng = SmallRng::seed_from_u64(7);
 
-    let (new_domain_size, mapping) =
-        compute_initial_split_mapping(&task, &config, 0, Some(0), &mut rng).unwrap();
+    let (new_domain_size, mapping) = compute_initial_split_mapping(
+        &task,
+        &config,
+        VariableIndex::from_usize(0),
+        Some(ExplicitValueIndex::new(0)),
+        &mut rng,
+    )
+    .unwrap();
 
     assert_eq!(new_domain_size, 2);
-    assert_eq!(mapping, vec![1, 0]);
+    assert_eq!(
+        mapping,
+        vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)]
+    );
 }

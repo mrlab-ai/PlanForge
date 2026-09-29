@@ -14,7 +14,8 @@
 use candle_core::{DType, Device, Tensor};
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, Operator, OperatorCost, VariableIndex,
 };
 
 use crate::residuals::{Assignment, evaluate};
@@ -381,21 +382,21 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
             "global".to_string(),
             vec!["holds".to_string(), "default".to_string()],
             Some(0),
-            1,
+            ExplicitValueIndex::new(1),
         ),
         ExplicitVariable::new(
             2,
             "left".to_string(),
             vec!["left-0".to_string(), "left-1".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ),
         ExplicitVariable::new(
             2,
             "right".to_string(),
             vec!["right-0".to_string(), "right-1".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ),
     ];
     let action = Operator::new(
@@ -405,11 +406,21 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
             ExplicitFact::propositional(2, 0),
         ],
         vec![
-            Effect::new(Vec::new(), 1, None, 1),
-            Effect::new(Vec::new(), 2, None, 1),
+            Effect::new(
+                Vec::new(),
+                VariableIndex::from_usize(1),
+                None,
+                ExplicitValueIndex::new(1),
+            ),
+            Effect::new(
+                Vec::new(),
+                VariableIndex::from_usize(2),
+                None,
+                ExplicitValueIndex::new(1),
+            ),
         ],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     );
     NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -421,10 +432,19 @@ fn joint_effect_task(initial_right: usize) -> NumericRootTask {
             ExplicitFact::propositional(2, 1),
         ],
         mutexes: Vec::new(),
-        state: vec![1, 0, initial_right],
+        state: vec![
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::from_usize(initial_right),
+        ],
         numeric_state: Vec::new(),
         operators: vec![action],
-        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        axioms: vec![PropositionalAxiom::new(
+            Vec::new(),
+            VariableIndex::from_usize(0),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
+        )],
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -1127,36 +1147,51 @@ fn causal_chain_task() -> NumericRootTask {
             "global".to_string(),
             vec!["holds".to_string(), "default".to_string()],
             Some(0),
-            1,
+            ExplicitValueIndex::new(1),
         ),
         ExplicitVariable::new(
             3,
             "position".to_string(),
             vec!["at-0".to_string(), "at-1".to_string(), "at-2".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ),
     ];
     let move_01 = Operator::new(
         "move-0-1".to_string(),
         vec![ExplicitFact::propositional(1, 0)],
-        vec![Effect::new(Vec::new(), 1, None, 1)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::from_usize(1),
+            None,
+            ExplicitValueIndex::new(1),
+        )],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     );
     let move_12 = Operator::new(
         "move-1-2".to_string(),
         vec![ExplicitFact::propositional(1, 1)],
-        vec![Effect::new(Vec::new(), 1, None, 2)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::from_usize(1),
+            None,
+            ExplicitValueIndex::new(2),
+        )],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     );
     let move_10 = Operator::new(
         "move-1-0".to_string(),
         vec![ExplicitFact::propositional(1, 1)],
-        vec![Effect::new(Vec::new(), 1, None, 0)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::from_usize(1),
+            None,
+            ExplicitValueIndex::new(0),
+        )],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     );
     NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -1165,10 +1200,15 @@ fn causal_chain_task() -> NumericRootTask {
         numeric_variables: Vec::new(),
         goals: vec![ExplicitFact::propositional(1, 2)],
         mutexes: Vec::new(),
-        state: vec![1, 0],
+        state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)],
         numeric_state: Vec::new(),
         operators: vec![move_01, move_12, move_10],
-        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        axioms: vec![PropositionalAxiom::new(
+            Vec::new(),
+            VariableIndex::from_usize(0),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
+        )],
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -1185,39 +1225,54 @@ fn clobbered_goals_task(initial_first_goal: bool) -> NumericRootTask {
             "global".to_string(),
             vec!["holds".to_string(), "default".to_string()],
             Some(0),
-            1,
+            ExplicitValueIndex::new(1),
         ),
         ExplicitVariable::new(
             2,
             "first-goal".to_string(),
             vec!["first-0".to_string(), "first-1".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ),
         ExplicitVariable::new(
             2,
             "second-goal".to_string(),
             vec!["second-0".to_string(), "second-1".to_string()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ),
     ];
     let set_one = Operator::new(
         "set-one".to_string(),
         Vec::new(),
-        vec![Effect::new(Vec::new(), 1, None, 1)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::from_usize(1),
+            None,
+            ExplicitValueIndex::new(1),
+        )],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     );
     let clobber_one_set_two = Operator::new(
         "clobber-one-set-two".to_string(),
         Vec::new(),
         vec![
-            Effect::new(Vec::new(), 1, None, 0),
-            Effect::new(Vec::new(), 2, None, 1),
+            Effect::new(
+                Vec::new(),
+                VariableIndex::from_usize(1),
+                None,
+                ExplicitValueIndex::new(0),
+            ),
+            Effect::new(
+                Vec::new(),
+                VariableIndex::from_usize(2),
+                None,
+                ExplicitValueIndex::new(1),
+            ),
         ],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     );
     NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -1229,10 +1284,19 @@ fn clobbered_goals_task(initial_first_goal: bool) -> NumericRootTask {
             ExplicitFact::propositional(2, 1),
         ],
         mutexes: Vec::new(),
-        state: vec![1, usize::from(initial_first_goal), 0],
+        state: vec![
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::from_usize(usize::from(initial_first_goal)),
+            ExplicitValueIndex::new(0),
+        ],
         numeric_state: Vec::new(),
         operators: vec![set_one, clobber_one_set_two],
-        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        axioms: vec![PropositionalAxiom::new(
+            Vec::new(),
+            VariableIndex::from_usize(0),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
+        )],
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
         global_constraint: ExplicitFact::propositional(0, 0),

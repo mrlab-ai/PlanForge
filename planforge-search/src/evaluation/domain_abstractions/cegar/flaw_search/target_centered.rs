@@ -10,13 +10,23 @@ use std::collections::HashMap;
 
 use planforge_sas::{
     numeric_conditions::CompOp,
-    numeric_task::{AbstractNumericTask, ExplicitFact, NumericType},
+    numeric_task::{
+        AbstractNumericTask, ExplicitFact, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue,
+        VariableIndex, ZERO_VALUE,
+    },
     utils::{interval::Interval, linear_effects::linearize_numeric_var},
 };
 
 use super::{NumericFlaw, can_split_numeric_var, numeric_requirement_for_comparison_fact};
 pub(super) use crate::evaluation::domain_abstractions::additive_numeric_views::numeric_effect_deltas;
 use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
+
+fn epsilon() -> NumericValue {
+    NumericValue::new(1e-12)
+}
+fn neg_epsilon() -> NumericValue {
+    NumericValue::new(-1e-12)
+}
 
 /// Backward-direction split helper for deviation flaws.
 ///
@@ -27,27 +37,27 @@ use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartition
 /// of `expected_interval` is finite on the relevant side.
 pub(super) fn preimage_split_for_expected_successor(
     expected_interval: Interval,
-    concrete_successor: f64,
-    delta: f64,
-) -> Option<(f64, bool)> {
+    concrete_successor: NumericValue,
+    delta: NumericValue,
+) -> Option<(NumericValue, bool)> {
     if expected_interval.is_empty() {
         return None;
     }
     if (concrete_successor < expected_interval.lower
         || (concrete_successor == expected_interval.lower && !expected_interval.lower_closed))
-        && expected_interval.lower.is_finite()
+        && expected_interval.lower.value().is_finite()
     {
         return Some((
-            expected_interval.lower - delta,
+            NumericValue::new(expected_interval.lower.value() - delta.value()),
             !expected_interval.lower_closed,
         ));
     }
     if (concrete_successor > expected_interval.upper
         || (concrete_successor == expected_interval.upper && !expected_interval.upper_closed))
-        && expected_interval.upper.is_finite()
+        && expected_interval.upper.value().is_finite()
     {
         return Some((
-            expected_interval.upper - delta,
+            NumericValue::new(expected_interval.upper.value() - delta.value()),
             expected_interval.upper_closed,
         ));
     }
@@ -62,10 +72,10 @@ pub(super) fn preimage_split_for_expected_successor(
 /// concrete value's distance to the closest boundary.
 pub(super) fn dependent_numeric_flaws_backward(
     task: &dyn AbstractNumericTask,
-    deltas: &HashMap<usize, Vec<f64>>,
+    deltas: &HashMap<VariableIndex, Vec<NumericValue>>,
     partitions: &NumericPartitions,
     fact: &ExplicitFact,
-    numeric_state: &[f64],
+    numeric_state: &[NumericValue],
     step: usize,
 ) -> Vec<NumericFlaw> {
     if let Some((numeric_var_id, required_interval)) =
@@ -77,7 +87,7 @@ pub(super) fn dependent_numeric_flaws_backward(
         return target_centered_shell_flaws(
             deltas,
             partitions,
-            numeric_var_id,
+            VariableIndex::from_usize(numeric_var_id),
             required_interval,
             concrete_value,
             step,
@@ -89,13 +99,13 @@ pub(super) fn dependent_numeric_flaws_backward(
 
 fn target_centered_linear_comparison_flaws(
     task: &dyn AbstractNumericTask,
-    deltas: &HashMap<usize, Vec<f64>>,
+    deltas: &HashMap<VariableIndex, Vec<NumericValue>>,
     partitions: &NumericPartitions,
     fact: &ExplicitFact,
-    numeric_state: &[f64],
+    numeric_state: &[NumericValue],
     step: usize,
 ) -> Vec<NumericFlaw> {
-    let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
+    let Some(tree) = task.numeric_conditions().for_var(fact.var_index()) else {
         return Vec::new();
     };
     let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id()) else {
@@ -111,7 +121,7 @@ fn target_centered_linear_comparison_flaws(
 
     let mut flaws = Vec::new();
     for (numeric_var_id, &coefficient) in expression.coefficients.iter().enumerate() {
-        if coefficient.abs() < 1e-12 {
+        if coefficient.abs() < epsilon().value() {
             continue;
         }
         if task
@@ -131,7 +141,12 @@ fn target_centered_linear_comparison_flaws(
                 .enumerate()
                 .filter(|(var, _)| *var != numeric_var_id)
                 .map(|(var, other_coefficient)| {
-                    other_coefficient * numeric_state.get(var).copied().unwrap_or(0.0)
+                    other_coefficient
+                        * numeric_state
+                            .get(var)
+                            .copied()
+                            .unwrap_or(ZERO_VALUE)
+                            .value()
                 })
                 .sum::<f64>();
         let Some(required_interval) = single_var_interval(coefficient, fixed_constant, required_op)
@@ -141,7 +156,7 @@ fn target_centered_linear_comparison_flaws(
         flaws.extend(target_centered_shell_flaws(
             deltas,
             partitions,
-            numeric_var_id,
+            VariableIndex::from_usize(numeric_var_id),
             required_interval,
             concrete_value,
             step,
@@ -151,11 +166,11 @@ fn target_centered_linear_comparison_flaws(
 }
 
 fn target_centered_shell_flaws(
-    deltas: &HashMap<usize, Vec<f64>>,
+    deltas: &HashMap<VariableIndex, Vec<NumericValue>>,
     partitions: &NumericPartitions,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
     required_interval: Interval,
-    concrete_value: f64,
+    concrete_value: NumericValue,
     step: usize,
 ) -> Vec<NumericFlaw> {
     let Some((boundary, include_in_lower)) =
@@ -180,28 +195,28 @@ fn target_centered_shell_flaws(
         var_deltas
             .iter()
             .copied()
-            .filter(|delta| *delta > 1e-12)
-            .min_by(|left, right| left.total_cmp(right))
+            .filter(|delta| *delta > epsilon())
+            .min_by(|left, right| left.value().total_cmp(&right.value()))
     } else {
         var_deltas
             .iter()
             .copied()
-            .filter(|delta| *delta < -1e-12)
-            .max_by(|left, right| left.total_cmp(right))
+            .filter(|delta| *delta < neg_epsilon())
+            .max_by(|left, right| left.value().total_cmp(&right.value()))
     };
     let Some(shell_delta) = shell_delta else {
         return flaws;
     };
 
-    let mut value = boundary - shell_delta;
+    let mut value = NumericValue::new(boundary.value() - shell_delta.value());
     for _ in 0..128 {
-        if !value.is_finite() {
+        if !value.value().is_finite() {
             break;
         }
-        if shell_delta > 0.0 && value <= concrete_value {
+        if shell_delta > ZERO_VALUE && value <= concrete_value {
             break;
         }
-        if shell_delta < 0.0 && value >= concrete_value {
+        if shell_delta < ZERO_VALUE && value >= concrete_value {
             break;
         }
         push_numeric_flaw_if_possible(
@@ -212,15 +227,15 @@ fn target_centered_shell_flaws(
             step,
             &mut flaws,
         );
-        value -= shell_delta;
+        value = NumericValue::new(value.value() - shell_delta.value());
     }
     flaws
 }
 
 fn push_numeric_flaw_if_possible(
     partitions: &NumericPartitions,
-    numeric_var_id: usize,
-    value: f64,
+    numeric_var_id: VariableIndex,
+    value: NumericValue,
     include_in_lower: bool,
     step: usize,
     flaws: &mut Vec<NumericFlaw>,
@@ -254,22 +269,22 @@ fn single_var_interval(coefficient: f64, constant: f64, op: CompOp) -> Option<In
     if coefficient.abs() < 1e-12 || op == CompOp::Ne {
         return None;
     }
-    let threshold = -constant / coefficient;
-    if !threshold.is_finite() {
+    let threshold = NumericValue::new(-constant / coefficient);
+    if !threshold.value().is_finite() {
         return None;
     }
     Some(match (op, coefficient.is_sign_positive()) {
         (CompOp::Lt, true) | (CompOp::Gt, false) => {
-            Interval::new(f64::NEG_INFINITY, threshold, false, false)
+            Interval::new(NEG_INF_VALUE, threshold, false, false)
         }
         (CompOp::Le, true) | (CompOp::Ge, false) => {
-            Interval::new(f64::NEG_INFINITY, threshold, false, true)
+            Interval::new(NEG_INF_VALUE, threshold, false, true)
         }
         (CompOp::Gt, true) | (CompOp::Lt, false) => {
-            Interval::new(threshold, f64::INFINITY, false, false)
+            Interval::new(threshold, INF_VALUE, false, false)
         }
         (CompOp::Ge, true) | (CompOp::Le, false) => {
-            Interval::new(threshold, f64::INFINITY, true, false)
+            Interval::new(threshold, INF_VALUE, true, false)
         }
         (CompOp::Eq, _) => Interval::singleton(threshold),
         (CompOp::Ne, _) => return None,
@@ -278,17 +293,17 @@ fn single_var_interval(coefficient: f64, constant: f64, op: CompOp) -> Option<In
 
 fn split_for_missing_numeric_requirement(
     requirement: Interval,
-    concrete_value: f64,
-) -> Option<(f64, bool)> {
+    concrete_value: NumericValue,
+) -> Option<(NumericValue, bool)> {
     if (concrete_value < requirement.lower
         || (concrete_value == requirement.lower && !requirement.lower_closed))
-        && requirement.lower.is_finite()
+        && requirement.lower.value().is_finite()
     {
         return Some((requirement.lower, !requirement.lower_closed));
     }
     if (concrete_value > requirement.upper
         || (concrete_value == requirement.upper && !requirement.upper_closed))
-        && requirement.upper.is_finite()
+        && requirement.upper.value().is_finite()
     {
         return Some((requirement.upper, requirement.upper_closed));
     }

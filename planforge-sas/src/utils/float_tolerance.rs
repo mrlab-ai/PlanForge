@@ -1,3 +1,5 @@
+use crate::numeric_task::NumericValue;
+
 pub const ABS_EPSILON: f64 = 1e-12;
 pub const REL_EPSILON: f64 = 1e-12;
 pub const DIJKSTRA_EPSILON: f64 = 1e-12;
@@ -14,11 +16,24 @@ pub fn tolerance(lhs: f64, rhs: f64) -> f64 {
 }
 
 #[inline]
+pub fn tolerance_nv(lhs: NumericValue, rhs: NumericValue) -> NumericValue {
+    NumericValue::new(ABS_EPSILON.max(REL_EPSILON * lhs.value().abs().max(rhs.value().abs())))
+}
+
+#[inline]
 pub fn canonicalize(value: f64) -> f64 {
     if value.is_nan() || value.is_infinite() {
         return value;
     }
     (value / ABS_EPSILON).round() * ABS_EPSILON
+}
+
+#[inline]
+pub fn canonicalize_nv(value: NumericValue) -> NumericValue {
+    if value.value().is_nan() || value.value().is_infinite() {
+        return value;
+    }
+    NumericValue::new((value.value() / ABS_EPSILON).round() * ABS_EPSILON)
 }
 
 #[inline]
@@ -32,8 +47,23 @@ pub fn canonical_bits(value: f64) -> u64 {
 }
 
 #[inline]
+pub fn canonical_bits_nv(value: NumericValue) -> u64 {
+    let canonical = canonicalize_nv(value);
+    if canonical.value() == 0.0 {
+        0.0f64.to_bits()
+    } else {
+        canonical.value().to_bits()
+    }
+}
+
+#[inline]
 pub fn equal(lhs: f64, rhs: f64) -> bool {
     (lhs - rhs).abs() <= tolerance(lhs, rhs)
+}
+
+#[inline]
+pub fn equal_nv(lhs: NumericValue, rhs: NumericValue) -> bool {
+    (lhs.value() - rhs.value()).abs() <= tolerance_nv(lhs, rhs).value()
 }
 
 #[cfg(test)]

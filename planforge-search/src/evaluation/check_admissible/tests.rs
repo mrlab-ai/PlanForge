@@ -2,6 +2,7 @@ use super::*;
 
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    OperatorCost, VariableIndex,
 };
 use std::sync::Arc;
 
@@ -13,15 +14,20 @@ fn chain_task() -> TaskRef<'static> {
         "v".to_string(),
         vec!["v=0".to_string(), "v=1".to_string(), "v=2".to_string()],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
     let step = |name: &str, from: usize, to: usize| {
         Operator::new(
             name.to_string(),
             vec![ExplicitFact::propositional(0, from)],
-            vec![Effect::new(vec![], 0, Some(from), to)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::from_usize(from)),
+                ExplicitValueIndex::from_usize(to),
+            )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )
     };
 
@@ -32,7 +38,7 @@ fn chain_task() -> TaskRef<'static> {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 2)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![step("step_0_1", 0, 1), step("step_1_2", 1, 2)],
         axioms: vec![],
@@ -171,6 +177,7 @@ fn goal_distance_is_computed_per_state() {
 
 #[test]
 fn rejects_a_task_with_a_negative_operator_cost() {
-    let error = minimum_action_cost(&[1.0, -1.0]).expect_err("negative costs break Dijkstra");
+    let error = minimum_action_cost(&[NumericValue::new(1.0), NumericValue::new(-1.0)])
+        .expect_err("negative costs break Dijkstra");
     assert!(error.contains("operator 1"), "{error}");
 }

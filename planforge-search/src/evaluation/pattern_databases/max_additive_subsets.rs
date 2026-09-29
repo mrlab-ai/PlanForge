@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use crate::evaluation::maximal_cliques::maximal_cliques;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, Operator,
+    VariableIndex, ZERO_VALUE,
 };
 
 use super::pattern_collection::PatternCollection;
@@ -26,12 +27,12 @@ pub fn are_patterns_additive(
 ) -> bool {
     for &var1 in &pattern1.regular {
         for &var2 in &pattern2.regular {
-            if !are_additive.prop_to_prop[var1][var2] {
+            if !are_additive.prop_to_prop[var1.index()][var2.index()] {
                 return false;
             }
         }
         for &var2 in &pattern2.numeric {
-            if !are_additive.prop_to_num[var1][var2] {
+            if !are_additive.prop_to_num[var1.index()][var2.index()] {
                 return false;
             }
         }
@@ -39,12 +40,12 @@ pub fn are_patterns_additive(
 
     for &var1 in &pattern1.numeric {
         for &var2 in &pattern2.numeric {
-            if !are_additive.num_to_num[var1][var2] {
+            if !are_additive.num_to_num[var1.index()][var2.index()] {
                 return false;
             }
         }
         for &var2 in &pattern2.regular {
-            if !are_additive.num_to_prop[var1][var2] {
+            if !are_additive.num_to_prop[var1.index()][var2.index()] {
                 return false;
             }
         }
@@ -74,17 +75,17 @@ pub fn compute_additive_vars(task: &dyn AbstractNumericTask) -> NumericVariableA
 
         for &var1 in &propositional_targets {
             for &var2 in &propositional_targets {
-                are_additive.prop_to_prop[var1][var2] = false;
+                are_additive.prop_to_prop[var1.index()][var2.index()] = false;
             }
             for &var2 in &numeric_targets {
-                are_additive.prop_to_num[var1][var2] = false;
-                are_additive.num_to_prop[var2][var1] = false;
+                are_additive.prop_to_num[var1.index()][var2.index()] = false;
+                are_additive.num_to_prop[var2.index()][var1.index()] = false;
             }
         }
 
         for &var1 in &numeric_targets {
             for &var2 in &numeric_targets {
-                are_additive.num_to_num[var1][var2] = false;
+                are_additive.num_to_num[var1.index()][var2.index()] = false;
             }
         }
     }
@@ -95,7 +96,7 @@ pub fn compute_additive_vars(task: &dyn AbstractNumericTask) -> NumericVariableA
 fn affected_numeric_targets(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
-) -> BTreeSet<usize> {
+) -> BTreeSet<VariableIndex> {
     let mut targets = BTreeSet::new();
 
     for effect in operator.assignment_effects() {
@@ -106,7 +107,7 @@ fn affected_numeric_targets(
         let affected_var_id = effect.affected_var_id();
         if task
             .numeric_variables()
-            .get(affected_var_id)
+            .get(affected_var_id.index())
             .is_some_and(|variable| variable.get_type() == &NumericType::Regular)
         {
             targets.insert(affected_var_id);
@@ -132,13 +133,13 @@ fn assignment_effect_can_change_numeric_value(
         AssignmentOperation::Plus | AssignmentOperation::Minus => {
             if task
                 .numeric_variables()
-                .get(effect.var_id())
+                .get(effect.var_id().index())
                 .is_some_and(|numeric_var| numeric_var.get_type() == &NumericType::Constant)
             {
                 let initial_numeric_values = task.get_initial_numeric_state_values();
                 return initial_numeric_values
-                    .get(effect.var_id())
-                    .is_none_or(|value| *value != 0.0);
+                    .get(effect.var_id().index())
+                    .is_none_or(|value| *value != ZERO_VALUE);
             }
             true
         }

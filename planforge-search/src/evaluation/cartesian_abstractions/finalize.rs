@@ -9,10 +9,10 @@ pub(super) fn finalize_abstraction(
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
-    Vec<usize>,
+    Vec<OperatorIndex>,
     Vec<AbstractOperatorRegions>,
 )> {
-    let mut grouped: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut grouped: HashMap<(usize, usize), Vec<OperatorIndex>> = HashMap::new();
     let mut raw = Vec::new();
     for transition_id in working.active_transition_ids() {
         let transition = working.transition(transition_id);
@@ -128,7 +128,7 @@ pub(super) fn finalize_abstraction(
             transition
                 .concrete_op_ids
                 .iter()
-                .map(|&op_id| semantics.operator_costs()[op_id])
+                .map(|&op_id| semantics.operator_costs()[op_id.index()].value())
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();
@@ -165,7 +165,7 @@ pub(super) fn finalize_standalone_abstraction(
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
-    Vec<usize>,
+    Vec<OperatorIndex>,
     Vec<AbstractOperatorRegions>,
 )> {
     ensure!(

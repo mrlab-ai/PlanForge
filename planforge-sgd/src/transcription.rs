@@ -25,7 +25,12 @@
 //!   not consumable demand: retaining duplicate incidences would make grouped
 //!   causal demand exceed one even for an integral action.
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt};
+#[cfg(test)]
+mod tests;
+
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericTaskExt, VariableIndex,
+};
 
 use crate::classical::{NotClassical, check_classical};
 
@@ -248,7 +253,12 @@ impl Transcription {
 
         let num_task_vars = task.get_num_variables();
         let derived: Vec<bool> = (0..num_task_vars)
-            .map(|v| task.get_variable_axiom_layer(v).ok().flatten().is_some())
+            .map(|v| {
+                task.get_variable_axiom_layer(VariableIndex::from_usize(v))
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
             .collect();
 
         // Transcription variables are the primary ones, in task order.
@@ -266,7 +276,7 @@ impl Transcription {
         let mut var_of_fact = Vec::new();
         for (local, &task_var) in primary_vars.iter().enumerate() {
             let size = task
-                .get_variable_domain_size(task_var)
+                .get_variable_domain_size(VariableIndex::from_usize(task_var))
                 .expect("the classical-fragment check validated variable ranges");
             var_offset.push(var_of_fact.len() as u32);
             var_domain.push(size as u32);
@@ -274,8 +284,9 @@ impl Transcription {
         }
 
         // `true` if a fact on a derived variable holds under the folded values.
-        let derived_fact_holds =
-            |var: usize, value: usize| -> bool { folded_values.get(var).copied() == Some(value) };
+        let derived_fact_holds = |var: usize, value: usize| -> bool {
+            folded_values.get(var).copied() == Some(ExplicitValueIndex::from_usize(value))
+        };
 
         let initial_fact = primary_vars
             .iter()
@@ -284,7 +295,7 @@ impl Transcription {
                     .get(task_var)
                     .copied()
                     .expect("folded values cover every task variable");
-                var_offset[local_of_task_var[task_var] as usize] + value as u32
+                var_offset[local_of_task_var[task_var] as usize] + value.index() as u32
             })
             .collect();
 
@@ -371,7 +382,7 @@ impl Transcription {
             let mut group_of_var: Vec<Option<u32>> = vec![None; num_task_vars];
             for effect in operator.effects() {
                 // The classical-fragment check guarantees the affected variable is primary.
-                debug_assert!(!derived[effect.var_id()]);
+                debug_assert!(!derived[effect.var_id().index()]);
 
                 // A condition on a derived variable is likewise decided now.
                 let never_fires = effect.conditions().iter().any(|fact| {
@@ -381,21 +392,21 @@ impl Transcription {
                     continue;
                 }
 
-                let group = match group_of_var[effect.var_id()] {
+                let group = match group_of_var[effect.var_id().index()] {
                     Some(group) => group,
                     None => {
                         let group = group_action.len() as u32;
                         group_action.push(action);
-                        group_var.push(local_of_task_var[effect.var_id()]);
-                        group_of_var[effect.var_id()] = Some(group);
+                        group_var.push(local_of_task_var[effect.var_id().index()]);
+                        group_of_var[effect.var_id().index()] = Some(group);
                         group
                     }
                 };
 
                 let effect_index = effect_group.len() as u32;
-                let local = local_of_task_var[effect.var_id()] as usize;
+                let local = local_of_task_var[effect.var_id().index()] as usize;
                 effect_group.push(group);
-                effect_fact.push(var_offset[local] + effect.value() as u32);
+                effect_fact.push(var_offset[local] + effect.value().index() as u32);
 
                 for fact in effect.conditions() {
                     if derived[fact.var()] {
@@ -460,155 +471,5 @@ impl Transcription {
             max_group_size,
             dropped_operators,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use planforge_sas::axioms::PropositionalAxiom;
-    use planforge_sas::numeric_task::{
-        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-        Operator,
-    };
-
-    use super::Transcription;
-    use crate::residuals::{Assignment, evaluate};
-
-    fn duplicate_precondition_task(duplicate: bool) -> NumericRootTask {
-        let variables = vec![
-            ExplicitVariable::new(
-                2,
-                "global".to_string(),
-                vec!["holds".to_string(), "default".to_string()],
-                Some(0),
-                1,
-            ),
-            ExplicitVariable::new(
-                2,
-                "left".to_string(),
-                vec!["left-0".to_string(), "left-1".to_string()],
-                None,
-                0,
-            ),
-            ExplicitVariable::new(
-                2,
-                "right".to_string(),
-                vec!["right-0".to_string(), "right-1".to_string()],
-                None,
-                0,
-            ),
-        ];
-        let left_zero = ExplicitFact::propositional(1, 0);
-        let right_zero = ExplicitFact::propositional(2, 0);
-        let preconditions = if duplicate {
-            vec![left_zero, right_zero, left_zero]
-        } else {
-            vec![left_zero, right_zero]
-        };
-        let operator = Operator::new(
-            "set-left".to_string(),
-            preconditions,
-            vec![Effect::new(Vec::new(), 1, Some(0), 1)],
-            Vec::new(),
-            1,
-        );
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 4,
-            metric: Metric::new(true, None),
-            variables,
-            numeric_variables: Vec::new(),
-            goals: vec![ExplicitFact::propositional(1, 1)],
-            mutexes: Vec::new(),
-            state: vec![1, 0, 0],
-            numeric_state: Vec::new(),
-            operators: vec![operator],
-            axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
-            comparison_axioms: Vec::new(),
-            assignment_axioms: Vec::new(),
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-
-    fn integral_residuals(
-        transcription: &Transcription,
-        current: &[usize],
-        next: &[usize],
-    ) -> crate::residuals::Residuals {
-        let mut assignment = Assignment::zeros(transcription, 1);
-        assignment.set_action_one_hot(0, 0);
-        assignment.set_state_one_hot(transcription, 0, current);
-        assignment.set_state_one_hot(transcription, 1, next);
-        evaluate(transcription, &assignment)
-    }
-
-    #[test]
-    fn duplicate_preconditions_are_canonicalized_without_changing_core_semantics() {
-        let duplicate =
-            Transcription::build(&duplicate_precondition_task(true)).expect("transcription");
-        let canonical =
-            Transcription::build(&duplicate_precondition_task(false)).expect("transcription");
-        let left_zero = duplicate.fact(0, 0);
-        let right_zero = duplicate.fact(1, 0);
-
-        assert_eq!(duplicate.pre_action(), &[0, 0]);
-        assert_eq!(duplicate.pre_fact(), &[left_zero, right_zero]);
-        assert_eq!(duplicate.pre_action(), canonical.pre_action());
-        assert_eq!(duplicate.pre_fact(), canonical.pre_fact());
-
-        let valid_duplicate = integral_residuals(&duplicate, &[0, 0], &[1, 0]);
-        let valid_canonical = integral_residuals(&canonical, &[0, 0], &[1, 0]);
-        assert_eq!(valid_duplicate, valid_canonical);
-        assert!(valid_duplicate.is_zero(1e-12));
-
-        let invalid_duplicate = integral_residuals(&duplicate, &[1, 0], &[1, 0]);
-        let invalid_canonical = integral_residuals(&canonical, &[1, 0], &[1, 0]);
-        assert_eq!(invalid_duplicate, invalid_canonical);
-        assert_eq!(invalid_duplicate.precondition, vec![1.0, 0.0]);
-    }
-
-    #[cfg(feature = "candle")]
-    #[test]
-    fn duplicate_precondition_does_not_create_more_than_unit_causal_demand() {
-        use candle_core::{Device, Tensor};
-
-        use crate::tensor::{DTYPE, TensorPlan};
-
-        let transcription =
-            Transcription::build(&duplicate_precondition_task(true)).expect("transcription");
-        let device = Device::Cpu;
-        let plan = TensorPlan::new(&transcription, 1, 1, device.clone()).expect("tensor plan");
-        let action_logits =
-            Tensor::from_vec(vec![30.0, -30.0], (1, 1, 2), &device).expect("action logits");
-        let mut state_values = vec![-30.0; transcription.num_facts()];
-        state_values[transcription.fact(0, 1) as usize] = 30.0;
-        state_values[transcription.fact(1, 0) as usize] = 30.0;
-        let state_logits =
-            Tensor::from_vec(state_values, (1, 1, transcription.num_facts()), &device)
-                .expect("state logits");
-        let temperature = Tensor::ones((1, 1, 1), DTYPE, &device).expect("temperature");
-        let forward = plan
-            .forward(&action_logits, &state_logits, &temperature, &temperature)
-            .expect("forward");
-        let link_shape = plan.causal_link_shape();
-        let link_logits = Tensor::zeros(&link_shape, DTYPE, &device).expect("link logits");
-        let link_temperature =
-            Tensor::ones((1, 1, 1, 1), DTYPE, &device).expect("link temperature");
-        let links = plan
-            .causal_link_forward(&forward, &link_logits, &link_temperature)
-            .expect("causal links");
-
-        let action_probability = forward
-            .action
-            .to_vec3::<f64>()
-            .expect("action distribution")[0][0][0];
-        let demand = links.demand.to_vec3::<f64>().expect("causal demand");
-        for fact in [transcription.fact(0, 0), transcription.fact(1, 0)] {
-            let fact_demand = demand[0][0][fact as usize];
-            assert!(
-                (fact_demand - action_probability).abs() < 1e-12,
-                "fact {fact} has demand {fact_demand}, expected one action mass {action_probability}"
-            );
-            assert!(fact_demand <= 1.0);
-        }
     }
 }
