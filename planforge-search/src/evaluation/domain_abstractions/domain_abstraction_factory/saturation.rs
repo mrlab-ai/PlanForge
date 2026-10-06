@@ -618,7 +618,12 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
+        let mut comparison_enumeration_memo =
+            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
+                numeric_domain_sizes: generator.numeric_domain_sizes(),
+                hash_multipliers: generator.hash_multipliers(),
+                comparison_var_ids,
+            });
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
@@ -669,11 +674,6 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             base_predecessor,
                             task,
-                            ComparisonBranchingLayout {
-                                numeric_domain_sizes: generator.numeric_domain_sizes(),
-                                hash_multipliers: generator.hash_multipliers(),
-                                comparison_var_ids,
-                            },
                             &comparison_preconditions[abstract_op_id],
                             &mut comparison_enumeration_memo,
                         )?;
@@ -724,7 +724,12 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
+        let mut comparison_enumeration_memo =
+            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
+                numeric_domain_sizes: generator.numeric_domain_sizes(),
+                hash_multipliers: generator.hash_multipliers(),
+                comparison_var_ids: &comparison_var_ids,
+            });
 
         let mut applicable_operator_ids = Vec::new();
         for target_hash in 0..num_states {
@@ -802,11 +807,6 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             base_predecessor,
                             task,
-                            ComparisonBranchingLayout {
-                                numeric_domain_sizes: generator.numeric_domain_sizes(),
-                                hash_multipliers: generator.hash_multipliers(),
-                                comparison_var_ids: &comparison_var_ids,
-                            },
                             &comparison_preconditions[abstract_op_id],
                             &mut comparison_enumeration_memo,
                         )?;

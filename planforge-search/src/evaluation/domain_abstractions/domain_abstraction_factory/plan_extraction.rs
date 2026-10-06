@@ -171,7 +171,12 @@ impl DomainAbstractionFactory {
         } else {
             Vec::new()
         };
-        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
+        let mut comparison_enumeration_memo =
+            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
+                numeric_domain_sizes,
+                hash_multipliers,
+                comparison_var_ids,
+            });
 
         let mut current_hash = table.initial_state_hash;
         if current_hash >= dist.len() || !dist[current_hash].is_finite() {
@@ -266,11 +271,6 @@ impl DomainAbstractionFactory {
                 let possible_successors = self.enumerate_states_with_evaluated_comparisons_cached(
                     base_successor,
                     task,
-                    ComparisonBranchingLayout {
-                        numeric_domain_sizes,
-                        hash_multipliers,
-                        comparison_var_ids,
-                    },
                     &[],
                     &mut comparison_enumeration_memo,
                 )?;
@@ -315,11 +315,6 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             cand_pred_i64 as usize,
                             task,
-                            ComparisonBranchingLayout {
-                                numeric_domain_sizes,
-                                hash_multipliers,
-                                comparison_var_ids,
-                            },
                             &comparison_preconditions[cand_op_id],
                             &mut comparison_enumeration_memo,
                         )?;
