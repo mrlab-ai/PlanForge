@@ -3,10 +3,12 @@ mod tests;
 
 use std::collections::HashMap;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use planforge_sas::{
     axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue, Operator, VariableIndex},
+    numeric_task::{
+        AbstractNumericTask, ExplicitFact, NumericValue, Operator, OperatorIndex, VariableIndex,
+    },
     state_registry::ConcreteStateView,
 };
 
@@ -14,7 +16,7 @@ use super::target_centered::{
     dependent_numeric_flaws_backward, numeric_effect_deltas, preimage_split_for_expected_successor,
 };
 use super::{
-    Flaw, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
+    Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
     dependent_numeric_flaws_for_comparison_prop_var, goal_facts,
 };
 use crate::evaluation::domain_abstractions::{
@@ -43,13 +45,16 @@ pub struct PartitionedTask<'a> {
 /// direct deviation flaws split at the current concrete value with the side
 /// determined from the operator delta. [`SplitDirection::Backward`] places
 /// splits at boundaries derived from the regressed-target / required interval.
-#[allow(unused_assignments)]
+///
+/// Without flaws, the outcome carries the concrete plan the walk executed: at
+/// every step the first operator of the wildcard step that is applicable and
+/// lands where the abstract plan said.
 pub fn get_progression_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     wildcard_plan: &WildcardPlanResult,
     direction: SplitDirection,
-) -> Result<Vec<Flaw>> {
+) -> Result<FlawSearchOutcome> {
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
@@ -69,19 +74,18 @@ pub fn get_progression_flaws(
         get_initial_state(task, &state_packer, &axiom_evaluator)?;
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
+    let mut executed_operator_ids = Vec::with_capacity(wildcard_plan.wildcard_plan.len());
     let mut step: usize = 1;
 
     for equivalent_ops in wildcard_plan.wildcard_plan.iter() {
-        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step];
         ensure!(
             step < wildcard_plan.abstract_numeric_states.len(),
             "WildcardPlanResult abstract_numeric_states too short for step {step}"
         );
+        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step];
 
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id.index()) else {
-                continue;
-            };
+            let op = abstract_plan_operator(task, op_id, step)?;
             let state = ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state);
             let operator_flaws =
                 get_progression_precondition_flaws(partitioned, op, state, step, direction);
@@ -106,6 +110,7 @@ pub fn get_progression_flaws(
                 collected_flaws.clear();
                 prop_state = next_prop_state;
                 numeric_state = next_numeric_state;
+                executed_operator_ids.push(op_id);
                 break;
             }
             collected_flaws.extend(deviation_flaws);
@@ -119,23 +124,69 @@ pub fn get_progression_flaws(
     }
 
     if !collected_flaws.is_empty() {
-        return Ok(collected_flaws);
+        return Ok(FlawSearchOutcome::without_plan(collected_flaws));
     }
 
-    Ok(get_goal_flaws(
+    let goal_flaws = get_goal_flaws(
         partitioned,
         ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state),
         step,
         direction,
+    );
+    Ok(outcome_of_executed_plan(
+        wildcard_plan,
+        goal_flaws,
+        executed_operator_ids,
     ))
 }
 
+/// The operator a wildcard plan step names; an abstract plan only ever names
+/// operators of its task.
+fn abstract_plan_operator(
+    task: &dyn AbstractNumericTask,
+    op_id: OperatorIndex,
+    step: usize,
+) -> Result<&Operator> {
+    task.get_operators().get(op_id.index()).with_context(|| {
+        format!(
+            "abstract plan step {step} names operator {op_id}, but the task has {} operators",
+            task.get_operators().len()
+        )
+    })
+}
+
+/// Package the flaws of a plan walk that executed one operator per wildcard
+/// step: without flaws, those operators are a concrete plan.
+fn outcome_of_executed_plan(
+    wildcard_plan: &WildcardPlanResult,
+    flaws: Vec<Flaw>,
+    executed_operator_ids: Vec<OperatorIndex>,
+) -> FlawSearchOutcome {
+    if !flaws.is_empty() {
+        return FlawSearchOutcome::without_plan(flaws);
+    }
+    assert_eq!(
+        executed_operator_ids.len(),
+        wildcard_plan.wildcard_plan.len(),
+        "a flawless plan walk executes one operator per abstract plan step"
+    );
+    FlawSearchOutcome {
+        flaws,
+        concrete_plan: Some(executed_operator_ids),
+    }
+}
+
+/// Walk the entire wildcard plan, collecting the flaws of every step.
+///
+/// Without flaws, the outcome carries the concrete plan the walk executed: at
+/// every step the first operator of the wildcard step whose preconditions
+/// hold.
 pub fn get_execute_entire_plan_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     wildcard_plan: &WildcardPlanResult,
     direction: SplitDirection,
-) -> Result<Vec<Flaw>> {
+) -> Result<FlawSearchOutcome> {
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
     let deltas = numeric_effect_deltas(task);
@@ -149,31 +200,30 @@ pub fn get_execute_entire_plan_flaws(
         get_initial_state(task, &state_packer, &axiom_evaluator)?;
 
     let mut collected_flaws: Vec<Flaw> = Vec::new();
+    let mut executed_operator_ids = Vec::with_capacity(wildcard_plan.wildcard_plan.len());
     let mut step: usize = 1;
 
     for equivalent_ops in wildcard_plan.wildcard_plan.iter() {
-        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step];
         ensure!(
             step < wildcard_plan.abstract_numeric_states.len(),
             "WildcardPlanResult abstract_numeric_states too short for step {step}"
         );
+        let expected_abs_numeric_state = &wildcard_plan.abstract_numeric_states[step];
 
         let state = ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state);
         let mut step_flaws = Vec::new();
-        let mut chosen_op: Option<&Operator> = None;
-        let mut fallback_op: Option<&Operator> = None;
+        let mut chosen_op: Option<(OperatorIndex, &Operator)> = None;
+        let mut fallback_op: Option<(OperatorIndex, &Operator)> = None;
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id.index()) else {
-                continue;
-            };
+            let op = abstract_plan_operator(task, op_id, step)?;
             if fallback_op.is_none() {
-                fallback_op = Some(op);
+                fallback_op = Some((op_id, op));
             }
 
             let operator_flaws =
                 get_progression_precondition_flaws(partitioned, op, state, step, direction);
             if operator_flaws.is_empty() {
-                chosen_op = Some(op);
+                chosen_op = Some((op_id, op));
                 step_flaws.clear();
                 break;
             }
@@ -182,7 +232,7 @@ pub fn get_execute_entire_plan_flaws(
 
         collected_flaws.extend(step_flaws);
 
-        if let Some(op) = chosen_op.or(fallback_op) {
+        if let Some((op_id, op)) = chosen_op.or(fallback_op) {
             let (next_prop_state, next_numeric_state, deviation_flaws) =
                 progress_and_get_deviation_flaws(
                     partitioned,
@@ -196,6 +246,7 @@ pub fn get_execute_entire_plan_flaws(
             collected_flaws.extend(deviation_flaws);
             prop_state = next_prop_state;
             numeric_state = next_numeric_state;
+            executed_operator_ids.push(op_id);
         }
 
         step += 1;
@@ -208,7 +259,11 @@ pub fn get_execute_entire_plan_flaws(
         direction,
     ));
 
-    Ok(collected_flaws)
+    Ok(outcome_of_executed_plan(
+        wildcard_plan,
+        collected_flaws,
+        executed_operator_ids,
+    ))
 }
 
 /// The successor of one plan step -- packed propositional half, numeric values

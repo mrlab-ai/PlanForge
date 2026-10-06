@@ -11,7 +11,7 @@ use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{Level, debug, enabled, info};
 
 use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementDirection,
+    CartesianAbstraction, CartesianAbstractionHeuristic,
 };
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -25,6 +25,7 @@ use super::cost_partitioning::{
     RegionalCostAllocation, StateRegion, TransitionResidualCosts,
     build_explicit_label_cost_partitioning_table, build_explicit_regional_cost_partitioning_table,
 };
+use super::goal_focused::MemberDirection;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::AbstractOperator;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::{
     AbstractDistanceTable, DistanceTableOptions, SaturationStep,
@@ -990,7 +991,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             deadline,
         )?;
         if self.config.partitioning.uses_regions()
-            && let Some(goal_cover_order) = self.cartesian_goal_cover_order(
+            && let Some(goal_cover_order) = self.goal_cover_order(
                 &order,
                 components,
                 &standalone_current_h_values(state, abstract_state_ids),
@@ -1073,41 +1074,41 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(deduplicate_orders(vec![greedy, random]))
     }
 
-    fn cartesian_goal_cover_order(
+    fn goal_cover_order(
         &self,
         base_order: &[usize],
         components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
-        require_pure_cartesian_collection: bool,
+        require_pure_goal_focused_collection: bool,
     ) -> Option<Vec<usize>> {
-        cartesian_goal_cover_order(
+        goal_cover_order(
             base_order,
             components,
             standalone_current_h,
-            require_pure_cartesian_collection,
+            require_pure_goal_focused_collection,
             GoalCoverOrderVariant::default(),
         )
     }
 
-    fn compact_cartesian_goal_cover_orders(
+    fn compact_goal_cover_orders(
         &self,
         base_order: &[usize],
         components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
     ) -> Vec<(usize, Vec<usize>)> {
         let mut variants_by_goal = HashMap::<usize, usize>::new();
-        for abstraction in components
+        for member in components
             .iter()
-            .filter_map(AbstractionComponent::as_cartesian)
+            .filter_map(AbstractionComponent::goal_focused_member)
         {
-            if let Some(goal_id) = abstraction.metadata.collection_goal_id {
-                *variants_by_goal.entry(goal_id).or_default() += 1;
-            }
+            *variants_by_goal
+                .entry(member.membership.goal_id)
+                .or_default() += 1;
         }
         let progressive_roots = components
             .iter()
-            .filter_map(AbstractionComponent::as_cartesian)
-            .any(|abstraction| abstraction.metadata.progressive_refinement_root);
+            .filter_map(AbstractionComponent::goal_focused_member)
+            .any(|member| member.membership.progressive_root);
         let goal_count = variants_by_goal
             .values()
             .filter(|&&variant_count| progressive_roots || variant_count >= 2)
@@ -1126,28 +1127,22 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         variants
             .into_iter()
             .filter_map(|variant| {
-                let order = cartesian_goal_cover_order(
-                    base_order,
-                    components,
-                    standalone_current_h,
-                    false,
-                    variant,
-                )?;
+                let order =
+                    goal_cover_order(base_order, components, standalone_current_h, false, variant)?;
                 let first_component = *order
                     .first()
                     .expect("compact goal-cover order must not be empty");
                 let goal_id = components[first_component]
-                    .as_cartesian()
-                    .expect("compact goal-cover order must start with a Cartesian component")
-                    .metadata
-                    .collection_goal_id
-                    .expect("compact goal-cover order must start with its anchor goal");
+                    .goal_focused_member()
+                    .expect("compact goal-cover order must start with its anchor goal")
+                    .membership
+                    .goal_id;
                 seen.insert(order.clone()).then_some((goal_id, order))
             })
             .collect()
     }
 
-    fn cartesian_specialist_goal_for_order(
+    fn specialist_goal_for_order(
         &self,
         order: &[usize],
         components: &[AbstractionComponent<'_>],
@@ -1156,31 +1151,26 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             || !order.iter().copied().all(|id| {
                 components
                     .get(id)
-                    .and_then(AbstractionComponent::as_cartesian)
-                    .is_some_and(|abstraction| abstraction.metadata.collection_goal_id.is_some())
+                    .and_then(AbstractionComponent::goal_focused_member)
+                    .is_some()
             })
         {
             return None;
         }
-        if !components[order[0]]
-            .as_cartesian()?
-            .metadata
-            .progressive_refinement_root
-        {
-            return None;
-        }
-        order
-            .first()
-            .and_then(|&id| components[id].as_cartesian()?.metadata.collection_goal_id)
+        let first = components[*order.first()?].goal_focused_member()?;
+        first
+            .membership
+            .progressive_root
+            .then_some(first.membership.goal_id)
     }
 
-    fn prefixed_cartesian_goal_cover_order(
+    fn prefixed_goal_cover_order(
         &self,
         base_order: &[usize],
         components: &[AbstractionComponent<'_>],
         standalone_current_h: &[f64],
     ) -> Option<Vec<usize>> {
-        cartesian_goal_cover_order(
+        goal_cover_order(
             base_order,
             components,
             standalone_current_h,
@@ -2111,8 +2101,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             baseline_deadline,
             self.config.saturator,
         )?;
-        baseline.specialist_goal_id =
-            self.cartesian_specialist_goal_for_order(&best_order, components);
+        baseline.specialist_goal_id = self.specialist_goal_for_order(&best_order, components);
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
@@ -2155,7 +2144,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 Err(error) => return Err(error),
             };
             candidate_cp.specialist_goal_id = specialist_goal_id
-                .or_else(|| self.cartesian_specialist_goal_for_order(&candidate, components));
+                .or_else(|| self.specialist_goal_for_order(&candidate, components));
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
             let candidate_index = partitions.len();
             partitions.push(candidate_cp);
@@ -2194,19 +2183,19 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         orders.push((None, declaration_order));
 
         if let Some(prefixed_goal_cover_order) =
-            self.prefixed_cartesian_goal_cover_order(base_order, components, standalone_current_h)
+            self.prefixed_goal_cover_order(base_order, components, standalone_current_h)
         {
             orders.push((None, prefixed_goal_cover_order));
         }
 
         orders.extend(
-            self.compact_cartesian_goal_cover_orders(base_order, components, standalone_current_h)
+            self.compact_goal_cover_orders(base_order, components, standalone_current_h)
                 .into_iter()
                 .map(|(goal_id, order)| (Some(goal_id), order)),
         );
 
         if let Some(goal_cover_order) =
-            self.cartesian_goal_cover_order(base_order, components, standalone_current_h, false)
+            self.goal_cover_order(base_order, components, standalone_current_h, false)
         {
             orders.push((None, goal_cover_order));
         }
@@ -2889,41 +2878,38 @@ fn compact_goal_cover_variants(
         .collect()
 }
 
-fn cartesian_goal_cover_order(
+fn goal_cover_order(
     base_order: &[usize],
     components: &[AbstractionComponent<'_>],
     standalone_current_h: &[f64],
-    require_pure_cartesian_collection: bool,
+    require_pure_goal_focused_collection: bool,
     variant: GoalCoverOrderVariant,
 ) -> Option<Vec<usize>> {
-    let is_goal_cartesian = |component_id: usize| {
+    let goal_member = |component_id: usize| {
         components
             .get(component_id)
-            .and_then(AbstractionComponent::as_cartesian)
-            .is_some_and(|abstraction| abstraction.metadata.collection_goal_id.is_some())
+            .and_then(AbstractionComponent::goal_focused_member)
     };
-    let pure_cartesian_collection = base_order.iter().copied().all(is_goal_cartesian);
-    if (require_pure_cartesian_collection || variant.compact) && !pure_cartesian_collection {
+    let is_goal_member = |component_id: usize| goal_member(component_id).is_some();
+    let pure_goal_focused_collection = base_order.iter().copied().all(is_goal_member);
+    if (require_pure_goal_focused_collection || variant.compact) && !pure_goal_focused_collection {
         return None;
     }
 
     let mut by_goal: HashMap<usize, Vec<usize>> = HashMap::new();
     for &component_id in base_order {
-        let Some(abstraction) = components
-            .get(component_id)
-            .and_then(AbstractionComponent::as_cartesian)
-        else {
+        let Some(member) = goal_member(component_id) else {
             continue;
         };
-        let Some(goal_id) = abstraction.metadata.collection_goal_id else {
-            continue;
-        };
-        by_goal.entry(goal_id).or_default().push(component_id);
+        by_goal
+            .entry(member.membership.goal_id)
+            .or_default()
+            .push(component_id);
     }
     let progressive_roots = components
         .iter()
-        .filter_map(AbstractionComponent::as_cartesian)
-        .any(|abstraction| abstraction.metadata.progressive_refinement_root);
+        .filter_map(AbstractionComponent::goal_focused_member)
+        .any(|member| member.membership.progressive_root);
     if by_goal.is_empty()
         || (!progressive_roots && by_goal.values().all(|components| components.len() < 2))
     {
@@ -2936,11 +2922,9 @@ fn cartesian_goal_cover_order(
             .copied()
             .unwrap_or(0.0)
     };
-    let abstraction = |component_id: usize| {
-        components
-            .get(component_id)
-            .and_then(AbstractionComponent::as_cartesian)
-            .expect("goal-cover order component must reference a Cartesian abstraction")
+    let member = |component_id: usize| {
+        goal_member(component_id)
+            .expect("goal-cover order component must reference a goal-focused collection member")
     };
     let goal_max_h = |components: &[usize]| {
         components
@@ -2962,23 +2946,14 @@ fn cartesian_goal_cover_order(
         sorted_goals[variant.anchor_goal_offset % sorted_goals.len()];
 
     let compare_anchor = |&left: &usize, &right: &usize| {
-        let left_abstraction = abstraction(left);
-        let right_abstraction = abstraction(right);
+        let left_member = member(left);
+        let right_member = member(right);
         current_h(right)
             .total_cmp(&current_h(left))
+            .then_with(|| right_member.tie_rank.cmp(&left_member.tie_rank))
             .then_with(|| {
-                right_abstraction
-                    .metadata
-                    .split_selection_rank
-                    .cmp(&left_abstraction.metadata.split_selection_rank)
-            })
-            .then_with(|| {
-                (right_abstraction.metadata.refinement_direction
-                    == CartesianRefinementDirection::Regression)
-                    .cmp(
-                        &(left_abstraction.metadata.refinement_direction
-                            == CartesianRefinementDirection::Regression),
-                    )
+                (right_member.direction == MemberDirection::Regression)
+                    .cmp(&(left_member.direction == MemberDirection::Regression))
             })
             .then_with(|| left.cmp(&right))
     };
@@ -2987,7 +2962,7 @@ fn cartesian_goal_cover_order(
     let first_anchor = sorted_anchor_components
         .get(variant.anchor_offset % sorted_anchor_components.len())
         .copied()?;
-    let first_metadata = &abstraction(first_anchor).metadata;
+    let first_member = member(first_anchor);
     let mut complementary_anchors = anchor_components
         .iter()
         .copied()
@@ -2995,21 +2970,19 @@ fn cartesian_goal_cover_order(
         .collect::<Vec<_>>();
     complementary_anchors.sort_by(|&left, &right| {
         let complement_score = |component_id: usize| {
-            let metadata = &abstraction(component_id).metadata;
+            let candidate = member(component_id);
             (
-                metadata.refinement_direction != first_metadata.refinement_direction,
-                metadata.split_selection_rank == first_metadata.split_selection_rank,
+                candidate.direction != first_member.direction,
+                candidate.tie_rank == first_member.tie_rank,
             )
         };
         complement_score(right)
             .cmp(&complement_score(left))
             .then_with(|| current_h(right).total_cmp(&current_h(left)))
             .then_with(|| {
-                abstraction(left)
-                    .transition_system
-                    .transitions
-                    .len()
-                    .cmp(&abstraction(right).transition_system.transitions.len())
+                member(left)
+                    .retained_transitions
+                    .cmp(&member(right).retained_transitions)
             })
             .then_with(|| left.cmp(&right))
     });
@@ -3020,7 +2993,7 @@ fn cartesian_goal_cover_order(
     let mut selected = HashSet::with_capacity(base_order.len());
     if variant.non_goal_prefix {
         for &component_id in base_order {
-            if !is_goal_cartesian(component_id) {
+            if !is_goal_member(component_id) {
                 order.push(component_id);
                 selected.insert(component_id);
             }
@@ -3053,20 +3026,18 @@ fn cartesian_goal_cover_order(
         let mut representatives = components.clone();
         representatives.sort_by(|&left, &right| {
             let variant_score = |component_id: usize| {
-                let metadata = &abstraction(component_id).metadata;
+                let candidate = member(component_id);
                 (
-                    metadata.refinement_direction == first_metadata.refinement_direction,
-                    metadata.split_selection_rank == first_metadata.split_selection_rank,
+                    candidate.direction == first_member.direction,
+                    candidate.tie_rank == first_member.tie_rank,
                 )
             };
             variant_score(right)
                 .cmp(&variant_score(left))
                 .then_with(|| {
-                    abstraction(left)
-                        .transition_system
-                        .transitions
-                        .len()
-                        .cmp(&abstraction(right).transition_system.transitions.len())
+                    member(left)
+                        .retained_transitions
+                        .cmp(&member(right).retained_transitions)
                 })
                 .then_with(|| current_h(right).total_cmp(&current_h(left)))
                 .then_with(|| left.cmp(&right))
@@ -3098,12 +3069,10 @@ fn cartesian_goal_cover_order(
         .filter(|component_id| !selected.contains(component_id))
         .collect::<Vec<_>>();
     remaining.sort_by(
-        |&left, &right| match (is_goal_cartesian(left), is_goal_cartesian(right)) {
-            (true, true) => abstraction(left)
-                .transition_system
-                .transitions
-                .len()
-                .cmp(&abstraction(right).transition_system.transitions.len())
+        |&left, &right| match (is_goal_member(left), is_goal_member(right)) {
+            (true, true) => member(left)
+                .retained_transitions
+                .cmp(&member(right).retained_transitions)
                 .then_with(|| current_h(right).total_cmp(&current_h(left)))
                 .then_with(|| left.cmp(&right)),
             (true, false) => std::cmp::Ordering::Less,

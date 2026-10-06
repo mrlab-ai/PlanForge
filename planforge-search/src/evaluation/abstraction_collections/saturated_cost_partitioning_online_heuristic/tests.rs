@@ -238,13 +238,13 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         .cloned()
         .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
         .collect::<Vec<_>>();
-    let order = |variant| {
-        cartesian_goal_cover_order(&base_order, &components, &standalone_h, true, variant).unwrap()
-    };
+    let order =
+        |variant| goal_cover_order(&base_order, &components, &standalone_h, true, variant).unwrap();
     let goal = |component_id: usize| {
         abstractions[component_id]
             .metadata
-            .collection_goal_id
+            .collection_member
+            .map(|member| member.goal_id)
             .unwrap()
     };
     let baseline = order(GoalCoverOrderVariant {
@@ -304,7 +304,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         .cloned()
         .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
         .collect::<Vec<_>>();
-    let prefixed = cartesian_goal_cover_order(
+    let prefixed = goal_cover_order(
         &mixed_order,
         &mixed_components,
         &mixed_h,
@@ -373,7 +373,12 @@ fn specialist_scp<'task>(
         .unwrap();
     let expected_goals = abstractions
         .iter()
-        .filter_map(|abstraction| abstraction.metadata.collection_goal_id)
+        .filter_map(|abstraction| {
+            abstraction
+                .metadata
+                .collection_member
+                .map(|member| member.goal_id)
+        })
         .collect::<HashSet<_>>();
     let components = abstractions
         .into_iter()
@@ -864,7 +869,6 @@ mod handcrafted_sailing_tests {
         CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
         CartesianRefinementDirection,
     };
-    use crate::evaluation::domain_abstractions::cegar::InitialSeedSplit;
     use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
     use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
     use crate::evaluation::domain_abstractions::domain_abstraction_generator::{
@@ -935,7 +939,13 @@ mod handcrafted_sailing_tests {
         for goal_id in 0..2 {
             let mut modes = abstractions
                 .iter()
-                .filter(|abstraction| abstraction.metadata.collection_goal_id == Some(goal_id))
+                .filter(|abstraction| {
+                    abstraction
+                        .metadata
+                        .collection_member
+                        .map(|member| member.goal_id)
+                        == Some(goal_id)
+                })
                 .map(|abstraction| {
                     (
                         abstraction.metadata.refinement_direction,
@@ -980,7 +990,7 @@ mod handcrafted_sailing_tests {
             .cloned()
             .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
             .collect::<Vec<_>>();
-        let goal_cover_order = cartesian_goal_cover_order(
+        let goal_cover_order = goal_cover_order(
             &(0..abstractions.len()).collect::<Vec<_>>(),
             &components,
             &standalone_h,
@@ -1075,7 +1085,6 @@ mod handcrafted_sailing_tests {
                 collection_strategy: Some("handcrafted_full_task_sailing".to_string()),
                 flaw_kind: None,
                 full_goal_task: Some(false),
-                initial_seed_splits: spec.seed_splits.iter().map(seed_description).collect(),
                 max_abstraction_size: Some(10_000),
                 ..DomainAbstractionMetadata::default()
             };
@@ -1195,7 +1204,15 @@ mod handcrafted_sailing_tests {
         name: String,
         goal: ExplicitFact,
         view_ids: Vec<usize>,
-        seed_splits: Vec<InitialSeedSplit>,
+        seed_splits: Vec<NumericSeed>,
+    }
+
+    /// A numeric split the handcrafted abstractions start from.
+    #[derive(Debug, Clone, PartialEq)]
+    struct NumericSeed {
+        numeric_var_id: VariableIndex,
+        value: NumericValue,
+        include_in_lower: bool,
     }
 
     fn handcrafted_full_task_specs(task: &dyn AbstractNumericTask) -> Vec<HandcraftedSpec> {
@@ -1228,15 +1245,7 @@ mod handcrafted_sailing_tests {
     ) -> anyhow::Result<DomainAbstraction> {
         let mut partitions = NumericPartitions::trivial(transformed_task);
         for seed in &spec.seed_splits {
-            let InitialSeedSplit::Numeric {
-                numeric_var_id,
-                value,
-                include_in_lower,
-            } = seed
-            else {
-                continue;
-            };
-            partitions.split_at(*numeric_var_id, *value, *include_in_lower);
+            partitions.split_at(seed.numeric_var_id, seed.value, seed.include_in_lower);
         }
 
         let goal_vars = (0..transformed_task.get_num_goals())
@@ -1401,10 +1410,7 @@ mod handcrafted_sailing_tests {
         candidates[0]
     }
 
-    fn route_seed_splits(
-        task: &dyn AbstractNumericTask,
-        view_ids: &[usize],
-    ) -> Vec<InitialSeedSplit> {
+    fn route_seed_splits(task: &dyn AbstractNumericTask, view_ids: &[usize]) -> Vec<NumericSeed> {
         let initial = task.get_initial_numeric_state_values();
         let mut seeds = Vec::new();
         for &view_id in view_ids {
@@ -1440,7 +1446,7 @@ mod handcrafted_sailing_tests {
     }
 
     fn add_route_grid_values(
-        seeds: &mut Vec<InitialSeedSplit>,
+        seeds: &mut Vec<NumericSeed>,
         numeric_var_id: VariableIndex,
         start: NumericValue,
         end: NumericValue,
@@ -1456,12 +1462,12 @@ mod handcrafted_sailing_tests {
     }
 
     fn add_split(
-        seeds: &mut Vec<InitialSeedSplit>,
+        seeds: &mut Vec<NumericSeed>,
         numeric_var_id: VariableIndex,
         value: NumericValue,
         include_in_lower: bool,
     ) {
-        seeds.push(InitialSeedSplit::Numeric {
+        seeds.push(NumericSeed {
             numeric_var_id,
             value,
             include_in_lower,
@@ -1489,19 +1495,13 @@ mod handcrafted_sailing_tests {
             .join(" || ")
     }
 
-    fn seed_description(seed: &InitialSeedSplit) -> String {
-        match seed {
-            InitialSeedSplit::Propositional { var_id, value } => format!("p{var_id}={value}"),
-            InitialSeedSplit::Numeric {
-                numeric_var_id,
-                value,
-                include_in_lower,
-            } => format!(
-                "n{numeric_var_id}{}{}",
-                if *include_in_lower { "<=" } else { "<" },
-                value
-            ),
-        }
+    fn seed_description(seed: &NumericSeed) -> String {
+        format!(
+            "n{}{}{}",
+            seed.numeric_var_id,
+            if seed.include_in_lower { "<=" } else { "<" },
+            seed.value
+        )
     }
 
     fn translated_sailing_2_2_task() -> NumericRootTask {
