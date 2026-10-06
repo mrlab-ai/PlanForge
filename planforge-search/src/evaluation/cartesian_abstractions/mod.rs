@@ -175,6 +175,10 @@ pub struct CartesianAbstractionCollectionConfig {
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
     pub progressive_goal_roots: bool,
+    /// Complementary collections only: alternate progression and regression
+    /// by variant parity. When false, every variant refines in the configured
+    /// `refinement_direction`.
+    pub alternate_split_kinds: bool,
 }
 
 impl Default for CartesianAbstractionCollectionConfig {
@@ -186,6 +190,7 @@ impl Default for CartesianAbstractionCollectionConfig {
             max_collection_states: 10_000_000,
             total_max_time: None,
             progressive_goal_roots: false,
+            alternate_split_kinds: true,
         }
     }
 }
@@ -2130,6 +2135,10 @@ impl CartesianAbstractionCollectionGenerator {
             config.variants_per_goal > 0,
             "Cartesian variants_per_goal must be > 0"
         );
+        ensure!(
+            config.alternate_split_kinds || config.collection_strategy.is_complementary(),
+            "`alternate_split_kinds=false` requires `collection_strategy=complementary`"
+        );
         CartesianAbstractionGenerator::new(config.abstraction.clone())?;
         Ok(Self { config })
     }
@@ -2154,6 +2163,7 @@ impl CartesianAbstractionCollectionGenerator {
                 max_collection_states: self.config.max_collection_states,
                 total_max_time: self.config.total_max_time,
                 progressive_goal_roots: self.config.progressive_goal_roots,
+                alternate_split_kinds: self.config.alternate_split_kinds,
             },
             self,
         )

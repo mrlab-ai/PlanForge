@@ -236,6 +236,7 @@ fn schedule(
         max_collection_states: 1_000,
         total_max_time: None,
         progressive_goal_roots,
+        alternate_split_kinds: true,
     }
 }
 
@@ -614,5 +615,43 @@ fn concrete_states_replay_and_check_goals() {
     assert!(
         initial.satisfies_goal(&task, 2).is_err(),
         "goal 2 does not exist"
+    );
+}
+
+#[test]
+fn without_alternation_every_variant_keeps_the_configured_direction() {
+    let bounds = [Bound::AtLeast(1.0), Bound::AtLeast(2.0)];
+    let task = counter_task(&bounds);
+    let backend = ScriptedBackend::new(&bounds);
+    let members = build_goal_focused_collection(
+        &task,
+        &GoalFocusedSchedule {
+            alternate_split_kinds: false,
+            ..schedule(CollectionStrategy::Complementary, 3, false)
+        },
+        &backend,
+    )
+    .unwrap();
+
+    let seed = |goal_id, variant_id: usize| Some(derive_variant_seed(5, goal_id, variant_id - 1));
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| (
+                member.call.goal_id.unwrap(),
+                member.call.variant_id,
+                member.call.direction,
+                member.call.tie_rank,
+                member.call.seed
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0, None, Some(0), None),
+            (1, 0, None, Some(0), None),
+            (0, 1, None, Some(0), seed(0, 1)),
+            (1, 1, None, Some(0), seed(1, 1)),
+            (1, 2, None, Some(1), seed(1, 2)),
+            (0, 2, None, Some(1), seed(0, 2)),
+        ]
     );
 }

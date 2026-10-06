@@ -298,14 +298,18 @@ pub(crate) struct GoalFocusedSchedule {
     pub(crate) max_collection_states: usize,
     pub(crate) total_max_time: Option<Duration>,
     pub(crate) progressive_goal_roots: bool,
+    /// Complementary collections: alternate progression and regression by
+    /// variant parity. When false, every variant keeps the backend's
+    /// configured direction; ranks and seeds are unaffected.
+    pub(crate) alternate_split_kinds: bool,
 }
 
 impl GoalFocusedSchedule {
     /// How member `member` of a task with `goal_count` goals is constructed.
     ///
     /// A complementary collection alternates progression and regression by
-    /// variant parity, ranks ties by `variant / 2`, and derives a seed for every
-    /// variant but the first; otherwise only the seed varies, and only when more
+    /// variant parity (unless `alternate_split_kinds` is off), ranks ties by
+    /// `variant / 2`, and derives a seed for every variant but the first; otherwise only the seed varies, and only when more
     /// than one variant per goal is requested. An initial-root specialist reuses
     /// variant 0's construction.
     fn goal_variant(&self, member: &ScheduledMember, goal_count: usize) -> GoalVariant {
@@ -326,14 +330,20 @@ impl GoalFocusedSchedule {
         let base_seed = self.random_seed.unwrap_or(0);
         let derived_seed =
             || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
+        assert!(
+            self.alternate_split_kinds || self.strategy.is_complementary(),
+            "only complementary collections choose split kinds per variant"
+        );
         let (direction, tie_rank, seed) = if self.strategy.is_complementary() {
-            let direction = if construction_variant.is_multiple_of(2) {
-                MemberDirection::Progression
-            } else {
-                MemberDirection::Regression
-            };
+            let direction = self.alternate_split_kinds.then(|| {
+                if construction_variant.is_multiple_of(2) {
+                    MemberDirection::Progression
+                } else {
+                    MemberDirection::Regression
+                }
+            });
             (
-                Some(direction),
+                direction,
                 Some(construction_variant / 2),
                 (construction_variant > 0).then(derived_seed),
             )

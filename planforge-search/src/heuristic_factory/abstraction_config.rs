@@ -898,6 +898,9 @@ fn apply_cartesian_source_options(
             "progressive_goal_roots" if collection => {
                 config.progressive_goal_roots = bool::from_option_value(arg.value())?;
             }
+            "alternate_split_kinds" if collection => {
+                config.alternate_split_kinds = bool::from_option_value(arg.value())?;
+            }
             "max_collection_size" if collection => {
                 config.max_collection_states = usize::from_option_value(arg.value())?;
             }
