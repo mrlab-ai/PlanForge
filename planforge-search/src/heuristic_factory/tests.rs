@@ -135,6 +135,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert_eq!(config.variants_per_goal, 8);
     assert!(config.progressive_goal_roots);
     assert!(!config.alternate_split_kinds);
+    assert!(config.single_goal_tasks);
     assert_eq!(config.abstraction.flaw_kind, FlawKind::ExecuteEntirePlan);
     assert!(config.abstraction.compute_operator_regions);
 }
@@ -643,6 +644,23 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
 }
 
 #[test]
+fn parses_full_task_goal_focused_options() {
+    let h = astar_heuristic(
+        "astar(scp(domain(collection_strategy=complementary, single_goal_tasks=false), cartesian_collection(collection_strategy=complementary, single_goal_tasks=false)))",
+    );
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
+    let mut domain = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    ApplyOptions::apply_options(&mut domain, sources[0].args()).unwrap();
+    assert!(!domain.single_goal_tasks);
+    let cartesian = abstraction_config::apply_cartesian_collection_options(
+        sources[1].args(),
+        abstraction_config::ComponentUse::RegionalCostPartitioning,
+    )
+    .unwrap();
+    assert!(!cartesian.single_goal_tasks);
+}
+
+#[test]
 fn parses_goal_focused_domain_collection_options() {
     let h = astar_heuristic(
         "astar(domain(collection_strategy=complementary, variants_per_goal=10, progressive_goal_roots=true, alternate_split_kinds=false, split_direction=backward))",
@@ -653,6 +671,7 @@ fn parses_goal_focused_domain_collection_options() {
     assert_eq!(cfg.variants_per_goal, 10);
     assert!(cfg.progressive_goal_roots);
     assert!(!cfg.alternate_split_kinds);
+    assert!(cfg.single_goal_tasks);
     assert_eq!(
         cfg.split_direction,
         Some(crate::evaluation::domain_abstractions::cegar::SplitDirection::Backward)

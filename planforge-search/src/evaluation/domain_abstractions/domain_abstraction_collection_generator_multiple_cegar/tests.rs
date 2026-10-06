@@ -165,6 +165,7 @@ fn complementary_rejects_options_the_schedule_decides_or_cannot_follow() {
     let without_alternation = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         split_direction: Some(SplitDirection::Backward),
         alternate_split_kinds: false,
+        single_goal_tasks: true,
         ..complementary.clone()
     };
     assert!(
@@ -220,6 +221,7 @@ fn standard_rejects_goal_focused_options() {
 
     let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         alternate_split_kinds: false,
+        single_goal_tasks: true,
         ..Default::default()
     });
     assert!(
@@ -243,6 +245,7 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
     };
     let variant = |direction, tie_rank, seed| GoalVariant {
         goal_id: Some(1),
+        full_task: false,
         variant_id: 3,
         kind: MemberKind::Scheduled,
         direction: Some(direction),
@@ -440,6 +443,7 @@ fn cartesian_members(
             total_max_time: None,
             progressive_goal_roots,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         },
     )
 }
@@ -547,6 +551,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
         &task,
         DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             alternate_split_kinds: false,
+            single_goal_tasks: true,
             split_direction: Some(SplitDirection::Backward),
             ..domain_goal_focused_config(3, true)
         },
@@ -566,6 +571,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             total_max_time: None,
             progressive_goal_roots: true,
             alternate_split_kinds: false,
+            single_goal_tasks: true,
         },
     );
 
@@ -590,6 +596,7 @@ fn cartesian_collections_reject_disabled_alternation_without_complementary() {
     let error =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             alternate_split_kinds: false,
+            single_goal_tasks: true,
             ..Default::default()
         })
         .err()
@@ -600,4 +607,124 @@ fn cartesian_collections_reject_disabled_alternation_without_complementary() {
             .contains("collection_strategy=complementary"),
         "{error:#}"
     );
+}
+
+#[test]
+fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
+    let task = two_counter_task();
+    let domain = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+            single_goal_tasks: false,
+            ..domain_goal_focused_config(2, false)
+        },
+    )
+    .generate_collection(&task)
+    .unwrap();
+    let cartesian =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                random_seed: Some(1),
+                ..Default::default()
+            },
+            collection_strategy: CollectionStrategy::Complementary,
+            variants_per_goal: 2,
+            max_collection_states: 10_000,
+            total_max_time: None,
+            progressive_goal_roots: false,
+            alternate_split_kinds: true,
+            single_goal_tasks: false,
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+
+    assert_eq!(domain.len(), 4);
+    assert_eq!(cartesian.len(), 4);
+    for (index, (domain, cartesian)) in domain.iter().zip(&cartesian).enumerate() {
+        assert_eq!(domain.metadata.full_goal_task, Some(true));
+        assert_eq!(domain.metadata.collection_member, None);
+        assert_eq!(cartesian.metadata.collection_member, None);
+        let expected_backward = index >= 2;
+        assert_eq!(
+            domain.metadata.split_direction,
+            if expected_backward {
+                SplitDirection::Backward
+            } else {
+                SplitDirection::Forward
+            }
+        );
+        assert_eq!(
+            cartesian.metadata.refinement_direction,
+            if expected_backward {
+                CartesianRefinementDirection::Regression
+            } else {
+                CartesianRefinementDirection::Progression
+            }
+        );
+        assert_eq!(domain.metadata.flaw_selection_rank, Some(0));
+        assert_eq!(cartesian.metadata.split_selection_rank, Some(0));
+        // Both abstract the full task: the plan reaches x >= 2 and y >= 3.
+        for (backend, initial_h, plan) in [
+            (
+                "domain",
+                domain.distance_table.distances[domain.distance_table.initial_state_hash],
+                domain.metadata.concrete_plan_operator_ids.as_ref(),
+            ),
+            (
+                "Cartesian",
+                cartesian.distance_table.distances[cartesian.distance_table.initial_state_hash],
+                cartesian.metadata.concrete_plan_operator_ids.as_ref(),
+            ),
+        ] {
+            assert_eq!(initial_h, 5.0, "{backend} member {index}");
+            assert_eq!(plan.map(Vec::len), Some(5), "{backend} member {index}");
+        }
+        assert!(
+            AbstractionComponent::domain(None, domain.clone())
+                .goal_focused_member()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn full_task_members_are_rejected_where_they_are_ill_defined() {
+    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        single_goal_tasks: false,
+        ..Default::default()
+    });
+    assert!(
+        error.contains("collection_strategy=complementary"),
+        "{error}"
+    );
+    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        single_goal_tasks: false,
+        ..domain_goal_focused_config(2, true)
+    });
+    assert!(error.contains("progressive_goal_roots=true"), "{error}");
+
+    for (collection_strategy, progressive_goal_roots, expected) in [
+        (
+            CollectionStrategy::Standard,
+            false,
+            "collection_strategy=complementary",
+        ),
+        (
+            CollectionStrategy::Complementary,
+            true,
+            "progressive_goal_roots=true",
+        ),
+    ] {
+        let error =
+            CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+                collection_strategy,
+                progressive_goal_roots,
+                single_goal_tasks: false,
+                ..Default::default()
+            })
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(expected), "{error:#}");
+    }
 }

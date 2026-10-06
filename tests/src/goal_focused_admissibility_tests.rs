@@ -131,6 +131,7 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         total_max_time: None,
         progressive_goal_roots: true,
         alternate_split_kinds: true,
+        single_goal_tasks: true,
     })
     .expect("the Cartesian collection configuration is valid")
     .generate(task)
