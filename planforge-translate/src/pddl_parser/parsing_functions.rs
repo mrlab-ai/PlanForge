@@ -116,6 +116,22 @@ pub fn parse_type_list(alist: &[SExpr]) -> Vec<Type> {
         result.push(Type::new(name, Some("object")));
     }
 
+    // A type that only appears as a supertype, as `store` in
+    // `place vehicle - store`, is declared by that use: it is a type in its own
+    // right, directly below `object`.
+    let mut implicit: Vec<String> = Vec::new();
+    for supertype in result.iter().filter_map(|t| t.basetype_name.as_deref()) {
+        if supertype != "object"
+            && !result.iter().any(|t| t.name == supertype)
+            && !implicit.iter().any(|name| name == supertype)
+        {
+            implicit.push(supertype.to_string());
+        }
+    }
+    for name in &implicit {
+        result.push(Type::new(name, Some("object")));
+    }
+
     result
 }
 
@@ -1007,9 +1023,47 @@ mod tests {
         ));
     }
 
-    fn parse_domain(domain: &str) {
+    fn parse_domain(
+        domain: &str,
+    ) -> (
+        crate::pddl::tasks::DomainDefinition,
+        HashMap<String, Vec<String>>,
+    ) {
         let form = parse_nested_list_string(domain).expect("test domain is valid S-expression");
-        parse_domain_pddl(form.as_list());
+        parse_domain_pddl(form.as_list())
+    }
+
+    /// `settlersnumeric` declares `(:types place vehicle - store resource)`:
+    /// `store` is only ever used as a supertype, which declares it.
+    #[test]
+    fn a_type_used_only_as_a_supertype_is_declared_below_object() {
+        let (_, supertypes) = parse_domain(
+            "(define (domain implicit-supertype)
+                (:requirements :typing)
+                (:types place vehicle - store resource)
+                (:predicates (at ?v - vehicle ?p - place) (holds ?s - store))
+                (:action a :parameters (?s - store ?v - vehicle)
+                    :precondition (holds ?s) :effect (not (holds ?s))))",
+        );
+        assert_eq!(supertypes["store"], vec!["store", "object"]);
+        assert_eq!(supertypes["place"], vec!["place", "store", "object"]);
+        assert_eq!(supertypes["vehicle"], vec!["vehicle", "store", "object"]);
+        assert_eq!(supertypes["resource"], vec!["resource", "object"]);
+    }
+
+    #[test]
+    fn an_explicit_declaration_of_a_supertype_is_kept() {
+        let (_, supertypes) = parse_domain(
+            "(define (domain explicit-supertype)
+                (:requirements :typing)
+                (:types place - store store - thing thing)
+                (:predicates (p ?x - place)))",
+        );
+        assert_eq!(
+            supertypes["place"],
+            vec!["place", "store", "thing", "object"]
+        );
+        assert_eq!(supertypes["store"], vec!["store", "thing", "object"]);
     }
 
     #[test]
