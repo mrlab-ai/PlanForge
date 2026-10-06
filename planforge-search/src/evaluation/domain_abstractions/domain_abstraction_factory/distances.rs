@@ -483,7 +483,7 @@ impl DomainAbstractionFactory {
             );
         }
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::default();
+        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::new(layout);
         let comparison_branching = !comparison_var_ids.is_empty();
 
         for (state_hash, distance) in distances.iter_mut().enumerate() {
@@ -502,7 +502,6 @@ impl DomainAbstractionFactory {
                 let alts = self.enumerate_states_with_evaluated_comparisons_cached(
                     state_hash,
                     task,
-                    layout,
                     &[],
                     &mut comparison_enumeration_memo,
                 )?;
@@ -556,7 +555,6 @@ impl DomainAbstractionFactory {
                         .enumerate_states_with_evaluated_comparisons_cached(
                             predecessor_i64 as usize,
                             task,
-                            layout,
                             &comparison_preconditions[op_id],
                             &mut comparison_enumeration_memo,
                         )?;
