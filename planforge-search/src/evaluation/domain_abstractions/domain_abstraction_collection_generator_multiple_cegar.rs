@@ -144,9 +144,9 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// [`goal_focused`](crate::evaluation::abstraction_collections::goal_focused)):
     /// `variants_per_goal` members per goal, each refined from the trivial
     /// abstraction of its single-goal task with the configured `flaw_kind`,
-    /// forward splits for even and backward splits for odd variants, flaw
-    /// ties ranked by `variant / 2`. The init-split, blacklist, and
-    /// stagnation options only apply to `standard`.
+    /// forward splits for even and backward splits for odd variants (unless
+    /// `alternate_split_kinds` is off), flaw ties ranked by `variant / 2`. The
+    /// init-split, blacklist, and stagnation options only apply to `standard`.
     pub collection_strategy: CollectionStrategy,
     /// Members per goal of a `complementary` collection. Must be 1 for
     /// `standard`.
@@ -155,6 +155,11 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// concrete states its earlier members' plans reached. Must be false for
     /// `standard`.
     pub progressive_goal_roots: bool,
+    /// Alternate forward and backward splits by variant parity in a
+    /// `complementary` collection. When false, every variant uses the
+    /// configured `split_direction` (the flaw kind's default when unset).
+    /// Must be true for `standard`.
+    pub alternate_split_kinds: bool,
     /// Alternate forward and backward split-value selection between full-task
     /// collection members. This is orthogonal to flaw collection: in
     /// particular, `execute_entire_plan` still collects every flaw along the
@@ -218,6 +223,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
             progressive_goal_roots: false,
+            alternate_split_kinds: true,
             interleave_split_directions: false,
             split_direction: None,
             compute_operator_regions: true,
@@ -294,6 +300,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "collection_strategy={}, ",
                 "variants_per_goal={}, ",
                 "progressive_goal_roots={}, ",
+                "alternate_split_kinds={}, ",
                 "interleave_split_directions={}, ",
             ),
             self.max_abstraction_size,
@@ -316,6 +323,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.collection_strategy,
             self.variants_per_goal,
             self.progressive_goal_roots,
+            self.alternate_split_kinds,
             self.interleave_split_directions,
         )
     }
@@ -360,6 +368,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     !self.config.progressive_goal_roots,
                     "`progressive_goal_roots=true` requires `collection_strategy=complementary`"
                 );
+                ensure!(
+                    self.config.alternate_split_kinds,
+                    "`alternate_split_kinds=false` requires `collection_strategy=complementary`"
+                );
                 if self.config.interleave_split_directions && self.config.split_direction.is_some()
                 {
                     bail!(
@@ -373,8 +385,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     "`interleave_split_directions=true` requires `collection_strategy=standard`"
                 );
                 ensure!(
-                    self.config.split_direction.is_none(),
-                    "`collection_strategy=complementary` chooses the split direction per variant; it cannot be combined with a fixed `split_direction`"
+                    !self.config.alternate_split_kinds || self.config.split_direction.is_none(),
+                    "`alternate_split_kinds=true` chooses the split direction per variant; it cannot be combined with a fixed `split_direction`"
                 );
                 ensure!(
                     matches!(
@@ -480,6 +492,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 max_collection_states: self.config.max_collection_size,
                 total_max_time: optional_duration("total_max_time", self.config.total_max_time)?,
                 progressive_goal_roots: self.config.progressive_goal_roots,
+                alternate_split_kinds: self.config.alternate_split_kinds,
             },
             &backend,
         )?;

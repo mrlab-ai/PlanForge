@@ -117,7 +117,7 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
+        "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -133,6 +133,8 @@ fn parses_hierarchical_cartesian_collection_source() {
         CollectionStrategy::Complementary
     );
     assert_eq!(config.variants_per_goal, 8);
+    assert!(config.progressive_goal_roots);
+    assert!(!config.alternate_split_kinds);
     assert_eq!(config.abstraction.flaw_kind, FlawKind::ExecuteEntirePlan);
     assert!(config.abstraction.compute_operator_regions);
 }
@@ -638,6 +640,23 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
     assert_eq!(cfg.random_seed, Some(7));
     assert!(cfg.debug);
+}
+
+#[test]
+fn parses_goal_focused_domain_collection_options() {
+    let h = astar_heuristic(
+        "astar(domain(collection_strategy=complementary, variants_per_goal=10, progressive_goal_roots=true, alternate_split_kinds=false, split_direction=backward))",
+    );
+    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+    assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
+    assert_eq!(cfg.variants_per_goal, 10);
+    assert!(cfg.progressive_goal_roots);
+    assert!(!cfg.alternate_split_kinds);
+    assert_eq!(
+        cfg.split_direction,
+        Some(crate::evaluation::domain_abstractions::cegar::SplitDirection::Backward)
+    );
 }
 
 #[test]

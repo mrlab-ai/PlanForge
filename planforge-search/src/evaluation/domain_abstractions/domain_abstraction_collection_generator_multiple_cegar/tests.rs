@@ -12,7 +12,7 @@ use crate::evaluation::abstraction_collections::component::{
 use crate::evaluation::abstraction_collections::goal_focused::MemberKind;
 use crate::evaluation::cartesian_abstractions::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig,
+    CartesianAbstractionConfig, CartesianRefinementDirection,
 };
 
 #[test]
@@ -162,6 +162,17 @@ fn complementary_rejects_options_the_schedule_decides_or_cannot_follow() {
         ..complementary.clone()
     });
     assert!(error.contains("split direction per variant"), "{error}");
+    let without_alternation = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        split_direction: Some(SplitDirection::Backward),
+        alternate_split_kinds: false,
+        ..complementary.clone()
+    };
+    assert!(
+        DomainAbstractionCollectionGeneratorMultipleCegar::new(without_alternation)
+            .validate_supported_options()
+            .is_ok(),
+        "without alternation the configured split direction applies to every variant"
+    );
 
     for flaw_kind in [
         FlawKind::Regression,
@@ -200,6 +211,15 @@ fn standard_rejects_goal_focused_options() {
 
     let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         progressive_goal_roots: true,
+        ..Default::default()
+    });
+    assert!(
+        error.contains("collection_strategy=complementary"),
+        "{error}"
+    );
+
+    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        alternate_split_kinds: false,
         ..Default::default()
     });
     assert!(
@@ -406,30 +426,41 @@ fn cartesian_members(
     variants_per_goal: usize,
     progressive_goal_roots: bool,
 ) -> Vec<MemberSummary> {
-    CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-        abstraction: CartesianAbstractionConfig {
-            max_states: 64,
-            random_seed: Some(1),
-            ..Default::default()
+    cartesian_members_with(
+        task,
+        CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                random_seed: Some(1),
+                ..Default::default()
+            },
+            collection_strategy: CollectionStrategy::Complementary,
+            variants_per_goal,
+            max_collection_states: 10_000,
+            total_max_time: None,
+            progressive_goal_roots,
+            alternate_split_kinds: true,
         },
-        collection_strategy: CollectionStrategy::Complementary,
-        variants_per_goal,
-        max_collection_states: 10_000,
-        total_max_time: None,
-        progressive_goal_roots,
-    })
-    .unwrap()
-    .generate(task)
-    .unwrap()
-    .into_iter()
-    .map(|abstraction| {
-        let initial_h =
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
-        let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
-        let member = AbstractionComponent::cartesian(None, abstraction).goal_focused_member();
-        (member, initial_h, plan)
-    })
-    .collect()
+    )
+}
+
+fn cartesian_members_with(
+    task: &NumericRootTask,
+    config: CartesianAbstractionCollectionConfig,
+) -> Vec<MemberSummary> {
+    CartesianAbstractionCollectionGenerator::new(config)
+        .unwrap()
+        .generate(task)
+        .unwrap()
+        .into_iter()
+        .map(|abstraction| {
+            let initial_h =
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+            let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
+            let member = AbstractionComponent::cartesian(None, abstraction).goal_focused_member();
+            (member, initial_h, plan)
+        })
+        .collect()
 }
 
 /// Everything but the backend-specific transition count.
@@ -506,5 +537,67 @@ fn a_dead_progressive_domain_root_is_rebuilt_from_the_initial_state() {
             .collect::<Vec<_>>(),
         vec![(0, false, Some(vec![0])), (1, false, Some(vec![]))],
         "the dead checkpoint x=1 must be rebuilt at the satisfying initial state"
+    );
+}
+
+#[test]
+fn without_alternation_domain_and_cartesian_members_keep_the_configured_direction() {
+    let task = two_counter_task();
+    let domain = domain_members(
+        &task,
+        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+            alternate_split_kinds: false,
+            split_direction: Some(SplitDirection::Backward),
+            ..domain_goal_focused_config(3, true)
+        },
+    );
+    let cartesian = cartesian_members_with(
+        &task,
+        CartesianAbstractionCollectionConfig {
+            abstraction: CartesianAbstractionConfig {
+                max_states: 64,
+                random_seed: Some(1),
+                refinement_direction: CartesianRefinementDirection::Regression,
+                ..Default::default()
+            },
+            collection_strategy: CollectionStrategy::Complementary,
+            variants_per_goal: 3,
+            max_collection_states: 10_000,
+            total_max_time: None,
+            progressive_goal_roots: true,
+            alternate_split_kinds: false,
+        },
+    );
+
+    assert_eq!(schedule_view(&domain), schedule_view(&cartesian));
+    assert!(
+        schedule_view(&domain)
+            .iter()
+            .all(|(member, _, _)| member.direction == MemberDirection::Regression)
+    );
+    assert_eq!(
+        schedule_view(&domain)
+            .iter()
+            .map(|(member, _, _)| member.tie_rank)
+            .collect::<Vec<_>>(),
+        vec![Some(0), Some(0), Some(0), Some(0), Some(1), Some(1)],
+        "ranks still follow the variant"
+    );
+}
+
+#[test]
+fn cartesian_collections_reject_disabled_alternation_without_complementary() {
+    let error =
+        CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            alternate_split_kinds: false,
+            ..Default::default()
+        })
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("collection_strategy=complementary"),
+        "{error:#}"
     );
 }
