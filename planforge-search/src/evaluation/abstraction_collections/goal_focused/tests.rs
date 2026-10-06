@@ -186,12 +186,29 @@ impl GoalFocusedBackend for ScriptedBackend {
                 report,
             ));
         };
-        assert_eq!(
-            task.get_num_goals(),
-            1,
-            "members see their single-goal task"
-        );
-        let Some(length) = self.plan_length(goal_id, call.root_x.unwrap_or(0.0)) else {
+        let goals = if variant.full_task {
+            assert_eq!(
+                task.get_num_goals(),
+                self.bounds.len(),
+                "full-task members see every goal"
+            );
+            (0..self.bounds.len()).collect::<Vec<_>>()
+        } else {
+            assert_eq!(
+                task.get_num_goals(),
+                1,
+                "members see their single-goal task"
+            );
+            vec![goal_id]
+        };
+        let plan_length = |x: f64| {
+            goals
+                .iter()
+                .map(|&goal| self.plan_length(goal, x))
+                .collect::<Option<Vec<_>>>()
+                .map(|lengths| lengths.into_iter().max().expect("a member has a goal"))
+        };
+        let Some(length) = plan_length(call.root_x.unwrap_or(0.0)) else {
             bail!(RefinementRootDeadEnd::new(format!(
                 "scripted goal {goal_id} from x={:?}",
                 call.root_x
@@ -199,10 +216,9 @@ impl GoalFocusedBackend for ScriptedBackend {
         };
         let initial_h = match &self.initial_h {
             Some(initial_h) => initial_h[goal_id],
-            None => self
-                .plan_length(goal_id, 0.0)
-                .expect("scripted goals are solvable from the initial state")
-                as f64,
+            None => {
+                plan_length(0.0).expect("scripted goals are solvable from the initial state") as f64
+            }
         };
         let report = BuiltReport {
             initial_h,
@@ -237,6 +253,7 @@ fn schedule(
         total_max_time: None,
         progressive_goal_roots,
         alternate_split_kinds: true,
+        single_goal_tasks: true,
     }
 }
 
@@ -653,5 +670,71 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
             (1, 2, None, Some(1), seed(1, 2)),
             (0, 2, None, Some(1), seed(0, 2)),
         ]
+    );
+}
+
+#[test]
+fn full_task_members_are_scheduled_round_robin_without_membership() {
+    let bounds = [
+        Bound::AtLeast(1.0),
+        Bound::AtLeast(3.0),
+        Bound::AtLeast(2.0),
+    ];
+    let task = counter_task(&bounds);
+    let mut backend = ScriptedBackend::new(&bounds);
+    // Unequal scripted h(s0) values would reorder single-goal members after
+    // the first two rounds; full-task members ignore them.
+    backend.initial_h = Some(vec![2.0, 5.0, 3.0]);
+    let members = build_goal_focused_collection(
+        &task,
+        &GoalFocusedSchedule {
+            single_goal_tasks: false,
+            ..schedule(CollectionStrategy::Complementary, 3, false)
+        },
+        &backend,
+    )
+    .unwrap();
+
+    let seed = |goal_id, variant_id: usize| Some(derive_variant_seed(5, goal_id, variant_id - 1));
+    use MemberDirection::{Progression, Regression};
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| (
+                member.call.goal_id.unwrap(),
+                member.call.variant_id,
+                member.call.direction.unwrap(),
+                member.call.tie_rank.unwrap(),
+                member.call.seed,
+                member.membership,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0, Progression, 0, None, None),
+            (1, 0, Progression, 0, None, None),
+            (2, 0, Progression, 0, None, None),
+            (0, 1, Regression, 0, seed(0, 1), None),
+            (1, 1, Regression, 0, seed(1, 1), None),
+            (2, 1, Regression, 0, seed(2, 1), None),
+            (0, 2, Progression, 1, seed(0, 2), None),
+            (1, 2, Progression, 1, seed(1, 2), None),
+            (2, 2, Progression, 1, seed(2, 2), None),
+        ]
+    );
+    assert!(members.iter().all(|member| member.call.root_x.is_none()));
+}
+
+#[test]
+#[should_panic(expected = "full-task members require")]
+fn full_task_members_reject_progressive_goal_roots() {
+    let bounds = [Bound::AtLeast(1.0)];
+    let task = counter_task(&bounds);
+    let _ = build_goal_focused_collection(
+        &task,
+        &GoalFocusedSchedule {
+            single_goal_tasks: false,
+            ..schedule(CollectionStrategy::Complementary, 2, true)
+        },
+        &ScriptedBackend::new(&bounds),
     );
 }

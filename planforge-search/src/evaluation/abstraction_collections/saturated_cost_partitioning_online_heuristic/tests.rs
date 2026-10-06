@@ -223,6 +223,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
             total_max_time: None,
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -369,6 +370,7 @@ fn specialist_scp<'task>(
             total_max_time: None,
             progressive_goal_roots: true,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&**task)
@@ -926,6 +928,7 @@ mod handcrafted_sailing_tests {
                 total_max_time: Some(Duration::from_secs(15)),
                 progressive_goal_roots: false,
                 alternate_split_kinds: true,
+                single_goal_tasks: true,
             })
             .expect("valid oracle Cartesian collection config")
             .generate(&restricted_task)

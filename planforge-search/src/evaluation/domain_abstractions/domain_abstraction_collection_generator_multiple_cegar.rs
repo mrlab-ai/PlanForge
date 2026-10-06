@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::evaluation::abstraction_collections::goal_focused::{
-    BuiltReport, CollectionMembership, ConcreteState, GoalFocusedBackend, GoalFocusedSchedule,
-    GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
+    BuiltReport, CollectionMembership, ConcreteState, FULL_TASK_PROGRESSIVE_ROOTS_ERROR,
+    GoalFocusedBackend, GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection,
+    build_goal_focused_collection,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstraction_task::AbstractionUse;
@@ -161,6 +162,12 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// configured `split_direction` (the flaw kind's default when unset).
     /// Must be true for `standard`.
     pub alternate_split_kinds: bool,
+    /// Build every member of a `complementary` collection on its goal's
+    /// single-goal task. When false, every member abstracts the full task and
+    /// goals only label the `G * V` members, which are scheduled round-robin
+    /// and carry no collection membership. Must be true for `standard` and
+    /// with `progressive_goal_roots`.
+    pub single_goal_tasks: bool,
     /// Alternate forward and backward split-value selection between full-task
     /// collection members. This is orthogonal to flaw collection: in
     /// particular, `execute_entire_plan` still collects every flaw along the
@@ -225,6 +232,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             variants_per_goal: 1,
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
             interleave_split_directions: false,
             split_direction: None,
             compute_operator_regions: true,
@@ -302,6 +310,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "variants_per_goal={}, ",
                 "progressive_goal_roots={}, ",
                 "alternate_split_kinds={}, ",
+                "single_goal_tasks={}, ",
                 "interleave_split_directions={}, ",
             ),
             self.max_abstraction_size,
@@ -325,6 +334,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.variants_per_goal,
             self.progressive_goal_roots,
             self.alternate_split_kinds,
+            self.single_goal_tasks,
             self.interleave_split_directions,
         )
     }
@@ -373,6 +383,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     self.config.alternate_split_kinds,
                     "`alternate_split_kinds=false` requires `collection_strategy=complementary`"
                 );
+                ensure!(
+                    self.config.single_goal_tasks,
+                    "`single_goal_tasks=false` requires `collection_strategy=complementary`"
+                );
                 if self.config.interleave_split_directions && self.config.split_direction.is_some()
                 {
                     bail!(
@@ -400,6 +414,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 ensure!(
                     self.config.max_collection_size > 0,
                     "`max_collection_size` must be > 0"
+                );
+                ensure!(
+                    self.config.single_goal_tasks || !self.config.progressive_goal_roots,
+                    "{FULL_TASK_PROGRESSIVE_ROOTS_ERROR}"
                 );
             }
         }
@@ -494,6 +512,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 total_max_time: optional_duration("total_max_time", self.config.total_max_time)?,
                 progressive_goal_roots: self.config.progressive_goal_roots,
                 alternate_split_kinds: self.config.alternate_split_kinds,
+                single_goal_tasks: self.config.single_goal_tasks,
             },
             &backend,
         )?;
@@ -814,7 +833,7 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
         let metadata = &mut abstraction.metadata;
         metadata.collection_strategy = Some(self.config.collection_strategy.to_string());
         metadata.flaw_kind = Some(self.config.flaw_kind.to_string());
-        metadata.full_goal_task = Some(variant.goal_id.is_none());
+        metadata.full_goal_task = Some(variant.full_task);
         metadata.max_abstraction_size = Some(max_abstraction_size);
         let report = BuiltReport {
             initial_h: abstraction.distance_table.distances

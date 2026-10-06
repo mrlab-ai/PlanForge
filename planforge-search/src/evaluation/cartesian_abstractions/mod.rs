@@ -53,9 +53,9 @@ use super::abstraction_collections::cost_partitioning::{
     StateRegion, build_explicit_goal_distances, sorted_value_sets_overlap,
 };
 use super::abstraction_collections::goal_focused::{
-    BuiltReport, CollectionMembership, ConcreteState, GoalFocusedBackend, GoalFocusedSchedule,
-    GoalVariant, MemberBudget, MemberDirection, RefinementRootDeadEnd,
-    build_goal_focused_collection,
+    BuiltReport, CollectionMembership, ConcreteState, FULL_TASK_PROGRESSIVE_ROOTS_ERROR,
+    GoalFocusedBackend, GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection,
+    RefinementRootDeadEnd, build_goal_focused_collection,
 };
 use super::abstraction_collections::portfolio::{CollectionStrategy, mix_seed, stable_text_seed};
 use super::abstraction_task::{AbstractionUse, validate_abstraction_operator};
@@ -179,6 +179,11 @@ pub struct CartesianAbstractionCollectionConfig {
     /// by variant parity. When false, every variant refines in the configured
     /// `refinement_direction`.
     pub alternate_split_kinds: bool,
+    /// Complementary collections only: build every member on its goal's
+    /// single-goal task. When false, every member abstracts the full task and
+    /// goals only label the `G * V` members, which are scheduled round-robin
+    /// and carry no collection membership. Excludes `progressive_goal_roots`.
+    pub single_goal_tasks: bool,
 }
 
 impl Default for CartesianAbstractionCollectionConfig {
@@ -191,6 +196,7 @@ impl Default for CartesianAbstractionCollectionConfig {
             total_max_time: None,
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         }
     }
 }
@@ -2139,6 +2145,14 @@ impl CartesianAbstractionCollectionGenerator {
             config.alternate_split_kinds || config.collection_strategy.is_complementary(),
             "`alternate_split_kinds=false` requires `collection_strategy=complementary`"
         );
+        ensure!(
+            config.single_goal_tasks || config.collection_strategy.is_complementary(),
+            "`single_goal_tasks=false` requires `collection_strategy=complementary`"
+        );
+        ensure!(
+            config.single_goal_tasks || !config.progressive_goal_roots,
+            "{FULL_TASK_PROGRESSIVE_ROOTS_ERROR}"
+        );
         CartesianAbstractionGenerator::new(config.abstraction.clone())?;
         Ok(Self { config })
     }
@@ -2164,6 +2178,7 @@ impl CartesianAbstractionCollectionGenerator {
                 total_max_time: self.config.total_max_time,
                 progressive_goal_roots: self.config.progressive_goal_roots,
                 alternate_split_kinds: self.config.alternate_split_kinds,
+                single_goal_tasks: self.config.single_goal_tasks,
             },
             self,
         )

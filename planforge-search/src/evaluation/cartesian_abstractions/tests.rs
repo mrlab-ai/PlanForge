@@ -1955,6 +1955,7 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
             total_max_time: None,
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2080,6 +2081,7 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
             total_max_time: None,
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2101,6 +2103,7 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
             total_max_time: None,
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2181,6 +2184,7 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
             total_max_time: None,
             progressive_goal_roots: true,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2338,6 +2342,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             total_max_time: None,
             progressive_goal_roots: true,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2450,6 +2455,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
             total_max_time: None,
             progressive_goal_roots: true,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2583,6 +2589,7 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
             total_max_time: None,
             progressive_goal_roots: true,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -2820,6 +2827,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             total_max_time: Some(Duration::ZERO),
             progressive_goal_roots: false,
             alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)

@@ -901,6 +901,9 @@ fn apply_cartesian_source_options(
             "alternate_split_kinds" if collection => {
                 config.alternate_split_kinds = bool::from_option_value(arg.value())?;
             }
+            "single_goal_tasks" if collection => {
+                config.single_goal_tasks = bool::from_option_value(arg.value())?;
+            }
             "max_collection_size" if collection => {
                 config.max_collection_states = usize::from_option_value(arg.value())?;
             }

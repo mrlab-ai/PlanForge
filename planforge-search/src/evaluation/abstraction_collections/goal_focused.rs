@@ -219,8 +219,11 @@ pub(crate) enum MemberKind {
 /// How the collection wants one member constructed.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GoalVariant {
-    /// `None` for a goal-free task, whose only member abstracts the full task.
+    /// The goal the member is scheduled under; `None` for a goal-free task.
     pub(crate) goal_id: Option<usize>,
+    /// The member abstracts the full task: a goal-free task, or a collection
+    /// with `single_goal_tasks` off, where `goal_id` is only a schedule label.
+    pub(crate) full_task: bool,
     pub(crate) variant_id: usize,
     pub(crate) kind: MemberKind,
     /// `None` keeps the backend's configured direction.
@@ -288,6 +291,10 @@ pub(crate) trait GoalFocusedBackend {
     );
 }
 
+/// Why `single_goal_tasks=false` and `progressive_goal_roots=true` are
+/// rejected together.
+pub(crate) const FULL_TASK_PROGRESSIVE_ROOTS_ERROR: &str = "`progressive_goal_roots=true` cannot be combined with `single_goal_tasks=false`: a lane only advances on a concrete plan for the full task, which ends the lane, so the roots would never move";
+
 /// The schedule-level configuration of a goal-focused collection.
 #[derive(Debug, Clone)]
 pub(crate) struct GoalFocusedSchedule {
@@ -302,6 +309,14 @@ pub(crate) struct GoalFocusedSchedule {
     /// variant parity. When false, every variant keeps the backend's
     /// configured direction; ranks and seeds are unaffected.
     pub(crate) alternate_split_kinds: bool,
+    /// Complementary collections: build every member on its goal's
+    /// single-goal task. When false, every member is built on the full task;
+    /// goals are then only labels that schedule the `G * V` members
+    /// round-robin and derive their seeds and ranks, and members carry no
+    /// collection membership. Excludes progressive goal roots, which would be
+    /// a no-op: a lane only advances on a plan for the full task, and that
+    /// ends the lane.
+    pub(crate) single_goal_tasks: bool,
 }
 
 impl GoalFocusedSchedule {
@@ -309,13 +324,15 @@ impl GoalFocusedSchedule {
     ///
     /// A complementary collection alternates progression and regression by
     /// variant parity (unless `alternate_split_kinds` is off), ranks ties by
-    /// `variant / 2`, and derives a seed for every variant but the first; otherwise only the seed varies, and only when more
-    /// than one variant per goal is requested. An initial-root specialist reuses
-    /// variant 0's construction.
+    /// `variant / 2`, and derives a seed for every variant but the first;
+    /// otherwise only the seed varies, and only when more than one variant
+    /// per goal is requested. An initial-root specialist reuses variant 0's
+    /// construction.
     fn goal_variant(&self, member: &ScheduledMember, goal_count: usize) -> GoalVariant {
         if goal_count == 0 {
             return GoalVariant {
                 goal_id: None,
+                full_task: true,
                 variant_id: member.variant_id,
                 kind: member.kind,
                 direction: None,
@@ -354,6 +371,7 @@ impl GoalFocusedSchedule {
         };
         GoalVariant {
             goal_id: Some(member.goal_id),
+            full_task: !self.single_goal_tasks,
             variant_id: member.variant_id,
             kind: member.kind,
             direction,
@@ -376,6 +394,11 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     assert!(
         schedule.variants_per_goal > 0,
         "goal-focused collections need at least one variant per goal"
+    );
+    assert!(
+        schedule.single_goal_tasks
+            || (schedule.strategy.is_complementary() && !schedule.progressive_goal_roots),
+        "full-task members require a complementary collection without progressive goal roots"
     );
     let goal_count = task.get_num_goals();
     let variants_per_goal = if goal_count == 0 {
@@ -407,6 +430,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             abstraction_count,
             variants_per_goal,
             progressive_goal_roots,
+            schedule.single_goal_tasks,
         )? {
             NextMember::Build(member) => member,
             NextMember::Stop(reason) => {
@@ -510,9 +534,8 @@ fn build_member<B: GoalFocusedBackend>(
     abstraction_id: usize,
     budget: MemberBudget,
 ) -> Result<BuiltMember<B::Member>> {
-    let goal_count = task.get_num_goals();
-    let goal_task =
-        (goal_count > 0).then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
+    let goal_task = (!variant.full_task)
+        .then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
     let member_task = goal_task
         .as_ref()
         .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
@@ -576,7 +599,7 @@ fn build_member<B: GoalFocusedBackend>(
         }
     };
 
-    let membership = (goal_count > 0).then(|| CollectionMembership {
+    let membership = (!variant.full_task).then(|| CollectionMembership {
         goal_id: member.goal_id,
         variant_id: member.variant_id,
         progressive_root: !is_specialist
@@ -729,6 +752,7 @@ impl CollectionState {
         abstraction_count: usize,
         variants_per_goal: usize,
         progressive_goal_roots: bool,
+        single_goal_tasks: bool,
     ) -> Result<NextMember> {
         let scheduled_member_pending = self.initial_abstractions_built < abstraction_count;
         let initial_root_specialist_goal = (!scheduled_member_pending && progressive_goal_roots)
@@ -756,11 +780,18 @@ impl CollectionState {
             }));
         }
         if scheduled_member_pending {
-            let Some(goal_id) = select_next_collection_goal(
-                &self.variants_built_by_goal,
-                &self.best_initial_h_by_goal,
-                variants_per_goal,
-            ) else {
+            let next_goal = if single_goal_tasks {
+                select_next_collection_goal(
+                    &self.variants_built_by_goal,
+                    &self.best_initial_h_by_goal,
+                    variants_per_goal,
+                )
+            } else {
+                // Full-task members share one task: the goal is only a
+                // label, so there is no goal to focus on.
+                select_round_robin_goal(&self.variants_built_by_goal, variants_per_goal)
+            };
+            let Some(goal_id) = next_goal else {
                 return Ok(NextMember::Stop("requested abstraction count reached"));
             };
             return Ok(NextMember::Build(ScheduledMember {
@@ -973,6 +1004,21 @@ impl CollectionState {
             );
         }
     }
+}
+
+/// The first goal label with the fewest variants, while some has fewer than
+/// `V`.
+fn select_round_robin_goal(
+    variants_built_by_goal: &[usize],
+    variants_per_goal: usize,
+) -> Option<usize> {
+    let minimum_built = variants_built_by_goal.iter().copied().min()?;
+    (minimum_built < variants_per_goal).then(|| {
+        variants_built_by_goal
+            .iter()
+            .position(|&count| count == minimum_built)
+            .expect("the minimum is attained")
+    })
 }
 
 /// Round-robin until every goal has `min(V, 2)` variants, then give the next
