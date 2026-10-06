@@ -1122,7 +1122,11 @@ impl AbstractionKey {
                 factory
                     .partitions()
                     .partitions(VariableIndex::from_usize(numeric_var_id))
-                    .unwrap_or(&[])
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "numeric variable {numeric_var_id} of the abstraction has no partitions"
+                        )
+                    })
                     .iter()
                     .copied()
                     .map(IntervalFingerprint::from_interval)

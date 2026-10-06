@@ -476,21 +476,14 @@ fn compute_max_refined(
     for (idx, flaw) in flaws.iter().enumerate() {
         let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
         let score: usize = match flaw {
-            Flaw::Numeric(nf) => numeric_domain_sizes
-                .get(nf.numeric_var_id.index())
-                .copied()
-                .unwrap_or(0),
+            Flaw::Numeric(nf) => numeric_domain_sizes[nf.numeric_var_id.index()],
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var_index();
-                let base: usize =
-                    domain_sizes.get(var_id.index()).copied().unwrap_or(0) * prop_multiplier;
+                let base: usize = domain_sizes[var_id.index()] * prop_multiplier;
                 if conditions.is_condition_var(var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
-                        let partitions = numeric_domain_sizes
-                            .get(nf.numeric_var_id.index())
-                            .copied()
-                            .unwrap_or(0);
+                        let partitions = numeric_domain_sizes[nf.numeric_var_id.index()];
                         by_partition_count.entry(partitions).or_default().push(nf);
                     }
                     if let Some((&max_partitions, vec)) = by_partition_count.iter().next_back() {
@@ -555,7 +548,7 @@ pub(super) fn fix_single_flaw_max_refined(
 }
 
 fn growth_key_for_domain_size(current_size: usize) -> (usize, usize) {
-    let current_size = current_size.max(1);
+    assert!(current_size > 0, "abstract domain sizes are positive");
     (current_size + 1, current_size)
 }
 
@@ -571,11 +564,7 @@ fn best_min_growth_dependent_flaws(
 ) -> Option<(Vec<NumericFlaw>, (usize, usize))> {
     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
     for nf in dependent_numeric_flaws.iter().cloned() {
-        let partitions = numeric_domain_sizes
-            .get(nf.numeric_var_id.index())
-            .copied()
-            .unwrap_or(1)
-            .max(1);
+        let partitions = numeric_domain_sizes[nf.numeric_var_id.index()];
         by_partition_count.entry(partitions).or_default().push(nf);
     }
     let (&max_partitions, flaws) = by_partition_count.iter().next_back()?;
@@ -594,19 +583,12 @@ fn min_growth_candidates(
     for (idx, flaw) in flaws.iter().enumerate() {
         let mut restricted_dep = None;
         let growth = match flaw {
-            Flaw::Numeric(nf) => growth_key_for_domain_size(
-                numeric_domain_sizes
-                    .get(nf.numeric_var_id.index())
-                    .copied()
-                    .unwrap_or(1),
-            ),
+            Flaw::Numeric(nf) => {
+                growth_key_for_domain_size(numeric_domain_sizes[nf.numeric_var_id.index()])
+            }
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var_index();
-                let prop_size = domain_sizes
-                    .get(var_id.index())
-                    .copied()
-                    .unwrap_or(1)
-                    .max(1);
+                let prop_size = domain_sizes[var_id.index()];
                 let prop_growth = if conditions.is_condition_var(var_id) && prop_size >= 2 {
                     (1, 1)
                 } else {

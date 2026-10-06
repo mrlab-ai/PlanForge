@@ -343,8 +343,15 @@ pub fn get_progression_numeric_deviation_flaws(
     } = states;
     let mut flaws: Vec<Flaw> = Vec::new();
 
-    let num_vars = successor.len().min(abstract_successor.len());
-    for var_id in 0..num_vars {
+    assert!(
+        current.len() == successor.len() && successor.len() == abstract_successor.len(),
+        "a plan step's concrete states and abstract successor cover the same {} numeric variables, got {}/{}/{}",
+        task.numeric_variables().len(),
+        current.len(),
+        successor.len(),
+        abstract_successor.len()
+    );
+    for var_id in 0..successor.len() {
         // Forward direction only emits a flaw if the operator actually
         // modifies this variable. Backward inspects every variable whose
         // concrete successor disagrees with the abstract one — this matches
@@ -383,10 +390,7 @@ pub fn get_progression_numeric_deviation_flaws(
         }
 
         let concrete_next_value = successor[var_id.index()];
-        let concrete_current_value = current
-            .get(var_id.index())
-            .copied()
-            .unwrap_or(concrete_next_value);
+        let concrete_current_value = current[var_id.index()];
         if concrete_next_value == concrete_current_value {
             continue;
         }

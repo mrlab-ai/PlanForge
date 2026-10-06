@@ -814,6 +814,33 @@ fn abstraction_size_u128(domain_sizes: &[usize], numeric_domain_sizes: &[usize])
     compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
 }
 
+/// Whether growing one variable's abstract domain from `old_size` to
+/// `new_size` keeps the abstraction within `max_abstraction_size`.
+///
+/// Sizes are compared exactly in `u128`. A size that does not fit `u128` is
+/// above every `usize` limit, so the refinement does not fit: that is the
+/// configured size limit, and the callers blacklist the variable for it.
+fn refined_size_fits(
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+    old_size: usize,
+    new_size: usize,
+    max_abstraction_size: usize,
+) -> bool {
+    assert!(
+        old_size > 0 && new_size > 0,
+        "abstract domain sizes are positive, got {old_size} -> {new_size}"
+    );
+    let Some(total_size) = abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
+        // The current abstraction is already larger than u128 and thus than
+        // any limit.
+        return false;
+    };
+    (total_size / old_size as u128)
+        .checked_mul(new_size as u128)
+        .is_some_and(|candidate| candidate <= max_abstraction_size as u128)
+}
+
 fn can_refine_propositional_variable(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
@@ -821,20 +848,13 @@ fn can_refine_propositional_variable(
     new_domain_size: usize,
     max_abstraction_size: usize,
 ) -> bool {
-    let Some(total_size) = abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
-        return false;
-    };
-    let Some(&old_domain_size) = domain_sizes.get(var_id.index()) else {
-        return false;
-    };
-    if old_domain_size == 0 || new_domain_size == 0 {
-        return false;
-    }
-    let reduced = total_size / (old_domain_size as u128);
-    reduced
-        .checked_mul(new_domain_size as u128)
-        .map(|candidate| candidate <= max_abstraction_size as u128)
-        .unwrap_or(false)
+    refined_size_fits(
+        domain_sizes,
+        numeric_domain_sizes,
+        domain_sizes[var_id.index()],
+        new_domain_size,
+        max_abstraction_size,
+    )
 }
 
 fn can_refine_numeric_variable(
@@ -843,22 +863,20 @@ fn can_refine_numeric_variable(
     numeric_var_id: VariableIndex,
     max_abstraction_size: usize,
 ) -> bool {
-    let Some(total_size) = abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
-        return false;
-    };
-    let Some(&old_partition_count) = numeric_domain_sizes.get(numeric_var_id.index()) else {
-        return false;
-    };
-    if old_partition_count == 0 {
-        return false;
-    }
-    let reduced = total_size / (old_partition_count as u128);
-    reduced
-        .checked_mul((old_partition_count as u128) + 1)
-        .map(|candidate| candidate <= max_abstraction_size as u128)
-        .unwrap_or(false)
+    let old_partition_count = numeric_domain_sizes[numeric_var_id.index()];
+    refined_size_fits(
+        domain_sizes,
+        numeric_domain_sizes,
+        old_partition_count,
+        old_partition_count + 1,
+        max_abstraction_size,
+    )
 }
 
+/// Whether the variable may be refined. A variable whose refinement does
+/// not fit the size limit never will, because abstract sizes only grow, so it
+/// is blacklisted for the rest of the run: the configured size limit, made
+/// permanent per variable.
 fn can_refine_propositional_variable_with_blacklist(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
@@ -871,9 +889,7 @@ fn can_refine_propositional_variable_with_blacklist(
     if blacklisted_prop_var_ids.contains(&var_id) {
         return false;
     }
-    if conditions.is_condition_var(var_id)
-        && domain_sizes.get(var_id.index()).copied().unwrap_or(0) >= 2
-    {
+    if conditions.is_condition_var(var_id) && domain_sizes[var_id.index()] >= 2 {
         return true;
     }
     if can_refine_propositional_variable(
@@ -890,6 +906,10 @@ fn can_refine_propositional_variable_with_blacklist(
     }
 }
 
+/// Whether the variable may be refined. A variable whose refinement does
+/// not fit the size limit never will, because abstract sizes only grow, so it
+/// is blacklisted for the rest of the run: the configured size limit, made
+/// permanent per variable.
 fn can_refine_numeric_variable_with_blacklist(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
@@ -989,6 +1009,14 @@ pub fn fix_flaws(
     Ok(refined_summary)
 }
 
+/// The partition count of a numeric variable that was just split.
+fn split_partition_count(partitions: &NumericPartitions, numeric_var_id: VariableIndex) -> usize {
+    partitions
+        .partitions(numeric_var_id)
+        .unwrap_or_else(|| panic!("split numeric variable {numeric_var_id} has no partitions"))
+        .len()
+}
+
 fn try_refine_from_flaw(
     task: &dyn AbstractNumericTask,
     flaw: &Flaw,
@@ -1017,11 +1045,7 @@ fn try_refine_from_flaw(
                 return Ok(None);
             }
             if partitions.split_at(var_id, nf.value, nf.include_in_lower) {
-                if let Some(parts) = partitions.partitions(var_id)
-                    && let Some(slot) = numeric_domain_sizes.get_mut(var_id.index())
-                {
-                    *slot = parts.len();
-                }
+                numeric_domain_sizes[var_id.index()] = split_partition_count(partitions, var_id);
                 let mut refined = RefinementSummary::default();
                 refined.mark_numeric(var_id);
                 return Ok(Some(refined));
@@ -1032,39 +1056,25 @@ fn try_refine_from_flaw(
             let var_id = pf.fact.var_index();
             let value = pf.fact.value();
 
-            // Bounds and conversion checks: these should hold in normal operation;
-            // surface violations during debug builds but keep release behavior.
-            if var_id.index() >= domain_mapping.len() || var_id.index() >= domain_sizes.len() {
-                debug_assert!(
-                    false,
-                    "try_refine_from_flaw: var_id out of bounds: {} (mapping.len={}, domain_sizes.len={})",
-                    var_id,
-                    domain_mapping.len(),
-                    domain_sizes.len()
-                );
-                return Ok(None);
-            }
-
-            let concrete_size = match task.get_variable_domain_size(var_id) {
-                Ok(s) => s,
-                Err(e) => {
-                    debug_assert!(
-                        false,
-                        "try_refine_from_flaw: get_variable_domain_size({}) failed: {}",
-                        var_id, e
-                    );
-                    return Ok(None);
-                }
-            };
-
-            if value >= concrete_size {
-                debug_assert!(
-                    false,
-                    "try_refine_from_flaw: fact value {} out of range (concrete size {}) for var {}",
-                    value, concrete_size, var_id
-                );
-                return Ok(None);
-            }
+            // Flaws name facts of the task the abstraction is built for.
+            assert!(
+                var_id.index() < domain_mapping.len() && var_id.index() < domain_sizes.len(),
+                "flaw variable {var_id} is outside the abstraction (mapping.len={}, domain_sizes.len={})",
+                domain_mapping.len(),
+                domain_sizes.len()
+            );
+            let concrete_size = task
+                .get_variable_domain_size(var_id)
+                .unwrap_or_else(|error| panic!("flaw variable {var_id} has no domain: {error}"));
+            assert!(
+                value < concrete_size,
+                "flaw fact value {value} is outside the domain of variable {var_id} (size {concrete_size})"
+            );
+            assert_eq!(
+                domain_mapping[var_id.index()].len(),
+                concrete_size,
+                "the domain mapping of variable {var_id} covers its concrete domain"
+            );
 
             let mut changed = false;
             let mut prop_domain_size_changed = false;
@@ -1102,12 +1112,7 @@ fn try_refine_from_flaw(
                     return Ok(None);
                 }
                 // Only refine if the value is still mapped to the default class (0).
-                if domain_mapping[var_id.index()]
-                    .get(value)
-                    .copied()
-                    .unwrap_or(ExplicitValueIndex::new(0))
-                    != ExplicitValueIndex::new(0)
-                {
+                if domain_mapping[var_id.index()][value] != ExplicitValueIndex::new(0) {
                     return Ok(None);
                 }
                 if !can_refine_propositional_variable_with_blacklist(
@@ -1162,11 +1167,8 @@ fn try_refine_from_flaw(
                     }
 
                     if partitions.split_at(num_id, dep.value, dep.include_in_lower) {
-                        if let Some(parts) = partitions.partitions(num_id)
-                            && let Some(slot) = numeric_domain_sizes.get_mut(num_id.index())
-                        {
-                            *slot = parts.len();
-                        }
+                        numeric_domain_sizes[num_id.index()] =
+                            split_partition_count(partitions, num_id);
                         any_numeric_changed = true;
                         refined.mark_numeric(num_id);
                         if dependent_numeric_refinement == DependentNumericRefinement::One {
