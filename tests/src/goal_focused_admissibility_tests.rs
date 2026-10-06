@@ -4,8 +4,8 @@
 //! optimal plan is optimal, so `h*(s_i)` is the cost of the suffix from `s_i`.
 //! Every heuristic built from a goal-focused collection -- each member on its
 //! own and the online saturated cost partitionings over domain, Cartesian, and
-//! mixed collections -- must stay finite and at most `h*(s_i)` on every one of
-//! those states. Nothing is clamped or skipped: an infinite value on a solvable
+//! mixed collections, with label and region partitioning -- must stay finite
+//! and at most `h*(s_i)` on every one of those states. Nothing is clamped or skipped: an infinite value on a solvable
 //! state is as much a failure as an overestimate.
 
 use std::sync::Arc;
@@ -102,8 +102,8 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
 fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
     DomainAbstractionCollectionGeneratorMultipleCegar::new(
         DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            max_abstraction_size: 1_000,
-            max_collection_size: 10_000,
+            max_abstraction_size: 300,
+            max_collection_size: 3_000,
             abstraction_generation_max_time: f64::INFINITY,
             total_max_time: f64::INFINITY,
             flaw_kind: FlawKind::ExecuteEntirePlan,
@@ -121,13 +121,13 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
 fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
     CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
         abstraction: CartesianAbstractionConfig {
-            max_states: 1_000,
+            max_states: 300,
             random_seed: Some(1),
             ..Default::default()
         },
         collection_strategy: CollectionStrategy::Complementary,
         variants_per_goal: 4,
-        max_collection_states: 10_000,
+        max_collection_states: 3_000,
         total_max_time: None,
         progressive_goal_roots: true,
         alternate_split_kinds: true,
@@ -142,7 +142,7 @@ fn scp_config(partitioning: CostPartitioningMethod) -> ScpOnlineConfig {
         max_time: 100.0,
         max_size: 10_000_000,
         table_construction_max_time: 100.0,
-        order_optimization_max_time: 1.0,
+        order_optimization_max_time: 0.05,
         random_seed: Some(1),
         partitioning,
         ..Default::default()
@@ -254,7 +254,26 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
     }
 }
 
-/// One test per instance, small enough for blind A* in an unoptimized build.
+/// One test per instance. Every instance is one blind A* solves in a few
+/// milliseconds: measured with `target/release/planforge --restrict-task
+/// --search 'astar(blind())'`,
+///
+/// | instance | expanded | search time |
+/// |---|---|---|
+/// | `sailing-simple/prob_1b1p_x` | 363 | 0.001s |
+/// | `sailing-simple/prob_1b1p_diag` | 380 | 0.001s |
+/// | `sailing-simple/prob_1b2p_x` | 1_070 | 0.002s |
+/// | `sailing-simple/prob_1b2p_diag` | 2_125 | 0.004s |
+/// | `sailing-simple/prob_2b1p` | 21_843 | 0.058s |
+/// | `counters-sym/problem_2` | 16 | 0.0002s |
+/// | `fn-counters-small_instances/problem_2` | 2 | 0.0001s |
+/// | `plant-watering/prob_4_1_1` | 227 | 0.001s |
+///
+/// `h*` comes from that search with no time limit, so it is bounded by the
+/// instance's state space alone. What the tests spend their time on is
+/// building the collections and the cost partitionings in an unoptimized
+/// build, which the member budgets (300 abstract states, 3_000 per
+/// collection) keep to seconds.
 macro_rules! admissibility_tests {
     ($($name:ident: $folder:literal / $stem:literal,)*) => {
         $(
