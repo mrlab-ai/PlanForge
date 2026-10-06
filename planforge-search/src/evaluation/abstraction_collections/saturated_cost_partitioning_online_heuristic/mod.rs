@@ -2213,13 +2213,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         progression_first.sort_by(|&left, &right| {
             abstraction_is_target_centered(components, left)
                 .cmp(&abstraction_is_target_centered(components, right))
-                .then_with(|| {
-                    standalone_current_h
-                        .get(right)
-                        .copied()
-                        .unwrap_or(0.0)
-                        .total_cmp(&standalone_current_h.get(left).copied().unwrap_or(0.0))
-                })
+                .then_with(|| standalone_current_h[right].total_cmp(&standalone_current_h[left]))
                 .then_with(|| left.cmp(&right))
         });
         orders.push((None, progression_first));
@@ -2228,13 +2222,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         target_first.sort_by(|&left, &right| {
             abstraction_is_target_centered(components, right)
                 .cmp(&abstraction_is_target_centered(components, left))
-                .then_with(|| {
-                    standalone_current_h
-                        .get(right)
-                        .copied()
-                        .unwrap_or(0.0)
-                        .total_cmp(&standalone_current_h.get(left).copied().unwrap_or(0.0))
-                })
+                .then_with(|| standalone_current_h[right].total_cmp(&standalone_current_h[left]))
                 .then_with(|| left.cmp(&right))
         });
         orders.push((None, target_first));
@@ -2377,10 +2365,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     debug!(
                         "scp_online: abstract-operator CP step abstraction {component_id}, abstract_states={}, standalone_h={}, metadata={}",
                         abstraction_state_count(abstraction),
-                        standalone_current_h
-                            .get(component_id)
-                            .copied()
-                            .unwrap_or(0.0),
+                        standalone_current_h[component_id],
                         abstraction_metadata_summary(abstraction),
                     );
                     log_abstract_operator_region_summary(
@@ -2916,12 +2901,7 @@ fn goal_cover_order(
         return None;
     }
 
-    let current_h = |component_id: usize| {
-        standalone_current_h
-            .get(component_id)
-            .copied()
-            .unwrap_or(0.0)
-    };
+    let current_h = |component_id: usize| standalone_current_h[component_id];
     let member = |component_id: usize| {
         goal_member(component_id)
             .expect("goal-cover order component must reference a goal-focused collection member")
@@ -3095,8 +3075,8 @@ fn goal_cover_order(
 fn max_heuristic_greedy_order(base_order: &[usize], standalone_current_h: &[f64]) -> Vec<usize> {
     let mut order = base_order.to_vec();
     order.sort_by(|&left, &right| {
-        let left_h = standalone_current_h.get(left).copied().unwrap_or(0.0);
-        let right_h = standalone_current_h.get(right).copied().unwrap_or(0.0);
+        let left_h = standalone_current_h[left];
+        let right_h = standalone_current_h[right];
         right_h.total_cmp(&left_h).then_with(|| left.cmp(&right))
     });
     order
@@ -3300,17 +3280,29 @@ fn abstraction_is_target_centered(
         .is_some_and(|flaw_kind| flaw_kind == "target_centered")
 }
 
+/// What a lookup table contributes for a component without an abstract state
+/// for the evaluated state: a pattern database state outside the database's
+/// enumerated states, or a component this evaluation did not look up. Such a
+/// component claims nothing, which is how cost-partitioning tables read it
+/// (`unknown_value`), and order selection scores it the same way.
+const UNKNOWN_STATE_H: f64 = 0.0;
+
+/// The goal distance of the evaluated state in one component's table;
+/// infinite for an abstract dead end.
 fn current_h_for_distances(
     abstraction_id: usize,
     distances: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
-    abstract_state_ids
-        .get(abstraction_id)
-        .copied()
-        .flatten()
-        .and_then(|state_id| distances.get(state_id).copied())
-        .unwrap_or(0.0)
+    let Some(state_id) = abstract_state_ids[abstraction_id] else {
+        return UNKNOWN_STATE_H;
+    };
+    *distances.get(state_id).unwrap_or_else(|| {
+        panic!(
+            "component {abstraction_id} state id {state_id} is outside its {} distances",
+            distances.len()
+        )
+    })
 }
 
 fn should_skip_zero_current_table(
@@ -3468,23 +3460,39 @@ fn standalone_current_h_values(
     state: &ScpOnlineState,
     abstract_state_ids: &[Option<usize>],
 ) -> Vec<f64> {
-    (0..state.h_values_by_abstraction.len())
-        .map(|abstraction_id| {
-            state
-                .h_values_by_abstraction
-                .get(abstraction_id)
-                .map(|distances| {
-                    current_h_for_distances(abstraction_id, distances, abstract_state_ids)
-                })
-                .unwrap_or(0.0)
+    state
+        .h_values_by_abstraction
+        .iter()
+        .enumerate()
+        .map(|(abstraction_id, distances)| {
+            current_h_for_distances(abstraction_id, distances, abstract_state_ids)
         })
         .collect()
 }
 
+/// How much of an operator's cost an abstraction that wants `wanted` takes
+/// from the others, given the operator's `surplus` (its cost minus everything
+/// all abstractions want).
 fn compute_stolen_costs(wanted: f64, surplus: f64) -> f64 {
-    if !wanted.is_finite() || !surplus.is_finite() {
+    // Saturated costs never exceed finite operator costs, but are -inf for an
+    // abstraction that is indifferent to the operator: it wants nothing, so it
+    // steals nothing.
+    if wanted == f64::NEG_INFINITY {
         return 0.0;
     }
+    assert!(
+        wanted.is_finite(),
+        "saturated costs are finite or -inf, got {wanted}"
+    );
+    // `compute_surplus_cost` reports +inf for an operator whose cost or total
+    // finite want is not finite; nothing is short there, so nothing is stolen.
+    if surplus == f64::INFINITY {
+        return 0.0;
+    }
+    assert!(
+        surplus.is_finite(),
+        "surplus costs are finite or +inf, got {surplus}"
+    );
     let rest = surplus + wanted;
     if rest >= 0.0 {
         (0.0_f64).max(wanted - rest)
