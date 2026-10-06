@@ -762,3 +762,103 @@ fn stale_numeric_flaw_at_existing_boundary_contributes_empty_summary() {
     assert!(refined.is_empty());
     assert_eq!(numeric_domain_sizes[0], 2);
 }
+
+/// A counter `x` from `initial` with the goal `x >= 20` and a unit increment.
+fn counter_to_twenty(initial: f64) -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
+            ConditionValue::DOMAIN_SIZE,
+            "x_ge_20".into(),
+            vec!["true".into(), "false".into()],
+            Some(0),
+            ConditionValue::False.as_usize(),
+        )],
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("twenty".into(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![usize::from(initial < 20.0)],
+        numeric_state: vec![initial, 1.0, 20.0],
+        operators: vec![Operator::new(
+            "increment".into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                0,
+                AssignmentOperation::Plus,
+                1,
+                false,
+                vec![],
+            )],
+            1,
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            0,
+            0,
+            2,
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+/// CEGAR splits at concrete state values, so every state of the plan lies on
+/// a partition boundary. The flaw search, the distance table's initial-state
+/// hash, and the heuristic's state lookup must map those boundary values to
+/// the same partitions, whether the variable has few or many partitions: the
+/// converged abstraction is then exact on the plan, and its h(s0) is the one
+/// its distance table stores.
+#[test]
+fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
+    use crate::evaluation::abstraction_collections::component::AbstractionComponent;
+    use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
+
+    for initial in [0.0, 7.0, 15.0] {
+        let task = counter_to_twenty(initial);
+        let abstraction = DomainAbstractionGenerator::new(CegarConfig {
+            max_abstraction_size: 10_000,
+            flaw_kind: FlawKind::Progression,
+            init_split_var_ids: Some(HashSet::new()),
+            ..Default::default()
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+        assert!(abstraction.metadata.solved_by_self, "x0={initial}");
+        let partition_count = abstraction.factory.numeric_domain_sizes()[0];
+        // Both sides of the old small/large lookup split are covered.
+        assert_eq!(
+            partition_count > 8,
+            initial < 15.0,
+            "x0={initial}: {partition_count} partitions"
+        );
+        let stored_h =
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+        assert_eq!(stored_h, 20.0 - initial, "x0={initial}");
+
+        let component = AbstractionComponent::domain(None, abstraction);
+        for step in 0..=(20.0 - initial) as usize {
+            let x = initial + step as f64;
+            let goal_value = if x >= 20.0 {
+                ConditionValue::True
+            } else {
+                ConditionValue::False
+            };
+            let h = component
+                .standalone_value_from_state_values(&[goal_value.as_usize()], &[x, 1.0, 20.0])
+                .unwrap();
+            assert_eq!(
+                h,
+                20.0 - x,
+                "x0={initial}, {partition_count} partitions: lookup of plan state x={x}"
+            );
+        }
+    }
+}
