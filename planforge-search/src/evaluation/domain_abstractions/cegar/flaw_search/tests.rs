@@ -79,7 +79,8 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         &plan,
         FlawKind::Progression,
     )
-    .unwrap();
+    .unwrap()
+    .flaws;
     assert!(flaws.is_empty());
 
     flaws = get_flaws(
@@ -89,7 +90,8 @@ fn get_flaws_returns_empty_for_valid_wildcard_plan() {
         &plan,
         FlawKind::Regression,
     )
-    .unwrap();
+    .unwrap()
+    .flaws;
     assert!(flaws.is_empty());
 }
 

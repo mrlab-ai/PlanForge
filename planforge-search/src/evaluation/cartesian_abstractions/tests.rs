@@ -18,8 +18,7 @@ use super::{
     CartesianSemantics, CartesianSplitSelection, CartesianStopReason, FlawKind, OperatorBitSet,
     RefinementNode, ShortestPaths, Split, SplitDimension, StateRegion, TransitionKey,
     WorkingAbstraction, artifact_unwanted_score, numeric_split_choice_key, numeric_split_intervals,
-    push_unique_split, retain_min_growth_splits, select_next_cartesian_collection_goal,
-    select_refinement_split,
+    push_unique_split, retain_min_growth_splits, select_refinement_split,
 };
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_sas::utils::interval::Interval;
@@ -1671,16 +1670,76 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
         })
         .collect::<Vec<_>>();
     assert_eq!(initial_h, vec![2.0, 3.0, 2.0, 3.0, 3.0, 2.0]);
-    assert_eq!(abstractions[0].metadata.collection_goal_id, Some(0));
-    assert_eq!(abstractions[0].metadata.collection_variant_id, Some(0));
-    assert_eq!(abstractions[2].metadata.collection_goal_id, Some(0));
-    assert_eq!(abstractions[2].metadata.collection_variant_id, Some(1));
-    assert_eq!(abstractions[3].metadata.collection_goal_id, Some(1));
-    assert_eq!(abstractions[3].metadata.collection_variant_id, Some(1));
-    assert_eq!(abstractions[4].metadata.collection_goal_id, Some(1));
-    assert_eq!(abstractions[4].metadata.collection_variant_id, Some(2));
-    assert_eq!(abstractions[5].metadata.collection_goal_id, Some(0));
-    assert_eq!(abstractions[5].metadata.collection_variant_id, Some(2));
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(0)
+    );
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(0)
+    );
+    assert_eq!(
+        abstractions[2]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(0)
+    );
+    assert_eq!(
+        abstractions[2]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(1)
+    );
+    assert_eq!(
+        abstractions[3]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(1)
+    );
+    assert_eq!(
+        abstractions[3]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(1)
+    );
+    assert_eq!(
+        abstractions[4]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(1)
+    );
+    assert_eq!(
+        abstractions[4]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(2)
+    );
+    assert_eq!(
+        abstractions[5]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(0)
+    );
+    assert_eq!(
+        abstractions[5]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(2)
+    );
     assert_eq!(
         abstractions[0].metadata.refinement_direction,
         CartesianRefinementDirection::Progression
@@ -1820,9 +1879,26 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
     let second_initial_h =
         abstractions[1].distance_table.distances[abstractions[1].distance_table.initial_state_hash];
     assert!(second_initial_h <= 4.0);
-    assert_eq!(abstractions[2].metadata.collection_goal_id, Some(1));
-    assert_eq!(abstractions[2].metadata.collection_variant_id, Some(1));
-    assert!(!abstractions[2].metadata.progressive_refinement_root);
+    assert_eq!(
+        abstractions[2]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(1)
+    );
+    assert_eq!(
+        abstractions[2]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(1)
+    );
+    assert!(
+        !abstractions[2]
+            .metadata
+            .collection_member
+            .is_some_and(|member| member.progressive_root)
+    );
     assert_eq!(
         abstractions[2]
             .metadata
@@ -1916,7 +1992,10 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
     assert_eq!(
         abstractions
             .iter()
-            .map(|abstraction| abstraction.metadata.collection_goal_id)
+            .map(|abstraction| abstraction
+                .metadata
+                .collection_member
+                .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
         vec![Some(0), Some(1)]
     );
@@ -1938,7 +2017,10 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
     assert_eq!(
         abstractions
             .iter()
-            .map(|abstraction| abstraction.metadata.progressive_refinement_root)
+            .map(|abstraction| abstraction
+                .metadata
+                .collection_member
+                .is_some_and(|member| member.progressive_root))
             .collect::<Vec<_>>(),
         vec![false, false],
         "a completed lane must not be progressed or retried again"
@@ -2011,9 +2093,18 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
         abstractions
             .iter()
             .map(|abstraction| (
-                abstraction.metadata.collection_goal_id,
-                abstraction.metadata.collection_variant_id,
-                abstraction.metadata.progressive_refinement_root,
+                abstraction
+                    .metadata
+                    .collection_member
+                    .map(|member| member.goal_id),
+                abstraction
+                    .metadata
+                    .collection_member
+                    .map(|member| member.variant_id),
+                abstraction
+                    .metadata
+                    .collection_member
+                    .is_some_and(|member| member.progressive_root),
                 abstraction.metadata.stop_reason,
                 abstraction.metadata.concrete_plan_operator_ids.as_deref(),
             ))
@@ -2022,7 +2113,10 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
     assert_eq!(
         abstractions
             .iter()
-            .map(|abstraction| abstraction.metadata.collection_goal_id)
+            .map(|abstraction| abstraction
+                .metadata
+                .collection_member
+                .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
         vec![Some(0), Some(1)]
     );
@@ -2041,7 +2135,12 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
         Some([].as_slice()),
         "the dead checkpoint must be rebuilt independently at the satisfying initial state"
     );
-    assert!(!abstractions[1].metadata.progressive_refinement_root);
+    assert!(
+        !abstractions[1]
+            .metadata
+            .collection_member
+            .is_some_and(|member| member.progressive_root)
+    );
 }
 
 #[test]
@@ -2108,7 +2207,10 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
     assert_eq!(
         abstractions
             .iter()
-            .map(|abstraction| abstraction.metadata.collection_goal_id)
+            .map(|abstraction| abstraction
+                .metadata
+                .collection_member
+                .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
         vec![Some(0), Some(1), Some(0)]
     );
@@ -2145,7 +2247,11 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
                 .abstract_state_id(&propositions, &numeric)
                 .unwrap();
             let h = abstraction.distance_table.distances[state_id];
-            let goal = abstraction.metadata.collection_goal_id.unwrap();
+            let goal = abstraction
+                .metadata
+                .collection_member
+                .map(|member| member.goal_id)
+                .unwrap();
             let target: usize = if goal == 0 { 4 } else { 2 };
             assert!(
                 h <= target.saturating_sub(x) as f64,
@@ -2218,21 +2324,6 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
 }
 
 #[test]
-fn collection_schedule_covers_each_goal_before_focusing_the_strongest() {
-    let mut counts = vec![0, 0, 0];
-    let strengths = vec![2.0, 5.0, 3.0];
-    let mut selected = Vec::new();
-    for _ in 0..9 {
-        let goal = select_next_cartesian_collection_goal(&counts, &strengths, 3).unwrap();
-        selected.push(goal);
-        counts[goal] += 1;
-    }
-
-    assert_eq!(selected, vec![0, 1, 2, 0, 1, 2, 1, 2, 0]);
-    assert_eq!(counts, vec![3, 3, 3]);
-}
-
-#[test]
 fn goal_collection_preserves_empty_goal_tasks() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 0,
@@ -2268,8 +2359,20 @@ fn goal_collection_preserves_empty_goal_tasks() {
         0.0
     );
     assert!(abstractions[0].metadata.solved_by_self);
-    assert_eq!(abstractions[0].metadata.collection_goal_id, None);
-    assert_eq!(abstractions[0].metadata.collection_variant_id, None);
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        None
+    );
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        None
+    );
 }
 
 #[test]
@@ -2325,8 +2428,20 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
         abstractions[0].metadata.stop_reason,
         CartesianStopReason::TimeLimit
     );
-    assert_eq!(abstractions[0].metadata.collection_goal_id, Some(0));
-    assert_eq!(abstractions[0].metadata.collection_variant_id, Some(0));
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .collection_member
+            .map(|member| member.goal_id),
+        Some(0)
+    );
+    assert_eq!(
+        abstractions[0]
+            .metadata
+            .collection_member
+            .map(|member| member.variant_id),
+        Some(0)
+    );
 }
 
 fn comparison_variable(name: &str) -> ExplicitVariable {

@@ -22,29 +22,6 @@ pub(super) enum PlanCheck {
     Refine(Split),
 }
 
-#[derive(Debug)]
-pub(super) struct RefinementRootDeadEnd {
-    abstract_state_id: usize,
-}
-
-impl RefinementRootDeadEnd {
-    pub(super) fn new(abstract_state_id: usize) -> Self {
-        Self { abstract_state_id }
-    }
-}
-
-impl std::fmt::Display for RefinementRootDeadEnd {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "concrete refinement root maps to abstract dead end {}",
-            self.abstract_state_id
-        )
-    }
-}
-
-impl std::error::Error for RefinementRootDeadEnd {}
-
 pub(super) fn approximately_equal(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-7 * left.abs().max(right.abs()).max(1.0)
 }
@@ -69,7 +46,7 @@ pub(super) fn replay_optimal_abstract_trace(
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &CartesianConcreteState,
+    refinement_root: &ConcreteState,
     selected_plan: Option<&[TransitionKey]>,
 ) -> Result<PlanCheck> {
     let use_desired_region_candidates = matches!(
@@ -273,7 +250,7 @@ pub(super) fn replay_entire_optimal_abstract_trace(
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &CartesianConcreteState,
+    refinement_root: &ConcreteState,
 ) -> Result<PlanCheck> {
     let mut propositions = refinement_root.propositions.clone();
     let mut numeric = refinement_root.numeric.clone();
@@ -412,7 +389,7 @@ pub(super) fn validate_concrete_plan(
     semantics: &CartesianSemantics<'_>,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &CartesianConcreteState,
+    refinement_root: &ConcreteState,
     plan: &ConcretePlan,
 ) -> Result<()> {
     let mut propositions = refinement_root.propositions.clone();

@@ -42,7 +42,8 @@ fn progression_flaws_find_precondition_violation() {
         &plan,
         SplitDirection::Forward,
     )
-    .unwrap();
+    .unwrap()
+    .flaws;
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 0)),
@@ -74,8 +75,9 @@ fn progression_flaws_find_goal_violation() {
 
     // The abstraction cannot tell `v=1` from `v=2`, so the wildcard plan stops
     // at `v=1` and the concrete goal `v=2` stays open.
-    let flaws =
-        get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward).unwrap();
+    let flaws = get_progression_flaws(&task, factory.partitions(), &plan, SplitDirection::Forward)
+        .unwrap()
+        .flaws;
     assert_eq!(flaws.len(), 1);
     match &flaws[0] {
         Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 2)),
@@ -165,8 +167,9 @@ fn progression_flaws_find_numeric_deviation_flaw() {
         ],
     };
 
-    let forward_flaws =
-        get_progression_flaws(&task, &partitions, &plan, SplitDirection::Forward).unwrap();
+    let forward_flaws = get_progression_flaws(&task, &partitions, &plan, SplitDirection::Forward)
+        .unwrap()
+        .flaws;
     assert!(
         forward_flaws.iter().any(|f| matches!(f, Flaw::Numeric(_))),
         "expected a numeric deviation flaw"
@@ -187,8 +190,9 @@ fn progression_flaws_find_numeric_deviation_flaw() {
     // lower bound of the UPPER partition (5, +inf) is unbounded on the lower
     // side, so the regressed split aligns with -5.0 - 3.0 = -8.0, the lower
     // boundary of the upper partition `(-5, +inf)`).
-    let backward_flaws =
-        get_progression_flaws(&task, &partitions, &plan, SplitDirection::Backward).unwrap();
+    let backward_flaws = get_progression_flaws(&task, &partitions, &plan, SplitDirection::Backward)
+        .unwrap()
+        .flaws;
     let backward_numeric = backward_flaws
         .iter()
         .find_map(|f| match f {

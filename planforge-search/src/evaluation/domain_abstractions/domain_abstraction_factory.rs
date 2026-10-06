@@ -15,8 +15,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::debug;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator,
-    metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericTaskExt, NumericType, Operator,
 };
 use planforge_sas::utils::float_tolerance;
 
@@ -68,11 +67,10 @@ pub struct DomainAbstractionFactory {
     /// task data, not abstraction data, but the factory outlives the borrow.
     numeric_conditions: Arc<NumericConditions>,
     additive_numeric_views: AdditiveNumericViews,
-    /// Per-concrete-operator metric cost, evaluated once over the initial
-    /// numeric state. The cost is task-deterministic, so caching here (and
-    /// sharing the `Arc` into every per-iteration `AbstractOperatorGenerator`)
-    /// avoids the `task.get_operators() × assignment_effects` scan that
-    /// `metric_operator_cost_from_initial_values` does on every call.
+    /// Per-concrete-operator cost, read once through the task's
+    /// [`NumericTaskExt::abstract_operator_cost`] hook and shared (via `Arc`)
+    /// into every per-iteration `AbstractOperatorGenerator`. Task views that
+    /// move the initial state keep these costs pinned to the base task.
     cached_operator_costs: Arc<[f64]>,
     /// Propositional dimensions that a single abstract state can constrain,
     /// ascending: exactly the variables this abstraction split into more than
@@ -139,10 +137,8 @@ impl DomainAbstractionFactory {
             );
         }
 
-        let cached_operator_costs: Arc<[f64]> = task
-            .get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
+        let cached_operator_costs: Arc<[f64]> = (0..task.get_operators().len())
+            .map(|operator_id| task.abstract_operator_cost(operator_id))
             .collect();
         let additive_numeric_views =
             AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;

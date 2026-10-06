@@ -278,7 +278,8 @@ fn get_flaws_reports_numeric_deviation_flaw() {
         &plan,
         FlawKind::Progression,
     )
-    .unwrap();
+    .unwrap()
+    .flaws;
 
     assert!(
         flaws.iter().any(|flaw| matches!(flaw, Flaw::Numeric(_))),

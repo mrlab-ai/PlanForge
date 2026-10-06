@@ -7,6 +7,9 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericType,
     NumericVariable, Operator,
 };
+use planforge_sas::utils::float_tolerance;
+
+use crate::evaluation::abstraction_collections::goal_focused::ConcreteState;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AbstractionUse {
@@ -213,6 +216,228 @@ impl AbstractNumericTask for SingleGoalTask<'_> {
     }
 }
 
+/// A task view that changes only the initial state, to a concrete state of the
+/// base task.
+///
+/// CEGAR run on this view searches flaws from that state, so a collection can
+/// refine an abstraction around the states a plan passes through. Everything
+/// else is the base task's: variables, operators, goals, and in particular the
+/// operator costs, which [`AbstractNumericTask::operator_cost_for_abstraction`]
+/// keeps pinned to the base task's initial state. The root must agree with the
+/// base task's initial state on every constant numeric variable, so
+/// abstractions built on this view partition the base task's state space
+/// exactly as they would partition it built on the base task.
+pub(crate) struct RootedTask<'task> {
+    base: &'task dyn AbstractNumericTask,
+    propositional: Vec<usize>,
+    numeric: Vec<f64>,
+}
+
+impl<'task> RootedTask<'task> {
+    pub(crate) fn new(base: &'task dyn AbstractNumericTask, root: &ConcreteState) -> Result<Self> {
+        let propositional = root.propositional_values(base)?;
+        let base_numeric = base.get_initial_numeric_state_values();
+        let mut numeric = root.numeric.clone();
+        for (numeric_var_id, variable) in base.numeric_variables().iter().enumerate() {
+            if variable.get_type() == &NumericType::Constant {
+                ensure!(
+                    float_tolerance::canonical_bits(numeric[numeric_var_id])
+                        == float_tolerance::canonical_bits(base_numeric[numeric_var_id]),
+                    "refinement root changes constant numeric variable {numeric_var_id} ({}) from {} to {}",
+                    variable.name(),
+                    base_numeric[numeric_var_id],
+                    numeric[numeric_var_id]
+                );
+                // Constants are read verbatim wherever an abstraction needs
+                // them, so they stay exactly the base task's values.
+                numeric[numeric_var_id] = base_numeric[numeric_var_id];
+            }
+        }
+        Ok(Self {
+            base,
+            propositional,
+            numeric,
+        })
+    }
+}
+
+impl AbstractNumericTask for RootedTask<'_> {
+    fn variables(&self) -> &Vec<ExplicitVariable> {
+        self.base.variables()
+    }
+
+    fn numeric_variables(&self) -> &Vec<NumericVariable> {
+        self.base.numeric_variables()
+    }
+
+    fn assignment_axioms(&self) -> &Vec<AssignmentAxiom> {
+        self.base.assignment_axioms()
+    }
+
+    fn comparison_axioms(&self) -> &Vec<ComparisonAxiom> {
+        self.base.comparison_axioms()
+    }
+
+    fn numeric_conditions(&self) -> &Arc<NumericConditions> {
+        self.base.numeric_conditions()
+    }
+
+    fn axioms(&self) -> &Vec<PropositionalAxiom> {
+        self.base.axioms()
+    }
+
+    fn metric(&self) -> &Metric {
+        self.base.metric()
+    }
+
+    fn get_num_variables(&self) -> usize {
+        self.base.get_num_variables()
+    }
+
+    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
+        self.base.get_variable_name(index)
+    }
+
+    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
+        self.base.get_variable_domain_size(index)
+    }
+
+    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
+        self.base.get_variable_axiom_layer(index)
+    }
+
+    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
+        self.base.get_variable_default_axiom_value(index)
+    }
+
+    fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
+        self.base.get_fact_name(fact)
+    }
+
+    fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool {
+        self.base.are_facts_mutex(fact1, fact2)
+    }
+
+    fn get_operators(&self) -> &Vec<Operator> {
+        self.base.get_operators()
+    }
+
+    fn goals(&self) -> &[ExplicitFact] {
+        self.base.goals()
+    }
+
+    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
+        self.base.get_operator_cost(index, is_axiom)
+    }
+
+    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
+        self.base.get_operator_name(index, is_axiom)
+    }
+
+    fn get_num_operators(&self) -> usize {
+        self.base.get_num_operators()
+    }
+
+    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
+        self.base.get_num_operator_preconditions(index, is_axiom)
+    }
+
+    fn get_operator_precondition(
+        &self,
+        index: usize,
+        precond_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
+        self.base
+            .get_operator_precondition(index, precond_index, is_axiom)
+    }
+
+    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
+        self.base.get_num_operator_effects(index, is_axiom)
+    }
+
+    fn get_num_operator_effect_conditions(
+        &self,
+        index: usize,
+        eff_index: usize,
+        is_axiom: bool,
+    ) -> usize {
+        self.base
+            .get_num_operator_effect_conditions(index, eff_index, is_axiom)
+    }
+
+    fn get_operator_effect_condition(
+        &self,
+        index: usize,
+        eff_index: usize,
+        cond_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
+        self.base
+            .get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
+    }
+
+    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact {
+        self.base.get_operator_effect(index, eff_index, is_axiom)
+    }
+
+    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask) {
+        self.base.convert_operator_index(index, ancestor_task)
+    }
+
+    fn get_num_axioms(&self) -> usize {
+        self.base.get_num_axioms()
+    }
+
+    fn get_num_goals(&self) -> usize {
+        self.base.get_num_goals()
+    }
+
+    fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
+        self.base.get_goal_fact(index)
+    }
+
+    fn get_initial_propositional_state_values(&self) -> &[usize] {
+        &self.propositional
+    }
+
+    fn get_initial_numeric_state_values(&self) -> &[f64] {
+        &self.numeric
+    }
+
+    fn convert_ancestor_state_values(
+        &self,
+        ancestor_state_values: &[usize],
+        ancestor_task: &dyn AbstractNumericTask,
+    ) -> Vec<usize> {
+        self.base
+            .convert_ancestor_state_values(ancestor_state_values, ancestor_task)
+    }
+
+    fn get_num_cmp_axioms(&self) -> usize {
+        self.base.get_num_cmp_axioms()
+    }
+
+    fn project_state_values(
+        &self,
+        propositional_values: &[usize],
+        numeric_values: &[f64],
+    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        self.base
+            .project_state_values(propositional_values, numeric_values)
+    }
+
+    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+        // The root is a reached concrete state and already closed under the
+        // task's axioms.
+        Ok((self.propositional.clone(), self.numeric.clone()))
+    }
+
+    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64 {
+        self.base.operator_cost_for_abstraction(operator_id)
+    }
+}
+
 /// Validates the concrete-operator fragment shared by domain and Cartesian
 /// abstractions. Unsupported task input is rejected before either backend
 /// constructs transitions.
@@ -302,3 +527,6 @@ pub(crate) fn validate_abstraction_operator(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

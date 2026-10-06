@@ -6,14 +6,17 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::abstract_operator_generator::AbstractOperator;
-use super::cegar::{Cegar, CegarConfig, CegarStopReason};
+use super::cegar::{Cegar, CegarConfig, CegarStopReason, SplitDirection};
 use super::domain_abstraction_factory::{
     AbstractDistanceTable, DistanceTableOptions, DomainAbstractionFactory,
 };
 use crate::evaluation::abstraction_collections::cost_partitioning::{
     AbstractOperatorRegions, AbstractTransitionSystem,
 };
-use crate::evaluation::abstraction_task::AbstractionUse;
+use crate::evaluation::abstraction_collections::goal_focused::{
+    CollectionMembership, ConcreteState,
+};
+use crate::evaluation::abstraction_task::{AbstractionUse, RootedTask};
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
 #[derive(Debug, Clone)]
@@ -137,12 +140,20 @@ pub struct DomainAbstractionMetadata {
     pub full_goal_task: Option<bool>,
     pub abstraction_use: AbstractionUse,
     pub stop_reason: Option<CegarStopReason>,
-    pub initial_seed_splits: Vec<String>,
     pub max_abstraction_size: Option<usize>,
     /// CEGAR exited because the wildcard plan has no flaws. This proves
     /// `h(init)` optimal only when `abstraction_use` is `Standalone`;
     /// collection combinators deliberately do not expose that search shortcut.
     pub solved_by_self: bool,
+    /// The split direction CEGAR refined with.
+    pub split_direction: SplitDirection,
+    /// The rank CEGAR used among tied best flaws, if any.
+    pub flaw_selection_rank: Option<usize>,
+    /// Operator ids of the concrete plan CEGAR executed when it solved the task
+    /// from its refinement root.
+    pub concrete_plan_operator_ids: Option<Vec<usize>>,
+    /// Set when the abstraction is a member of a goal-focused collection.
+    pub collection_member: Option<CollectionMembership>,
 }
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
@@ -164,12 +175,31 @@ impl DomainAbstractionGenerator {
 
     /// Builds a domain abstraction and its abstract distance table.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<DomainAbstraction> {
-        let outcome = self
-            .cegar
-            .build_abstraction(task)
-            .context("CEGAR failed to build abstraction")?;
+        self.generate_from_root(task, None)
+    }
+
+    /// Builds a domain abstraction whose CEGAR loop searches for flaws from
+    /// `refinement_root` instead of the task initial state.
+    ///
+    /// The root only chooses counterexamples. The abstraction still partitions
+    /// the full state space of `task`, operator costs stay those of `task`, and
+    /// the distance table's initial state is the initial state of `task`.
+    pub(crate) fn generate_from_root(
+        &self,
+        task: &dyn AbstractNumericTask,
+        refinement_root: Option<&ConcreteState>,
+    ) -> Result<DomainAbstraction> {
+        let outcome = match refinement_root {
+            Some(root) => {
+                let rooted_task = RootedTask::new(task, root)?;
+                self.cegar.build_abstraction(&rooted_task)
+            }
+            None => self.cegar.build_abstraction(task),
+        }
+        .context("CEGAR failed to build abstraction")?;
         let solved_by_self = outcome.solved_by_self;
         let stop_reason = outcome.stop_reason;
+        let concrete_plan_operator_ids = outcome.concrete_plan_operator_ids;
         let factory = outcome.final_state.factory;
         let mut operator_generator =
             factory.make_operator_generator(task, self.config.combine_labels)?;
@@ -241,6 +271,9 @@ impl DomainAbstractionGenerator {
                 solved_by_self,
                 abstraction_use: AbstractionUse::Standalone,
                 stop_reason: Some(stop_reason),
+                split_direction: self.config.effective_split_direction(),
+                flaw_selection_rank: self.config.flaw_selection_rank,
+                concrete_plan_operator_ids,
                 ..DomainAbstractionMetadata::default()
             },
         })

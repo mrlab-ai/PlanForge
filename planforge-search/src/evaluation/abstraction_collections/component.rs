@@ -2,9 +2,11 @@ use std::collections::BTreeSet;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
 
+use super::goal_focused::{CollectionMembership, MemberDirection};
 use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstraction, CartesianAbstractionHeuristic,
+    CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementDirection,
 };
+use crate::evaluation::domain_abstractions::cegar::SplitDirection;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::DistanceTableOptions;
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
 use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
@@ -27,6 +29,18 @@ impl std::fmt::Display for AbstractionKind {
             Self::PatternDatabase => formatter.write_str("pattern database"),
         }
     }
+}
+
+/// The backend-independent facts about a member of a goal-focused collection
+/// that collection heuristics order components by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GoalFocusedMember {
+    pub membership: CollectionMembership,
+    pub direction: MemberDirection,
+    pub tie_rank: Option<usize>,
+    /// Retained abstract transitions (Cartesian) or abstract operators
+    /// (domain): the units operator regions are attached to.
+    pub retained_transitions: usize,
 }
 
 pub enum AbstractionComponent<'task> {
@@ -249,6 +263,47 @@ impl<'task> AbstractionComponent<'task> {
             ));
         }
         Ok(ids.into_iter().collect())
+    }
+
+    /// `Some` exactly for members of a goal-focused collection.
+    pub fn goal_focused_member(&self) -> Option<GoalFocusedMember> {
+        match self {
+            Self::Domain(heuristic) => {
+                let abstraction = heuristic.abstraction();
+                let metadata = &abstraction.metadata;
+                metadata
+                    .collection_member
+                    .map(|membership| GoalFocusedMember {
+                        membership,
+                        direction: match metadata.split_direction {
+                            SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {
+                                MemberDirection::Progression
+                            }
+                            SplitDirection::Backward => MemberDirection::Regression,
+                        },
+                        tie_rank: metadata.flaw_selection_rank,
+                        retained_transitions: abstraction.abstract_operators.len(),
+                    })
+            }
+            Self::Cartesian(heuristic) => {
+                let abstraction = heuristic.abstraction();
+                let metadata = &abstraction.metadata;
+                metadata
+                    .collection_member
+                    .map(|membership| GoalFocusedMember {
+                        membership,
+                        direction: match metadata.refinement_direction {
+                            CartesianRefinementDirection::Progression => {
+                                MemberDirection::Progression
+                            }
+                            CartesianRefinementDirection::Regression => MemberDirection::Regression,
+                        },
+                        tie_rank: metadata.split_selection_rank,
+                        retained_transitions: abstraction.transition_system.transitions.len(),
+                    })
+            }
+            Self::PatternDatabase(_) => None,
+        }
     }
 
     pub fn as_domain(&self) -> Option<&DomainAbstraction> {

@@ -4,10 +4,9 @@ mod tests;
 pub mod flaw_search;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::utils::state_packer::StatePacker;
 use rand::Rng;
@@ -18,11 +17,17 @@ use tracing::{debug, info};
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
 use planforge_sas::state_registry::ConcreteStateView;
 
-use flaw_search::{DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
+use flaw_search::{
+    DependentNumericRefinement, Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw,
+    can_split_numeric_var,
+};
 
 pub use flaw_search::SplitDirection;
-pub use flaw_search::flaw_selection::{FlawTreatment, FlawTreatmentVariants, InitSplitMethod};
+pub use flaw_search::flaw_selection::{
+    FlawTreatment, FlawTreatmentVariants, InitSplitMethod, TieBreak,
+};
 
+use crate::evaluation::abstraction_collections::goal_focused::RefinementRootDeadEnd;
 use crate::evaluation::cegar::{CegarDriver, CegarIterationResult, progress_concrete_state};
 pub use crate::evaluation::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::domain_abstractions::cegar::flaw_search::state::FlawSearchState;
@@ -66,7 +71,6 @@ pub struct CegarConfig {
     pub init_split_var_ids: Option<HashSet<usize>>,
     pub blacklisted_prop_var_ids: HashSet<usize>,
     pub blacklisted_numeric_var_ids: HashSet<usize>,
-    pub initial_seed_splits: Vec<InitialSeedSplit>,
     /// When false, `DomainAbstractionGenerator::generate` skips building the
     /// `Vec<AbstractOperatorRegions>`. Operator regions are only
     /// consumed by abstract-operator transition-cost partitioning
@@ -93,6 +97,11 @@ pub struct CegarConfig {
     /// `DomainAbstractionCollectionGeneratorMultipleCegarConfig::max_refined_comparison_vars_per_abstraction`
     /// for the longer rationale).
     pub max_refined_comparison_vars_per_abstraction: Option<usize>,
+    /// Which of the tied best flaws to refine: `flaw_treatment` scores the
+    /// flaws, the best-scoring ones are sorted by a deterministic key, and the
+    /// one at `rank % ties` is refined. `None` breaks ties with the random
+    /// seed. Treatments that refine every flaw have no tie to break.
+    pub flaw_selection_rank: Option<usize>,
 }
 
 impl Default for CegarConfig {
@@ -111,11 +120,20 @@ impl Default for CegarConfig {
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
-            initial_seed_splits: Vec::new(),
             split_direction: None,
             compute_operator_regions: true,
             max_refined_comparison_vars_per_abstraction: None,
+            flaw_selection_rank: None,
         }
+    }
+}
+
+impl CegarConfig {
+    /// The split direction refinement uses: the configured one, or the flaw
+    /// kind's default.
+    pub fn effective_split_direction(&self) -> SplitDirection {
+        self.split_direction
+            .unwrap_or_else(|| self.flaw_kind.default_split_direction())
     }
 }
 
@@ -171,19 +189,6 @@ impl crate::config::ApplyOptions for CegarConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum InitialSeedSplit {
-    Propositional {
-        var_id: usize,
-        value: usize,
-    },
-    Numeric {
-        numeric_var_id: usize,
-        value: f64,
-        include_in_lower: bool,
-    },
-}
-
 #[derive(Clone)]
 pub struct FlawCandidate {
     idx: usize,
@@ -218,6 +223,10 @@ pub struct CegarOutcome {
     /// standalone full-task abstraction, the abstract plan is then a real
     /// concrete plan and `h(init)` is optimal.
     pub solved_by_self: bool,
+    /// The concrete operators the flaw search executed when no flaws remained.
+    /// `Some` exactly when `solved_by_self` and the flaw kind executes a
+    /// concrete plan (see [`FlawSearchOutcome::concrete_plan`]).
+    pub concrete_plan_operator_ids: Option<Vec<usize>>,
 }
 
 /// What a refinement writes to: the abstraction's propositional domain mapping
@@ -306,17 +315,13 @@ impl Cegar {
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
 
         let start = Instant::now();
-        // Per-CEGAR-invocation seed diversification. The collection-generator hands every
-        // CEGAR call the same `config.random_seed`, so without this counter each abstraction
-        // would explore the identical RNG trajectory — defeating diversity. A process-wide
-        // counter xor'd (via splitmix-style mixing) into the seed gives every CEGAR a distinct
-        // initial state while remaining fully reproducible when `random_seed` is set.
-        static CEGAR_INVOCATION_COUNTER: AtomicU64 = AtomicU64::new(0);
-        let invocation = CEGAR_INVOCATION_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let base_seed = config
-            .random_seed
-            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED);
-        let mut rng = SmallRng::seed_from_u64(base_seed ^ splitmix64(invocation));
+        // The run is a function of its configuration alone: collection
+        // generators hand every member its own seed.
+        let mut rng = SmallRng::seed_from_u64(
+            config
+                .random_seed
+                .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+        );
 
         let (mut domain_mapping, mut domain_sizes) = trivial_domain_mapping_and_sizes(task)
             .context("failed to build trivial domain mapping")?;
@@ -326,34 +331,19 @@ impl Cegar {
         let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
         let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
 
-        if config.initial_seed_splits.is_empty() {
-            apply_initial_goal_splits(
-                task,
-                config,
-                &mut rng,
-                RefinementState {
-                    domain_mapping: &mut domain_mapping,
-                    domain_sizes: &mut domain_sizes,
-                    partitions: &mut partitions,
-                    numeric_domain_sizes: &mut numeric_domain_sizes,
-                    blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
-                    blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
-                },
-            )?;
-        } else {
-            apply_initial_seed_splits(
-                task,
-                config,
-                RefinementState {
-                    domain_mapping: &mut domain_mapping,
-                    domain_sizes: &mut domain_sizes,
-                    partitions: &mut partitions,
-                    numeric_domain_sizes: &mut numeric_domain_sizes,
-                    blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
-                    blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
-                },
-            )?;
-        }
+        apply_initial_goal_splits(
+            task,
+            config,
+            &mut rng,
+            RefinementState {
+                domain_mapping: &mut domain_mapping,
+                domain_sizes: &mut domain_sizes,
+                partitions: &mut partitions,
+                numeric_domain_sizes: &mut numeric_domain_sizes,
+                blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+            },
+        )?;
 
         let iteration = 1usize;
         let mut factory = DomainAbstractionFactory::new(
@@ -368,6 +358,7 @@ impl Cegar {
         })?;
         let mut wildcard_plan = None;
         let mut solved_by_self = false;
+        let mut concrete_plan_operator_ids = None;
         let run = CegarDriver::new(config.max_iterations, config.max_time).run_from(
             start,
             |iteration, deadline| {
@@ -419,25 +410,24 @@ impl Cegar {
             }
 
             let Some(plan) = wildcard_plan.as_ref() else {
-                let abstraction_size = compute_abstraction_size_u128(
-                    factory.domain_sizes(),
-                    factory.numeric_domain_sizes(),
-                )
-                .unwrap_or(u128::MAX);
-                bail!(
-                    "CEGAR produced an abstract dead end for the concrete initial state at iteration {iteration}; abstraction_size={abstraction_size}, prop_domains={:?}, numeric_domains={:?}",
+                return Err(RefinementRootDeadEnd::new(format!(
+                    "domain abstraction at CEGAR iteration {iteration}; abstraction_size={:?}, prop_domains={:?}, numeric_domains={:?}",
+                    compute_abstraction_size_u128(
+                        factory.domain_sizes(),
+                        factory.numeric_domain_sizes(),
+                    ),
                     factory.domain_sizes(),
                     factory.numeric_domain_sizes()
-                );
+                ))
+                .into());
             };
             let real_check_time = Duration::ZERO;
 
             let flaw_start = Instant::now();
-            let direction = self
-                .config
-                .split_direction
-                .unwrap_or_else(|| self.config.flaw_kind.default_split_direction());
-            let flaws = self
+            let FlawSearchOutcome {
+                flaws,
+                concrete_plan,
+            } = self
                 .config
                 .flaw_kind
                 .get_flaws_with_direction(
@@ -445,7 +435,7 @@ impl Cegar {
                     factory.partitions(),
                     factory.domain_mapping(),
                     plan,
-                    direction,
+                    self.config.effective_split_direction(),
                 )
                 .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
             let flaw_time = flaw_start.elapsed();
@@ -454,6 +444,7 @@ impl Cegar {
             }
             if flaws.is_empty() {
                 solved_by_self = true;
+                concrete_plan_operator_ids = concrete_plan;
                 return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
             }
             let eligible_flaws =
@@ -587,6 +578,7 @@ impl Cegar {
             last_step,
             stop_reason,
             solved_by_self,
+            concrete_plan_operator_ids,
         })
     }
 }
@@ -805,17 +797,6 @@ fn is_goal(task: &dyn AbstractNumericTask, buffer: &[u64], packer: &StatePacker)
         .all(|goal_fact| goal_fact.is_hold(ConcreteStateView::from_decoded(packer, buffer, &[])))
 }
 
-/// SplitMix64 bit-mixer — turns a low-entropy counter into a well-spread `u64` so xor'ing it
-/// into a base seed produces independent SmallRng streams across CEGAR invocations.
-#[inline]
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    let mut z = x;
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
-}
-
 fn shuffle_indices_with_rng<R: rand::Rng + ?Sized>(indices: &mut [usize], rng: &mut R) {
     indices.shuffle(rng);
 }
@@ -949,7 +930,10 @@ pub fn fix_flaws(
         &flaws,
         state.domain_sizes,
         state.numeric_domain_sizes,
-        rng,
+        match config.flaw_selection_rank {
+            Some(rank) => TieBreak::Rank(rank),
+            None => TieBreak::Random(rng),
+        },
         plan_length,
     );
 
@@ -1471,94 +1455,6 @@ fn apply_initial_goal_splits(
         }
     }
 
-    Ok(())
-}
-
-fn apply_initial_seed_splits(
-    task: &dyn AbstractNumericTask,
-    config: &CegarConfig,
-    state: RefinementState<'_>,
-) -> Result<()> {
-    let RefinementState {
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-        blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids,
-    } = state;
-    for seed in &config.initial_seed_splits {
-        match *seed {
-            InitialSeedSplit::Numeric {
-                numeric_var_id,
-                value,
-                include_in_lower,
-            } => {
-                if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
-                    continue;
-                }
-                ensure!(
-                    task.numeric_variables().get(numeric_var_id).is_some(),
-                    "initial numeric seed references missing variable {numeric_var_id}"
-                );
-                ensure!(
-                    is_refinable_numeric_dimension(task, numeric_var_id),
-                    "initial numeric seed references unsupported abstraction dimension {numeric_var_id} ({})",
-                    task.numeric_variables()[numeric_var_id].name()
-                );
-                if !can_refine_numeric_variable(
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    numeric_var_id,
-                    config.max_abstraction_size,
-                ) {
-                    continue;
-                }
-                if partitions.split_at(numeric_var_id, value, include_in_lower)
-                    && let Some(parts) = partitions.partitions(numeric_var_id)
-                    && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id)
-                {
-                    *slot = parts.len();
-                }
-            }
-            InitialSeedSplit::Propositional { var_id, value } => {
-                if blacklisted_prop_var_ids.contains(&var_id) {
-                    continue;
-                }
-                let Ok(concrete_size) = task.get_variable_domain_size(var_id) else {
-                    continue;
-                };
-                if value >= concrete_size {
-                    continue;
-                }
-                let mapping = if task.numeric_conditions().is_condition_var(var_id) {
-                    CONDITION_SPLIT_MAPPING.to_vec()
-                } else {
-                    let mut mapping = vec![0; concrete_size];
-                    mapping[value] = 1;
-                    mapping
-                };
-                // Either way the seed is a binary split: one class for the value
-                // it names, one for everything else.
-                let new_domain_size = 2;
-                if !can_refine_propositional_variable(
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    var_id,
-                    new_domain_size,
-                    config.max_abstraction_size,
-                ) {
-                    continue;
-                }
-                if let Some(slot) = domain_mapping.get_mut(var_id) {
-                    *slot = mapping;
-                }
-                if let Some(slot) = domain_sizes.get_mut(var_id) {
-                    *slot = new_domain_size;
-                }
-            }
-        }
-    }
     Ok(())
 }
 
