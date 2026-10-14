@@ -521,9 +521,9 @@ fn add_task_operator(
         if !eff.conditions().is_empty() {
             continue;
         }
-        if let Some(fid) = universe.fact_id(&ExplicitFact::propositional_from_indexes(
-            eff.var_id(),
-            eff.value(),
+        if let Some(fid) = universe.fact_id(&ExplicitFact::propositional(
+            eff.var_id().index(),
+            eff.value().index(),
         )) {
             parent_effects.push(fid);
         }
@@ -566,9 +566,9 @@ fn add_task_operator(
         let mut state_deps = parent_state_deps.clone();
         universe.split_conditions(eff.conditions(), &mut preconditions, &mut state_deps);
         let effects = universe
-            .fact_id(&ExplicitFact::propositional_from_indexes(
-                eff.var_id(),
-                eff.value(),
+            .fact_id(&ExplicitFact::propositional(
+                eff.var_id().index(),
+                eff.value().index(),
             ))
             .into_iter()
             .collect();
@@ -628,9 +628,9 @@ fn add_propositional_axiom_operator(
     // An out-of-universe effect means the axiom drives a value of a
     // numeric-axiom variable, which the relaxation cannot represent.
     let effect_fid = universe
-        .fact_id(&ExplicitFact::propositional_from_indexes(
-            axiom.var_id(),
-            axiom.effect_value(),
+        .fact_id(&ExplicitFact::propositional(
+            axiom.var_id().index(),
+            axiom.effect_value().index(),
         ))
         .ok_or_else(|| {
             format!(
@@ -646,9 +646,9 @@ fn add_propositional_axiom_operator(
     let mut state_deps: Vec<StateDependentPrecond> = Vec::new();
     universe.split_conditions(axiom.conditions(), &mut preconditions, &mut state_deps);
     universe.split_conditions(
-        &[ExplicitFact::propositional_from_indexes(
-            axiom.var_id(),
-            axiom.precondition_value(),
+        &[ExplicitFact::propositional(
+            axiom.var_id().index(),
+            axiom.precondition_value().index(),
         )],
         &mut preconditions,
         &mut state_deps,

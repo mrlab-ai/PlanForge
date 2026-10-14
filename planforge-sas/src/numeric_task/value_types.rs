@@ -385,21 +385,11 @@ impl ExplicitFact {
     pub fn propositional(var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::Propositional, var, value)
     }
-    /// Fact on a genuine propositional variable.
-    #[inline]
-    pub fn propositional_from_indexes(var: VariableIndex, value: ExplicitValueIndex) -> Self {
-        Self::in_namespace_from_indexes(FactNamespace::Propositional, var, value)
-    }
 
     /// Fact on the variable carrying a numeric condition's truth value.
     #[inline]
     pub fn condition(var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::Condition, var, value)
-    }
-    /// Fact on the variable carrying a numeric condition's truth value.
-    #[inline]
-    pub fn condition_from_indexes(var: VariableIndex, value: ExplicitValueIndex) -> Self {
-        Self::in_namespace_from_indexes(FactNamespace::Condition, var, value)
     }
 
     /// Fact on a numeric variable in a domain abstraction's id space.
@@ -410,13 +400,6 @@ impl ExplicitFact {
     #[inline]
     pub fn numeric_variable(abstraction_var: usize, value: usize) -> Self {
         Self::in_namespace(FactNamespace::NumericVariable, abstraction_var, value)
-    }
-    #[inline]
-    pub fn numeric_variable_from_indexes(
-        abstraction_var: VariableIndex,
-        value: ExplicitValueIndex,
-    ) -> Self {
-        Self::in_namespace_from_indexes(FactNamespace::NumericVariable, abstraction_var, value)
     }
 
     /// Constructors accept `usize` to minimize call-site churn; values are
@@ -431,21 +414,6 @@ impl ExplicitFact {
         ExplicitFact {
             packed_var: (namespace as u32) << Self::VAR_BITS | var as u32,
             value_id: ExplicitValueIndex::from_usize(value),
-        }
-    }
-    pub fn in_namespace_from_indexes(
-        namespace: FactNamespace,
-        var: VariableIndex,
-        value: ExplicitValueIndex,
-    ) -> Self {
-        assert!(
-            var.index() <= Self::MAX_VAR_ID,
-            "ExplicitFact var {var} exceeds the {} packed variable-id bits",
-            Self::VAR_BITS
-        );
-        ExplicitFact {
-            packed_var: (namespace as u32) << Self::VAR_BITS | var.index() as u32,
-            value_id: value,
         }
     }
 

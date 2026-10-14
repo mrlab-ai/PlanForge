@@ -3390,7 +3390,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .and_then(|add_facts| add_facts.first())
             .cloned()
             .unwrap_or_else(|| {
-                ExplicitFact::propositional_from_indexes(axiom.var_id(), axiom.effect_value())
+                ExplicitFact::propositional(axiom.var_id().index(), axiom.effect_value().index())
             });
         let effect_ids = if self.is_numeric_axiom_var(axiom.var_id()) {
             Vec::new()

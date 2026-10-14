@@ -523,7 +523,7 @@ impl DomainAbstractionFactory {
                 .and_then(|mapping| mapping.get(fact.value()))
                 .copied()
                 .unwrap_or(fact.value_index());
-            out.push(ExplicitFact::propositional_from_indexes(var, mapped));
+            out.push(ExplicitFact::propositional(var.index(), mapped.index()));
         }
 
         out

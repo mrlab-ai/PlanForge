@@ -79,7 +79,7 @@ pub fn get_regression_precondition_flaws(
         if !state.value_is_held_for_var(eff.var_id(), eff.value()) {
             let eff_var_id = eff.var_id();
             out.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::propositional_from_indexes(eff_var_id, eff.value()),
+                fact: ExplicitFact::propositional(eff_var_id.index(), eff.value().index()),
                 dependent_numeric_flaws: vec![],
                 step,
             }));

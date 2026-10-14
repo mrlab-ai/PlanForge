@@ -206,9 +206,9 @@ impl SasOperator {
         } = self;
         for effect in &effects {
             if let Some(precondition_value) = effect.precondition_value() {
-                prevail.push(ExplicitFact::propositional_from_indexes(
-                    effect.var_id(),
-                    precondition_value,
+                prevail.push(ExplicitFact::propositional(
+                    effect.var_id().index(),
+                    precondition_value.index(),
                 ));
             }
         }

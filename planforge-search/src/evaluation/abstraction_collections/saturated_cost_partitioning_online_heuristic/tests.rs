@@ -1357,7 +1357,9 @@ mod handcrafted_sailing_tests {
             .filter(|operator| operator.name().ends_with(&suffix))
             .flat_map(|operator| operator.effects().iter())
             .filter(|effect| effect.conditions().is_empty())
-            .map(|effect| ExplicitFact::propositional_from_indexes(effect.var_id(), effect.value()))
+            .map(|effect| {
+                ExplicitFact::propositional(effect.var_id().index(), effect.value().index())
+            })
             .collect::<Vec<_>>();
         candidates.sort();
         candidates.dedup();

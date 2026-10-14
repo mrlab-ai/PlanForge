@@ -23,7 +23,7 @@ mod tests;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
-use crate::numeric_task::{AxiomIndex, ExplicitValueIndex, NumericValue, VariableIndex};
+use crate::numeric_task::{AxiomIndex, NumericValue, VariableIndex};
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The two values a propositional variable carrying a numeric condition's
@@ -768,25 +768,9 @@ impl NumericConditions {
     #[inline]
     pub fn fact(&self, prop_var_id: usize, value: usize) -> ExplicitFact {
         ExplicitFact::in_namespace(
-            self.namespace_of(VariableIndex::new(prop_var_id as u32)),
+            self.namespace_of(VariableIndex::from_usize(prop_var_id)),
             prop_var_id,
             value,
-        )
-    }
-
-    /// Build a correctly tagged fact. This is the authoritative constructor
-    /// for callers that hold a variable id and cannot themselves know which
-    /// namespace it names.
-    #[inline]
-    pub fn fact_from_indexes(
-        &self,
-        prop_var_id: VariableIndex,
-        value: ExplicitValueIndex,
-    ) -> ExplicitFact {
-        ExplicitFact::in_namespace(
-            self.namespace_of(prop_var_id),
-            prop_var_id.index(),
-            value.index(),
         )
     }
 

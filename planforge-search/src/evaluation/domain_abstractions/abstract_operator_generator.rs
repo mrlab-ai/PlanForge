@@ -1016,10 +1016,10 @@ fn build_branch_for_operator(
                 touched_eff.push(var_id);
                 facts
                     .eff_pairs
-                    .push(ExplicitFact::propositional_from_indexes(var_id, abs_val));
+                    .push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
             }
         } else {
-            effects_without_pre.push(ExplicitFact::propositional_from_indexes(var_id, abs_val));
+            effects_without_pre.push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
         }
     }
 
@@ -1030,17 +1030,15 @@ fn build_branch_for_operator(
         }
         let abs_val = generator.abstract_value(var_id, pre.value_index());
         if generator.effect_on_var_scratch[var_id.index()].is_some() {
-            facts
-                .pre_pairs
-                .push(ExplicitFact::in_namespace_from_indexes(
-                    pre.namespace(),
-                    var_id,
-                    abs_val,
-                ));
+            facts.pre_pairs.push(ExplicitFact::in_namespace(
+                pre.namespace(),
+                var_id.index(),
+                abs_val.index(),
+            ));
         } else if !task.numeric_conditions().is_condition_var(var_id) {
             facts
                 .prev_pairs
-                .push(ExplicitFact::propositional_from_indexes(var_id, abs_val));
+                .push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
         }
     }
 
@@ -1065,10 +1063,10 @@ fn build_branch_for_operator(
         );
         facts
             .pre_pairs
-            .push(ExplicitFact::condition_from_indexes(var_id, source_abs));
+            .push(ExplicitFact::condition(var_id.index(), source_abs.index()));
         facts
             .eff_pairs
-            .push(ExplicitFact::condition_from_indexes(var_id, target_abs));
+            .push(ExplicitFact::condition(var_id.index(), target_abs.index()));
     }
 
     // Clear only the slots we touched, so subsequent calls start clean
