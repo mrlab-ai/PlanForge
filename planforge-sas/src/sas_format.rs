@@ -140,20 +140,23 @@ impl Metric {
     /// convention and not an encoding of variable zero, so a task whose metric
     /// variable ends up first is a task without a metric — for both ways in,
     /// which is what matters here.
-    pub fn from_sas(direction: char, index: Option<VariableIndex>) -> Option<Self> {
+    pub fn from_sas(direction: char, index: usize) -> Option<Self> {
         let is_min = match direction {
             '<' => true,
             '>' => false,
             _ => return None,
         };
-        Some(Metric::new(is_min, index))
+        Some(Metric::new(
+            is_min,
+            (index > 0).then(|| VariableIndex::from_usize(index)),
+        ))
     }
 
     /// Inverse of [`Self::from_sas`]: a task without a metric variable is
     /// written with index `0`.
-    pub fn as_sas(&self) -> (char, Option<VariableIndex>) {
+    pub fn as_sas(&self) -> (char, usize) {
         let direction = if self.is_min() { '<' } else { '>' };
-        (direction, self.var_id())
+        (direction, self.var_id().map_or(0, |var_id| var_id.index()))
     }
 }
 

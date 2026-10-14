@@ -333,3 +333,28 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
         .collect();
     assert_eq!(heads, [VariableIndex::new(1), VariableIndex::new(3)]);
 }
+
+/// Values are stored as `u32`; one past that range must be a parse error, not
+/// a value that wrapped around to a valid-looking index.
+#[test]
+fn a_state_value_beyond_u32_is_rejected() {
+    assert_eq!(
+        parse_state("begin_state\n1\n4294967295\nend_state\n")
+            .expect("u32::MAX is a valid value")
+            .1,
+        vec![
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(u32::MAX)
+        ]
+    );
+    assert!(parse_state("begin_state\n1\n4294967296\nend_state\n").is_err());
+}
+
+#[test]
+fn a_metric_index_beyond_u32_is_rejected() {
+    let metric = parse_metric("begin_metric\n< 4294967295\nend_metric\n")
+        .expect("u32::MAX is a valid index")
+        .1;
+    assert_eq!(metric.var_id(), Some(VariableIndex::new(u32::MAX)));
+    assert!(parse_metric("begin_metric\n< 4294967296\nend_metric\n").is_err());
+}

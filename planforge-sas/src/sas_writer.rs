@@ -99,7 +99,7 @@ pub fn write_sas<W: Write>(parts: &SasTaskParts, out: &mut W) -> io::Result<()> 
     out.block("version", |out| writeln!(out, "{}", parts.version))?;
     out.block("metric", |out| {
         let (direction, index) = parts.metric.as_sas();
-        writeln!(out, "{direction} {}", index.map_or(0, |v| v.index()))
+        writeln!(out, "{direction} {index}")
     })?;
 
     out.counted(&parts.variables, |out, variable| {
