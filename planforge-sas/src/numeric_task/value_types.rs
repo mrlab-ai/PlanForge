@@ -254,9 +254,99 @@ impl NumericValue {
     }
 }
 
+/// The inherent helpers forward to the `f64` method of the same name,
+/// including its NaN handling.
+impl NumericValue {
+    #[inline(always)]
+    pub fn abs(self) -> Self {
+        Self(self.0.abs())
+    }
+
+    #[inline(always)]
+    pub fn min(self, other: Self) -> Self {
+        Self(self.0.min(other.0))
+    }
+
+    #[inline(always)]
+    pub fn max(self, other: Self) -> Self {
+        Self(self.0.max(other.0))
+    }
+
+    #[inline(always)]
+    pub fn round(self) -> Self {
+        Self(self.0.round())
+    }
+
+    #[inline(always)]
+    pub fn is_finite(self) -> bool {
+        self.0.is_finite()
+    }
+
+    #[inline(always)]
+    pub fn is_nan(self) -> bool {
+        self.0.is_nan()
+    }
+
+    #[inline(always)]
+    pub fn is_infinite(self) -> bool {
+        self.0.is_infinite()
+    }
+
+    #[inline(always)]
+    pub fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
 impl Display for NumericValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+/// Arithmetic on [`NumericValue`] is exactly the `f64` arithmetic on the
+/// wrapped values: no checks and no canonicalisation, so writing `a + b`
+/// instead of `NumericValue::new(a.value() + b.value())` is bit-identical.
+macro_rules! numeric_value_binary_op {
+    ($trait:ident, $method:ident, $assign_trait:ident, $assign_method:ident, $op:tt) => {
+        impl std::ops::$trait for NumericValue {
+            type Output = NumericValue;
+
+            #[inline(always)]
+            fn $method(self, rhs: NumericValue) -> NumericValue {
+                NumericValue(self.0 $op rhs.0)
+            }
+        }
+
+        impl std::ops::$assign_trait for NumericValue {
+            #[inline(always)]
+            fn $assign_method(&mut self, rhs: NumericValue) {
+                self.0 = self.0 $op rhs.0;
+            }
+        }
+    };
+}
+
+numeric_value_binary_op!(Add, add, AddAssign, add_assign, +);
+numeric_value_binary_op!(Sub, sub, SubAssign, sub_assign, -);
+numeric_value_binary_op!(Mul, mul, MulAssign, mul_assign, *);
+numeric_value_binary_op!(Div, div, DivAssign, div_assign, /);
+
+impl std::ops::Neg for NumericValue {
+    type Output = NumericValue;
+
+    #[inline(always)]
+    fn neg(self) -> NumericValue {
+        NumericValue(-self.0)
+    }
+}
+
+/// Sums in iteration order through `f64`'s own [`Sum`](std::iter::Sum), so the
+/// result is bit-identical to summing the wrapped values.
+impl std::iter::Sum for NumericValue {
+    #[inline(always)]
+    fn sum<I: Iterator<Item = NumericValue>>(iter: I) -> NumericValue {
+        NumericValue(iter.map(|value| value.0).sum())
     }
 }
 
@@ -505,14 +595,14 @@ impl AssignmentOperation {
     ) -> NumericValue {
         match operation {
             AssignmentOperation::Assign => right,
-            AssignmentOperation::Plus => NumericValue(left.value() + right.value()),
-            AssignmentOperation::Minus => NumericValue(left.value() - right.value()),
-            AssignmentOperation::Times => NumericValue(left.value() * right.value()),
+            AssignmentOperation::Plus => left + right,
+            AssignmentOperation::Minus => left - right,
+            AssignmentOperation::Times => left * right,
             AssignmentOperation::Divide => {
-                if right.value() == 0.0 {
+                if right == ZERO_VALUE {
                     panic!("Division by zero is not allowed");
                 }
-                NumericValue(left.value() / right.value())
+                left / right
             }
         }
     }
