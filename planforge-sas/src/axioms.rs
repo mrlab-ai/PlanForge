@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, TaskRef, VariableIndex,
+    ZERO_VALUE,
 };
 use crate::utils::errors::{AssignmentAxiomError, AxiomEvalError, InvalidIndex, WrongAxiomLayer};
 use crate::utils::state_packer::StatePacker;
@@ -113,24 +114,16 @@ impl AssignmentAxiom {
             }));
         }
         let result = match self.operator {
-            CalOperator::Sum => NumericValue::new(
-                numeric_state[left.index()].value() + numeric_state[right.index()].value(),
-            ),
-            CalOperator::Difference => NumericValue::new(
-                numeric_state[left.index()].value() - numeric_state[right.index()].value(),
-            ),
-            CalOperator::Product => NumericValue::new(
-                numeric_state[left.index()].value() * numeric_state[right.index()].value(),
-            ),
+            CalOperator::Sum => numeric_state[left.index()] + numeric_state[right.index()],
+            CalOperator::Difference => numeric_state[left.index()] - numeric_state[right.index()],
+            CalOperator::Product => numeric_state[left.index()] * numeric_state[right.index()],
             CalOperator::Division => {
-                if numeric_state[right.index()].value() == 0.0 {
+                if numeric_state[right.index()] == ZERO_VALUE {
                     return Err(AssignmentAxiomError::DivisionByZero {
                         divisor: right.index(),
                     });
                 }
-                NumericValue::new(
-                    numeric_state[left.index()].value() / numeric_state[right.index()].value(),
-                )
+                numeric_state[left.index()] / numeric_state[right.index()]
             }
         };
         numeric_state[affected.index()] = result;

@@ -733,7 +733,7 @@ impl<'a> StateRegistry<'a> {
 
     fn pack_regular_numeric(&self, value: NumericValue) -> u64 {
         let canonical = float_tolerance::canonicalize_nv(value);
-        let bits = canonical.value().to_bits();
+        let bits = canonical.to_bits();
         let mut interner = self.compact_numeric_values.borrow_mut();
         if let Some(&id) = interner.ids_by_bits.get(&bits) {
             return id as u64;
@@ -1335,7 +1335,7 @@ impl<'a> StateRegistry<'a> {
             NumericValue::new(0.0)
         };
         let op_cost = if self.metric_use_metric {
-            NumericValue::new(new_metric.value() - ctx.parent_metric.value())
+            new_metric - ctx.parent_metric
         } else {
             NumericValue::new(1.0)
         };
@@ -1386,9 +1386,9 @@ impl<'a> StateRegistry<'a> {
                         }
                     })?;
                     if self.metric_is_min {
-                        old_metric.value() < new_metric.value()
+                        old_metric < new_metric
                     } else {
-                        old_metric.value() > new_metric.value()
+                        old_metric > new_metric
                     }
                 };
 
@@ -1845,7 +1845,7 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate metric after applying operator: {e:?}"),
             })?;
 
-        Ok(NumericValue::new(new_metric.value() - old_metric.value()))
+        Ok(new_metric - old_metric)
     }
 
     fn metric_value_for_state(
@@ -1907,13 +1907,12 @@ impl<'a> StateRegistry<'a> {
         let old_metric_val = self.metric_value_for_state(existing_state)?;
         let new_metric_val = self
             .evaluate_metric(successor_numeric_vals)
-            .map_err(AxiomEvalError::InvalidIndex)?
-            .value();
+            .map_err(AxiomEvalError::InvalidIndex)?;
 
         Ok(if self.task.metric().is_min() {
-            old_metric_val.value() < new_metric_val
+            old_metric_val < new_metric_val
         } else {
-            old_metric_val.value() > new_metric_val
+            old_metric_val > new_metric_val
         })
     }
 

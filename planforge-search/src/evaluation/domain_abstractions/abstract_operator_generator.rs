@@ -624,7 +624,7 @@ pub struct AbstractOperatorGenerator {
     /// operator (in `DomainAbstractionFactory::new`) and shared via `Arc`
     /// across every per-iteration generator. Recomputing per call cost ~8%
     /// of total CPU on minecraft before this cache.
-    cached_operator_costs: Arc<[f64]>,
+    cached_operator_costs: Arc<[NumericValue]>,
 }
 
 impl AbstractOperatorGenerator {
@@ -695,10 +695,10 @@ impl AbstractOperatorGenerator {
         }
 
         let num_variables = task.get_num_variables();
-        let cached_operator_costs: Arc<[f64]> = task
+        let cached_operator_costs: Arc<[NumericValue]> = task
             .get_operators()
             .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
+            .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
         Ok(Self {
             domain_mapping,
@@ -726,7 +726,7 @@ impl AbstractOperatorGenerator {
         partitions: NumericPartitions,
         numeric_domain_sizes: Vec<usize>,
         combine_labels: bool,
-        cached_operator_costs: Arc<[f64]>,
+        cached_operator_costs: Arc<[NumericValue]>,
     ) -> Result<Self> {
         let mut generator = Self::new(
             task,
@@ -960,7 +960,7 @@ fn build_branch_for_operator(
         .cached_operator_costs
         .get(concrete_op_id.index())
         .copied()
-        .unwrap_or_else(|| abstract_operator_cost(task, op).value());
+        .unwrap_or_else(|| abstract_operator_cost(task, op));
     let num_variables = task.get_num_variables();
     // Reuse per-operator scratch buffers stored on the generator instead of
     // `vec![None; num_variables]` per call. We have to reset the slots
@@ -1086,7 +1086,7 @@ fn build_branch_for_operator(
             ass_effects,
             op_preconditions: merged_preconditions,
             concrete_op_id,
-            cost: NumericValue::new(abstract_cost),
+            cost: abstract_cost,
         },
         0,
         &mut facts,

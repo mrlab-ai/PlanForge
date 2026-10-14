@@ -15,8 +15,8 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::debug;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, Operator, VariableIndex,
-    metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, NumericValue, Operator,
+    VariableIndex, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
 
@@ -73,7 +73,7 @@ pub struct DomainAbstractionFactory {
     /// sharing the `Arc` into every per-iteration `AbstractOperatorGenerator`)
     /// avoids the `task.get_operators() × assignment_effects` scan that
     /// `metric_operator_cost_from_initial_values` does on every call.
-    cached_operator_costs: Arc<[f64]>,
+    cached_operator_costs: Arc<[NumericValue]>,
     /// Propositional dimensions that a single abstract state can constrain,
     /// ascending: exactly the variables this abstraction split into more than
     /// one class. A variable with one class has that class covering its whole
@@ -142,10 +142,10 @@ impl DomainAbstractionFactory {
             );
         }
 
-        let cached_operator_costs: Arc<[f64]> = task
+        let cached_operator_costs: Arc<[NumericValue]> = task
             .get_operators()
             .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
+            .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
         let additive_numeric_views =
             AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;

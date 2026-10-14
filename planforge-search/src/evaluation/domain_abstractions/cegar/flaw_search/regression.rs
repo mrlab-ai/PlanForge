@@ -160,13 +160,13 @@ fn split_for_missing_numeric_requirement(
 ) -> Option<(NumericValue, bool)> {
     if (initial_value < requirement.lower
         || (initial_value == requirement.lower && !requirement.lower_closed))
-        && requirement.lower.value().is_finite()
+        && requirement.lower.is_finite()
     {
         return Some((requirement.lower, !requirement.lower_closed));
     }
     if (initial_value > requirement.upper
         || (initial_value == requirement.upper && !requirement.upper_closed))
-        && requirement.upper.value().is_finite()
+        && requirement.upper.is_finite()
     {
         return Some((requirement.upper, requirement.upper_closed));
     }

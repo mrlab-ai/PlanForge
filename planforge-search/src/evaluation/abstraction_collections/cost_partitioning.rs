@@ -393,17 +393,14 @@ impl RegionalUsageIndex {
                 let mut bounds = HashSet::with_capacity(cells.len());
                 for cell in cells {
                     let interval = cell.region.numeric[dimension];
-                    bounds.insert((
-                        interval.lower.value().to_bits(),
-                        interval.upper.value().to_bits(),
-                    ));
+                    bounds.insert((interval.lower.to_bits(), interval.upper.to_bits()));
                 }
                 bounds.len()
             })
             .filter(|&dimension| {
                 cells.iter().any(|cell| {
                     let interval = cell.region.numeric[dimension];
-                    interval.lower.value().is_finite() || interval.upper.value().is_finite()
+                    interval.lower.is_finite() || interval.upper.is_finite()
                 })
             })?;
         let mut sorted_cell_ids = (0..cells.len()).collect::<Vec<_>>();
@@ -411,9 +408,8 @@ impl RegionalUsageIndex {
             let left = cells[left].region.numeric[primary_dim];
             let right = cells[right].region.numeric[primary_dim];
             left.lower
-                .value()
-                .total_cmp(&right.lower.value())
-                .then_with(|| left.upper.value().total_cmp(&right.upper.value()))
+                .total_cmp(&right.lower)
+                .then_with(|| left.upper.total_cmp(&right.upper))
         });
         let blocks = sorted_cell_ids
             .chunks(REGIONAL_INDEX_BLOCK_SIZE)
@@ -424,9 +420,7 @@ impl RegionalUsageIndex {
                 max_upper: cell_ids
                     .iter()
                     .map(|&cell_id| cells[cell_id].region.numeric[primary_dim].upper)
-                    .fold(NEG_INF_VALUE, |a, b| {
-                        NumericValue::new(f64::max(a.value(), b.value()))
-                    }),
+                    .fold(NEG_INF_VALUE, |a, b| a.max(b)),
             })
             .collect();
         Some(Self {

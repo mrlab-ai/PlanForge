@@ -423,7 +423,7 @@ fn single_var_interval_for_linear_zero_comparison(
     }
 
     let threshold = NumericValue::new(-expression.constant / *coefficient);
-    if !threshold.value().is_finite() {
+    if !threshold.is_finite() {
         return None;
     }
 

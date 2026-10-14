@@ -849,7 +849,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         }
         let num_numeric_vars = self.task.numeric_variables().len();
         for (numeric_var_id, interval) in source_region.numeric.iter().enumerate() {
-            if interval.lower.value().is_finite() {
+            if interval.lower.is_finite() {
                 let mut expression = LinearExpression::zero(num_numeric_vars);
                 expression.coefficients[numeric_var_id] = 1.0;
                 expression.constant = -interval.lower.value();
@@ -865,7 +865,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
                     ids.push(proposition_id);
                 }
             }
-            if interval.upper.value().is_finite() {
+            if interval.upper.is_finite() {
                 let mut expression = LinearExpression::zero(num_numeric_vars);
                 expression.coefficients[numeric_var_id] = -1.0;
                 expression.constant = interval.upper.value();
@@ -1923,11 +1923,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
                 .unwrap_or(0.0)
                 .max(0.0);
         }
-        let mut operator_cost = metric_operator_cost_from_initial_values(self.task, operator);
+        let mut operator_cost =
+            metric_operator_cost_from_initial_values(self.task, operator).value();
 
         if self.task.is_linear_cost_operator(operator_id) && self.use_bounds {
             let coefficients = self.task.operator_cost_coefficients(operator_id);
-            operator_cost = NumericValue::new(self.task.operator_cost_constant(operator_id));
+            operator_cost = self.task.operator_cost_constant(operator_id);
 
             for (numeric_var_id, &weight) in coefficients.iter().enumerate() {
                 if weight >= self.config.precision
@@ -1936,36 +1937,30 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         operator_id,
                     )
                 {
-                    operator_cost = NumericValue::new(
-                        operator_cost.value()
-                            + weight
-                                * self.numeric_bound.get_variable_before_action_lb(
-                                    VariableIndex::from_usize(numeric_var_id),
-                                    operator_id,
-                                ),
-                    );
+                    operator_cost += weight
+                        * self.numeric_bound.get_variable_before_action_lb(
+                            VariableIndex::from_usize(numeric_var_id),
+                            operator_id,
+                        );
                 } else if weight <= -self.config.precision
                     && self.numeric_bound.get_variable_before_action_has_ub(
                         VariableIndex::from_usize(numeric_var_id),
                         operator_id,
                     )
                 {
-                    operator_cost = NumericValue::new(
-                        operator_cost.value()
-                            + weight
-                                * self.numeric_bound.get_variable_before_action_ub(
-                                    VariableIndex::from_usize(numeric_var_id),
-                                    operator_id,
-                                ),
-                    );
+                    operator_cost += weight
+                        * self.numeric_bound.get_variable_before_action_ub(
+                            VariableIndex::from_usize(numeric_var_id),
+                            operator_id,
+                        );
                 } else if weight.abs() >= self.config.precision {
-                    operator_cost = ZERO_VALUE;
+                    operator_cost = 0.0;
                     break;
                 }
             }
         }
 
-        operator_cost.value().max(0.0)
+        operator_cost.max(0.0)
     }
 
     fn build_relaxed_operator_for_operator(

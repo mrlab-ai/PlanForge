@@ -145,9 +145,7 @@ pub(super) fn abstract_operator_region_stats(
             .source
             .numeric
             .iter()
-            .filter(|interval| {
-                interval.lower.value().is_finite() || interval.upper.value().is_finite()
-            })
+            .filter(|interval| interval.lower.is_finite() || interval.upper.is_finite())
             .count();
         if bounded_dimensions > 0 {
             stats.bounded_labels = stats.bounded_labels.saturating_add(1);
@@ -188,9 +186,7 @@ pub(super) fn log_positive_label_operator_region_diagnostics(
             .source
             .numeric
             .iter()
-            .filter(|interval| {
-                interval.lower.value().is_finite() || interval.upper.value().is_finite()
-            })
+            .filter(|interval| interval.lower.is_finite() || interval.upper.is_finite())
             .count();
         if bounded_dimensions > 0 {
             counts.bounded_operator_regions += 1;

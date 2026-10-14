@@ -252,7 +252,7 @@ pub(super) fn compute_shortest_paths_with_goals(
             }
             let cost = semantics.operator_costs()[transition.concrete_op_id.index()];
             ensure!(
-                cost.value() >= -float_tolerance::SEARCH_EPSILON && cost.value().is_finite(),
+                cost.value() >= -float_tolerance::SEARCH_EPSILON && cost.is_finite(),
                 "invalid operator cost {cost}"
             );
             let alternative = distance + cost.value().max(0.0);

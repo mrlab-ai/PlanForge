@@ -639,10 +639,10 @@ fn target_centered_builds_goal_side_partitions() {
             .expect("x partitions should exist")
             .iter()
             .flat_map(|interval| [interval.lower, interval.upper])
-            .filter(|value| value.value().is_finite())
+            .filter(|value| value.is_finite())
             .collect::<Vec<_>>();
         points.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        points.dedup_by(|a, b| a.value().to_bits() == b.value().to_bits());
+        points.dedup_by(|a, b| a.to_bits() == b.to_bits());
         points
     }
 

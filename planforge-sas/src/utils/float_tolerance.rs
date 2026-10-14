@@ -30,7 +30,7 @@ pub fn canonicalize(value: f64) -> f64 {
 
 #[inline]
 pub fn canonicalize_nv(value: NumericValue) -> NumericValue {
-    if value.value().is_nan() || value.value().is_infinite() {
+    if value.is_nan() || value.is_infinite() {
         return value;
     }
     NumericValue::new((value.value() / ABS_EPSILON).round() * ABS_EPSILON)
@@ -52,7 +52,7 @@ pub fn canonical_bits_nv(value: NumericValue) -> u64 {
     if canonical.value() == 0.0 {
         0.0f64.to_bits()
     } else {
-        canonical.value().to_bits()
+        canonical.to_bits()
     }
 }
 

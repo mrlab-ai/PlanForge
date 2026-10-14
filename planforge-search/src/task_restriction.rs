@@ -8,7 +8,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
-    NumericValue, NumericVariable, Operator, VariableIndex,
+    NumericValue, NumericVariable, ONE_VALUE, Operator, VariableIndex, ZERO_VALUE,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
@@ -102,14 +102,14 @@ struct AffineExpression {
 impl AffineExpression {
     fn zero(num_vars: usize) -> Self {
         Self {
-            coefficients: vec![NumericValue::new(0.0); num_vars],
-            constant: NumericValue::new(0.0),
+            coefficients: vec![ZERO_VALUE; num_vars],
+            constant: ZERO_VALUE,
         }
     }
 
     fn var(var_id: VariableIndex, num_vars: usize) -> Self {
         let mut expr = Self::zero(num_vars);
-        expr.coefficients[var_id.index()] = NumericValue::new(1.0);
+        expr.coefficients[var_id.index()] = ONE_VALUE;
         expr
     }
 
@@ -121,25 +121,25 @@ impl AffineExpression {
 
     fn add(mut self, rhs: Self) -> Self {
         for (lhs, rhs) in self.coefficients.iter_mut().zip(rhs.coefficients) {
-            *lhs = NumericValue::new(lhs.value() + rhs.value());
+            *lhs += rhs;
         }
-        self.constant = NumericValue::new(self.constant.value() + rhs.constant.value());
+        self.constant += rhs.constant;
         self
     }
 
     fn sub(mut self, rhs: Self) -> Self {
         for (lhs, rhs) in self.coefficients.iter_mut().zip(rhs.coefficients) {
-            *lhs = NumericValue::new(lhs.value() - rhs.value());
+            *lhs -= rhs;
         }
-        self.constant = NumericValue::new(self.constant.value() - rhs.constant.value());
+        self.constant -= rhs.constant;
         self
     }
 
-    fn scale(mut self, factor: f64) -> Self {
+    fn scale(mut self, factor: NumericValue) -> Self {
         for coefficient in &mut self.coefficients {
-            *coefficient = NumericValue::new(coefficient.value() * factor);
+            *coefficient *= factor;
         }
-        self.constant = NumericValue::new(self.constant.value() * factor);
+        self.constant *= factor;
         self
     }
 
@@ -148,7 +148,7 @@ impl AffineExpression {
             .iter()
             .enumerate()
             .filter_map(|(var_id, &coefficient)| {
-                (!approx_eq(coefficient.value(), 0.0)).then_some(VariableIndex::from_usize(var_id))
+                (!approx_eq(coefficient, ZERO_VALUE)).then_some(VariableIndex::from_usize(var_id))
             })
             .collect()
     }
@@ -162,10 +162,8 @@ impl AffineExpression {
         );
         let mut value = self.constant;
         for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if !approx_eq(coefficient.value(), 0.0) {
-                value = NumericValue::new(
-                    value.value() + coefficient.value() * numeric_values[var_id].value(),
-                );
+            if !approx_eq(coefficient, ZERO_VALUE) {
+                value += coefficient * numeric_values[var_id];
             }
         }
         Ok(value)
@@ -173,23 +171,19 @@ impl AffineExpression {
 
     fn apply_effects(
         &self,
-        additive_deltas: &[f64],
+        additive_deltas: &[NumericValue],
         assigned_constants: &[Option<NumericValue>],
     ) -> Self {
         let mut out = Self::constant(self.constant, self.coefficients.len());
         for (var_id, &coefficient) in self.coefficients.iter().enumerate() {
-            if approx_eq(coefficient.value(), 0.0) {
+            if approx_eq(coefficient, ZERO_VALUE) {
                 continue;
             }
             if let Some(value) = assigned_constants[var_id] {
-                out.constant =
-                    NumericValue::new(out.constant.value() + coefficient.value() * value.value());
+                out.constant += coefficient * value;
             } else {
-                out.coefficients[var_id] =
-                    NumericValue::new(out.coefficients[var_id].value() + coefficient.value());
-                out.constant = NumericValue::new(
-                    out.constant.value() + coefficient.value() * additive_deltas[var_id],
-                );
+                out.coefficients[var_id] += coefficient;
+                out.constant += coefficient * additive_deltas[var_id];
             }
         }
         out
@@ -332,7 +326,7 @@ pub fn build_icaps26_restricted_task(
         let value = initial_numeric[original_id.index()];
         if matches!(variable.get_type(), NumericType::Constant) {
             constants.by_bits.insert(
-                float_tolerance::canonicalize_nv(value).value().to_bits(),
+                float_tolerance::canonicalize_nv(value).to_bits(),
                 VariableIndex::from_usize(transformed_id),
             );
             transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
@@ -358,14 +352,14 @@ pub fn build_icaps26_restricted_task(
             );
             let coefficient = difference.coefficients[original_var_id.index()];
             ensure!(
-                coefficient.value().is_finite() && !approx_eq(coefficient.value(), 0.0),
+                coefficient.is_finite() && !approx_eq(coefficient, ZERO_VALUE),
                 "ICAPS 2026 comparison axiom {comparison_axiom_id} has invalid coefficient {coefficient}"
             );
             (
                 original_to_transformed[original_var_id.index()]
                     .expect("retained ICAPS regular variable has no transformed id"),
-                float_tolerance::canonicalize(-difference.constant.value() / coefficient.value()),
-                if coefficient.value() > 0.0 {
+                float_tolerance::canonicalize_nv(-difference.constant / coefficient),
+                if coefficient > ZERO_VALUE {
                     comparison_axiom.get_operator().clone()
                 } else {
                     reverse_comparison(comparison_axiom.get_operator())
@@ -389,7 +383,7 @@ pub fn build_icaps26_restricted_task(
             transformed_to_expr.push(difference);
             (
                 VariableIndex::from_usize(auxiliary_id),
-                0.0,
+                ZERO_VALUE,
                 comparison_axiom.get_operator().clone(),
             )
         };
@@ -427,7 +421,7 @@ pub fn build_icaps26_restricted_task(
     let mut comparison_axioms = Vec::with_capacity(normalized_comparisons.len());
     for (comparison_axiom_id, left, threshold, operator) in normalized_comparisons {
         let right = constants.get_or_insert(
-            NumericValue::new(threshold),
+            threshold,
             &mut numeric_variables,
             &mut numeric_initial,
             &mut transformed_to_expr,
@@ -614,7 +608,7 @@ fn ensure_operator_costs_unchanged(
         let transformed_cost =
             metric_operator_cost_from_initial_values(transformed_task, transformed);
         ensure!(
-            approx_eq(source_cost.value(), transformed_cost.value()),
+            approx_eq(source_cost, transformed_cost),
             "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",
             source.name()
         );
@@ -696,7 +690,7 @@ fn transform_operator(
         );
     }
 
-    let mut deltas = vec![NumericValue::new(0.0); task.numeric_variables().len()];
+    let mut deltas = vec![ZERO_VALUE; task.numeric_variables().len()];
     for effect in operator.assignment_effects() {
         ensure!(
             !effect.is_conditional() && effect.conditions().is_empty(),
@@ -711,16 +705,8 @@ fn transform_operator(
             ),
         };
         match effect.operation() {
-            AssignmentOperation::Plus => {
-                deltas[effect.affected_var_id().index()] = NumericValue::new(
-                    deltas[effect.affected_var_id().index()].value() + source_value.value(),
-                )
-            }
-            AssignmentOperation::Minus => {
-                deltas[effect.affected_var_id().index()] = NumericValue::new(
-                    deltas[effect.affected_var_id().index()].value() - source_value.value(),
-                )
-            }
+            AssignmentOperation::Plus => deltas[effect.affected_var_id().index()] += source_value,
+            AssignmentOperation::Minus => deltas[effect.affected_var_id().index()] -= source_value,
             AssignmentOperation::Assign => bail!(
                 "restricted task does not support assignment numeric effects in operator {}",
                 operator.name()
@@ -741,15 +727,11 @@ fn transform_operator(
                     let delta = root_exprs
                         .get(&VariableIndex::from_usize(original_id))
                         .map(|expr| {
-                            NumericValue::new(
-                                expr.coefficients
-                                    .iter()
-                                    .zip(deltas.iter())
-                                    .map(|(&coefficient, &delta)| {
-                                        coefficient.value() * delta.value()
-                                    })
-                                    .sum::<f64>(),
-                            )
+                            expr.coefficients
+                                .iter()
+                                .zip(deltas.iter())
+                                .map(|(&coefficient, &delta)| coefficient * delta)
+                                .sum()
                         })
                         .unwrap_or(deltas[original_id]);
                     (transformed_id, delta)
@@ -761,20 +743,19 @@ fn transform_operator(
             .iter()
             .enumerate()
             .map(|(transformed_id, expr)| {
-                let delta = NumericValue::new(
-                    expr.coefficients
-                        .iter()
-                        .zip(deltas.iter())
-                        .map(|(&coefficient, &delta)| coefficient.value() * delta.value())
-                        .sum::<f64>(),
-                );
+                let delta = expr
+                    .coefficients
+                    .iter()
+                    .zip(deltas.iter())
+                    .map(|(&coefficient, &delta)| coefficient * delta)
+                    .sum();
                 (VariableIndex::from_usize(transformed_id), delta)
             })
             .collect(),
     };
     let mut assignment_effects = Vec::new();
     for (transformed_id, delta) in transformed_deltas {
-        if approx_eq(delta.value(), 0.0) {
+        if approx_eq(delta, ZERO_VALUE) {
             continue;
         }
         let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
@@ -804,7 +785,7 @@ fn transform_operator_with_assignment(
     coordinate_mode: EffectCoordinateMode,
     numerics: &mut TransformedNumerics<'_>,
 ) -> Result<Operator> {
-    let mut additive_deltas = vec![0.0; task.numeric_variables().len()];
+    let mut additive_deltas = vec![ZERO_VALUE; task.numeric_variables().len()];
     let mut assigned_constants = vec![None; task.numeric_variables().len()];
     for effect in operator.assignment_effects() {
         ensure!(
@@ -826,7 +807,7 @@ fn transform_operator_with_assignment(
                     "restricted task does not support mixed assignment/additive numeric effects on one variable in operator {}",
                     operator.name()
                 );
-                additive_deltas[effect.affected_var_id().index()] += source_value.value();
+                additive_deltas[effect.affected_var_id().index()] += source_value;
             }
             AssignmentOperation::Minus => {
                 ensure!(
@@ -834,12 +815,14 @@ fn transform_operator_with_assignment(
                     "restricted task does not support mixed assignment/additive numeric effects on one variable in operator {}",
                     operator.name()
                 );
-                additive_deltas[effect.affected_var_id().index()] -= source_value.value();
+                additive_deltas[effect.affected_var_id().index()] -= source_value;
             }
             AssignmentOperation::Assign => {
                 ensure!(
-                    approx_eq(additive_deltas[effect.affected_var_id().index()], 0.0)
-                        && assigned_constants[effect.affected_var_id().index()].is_none(),
+                    approx_eq(
+                        additive_deltas[effect.affected_var_id().index()],
+                        ZERO_VALUE
+                    ) && assigned_constants[effect.affected_var_id().index()].is_none(),
                     "restricted task does not support multiple numeric effects on an assigned variable in operator {}",
                     operator.name()
                 );
@@ -874,7 +857,7 @@ fn transform_operator_with_assignment(
     for (transformed_id, successor_expr, delta_expr) in transformed_effects {
         if delta_expr.non_zero_vars().is_empty() {
             let delta = delta_expr.constant;
-            if approx_eq(delta.value(), 0.0) {
+            if approx_eq(delta, ZERO_VALUE) {
                 continue;
             }
             let const_id = numerics.intern_constant(delta, task.numeric_variables().len());
@@ -958,7 +941,7 @@ impl ConstantPool {
         num_original_numeric: usize,
     ) -> VariableIndex {
         let value = float_tolerance::canonicalize_nv(value);
-        let bits = value.value().to_bits();
+        let bits = value.to_bits();
         if let Some(&id) = self.by_bits.get(&bits) {
             return id;
         }
@@ -1018,19 +1001,19 @@ impl Linearizer<'_> {
                     CalOperator::Difference => lhs.sub(rhs),
                     CalOperator::Product => {
                         if rhs.non_zero_vars().is_empty() {
-                            lhs.scale(rhs.constant.value())
+                            lhs.scale(rhs.constant)
                         } else if lhs.non_zero_vars().is_empty() {
-                            rhs.scale(lhs.constant.value())
+                            rhs.scale(lhs.constant)
                         } else {
                             bail!("numeric assignment axiom {axiom_id} is nonlinear")
                         }
                     }
                     CalOperator::Division => {
                         ensure!(
-                            rhs.non_zero_vars().is_empty() && !approx_eq(rhs.constant.value(), 0.0),
+                            rhs.non_zero_vars().is_empty() && !approx_eq(rhs.constant, ZERO_VALUE),
                             "numeric assignment axiom {axiom_id} has non-constant or zero divisor"
                         );
-                        lhs.scale(1.0 / rhs.constant.value())
+                        lhs.scale(ONE_VALUE / rhs.constant)
                     }
                 }
             }
@@ -1042,8 +1025,8 @@ impl Linearizer<'_> {
     }
 }
 
-fn approx_eq(lhs: f64, rhs: f64) -> bool {
-    (lhs - rhs).abs() <= 1e-12
+fn approx_eq(lhs: NumericValue, rhs: NumericValue) -> bool {
+    (lhs - rhs).abs().value() <= 1e-12
 }
 
 fn restricted_shape_prefix(expr: &AffineExpression) -> String {
@@ -1051,9 +1034,9 @@ fn restricted_shape_prefix(expr: &AffineExpression) -> String {
         .coefficients
         .iter()
         .copied()
-        .filter(|coefficient| !approx_eq(coefficient.value(), 0.0))
+        .filter(|&coefficient| !approx_eq(coefficient, ZERO_VALUE))
         .collect::<Vec<_>>();
-    coefficients.sort_by(|left, right| left.value().total_cmp(&right.value()));
+    coefficients.sort_by(NumericValue::total_cmp);
     let shape = coefficients
         .iter()
         .map(|coefficient| coefficient.to_string())

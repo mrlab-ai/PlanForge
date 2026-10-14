@@ -28,7 +28,9 @@ use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
 };
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, NumericValue, TaskRef};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, INF_VALUE, NumericRootTask, NumericValue, ONE_VALUE, TaskRef, ZERO_VALUE,
+};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::{
     ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
@@ -335,29 +337,24 @@ pub fn solve_task(
             // user's `blind` choice as a placeholder by materializing a
             // real `BlindHeuristic` with the task's min-action-cost.
             let task_ref: &dyn AbstractNumericTask = &*task;
-            let original_costs: Vec<f64> = task
+            let min_cost = task
                 .get_operators()
                 .iter()
                 .map(|op| {
                     planforge_sas::numeric_task::metric_operator_cost_from_initial_values(
                         task_ref, op,
                     )
-                    .value()
                 })
-                .collect();
-            let min_cost = original_costs
-                .iter()
-                .copied()
-                .fold(f64::INFINITY, |a, b| a.min(b));
+                .fold(INF_VALUE, NumericValue::min);
             let min_action_cost = if min_cost.is_finite() {
-                min_cost.max(0.0)
+                min_cost.max(ZERO_VALUE)
             } else {
-                1.0
+                ONE_VALUE
             };
             let make_blind = || {
                 Box::new(
                     planforge_search::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
-                        NumericValue::new(min_action_cost),
+                        min_action_cost,
                         None,
                     ),
                 ) as Box<dyn planforge_search::evaluation::Heuristic + '_>

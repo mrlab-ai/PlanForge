@@ -612,7 +612,7 @@ impl DomainAbstractionFactory {
                 .unwrap_or(num_init[num_var_id.index()]);
             let val = float_tolerance::canonicalize_nv(concrete_value);
             ensure!(
-                val.value().is_finite() && !val.value().is_nan(),
+                val.is_finite() && !val.is_nan(),
                 "initial numeric value for var {num_var_id} must be finite, got {val}"
             );
             let parts = self

@@ -33,7 +33,7 @@ impl NumericPartitions {
                     let value = float_tolerance::canonicalize_nv(
                         *initial_numeric_values.get(i).unwrap_or(&NAN_VALUE),
                     );
-                    if value.value().is_finite() {
+                    if value.is_finite() {
                         vec![Interval::singleton(value)]
                     } else {
                         vec![Interval::unbounded()]

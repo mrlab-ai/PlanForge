@@ -291,7 +291,7 @@ fn comparison_refinement(
                 .with_context(|| format!("missing concrete numeric var {var_id}"))?,
         );
         ensure!(
-            witness_value.value().is_finite(),
+            witness_value.is_finite(),
             "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"
         );
         let parent = *state
@@ -303,8 +303,8 @@ fn comparison_refinement(
             boundaries.extend(semantics.target_split_boundaries().iter().copied());
         }
         boundaries.push(witness_value);
-        boundaries.sort_by(|a, b| f64::total_cmp(&a.value(), &b.value()));
-        boundaries.dedup_by(|left, right| left.value().to_bits() == right.value().to_bits());
+        boundaries.sort_by(NumericValue::total_cmp);
+        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
 
         let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         for boundary in boundaries {
@@ -544,7 +544,7 @@ pub(super) fn split_deviation_candidates(
             parent.contains(source),
             "Cartesian source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"
         );
-        if !boundary.value().is_finite() {
+        if !boundary.is_finite() {
             rejected_numeric_splits.push(format!(
                 "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?}, parent={parent:?} has only infinite separating boundary"
             ));

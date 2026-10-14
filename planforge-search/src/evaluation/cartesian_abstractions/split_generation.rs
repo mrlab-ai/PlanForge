@@ -127,7 +127,7 @@ pub(super) fn desired_comparison_interval(
         ),
     };
     ensure!(
-        threshold.value().is_finite(),
+        threshold.is_finite(),
         "numeric comparison axiom {comparison_axiom_id} has non-finite threshold {threshold}"
     );
     if !comparison_truth(desired_prop_value)? {
@@ -239,7 +239,7 @@ fn splits_for_desired_region(
             witness < target.lower || (witness == target.lower && !target.lower_closed);
         let (boundary, lower_includes_boundary) = if witness_is_below {
             ensure!(
-                target.lower.value().is_finite(),
+                target.lower.is_finite(),
                 "desired lower split boundary is infinite"
             );
             (target.lower, !target.lower_closed)
@@ -249,7 +249,7 @@ fn splits_for_desired_region(
                 "numeric witness is neither below nor above desired interval"
             );
             ensure!(
-                target.upper.value().is_finite(),
+                target.upper.is_finite(),
                 "desired upper split boundary is infinite"
             );
             (target.upper, target.upper_closed)

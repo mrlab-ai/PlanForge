@@ -49,7 +49,7 @@ pub fn prepare_comparison_tree_inputs_from_initial_state(
         }
         let value = float_tolerance::canonicalize_nv(raw_value);
         ensure!(
-            value.value().is_finite() && !value.value().is_nan(),
+            value.is_finite() && !value.is_nan(),
             "initial numeric value for var {numeric_var_id} must be finite, got {value}"
         );
         numeric_intervals.push(Interval::singleton(value));
@@ -123,7 +123,7 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
                     initial_numeric_values[numeric_var_id.index()],
                 );
                 ensure!(
-                    value.value().is_finite() && !value.value().is_nan(),
+                    value.is_finite() && !value.is_nan(),
                     "constant numeric value for var {numeric_var_id} must be finite, got {value}"
                 );
                 out[numeric_var_id.index()] = Interval::singleton(value);

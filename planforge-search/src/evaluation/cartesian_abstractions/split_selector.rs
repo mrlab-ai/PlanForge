@@ -1,4 +1,4 @@
-use planforge_sas::numeric_task::{INF_VALUE, NEG_INF_VALUE};
+use planforge_sas::numeric_task::{INF_VALUE, NEG_INF_VALUE, ONE_VALUE};
 
 use super::*;
 
@@ -7,8 +7,7 @@ pub(super) fn numeric_split_choice_key(
     boundary: NumericValue,
     lower_closed: bool,
 ) -> u64 {
-    mix_seed(stable_text_seed(variable_name) ^ boundary.value().to_bits())
-        ^ (u64::from(lower_closed) << 63)
+    mix_seed(stable_text_seed(variable_name) ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
 }
 
 pub(super) fn split_choice_key(semantics: &CartesianSemantics<'_>, split: &Split) -> u64 {
@@ -126,24 +125,13 @@ pub(super) fn numeric_split_intervals(
 ) -> Result<(Interval, Interval)> {
     let (lower_bound, upper_bound, lower_closed, upper_closed) = if integer_lattice {
         ensure!(
-            boundary.value().is_finite()
-                && approximately_equal(boundary.value(), boundary.value().round()),
+            boundary.is_finite() && approximately_equal(boundary.value(), boundary.value().round()),
             "integer Cartesian split has non-integer boundary {boundary}"
         );
         if lower_includes_boundary {
-            (
-                boundary,
-                NumericValue::new(boundary.value() + 1.0),
-                true,
-                true,
-            )
+            (boundary, boundary + ONE_VALUE, true, true)
         } else {
-            (
-                NumericValue::new(boundary.value() - 1.0),
-                boundary,
-                true,
-                true,
-            )
+            (boundary - ONE_VALUE, boundary, true, true)
         }
     } else {
         (
@@ -457,11 +445,11 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
                 other_region
             };
             let desired = desired_region.numeric[var_id.index()];
-            if !desired.lower.value().is_finite() || !desired.upper.value().is_finite() {
+            if !desired.lower.is_finite() || !desired.upper.is_finite() {
                 return Ok(f64::INFINITY);
             }
             let current = parent.numeric[var_id.index()];
-            if !current.lower.value().is_finite() || !current.upper.value().is_finite() {
+            if !current.lower.is_finite() || !current.upper.is_finite() {
                 return Ok(f64::INFINITY);
             }
             let current_values = integer_interval_cardinality(current);
@@ -471,8 +459,8 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
                 unwanted_values >= 0.0,
                 "ICAPS 2026 desired interval contains more integer values than its parent"
             );
-            let unwanted_width = (current.upper.value() - current.lower.value())
-                - (desired.upper.value() - desired.lower.value());
+            let unwanted_width =
+                ((current.upper - current.lower) - (desired.upper - desired.lower)).value();
             ensure!(
                 unwanted_width >= 0.0,
                 "ICAPS 2026 desired interval is wider than its parent"
@@ -491,7 +479,7 @@ pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Spli
 }
 
 fn integer_interval_cardinality(interval: Interval) -> f64 {
-    debug_assert!(interval.lower.value().is_finite() && interval.upper.value().is_finite());
+    debug_assert!(interval.lower.is_finite() && interval.upper.is_finite());
     let first = if interval.lower_closed {
         interval.lower.value().ceil()
     } else {

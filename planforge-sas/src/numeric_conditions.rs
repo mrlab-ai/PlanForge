@@ -123,10 +123,10 @@ impl ArithOp {
 
     pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
         match self {
-            ArithOp::Add => NumericValue::new(lhs.value() + rhs.value()),
-            ArithOp::Sub => NumericValue::new(lhs.value() - rhs.value()),
-            ArithOp::Mul => NumericValue::new(lhs.value() * rhs.value()),
-            ArithOp::Div => NumericValue::new(lhs.value() / rhs.value()),
+            ArithOp::Add => lhs + rhs,
+            ArithOp::Sub => lhs - rhs,
+            ArithOp::Mul => lhs * rhs,
+            ArithOp::Div => lhs / rhs,
         }
     }
 

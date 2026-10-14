@@ -102,8 +102,8 @@ impl NumericRange {
         // Use bit-pattern inequality rather than `> self.max + EPSILON` so
         // `+∞ vs finite max` reads as "widened" without an arithmetic-on-
         // infinity ambiguity.
-        let changed = new_max.value().to_bits() != self.max.value().to_bits()
-            || new_min.value().to_bits() != self.min.value().to_bits();
+        let changed =
+            new_max.to_bits() != self.max.to_bits() || new_min.to_bits() != self.min.to_bits();
         self.max = new_max;
         self.min = new_min;
         changed
@@ -1061,12 +1061,12 @@ impl<'task> FfHeuristic<'task> {
                 let r = numeric[ax.right_var.index()];
                 let new = match ax.op {
                     CalOperator::Sum => NumericRange {
-                        max: NumericValue::new(l.max.value() + r.max.value()),
-                        min: NumericValue::new(l.min.value() + r.min.value()),
+                        max: l.max + r.max,
+                        min: l.min + r.min,
                     },
                     CalOperator::Difference => NumericRange {
-                        max: NumericValue::new(l.max.value() - r.min.value()),
-                        min: NumericValue::new(l.min.value() - r.max.value()),
+                        max: l.max - r.min,
+                        min: l.min - r.max,
                     },
                     // Sign-aware interval multiplication for `d := l * r`.
                     // With l ∈ [l.min, l.max] and r ∈ [r.min, r.max], the
@@ -1076,13 +1076,13 @@ impl<'task> FfHeuristic<'task> {
                     // four. The monotonic-relaxation join is a union with
                     // the existing envelope, so widening is admissible.
                     CalOperator::Product => {
-                        let p1 = l.min.value() * r.min.value();
-                        let p2 = l.min.value() * r.max.value();
-                        let p3 = l.max.value() * r.min.value();
-                        let p4 = l.max.value() * r.max.value();
+                        let p1 = l.min * r.min;
+                        let p2 = l.min * r.max;
+                        let p3 = l.max * r.min;
+                        let p4 = l.max * r.max;
                         NumericRange {
-                            max: NumericValue::new(p1.max(p2).max(p3).max(p4)),
-                            min: NumericValue::new(p1.min(p2).min(p3).min(p4)),
+                            max: p1.max(p2).max(p3).max(p4),
+                            min: p1.min(p2).min(p3).min(p4),
                         }
                     }
                     // Sign-aware interval division for `d := l / r`. If
@@ -1097,13 +1097,13 @@ impl<'task> FfHeuristic<'task> {
                                 min: NEG_INF_VALUE,
                             }
                         } else {
-                            let q1 = l.min.value() / r.min.value();
-                            let q2 = l.min.value() / r.max.value();
-                            let q3 = l.max.value() / r.min.value();
-                            let q4 = l.max.value() / r.max.value();
+                            let q1 = l.min / r.min;
+                            let q2 = l.min / r.max;
+                            let q3 = l.max / r.min;
+                            let q4 = l.max / r.max;
                             NumericRange {
-                                max: NumericValue::new(q1.max(q2).max(q3).max(q4)),
-                                min: NumericValue::new(q1.min(q2).min(q3).min(q4)),
+                                max: q1.max(q2).max(q3).max(q4),
+                                min: q1.min(q2).min(q3).min(q4),
                             }
                         }
                     }
@@ -1159,8 +1159,8 @@ impl<'task> FfHeuristic<'task> {
         let prev = numeric[eff.affected_var.index()];
         let new = match eff.operation {
             AssignmentOperation::Assign => NumericRange {
-                max: NumericValue::new(prev.max.value().max(rhs.max.value())),
-                min: NumericValue::new(prev.min.value().min(rhs.min.value())),
+                max: prev.max.max(rhs.max),
+                min: prev.min.min(rhs.min),
             },
             AssignmentOperation::Plus => {
                 let mut next = prev;

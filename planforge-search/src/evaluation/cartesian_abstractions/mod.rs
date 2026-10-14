@@ -265,7 +265,7 @@ impl CartesianRefinementHierarchy {
                         .get(var_id.index())
                         .with_context(|| format!("numeric state has no value for var {var_id}"))?;
                     ensure!(
-                        value.value().is_finite(),
+                        value.is_finite(),
                         "numeric state var {var_id} is not finite: {value}"
                     );
                     let in_lower =
@@ -334,7 +334,7 @@ impl CartesianRefinementHierarchy {
             old_state_is_lower,
         } = split;
         ensure!(
-            boundary.value().is_finite(),
+            boundary.is_finite(),
             "Cartesian split boundary must be finite"
         );
         let lower_node_id = self.nodes.len();
@@ -847,9 +847,9 @@ impl From<&Split> for SplitIdentity {
             } => Self::Numeric {
                 state_id: *state_id,
                 var_id: *var_id,
-                boundary_bits: boundary.value().to_bits(),
+                boundary_bits: boundary.to_bits(),
                 lower_includes_boundary: *lower_includes_boundary,
-                witness_bits: witness_value.value().to_bits(),
+                witness_bits: witness_value.to_bits(),
                 integer_lattice: *integer_lattice,
             },
         }
@@ -1020,7 +1020,7 @@ impl<'task> CartesianSemantics<'task> {
                 NumericType::Constant | NumericType::Cost => Vec::new(),
             };
             deltas.retain(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON);
-            deltas.sort_by(|a, b| a.value().total_cmp(&b.value()));
+            deltas.sort_by(NumericValue::total_cmp);
             deltas.dedup_by(|left, right| approximately_equal(left.value(), right.value()));
             additive_effect_deltas.push(deltas);
         }
@@ -1033,13 +1033,12 @@ impl<'task> CartesianSemantics<'task> {
                 task.get_initial_numeric_state_values()
                     .get(numeric_var_id)
                     .copied()
-                    .filter(|value| value.value().is_finite())
+                    .filter(|value| value.is_finite())
             })
             .map(float_tolerance::canonicalize_nv)
             .collect::<Vec<_>>();
-        target_split_boundaries.sort_by(|a, b| a.value().total_cmp(&b.value()));
-        target_split_boundaries
-            .dedup_by(|left, right| left.value().to_bits() == right.value().to_bits());
+        target_split_boundaries.sort_by(NumericValue::total_cmp);
+        target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         let mut prop_split_dependent_operators = (0..task.get_num_variables())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();

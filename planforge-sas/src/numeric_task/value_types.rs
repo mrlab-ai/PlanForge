@@ -293,6 +293,11 @@ impl NumericValue {
     }
 
     #[inline(always)]
+    pub fn to_bits(self) -> u64 {
+        self.0.to_bits()
+    }
+
+    #[inline(always)]
     pub fn total_cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.total_cmp(&other.0)
     }
