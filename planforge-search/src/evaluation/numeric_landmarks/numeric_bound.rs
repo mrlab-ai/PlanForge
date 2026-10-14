@@ -115,7 +115,7 @@ impl NumericBound {
         self.epsilon = epsilon;
     }
 
-    pub fn calculate_bounds(&mut self, _state: &[NumericValue], iterations: usize) {
+    pub fn calculate_bounds(&mut self, state: &[NumericValue], iterations: usize) {
         assert!(
             self.initialized,
             "numeric bound must be initialized before use"
@@ -129,29 +129,7 @@ impl NumericBound {
         let mut completed_iterations = 0usize;
 
         while completed_iterations < iterations
-            && (self.update_variable_bounds(_state)
-                || self.update_action_bounds()
-                || self.update_before_action_bounds())
-        {
-            completed_iterations += 1;
-        }
-    }
-
-    pub fn calculate_bounds_nv(&mut self, _state: &[NumericValue], iterations: usize) {
-        assert!(
-            self.initialized,
-            "numeric bound must be initialized before use"
-        );
-        assert!(
-            iterations <= i32::MAX as usize,
-            "bound iterations exceed supported range"
-        );
-        self.prepare();
-        self.update_before_action_bounds();
-        let mut completed_iterations = 0usize;
-
-        while completed_iterations < iterations
-            && (self.update_variable_bounds(_state)
+            && (self.update_variable_bounds(state)
                 || self.update_action_bounds()
                 || self.update_before_action_bounds())
         {

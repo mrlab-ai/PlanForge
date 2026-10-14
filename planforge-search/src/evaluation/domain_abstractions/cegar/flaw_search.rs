@@ -25,11 +25,11 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 use std::fmt;
 
-#[allow(unused_imports)]
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue,
-    OperatorCost, VariableIndex,
+    AbstractNumericTask, ExplicitFact, INF_VALUE, NEG_INF_VALUE, NumericValue, VariableIndex,
 };
+#[cfg(test)]
+use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorCost};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
