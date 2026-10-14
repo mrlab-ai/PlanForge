@@ -38,7 +38,7 @@ use planforge_sas::numeric_task::{
     NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
     metric_operator_cost_from_initial_values,
 };
-use planforge_sas::utils::float_tolerance::{self, equal, equal_nv};
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -1021,7 +1021,7 @@ impl<'task> CartesianSemantics<'task> {
             };
             deltas.retain(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON);
             deltas.sort_by(|a, b| a.value().total_cmp(&b.value()));
-            deltas.dedup_by(|left, right| equal_nv(*left, *right));
+            deltas.dedup_by(|left, right| approximately_equal(left.value(), right.value()));
             additive_effect_deltas.push(deltas);
         }
         let mut target_split_boundaries = task
@@ -1117,7 +1117,7 @@ impl<'task> CartesianSemantics<'task> {
         let initial_numeric = task.get_initial_numeric_state_values();
         let mut numeric_integer_lattice = initial_numeric
             .iter()
-            .map(|&value| equal(value.value(), value.value().round()))
+            .map(|&value| approximately_equal(value.value(), value.value().round()))
             .collect::<Vec<_>>();
         for op in task.get_operators() {
             for effect in op.assignment_effects() {
@@ -1126,8 +1126,10 @@ impl<'task> CartesianSemantics<'task> {
                     AssignmentOperation::Plus
                     | AssignmentOperation::Minus
                     | AssignmentOperation::Assign
-                    | AssignmentOperation::Times => equal(rhs.value(), rhs.value().round()),
-                    AssignmentOperation::Divide => equal(rhs.value().abs(), 1.0),
+                    | AssignmentOperation::Times => {
+                        approximately_equal(rhs.value(), rhs.value().round())
+                    }
+                    AssignmentOperation::Divide => approximately_equal(rhs.value().abs(), 1.0),
                 };
                 numeric_integer_lattice[effect.affected_var_id().index()] &= preserves_integers;
             }
@@ -1138,10 +1140,12 @@ impl<'task> CartesianSemantics<'task> {
             };
             let initial_value = view.evaluate(initial_numeric);
             numeric_integer_lattice[numeric_var_id] =
-                equal(initial_value.value(), initial_value.value().round())
+                approximately_equal(initial_value.value(), initial_value.value().round())
                     && (0..operator_count).all(|op_id| {
                         view.operator_delta(OperatorIndex::from_usize(op_id))
-                            .is_ok_and(|delta| equal(delta.value(), delta.value().round()))
+                            .is_ok_and(|delta| {
+                                approximately_equal(delta.value(), delta.value().round())
+                            })
                     });
         }
         Ok(Self {
