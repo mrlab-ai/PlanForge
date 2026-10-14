@@ -15,7 +15,7 @@
 //! axiom" mapping.
 //!
 //! Evaluation is generic over the value domain via [`ConditionDomain`], so
-//! concrete states (`f64`) and abstract states ([`Interval`]) share one
+//! concrete states ([`NumericValue`]) and abstract states ([`Interval`]) share one
 //! implementation.
 
 #[cfg(test)]
@@ -112,16 +112,7 @@ pub enum ArithOp {
 
 impl ArithOp {
     #[inline]
-    pub fn apply(self, lhs: f64, rhs: f64) -> f64 {
-        match self {
-            ArithOp::Add => lhs + rhs,
-            ArithOp::Sub => lhs - rhs,
-            ArithOp::Mul => lhs * rhs,
-            ArithOp::Div => lhs / rhs,
-        }
-    }
-
-    pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
+    pub fn apply(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
         match self {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => lhs - rhs,
@@ -167,18 +158,7 @@ pub enum CompOp {
 
 impl CompOp {
     #[inline]
-    pub fn apply(self, lhs: f64, rhs: f64) -> bool {
-        match self {
-            CompOp::Lt => lhs < rhs,
-            CompOp::Le => lhs <= rhs,
-            CompOp::Gt => lhs > rhs,
-            CompOp::Ge => lhs >= rhs,
-            CompOp::Eq => lhs == rhs,
-            CompOp::Ne => lhs != rhs,
-        }
-    }
-
-    pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> bool {
+    pub fn apply(self, lhs: NumericValue, rhs: NumericValue) -> bool {
         match self {
             CompOp::Lt => lhs < rhs,
             CompOp::Le => lhs <= rhs,
@@ -310,7 +290,7 @@ impl ConditionNode {
 
 /// The value domain a condition can be evaluated over.
 ///
-/// Implemented for `f64` (concrete states) and [`Interval`] (abstract
+/// Implemented for [`NumericValue`] (concrete states) and [`Interval`] (abstract
 /// states); both evaluation orders are written once against this trait.
 pub trait ConditionDomain: Copy {
     /// What comparing two values of this domain yields: `bool` for points,
@@ -333,28 +313,6 @@ pub trait ConditionDomain: Copy {
     fn compare(op: CompOp, lhs: Self, rhs: Self) -> Self::Verdict;
 }
 
-impl ConditionDomain for f64 {
-    type Verdict = bool;
-
-    /// A concrete state pins every derived variable exactly, so there is
-    /// nothing in `inputs` that could sharpen the recomputed value.
-    #[inline]
-    fn combine(
-        op: ArithOp,
-        lhs: f64,
-        rhs: f64,
-        _result_numeric_var_id: VariableIndex,
-        _: &[f64],
-    ) -> f64 {
-        op.apply(lhs, rhs)
-    }
-
-    #[inline]
-    fn compare(op: CompOp, lhs: f64, rhs: f64) -> bool {
-        op.apply(lhs, rhs)
-    }
-}
-
 impl ConditionDomain for NumericValue {
     type Verdict = bool;
 
@@ -368,12 +326,12 @@ impl ConditionDomain for NumericValue {
         _result_numeric_var_id: VariableIndex,
         _: &[NumericValue],
     ) -> NumericValue {
-        op.apply_nv(lhs, rhs)
+        op.apply(lhs, rhs)
     }
 
     #[inline]
     fn compare(op: CompOp, lhs: NumericValue, rhs: NumericValue) -> bool {
-        op.apply_nv(lhs, rhs)
+        op.apply(lhs, rhs)
     }
 }
 
