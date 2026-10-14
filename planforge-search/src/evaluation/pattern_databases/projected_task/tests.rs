@@ -232,13 +232,12 @@ fn projection_rejects_derived_pattern_variables() {
             numeric: vec![VariableIndex::from_usize(2)],
         },
     );
-    let _numeric_var_id = VariableIndex::from_usize(2);
     assert!(matches!(
         result,
         Err(ProjectedTaskBuildError::UnsupportedPatternNumericVarType {
-            numeric_var_id: _numeric_var_id,
+            numeric_var_id,
             numeric_type: NumericType::Derived,
-        })
+        }) if numeric_var_id == VariableIndex::new(2)
     ));
 }
 

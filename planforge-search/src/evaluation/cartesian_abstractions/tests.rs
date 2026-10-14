@@ -387,16 +387,12 @@ fn min_growth_uses_projected_transition_count() {
         description: String::new(),
     };
 
-    let _saved_candidate = VariableIndex::from_usize(1);
-    let mut candidates = vec![split(VariableIndex::from_usize(0)), split(_saved_candidate)];
+    let mut candidates = vec![split(VariableIndex::new(0)), split(VariableIndex::new(1))];
     retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(
         candidates[0],
-        Split::Numeric {
-            var_id: _saved_candidate,
-            ..
-        }
+        Split::Numeric { var_id, .. } if var_id == VariableIndex::new(1)
     ));
 }
 
@@ -480,12 +476,11 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
         description: String::new(),
     };
 
-    let _saved_candidate = VariableIndex::from_usize(0);
     let selected = select_refinement_split(
         &working,
         &semantics,
         vec![
-            split(_saved_candidate, NumericValue::new(-10.0)),
+            split(VariableIndex::new(0), NumericValue::new(-10.0)),
             split(VariableIndex::from_usize(1), NumericValue::new(-2.0)),
         ],
         0,
@@ -493,10 +488,7 @@ fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
     .unwrap();
     assert!(matches!(
         selected,
-        Split::Numeric {
-            var_id: _saved_candidate,
-            ..
-        }
+        Split::Numeric { var_id, .. } if var_id == VariableIndex::new(0)
     ));
 }
 
