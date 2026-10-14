@@ -120,7 +120,7 @@ impl SearchSpace {
             self.node_status.resize(new_len, 0);
         }
         self.parent_states[state_id] = encode_compact_id(info.parent_state, "parent state");
-        self.parent_operator_ids[state_id] = info.parent_operator_id.unwrap_or(NO_COMPACT_OPID);
+        self.parent_operator_ids[state_id] = encode_compact_opid(info.parent_operator_id);
         self.g_values[state_id] = info.g_value;
         self.node_status[state_id] = NODE_PRESENT
             | if info.is_dead_end { NODE_DEAD_END } else { 0 }
@@ -213,6 +213,17 @@ fn encode_compact_id(id: Option<usize>, kind: &str) -> u32 {
 fn decode_compact_id(id: u32) -> Option<usize> {
     (id != NO_COMPACT_ID).then_some(id as usize)
 }
+fn encode_compact_opid(id: Option<OperatorIndex>) -> OperatorIndex {
+    let Some(id) = id else {
+        return NO_COMPACT_OPID;
+    };
+    assert_ne!(
+        id, NO_COMPACT_OPID,
+        "parent operator id {id} collides with the missing-id sentinel"
+    );
+    id
+}
+
 fn decode_compact_opid(id: OperatorIndex) -> Option<OperatorIndex> {
     (id != NO_COMPACT_OPID).then_some(id)
 }
