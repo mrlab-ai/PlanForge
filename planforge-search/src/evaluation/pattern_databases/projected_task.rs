@@ -327,7 +327,7 @@ impl PatternLookupProjection {
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits_nv(
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(
                 Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?,
             );
         }
@@ -347,7 +347,7 @@ impl PatternLookupProjection {
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
             let value = source_numeric_values[original_numeric_var.index()];
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(value.value());
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(value);
         }
     }
 
@@ -392,10 +392,10 @@ impl PatternLookupProjection {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                packer.pack_double(
-                    Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?
-                        .value(),
-                ),
+                packer.pack_double(Self::numeric_value_from_source(
+                    original_numeric_var,
+                    source_numeric_values,
+                )?),
             );
         }
 
@@ -932,13 +932,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                packer.pack_double(
-                    self.projected_numeric_value_from_source_numeric(
-                        projected_numeric_id,
-                        source_numeric_values,
-                    )?
-                    .value(),
-                ),
+                packer.pack_double(self.projected_numeric_value_from_source_numeric(
+                    projected_numeric_id,
+                    source_numeric_values,
+                )?),
             );
         }
 
@@ -968,13 +965,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 numeric_index + 1,
-                packer.pack_double(
-                    self.projected_numeric_value_from_source_numeric(
-                        projected_numeric_id,
-                        source_numeric_values,
-                    )?
-                    .value(),
-                ),
+                packer.pack_double(self.projected_numeric_value_from_source_numeric(
+                    projected_numeric_id,
+                    source_numeric_values,
+                )?),
             );
         }
 
@@ -999,13 +993,11 @@ impl<'task> ProjectedTask<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.pattern_numeric_projected_ids.iter().enumerate()
         {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(
-                self.projected_numeric_value_from_source_numeric(
+            bins[numeric_index + 1] =
+                float_tolerance::canonical_bits(self.projected_numeric_value_from_source_numeric(
                     projected_numeric_id,
                     source_numeric_values,
-                )?
-                .value(),
-            );
+                )?);
         }
 
         Ok(())

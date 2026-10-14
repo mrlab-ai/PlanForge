@@ -14,7 +14,7 @@ pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask)
     for (i, v) in task.numeric_variables().iter().enumerate() {
         if v.get_type() == &NumericType::Constant {
             numeric_intervals[i] =
-                Interval::singleton(float_tolerance::canonicalize_nv(initial_numeric_values[i]));
+                Interval::singleton(float_tolerance::canonicalize(initial_numeric_values[i]));
         }
     }
     numeric_intervals
@@ -47,7 +47,7 @@ pub fn prepare_comparison_tree_inputs_from_initial_state(
             numeric_intervals.push(Interval::new(ZERO_VALUE, ZERO_VALUE, false, false));
             continue;
         }
-        let value = float_tolerance::canonicalize_nv(raw_value);
+        let value = float_tolerance::canonicalize(raw_value);
         ensure!(
             value.is_finite() && !value.is_nan(),
             "initial numeric value for var {numeric_var_id} must be finite, got {value}"
@@ -119,9 +119,8 @@ pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
         let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
         match numeric_var.get_type() {
             NumericType::Constant => {
-                let value = float_tolerance::canonicalize_nv(
-                    initial_numeric_values[numeric_var_id.index()],
-                );
+                let value =
+                    float_tolerance::canonicalize(initial_numeric_values[numeric_var_id.index()]);
                 ensure!(
                     value.is_finite() && !value.is_nan(),
                     "constant numeric value for var {numeric_var_id} must be finite, got {value}"

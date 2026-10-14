@@ -80,8 +80,8 @@ impl Interval {
     #[inline]
     pub fn canonicalized(self) -> Self {
         Self::new(
-            float_tolerance::canonicalize_nv(self.lower),
-            float_tolerance::canonicalize_nv(self.upper),
+            float_tolerance::canonicalize(self.lower),
+            float_tolerance::canonicalize(self.upper),
             self.lower_closed,
             self.upper_closed,
         )

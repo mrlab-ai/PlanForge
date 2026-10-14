@@ -97,7 +97,7 @@ fn deterministic_numeric_effect_image(
         }
         let rhs_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
             NumericType::Constant | NumericType::Cost => {
-                float_tolerance::canonicalize_nv(*initial_numeric.get(effect.var_id().index())?)
+                float_tolerance::canonicalize(*initial_numeric.get(effect.var_id().index())?)
             }
             _ => return None,
         };
@@ -109,14 +109,14 @@ fn deterministic_numeric_effect_image(
                 if assignment.is_some() {
                     return None;
                 }
-                delta = float_tolerance::canonicalize_nv(delta + rhs_value);
+                delta = float_tolerance::canonicalize(delta + rhs_value);
                 touched = true;
             }
             AssignmentOperation::Minus => {
                 if assignment.is_some() {
                     return None;
                 }
-                delta = float_tolerance::canonicalize_nv(delta - rhs_value);
+                delta = float_tolerance::canonicalize(delta - rhs_value);
                 touched = true;
             }
             AssignmentOperation::Assign => {
@@ -180,18 +180,18 @@ fn deterministic_affected_regular_numeric_vars(
         else {
             continue;
         };
-        let rhs_value = float_tolerance::canonicalize_nv(rhs_value);
+        let rhs_value = float_tolerance::canonicalize(rhs_value);
         if !rhs_value.is_finite() {
             continue;
         }
         match effect.operation() {
             AssignmentOperation::Plus => {
                 deltas[affected_var_id.index()] =
-                    float_tolerance::canonicalize_nv(deltas[affected_var_id.index()] + rhs_value)
+                    float_tolerance::canonicalize(deltas[affected_var_id.index()] + rhs_value)
             }
             AssignmentOperation::Minus => {
                 deltas[affected_var_id.index()] =
-                    float_tolerance::canonicalize_nv(deltas[affected_var_id.index()] - rhs_value)
+                    float_tolerance::canonicalize(deltas[affected_var_id.index()] - rhs_value)
             }
             AssignmentOperation::Assign => assignments.push(affected_var_id),
             AssignmentOperation::Times | AssignmentOperation::Divide => unreachable!(),

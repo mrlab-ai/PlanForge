@@ -76,7 +76,7 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: NumericValue) 
         let mid = low + (high - low) / 2;
         let iv = &partitions[mid];
         let below_lower = if iv.lower.is_finite() {
-            let tolerance = float_tolerance::tolerance_nv(value, iv.lower);
+            let tolerance = float_tolerance::tolerance(value, iv.lower);
             value < iv.lower - tolerance
                 || (value - iv.lower).abs() <= tolerance && !iv.lower_closed
         } else {
@@ -88,7 +88,7 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: NumericValue) 
         }
 
         let above_upper = if iv.upper.is_finite() {
-            let tolerance = float_tolerance::tolerance_nv(value, iv.upper);
+            let tolerance = float_tolerance::tolerance(value, iv.upper);
             value > iv.upper + tolerance
                 || (value - iv.upper).abs() <= tolerance && !iv.upper_closed
         } else {
@@ -239,7 +239,7 @@ impl EquispacedPartitioning {
                 // Value is below the first finite partition with no head tail.
                 // Tolerate values that round to `base` (matches the legacy
                 // tolerant binary search).
-                let tol = float_tolerance::tolerance_nv(value, self.base);
+                let tol = float_tolerance::tolerance(value, self.base);
                 (self.base - value <= tol).then_some(0)
             };
         }
@@ -248,7 +248,7 @@ impl EquispacedPartitioning {
             NumericValue::new(self.base.value() + self.step.value() * self.finite_count as f64);
         let upper_tail_present = self.finite_offset + self.finite_count < self.total;
         if value >= last_upper {
-            let tol = float_tolerance::tolerance_nv(value, last_upper);
+            let tol = float_tolerance::tolerance(value, last_upper);
             if !upper_tail_present {
                 return (value - last_upper <= tol).then_some(self.total - 1);
             }

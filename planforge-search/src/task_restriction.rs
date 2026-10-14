@@ -326,7 +326,7 @@ pub fn build_icaps26_restricted_task(
         let value = initial_numeric[original_id.index()];
         if matches!(variable.get_type(), NumericType::Constant) {
             constants.by_bits.insert(
-                float_tolerance::canonicalize_nv(value).to_bits(),
+                float_tolerance::canonicalize(value).to_bits(),
                 VariableIndex::from_usize(transformed_id),
             );
             transformed_to_expr.push(AffineExpression::constant(value, num_original_numeric));
@@ -358,7 +358,7 @@ pub fn build_icaps26_restricted_task(
             (
                 original_to_transformed[original_var_id.index()]
                     .expect("retained ICAPS regular variable has no transformed id"),
-                float_tolerance::canonicalize_nv(-difference.constant / coefficient),
+                float_tolerance::canonicalize(-difference.constant / coefficient),
                 if coefficient > ZERO_VALUE {
                     comparison_axiom.get_operator().clone()
                 } else {
@@ -940,7 +940,7 @@ impl ConstantPool {
         transformed_to_expr: &mut Vec<AffineExpression>,
         num_original_numeric: usize,
     ) -> VariableIndex {
-        let value = float_tolerance::canonicalize_nv(value);
+        let value = float_tolerance::canonicalize(value);
         let bits = value.to_bits();
         if let Some(&id) = self.by_bits.get(&bits) {
             return id;

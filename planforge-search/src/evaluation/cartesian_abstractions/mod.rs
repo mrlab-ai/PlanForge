@@ -1035,7 +1035,7 @@ impl<'task> CartesianSemantics<'task> {
                     .copied()
                     .filter(|value| value.is_finite())
             })
-            .map(float_tolerance::canonicalize_nv)
+            .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
         target_split_boundaries.sort_by(NumericValue::total_cmp);
         target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
@@ -1296,7 +1296,7 @@ impl<'task> CartesianSemantics<'task> {
             .enumerate()
             .map(|(var_id, var)| {
                 if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(float_tolerance::canonicalize_nv(initial_numeric[var_id]))
+                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
                 } else {
                     Interval::unbounded()
                 }
@@ -1696,7 +1696,7 @@ impl<'task> CartesianSemantics<'task> {
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
         if let Some(view) = self.additive_numeric_views[numeric_var_id.index()].as_ref() {
-            let delta = float_tolerance::canonicalize_nv(view.operator_delta(op_id)?);
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
         }
@@ -1707,7 +1707,7 @@ impl<'task> CartesianSemantics<'task> {
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
             .rev()
         {
-            let rhs = float_tolerance::canonicalize_nv(
+            let rhs = float_tolerance::canonicalize(
                 self.task.get_initial_numeric_state_values()[effect.var_id().index()],
             );
             match effect.operation() {

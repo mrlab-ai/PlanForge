@@ -541,7 +541,7 @@ fn build_candidate_from_transition(
         return false;
     }
 
-    let cost_bits = float_tolerance::canonical_bits_nv(skeleton.cost);
+    let cost_bits = float_tolerance::canonical_bits(skeleton.cost);
     let signature_hash = compute_signature_hash(
         extended_prev_pairs,
         extended_pre_pairs,
@@ -1672,7 +1672,7 @@ fn prepare_comparison_tree_inputs_for_combo_into(
 
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
-            out[var_id] = Interval::singleton(float_tolerance::canonicalize_nv(
+            out[var_id] = Interval::singleton(float_tolerance::canonicalize(
                 initial_numeric_values[var_id],
             ));
         } else if numeric_var.get_type() != &NumericType::Derived {

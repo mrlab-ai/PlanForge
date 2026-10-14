@@ -452,9 +452,7 @@ pub(crate) fn can_split_numeric_var(
     value: NumericValue,
     include_in_lower: bool,
 ) -> bool {
-    let value = NumericValue::new(f64::from_bits(float_tolerance::canonical_bits(
-        value.value(),
-    )));
+    let value = NumericValue::new(f64::from_bits(float_tolerance::canonical_bits(value)));
     let Some(parts) = partitions.partitions(numeric_var_id) else {
         return false;
     };
