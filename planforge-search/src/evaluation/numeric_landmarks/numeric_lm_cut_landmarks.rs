@@ -536,7 +536,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
         if self.use_bounds {
             let initial_numeric_values = self.task.get_initial_numeric_state_values();
             self.numeric_bound
-                .calculate_bounds_nv(initial_numeric_values, self.config.bound_iterations);
+                .calculate_bounds(initial_numeric_values, self.config.bound_iterations);
         }
         self.initialized = true;
     }
@@ -1936,10 +1936,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         operator_id,
                     )
                 {
-                    operator_cost = NumericValue::new(operator_cost.value() + weight);
-                    self.numeric_bound.get_variable_before_action_lb(
-                        VariableIndex::from_usize(numeric_var_id),
-                        operator_id,
+                    operator_cost = NumericValue::new(
+                        operator_cost.value()
+                            + weight
+                                * self.numeric_bound.get_variable_before_action_lb(
+                                    VariableIndex::from_usize(numeric_var_id),
+                                    operator_id,
+                                ),
                     );
                 } else if weight <= -self.config.precision
                     && self.numeric_bound.get_variable_before_action_has_ub(
@@ -1947,10 +1950,13 @@ impl<'task> LandmarkCutLandmarks<'task> {
                         operator_id,
                     )
                 {
-                    operator_cost = NumericValue::new(operator_cost.value() + weight);
-                    self.numeric_bound.get_variable_before_action_ub(
-                        VariableIndex::from_usize(numeric_var_id),
-                        operator_id,
+                    operator_cost = NumericValue::new(
+                        operator_cost.value()
+                            + weight
+                                * self.numeric_bound.get_variable_before_action_ub(
+                                    VariableIndex::from_usize(numeric_var_id),
+                                    operator_id,
+                                ),
                     );
                 } else if weight.abs() >= self.config.precision {
                     operator_cost = ZERO_VALUE;
