@@ -1,4 +1,3 @@
-use core::f64;
 use std::{
     fmt::{self, Display},
     hash::Hash,
@@ -175,62 +174,66 @@ impl FactNamespace {
     }
 }
 
-/// Struct used to avoid confusions with other numeric values, representing
-/// a variable index used in facts and other structs.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct VariableIndex(u32);
+/// Defines a `u32`-backed index newtype.
+///
+/// Indices are stored as `u32` to halve their footprint on 64-bit targets.
+/// [`from_usize`](VariableIndex::from_usize) is the one narrowing point, and it
+/// panics instead of truncating: an index past `u32::MAX` would otherwise alias
+/// another entity.
+macro_rules! u32_index {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+        pub struct $name(u32);
 
-impl VariableIndex {
-    #[inline(always)]
-    pub const fn new(index: u32) -> Self {
-        Self(index)
-    }
+        impl $name {
+            #[inline(always)]
+            pub const fn new(index: u32) -> Self {
+                Self(index)
+            }
 
-    #[inline(always)]
-    pub const fn from_usize(index: usize) -> Self {
-        Self(index as u32)
-    }
+            #[inline(always)]
+            pub const fn from_usize(index: usize) -> Self {
+                assert!(
+                    index <= u32::MAX as usize,
+                    concat!(stringify!($name), " exceeds u32::MAX")
+                );
+                Self(index as u32)
+            }
 
-    #[inline(always)]
-    pub const fn index(&self) -> usize {
-        self.0 as usize
-    }
+            #[inline(always)]
+            pub const fn index(&self) -> usize {
+                self.0 as usize
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
 }
 
-impl Display for VariableIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+u32_index!(
+    /// Index of a variable in its id space.
+    VariableIndex
+);
 
-/// Struct used to avoid confusions with other numeric values, representing
-/// a value index (the index of the value in a domain of a variable) used in
-/// facts and other structs.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct ExplicitValueIndex(u32);
+u32_index!(
+    /// Index of a value in the domain of a variable.
+    ExplicitValueIndex
+);
 
-impl ExplicitValueIndex {
-    #[inline(always)]
-    pub const fn new(index: u32) -> Self {
-        Self(index)
-    }
+u32_index!(
+    /// Index of an axiom.
+    AxiomIndex
+);
 
-    #[inline(always)]
-    pub const fn from_usize(index: usize) -> Self {
-        Self(index as u32)
-    }
-
-    #[inline(always)]
-    pub const fn index(&self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Display for ExplicitValueIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+u32_index!(
+    /// Index of an operator.
+    OperatorIndex
+);
 
 /// Struct used to avoid confusions with other numeric values, representing
 /// a numeric value for numeric variables.
@@ -257,34 +260,6 @@ impl Display for NumericValue {
     }
 }
 
-/// Struct used to avoid confusions with other numeric values, representing
-/// a variable index used in facts and other structs.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct AxiomIndex(u32);
-
-impl AxiomIndex {
-    #[inline(always)]
-    pub const fn new(index: u32) -> Self {
-        Self(index)
-    }
-
-    #[inline(always)]
-    pub const fn from_usize(index: usize) -> Self {
-        Self(index as u32)
-    }
-
-    #[inline(always)]
-    pub const fn index(&self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Display for AxiomIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 /// Variable/value pair, tagged with the variable's [`FactNamespace`].
 ///
 /// `u32` fields halve the storage per fact compared to `usize` on 64-bit
@@ -299,7 +274,7 @@ impl Display for AxiomIndex {
 #[derive(Clone, Copy)]
 pub struct ExplicitFact {
     /// `namespace << (32 - FactNamespace::BITS) | var`.
-    var_id: VariableIndex,
+    packed_var: u32,
     value_id: ExplicitValueIndex,
 }
 
@@ -358,13 +333,9 @@ impl ExplicitFact {
             "ExplicitFact var {var} exceeds the {} packed variable-id bits",
             Self::VAR_BITS
         );
-        debug_assert!(
-            value <= u32::MAX as usize,
-            "ExplicitFact value {value} > u32::MAX"
-        );
         ExplicitFact {
-            var_id: VariableIndex((namespace as u32) << Self::VAR_BITS | var as u32),
-            value_id: ExplicitValueIndex(value as u32),
+            packed_var: (namespace as u32) << Self::VAR_BITS | var as u32,
+            value_id: ExplicitValueIndex::from_usize(value),
         }
     }
     pub fn in_namespace_from_indexes(
@@ -378,7 +349,7 @@ impl ExplicitFact {
             Self::VAR_BITS
         );
         ExplicitFact {
-            var_id: VariableIndex((namespace as u32) << Self::VAR_BITS | var.index() as u32),
+            packed_var: (namespace as u32) << Self::VAR_BITS | var.index() as u32,
             value_id: value,
         }
     }
@@ -389,16 +360,14 @@ impl ExplicitFact {
     #[must_use]
     pub fn with_namespace(self, namespace: FactNamespace) -> Self {
         ExplicitFact {
-            var_id: VariableIndex(
-                (namespace as u32) << Self::VAR_BITS | (self.var_id.0 & Self::VAR_MASK),
-            ),
+            packed_var: (namespace as u32) << Self::VAR_BITS | (self.packed_var & Self::VAR_MASK),
             value_id: self.value_id,
         }
     }
 
     #[inline(always)]
     pub fn namespace(&self) -> FactNamespace {
-        FactNamespace::from_tag(self.var_id.0 >> Self::VAR_BITS)
+        FactNamespace::from_tag(self.packed_var >> Self::VAR_BITS)
     }
 
     #[inline(always)]
@@ -408,7 +377,7 @@ impl ExplicitFact {
 
     #[inline(always)]
     pub const fn var(&self) -> usize {
-        (self.var_id.0 & Self::VAR_MASK) as usize
+        (self.packed_var & Self::VAR_MASK) as usize
     }
     #[inline(always)]
     pub const fn value(&self) -> usize {
@@ -416,11 +385,11 @@ impl ExplicitFact {
     }
     #[inline(always)]
     pub const fn var_index(&self) -> VariableIndex {
-        VariableIndex(self.var_id.0 & Self::VAR_MASK)
+        VariableIndex(self.packed_var & Self::VAR_MASK)
     }
     #[inline(always)]
     pub const fn value_index(&self) -> ExplicitValueIndex {
-        ExplicitValueIndex(self.value_id.index() as u32)
+        self.value_id
     }
 }
 
@@ -596,34 +565,6 @@ impl AssignmentEffect {
 }
 
 /// Struct used to avoid confusions with other numeric values, representing
-/// an operator index.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct OperatorIndex(u32);
-
-impl OperatorIndex {
-    #[inline(always)]
-    pub const fn new(index: u32) -> Self {
-        Self(index)
-    }
-
-    #[inline(always)]
-    pub const fn from_usize(index: usize) -> Self {
-        Self(index as u32)
-    }
-
-    #[inline(always)]
-    pub const fn index(&self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Display for OperatorIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Struct used to avoid confusions with other numeric values, representing
 /// the cost of an operator.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct OperatorCost(u64);
@@ -635,8 +576,9 @@ impl OperatorCost {
     }
 
     #[inline(always)]
-    pub const fn from_usize(index: usize) -> Self {
-        Self(index as u64)
+    pub const fn from_usize(value: usize) -> Self {
+        // Lossless: `usize` is at most 64 bits on every supported target.
+        Self(value as u64)
     }
 
     #[inline(always)]
