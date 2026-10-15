@@ -5,15 +5,16 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::Deref;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, VariableIndex,
+    ZERO_VALUE,
 };
 
 use crate::task_restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CausalGraphVariable {
-    Propositional(usize),
-    Numeric(usize),
+    Propositional(VariableIndex),
+    Numeric(VariableIndex),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -23,7 +24,7 @@ pub struct CausalGraph {
     successors: BTreeMap<CausalGraphVariable, BTreeSet<CausalGraphVariable>>,
     goal_distances: BTreeMap<CausalGraphVariable, usize>,
     causal_levels: BTreeMap<CausalGraphVariable, usize>,
-    comparison_numeric_vars: Vec<Option<usize>>,
+    comparison_numeric_vars: Vec<Option<VariableIndex>>,
 }
 
 impl CausalGraph {
@@ -72,7 +73,7 @@ impl CausalGraph {
             .unwrap_or(0)
     }
 
-    pub fn comparison_numeric_var(&self, comparison_axiom_id: usize) -> Option<usize> {
+    pub fn comparison_numeric_var(&self, comparison_axiom_id: usize) -> Option<VariableIndex> {
         self.comparison_numeric_vars
             .get(comparison_axiom_id)
             .copied()
@@ -80,7 +81,9 @@ impl CausalGraph {
     }
 
     fn build(task: &dyn AbstractNumericTask, support: &NumericGraphSupport) -> Self {
-        let comparison_numeric_vars = (0..task.comparison_axioms().len())
+        let comparison_numeric_vars: Vec<Option<VariableIndex>> = (0..task
+            .comparison_axioms()
+            .len())
             .map(|comparison_axiom_id| support.comparison_numeric_var(task, comparison_axiom_id))
             .collect();
         let mut graph = Self {
@@ -89,8 +92,10 @@ impl CausalGraph {
         };
 
         for var_id in 0..task.variables().len() {
-            if is_regular_propositional_var(task, var_id) {
-                graph.ensure_node(CausalGraphVariable::Propositional(var_id));
+            if is_regular_propositional_var(task, VariableIndex::from_usize(var_id)) {
+                graph.ensure_node(CausalGraphVariable::Propositional(
+                    VariableIndex::from_usize(var_id),
+                ));
             }
         }
         for numeric_var_id in support.numeric_nodes(task) {
@@ -164,12 +169,14 @@ impl CausalGraph {
     ) -> Vec<CausalGraphVariable> {
         let mut sources = BTreeSet::new();
         for fact in preconditions {
-            if let Some(comparison_axiom_id) = task.numeric_conditions().id_for_var(fact.var()) {
+            if let Some(comparison_axiom_id) =
+                task.numeric_conditions().id_for_var(fact.var_index())
+            {
                 if let Some(numeric_var_id) = self.comparison_numeric_var(comparison_axiom_id) {
                     sources.insert(CausalGraphVariable::Numeric(numeric_var_id));
                 }
-            } else if is_regular_propositional_var(task, fact.var()) {
-                sources.insert(CausalGraphVariable::Propositional(fact.var()));
+            } else if is_regular_propositional_var(task, fact.var_index()) {
+                sources.insert(CausalGraphVariable::Propositional(fact.var_index()));
             }
         }
         sources.into_iter().collect()
@@ -213,12 +220,12 @@ impl CausalGraph {
             let goal = task.get_goal_fact(goal_index);
             let goal_var = task
                 .numeric_conditions()
-                .id_for_var(goal.var())
+                .id_for_var(goal.var_index())
                 .and_then(|id| self.comparison_numeric_var(id))
                 .map(CausalGraphVariable::Numeric)
                 .or_else(|| {
-                    is_regular_propositional_var(task, goal.var())
-                        .then_some(CausalGraphVariable::Propositional(goal.var()))
+                    is_regular_propositional_var(task, goal.var_index())
+                        .then_some(CausalGraphVariable::Propositional(goal.var_index()))
                 });
             if let Some(goal_var) = goal_var
                 && self.goal_distances.insert(goal_var, 0).is_none()
@@ -325,13 +332,14 @@ enum NumericGraphSupport {
 }
 
 impl NumericGraphSupport {
-    fn numeric_nodes(&self, task: &dyn AbstractNumericTask) -> Vec<usize> {
-        let mut nodes: Vec<_> = task
+    fn numeric_nodes(&self, task: &dyn AbstractNumericTask) -> Vec<VariableIndex> {
+        let mut nodes: Vec<VariableIndex> = task
             .numeric_variables()
             .iter()
             .enumerate()
             .filter_map(|(id, variable)| {
-                (variable.get_type() == &NumericType::Regular).then_some(id)
+                (variable.get_type() == &NumericType::Regular)
+                    .then_some(VariableIndex::from_usize(id))
             })
             .collect();
         if let Self::Snp(support) = self {
@@ -344,7 +352,7 @@ impl NumericGraphSupport {
         &self,
         task: &dyn AbstractNumericTask,
         comparison_axiom_id: usize,
-    ) -> Option<usize> {
+    ) -> Option<VariableIndex> {
         let comparison_axiom = task.comparison_axioms().get(comparison_axiom_id)?;
         let left = comparison_axiom.get_left_var_id();
         let right = comparison_axiom.get_right_var_id();
@@ -375,8 +383,8 @@ impl NumericGraphSupport {
 #[derive(Debug)]
 struct SnpNumericSupport {
     assignment_by_affected: Vec<Option<usize>>,
-    helper_by_derived: Vec<Option<usize>>,
-    regular_dependencies: Vec<Option<BTreeSet<usize>>>,
+    helper_by_derived: Vec<Option<VariableIndex>>,
+    regular_dependencies: Vec<Option<BTreeSet<VariableIndex>>>,
 }
 
 impl SnpNumericSupport {
@@ -384,9 +392,11 @@ impl SnpNumericSupport {
         let mut assignment_by_affected = vec![None; task.numeric_variables().len()];
         for (axiom_id, axiom) in task.assignment_axioms().iter().enumerate() {
             let affected = axiom.get_affected_var_id();
-            let slot = assignment_by_affected.get_mut(affected).ok_or_else(|| {
-                format!("assignment axiom {axiom_id} has invalid target {affected}")
-            })?;
+            let slot = assignment_by_affected
+                .get_mut(affected.index())
+                .ok_or_else(|| {
+                    format!("assignment axiom {axiom_id} has invalid target {affected}")
+                })?;
             if slot.replace(axiom_id).is_some() {
                 return Err(format!(
                     "multiple assignment axioms define numeric variable {affected}"
@@ -406,10 +416,14 @@ impl SnpNumericSupport {
             if task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Derived {
                 continue;
             }
-            let dependencies =
-                support.collect_regular_dependencies(task, numeric_var_id, &mut visiting)?;
+            let dependencies = support.collect_regular_dependencies(
+                task,
+                VariableIndex::from_usize(numeric_var_id),
+                &mut visiting,
+            )?;
             if dependencies.len() > 1 {
-                support.helper_by_derived[numeric_var_id] = Some(next_helper);
+                support.helper_by_derived[numeric_var_id] =
+                    Some(VariableIndex::from_usize(next_helper));
                 next_helper += 1;
             }
         }
@@ -419,24 +433,25 @@ impl SnpNumericSupport {
     fn collect_regular_dependencies(
         &mut self,
         task: &dyn AbstractNumericTask,
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
         visiting: &mut [bool],
-    ) -> Result<BTreeSet<usize>, String> {
-        if let Some(cached) = &self.regular_dependencies[numeric_var_id] {
+    ) -> Result<BTreeSet<VariableIndex>, String> {
+        if let Some(cached) = &self.regular_dependencies[numeric_var_id.index()] {
             return Ok(cached.clone());
         }
-        if std::mem::replace(&mut visiting[numeric_var_id], true) {
+        if std::mem::replace(&mut visiting[numeric_var_id.index()], true) {
             return Err(format!(
                 "cycle in numeric assignment axioms at variable {numeric_var_id}"
             ));
         }
-        let dependencies = match task.numeric_variables()[numeric_var_id].get_type() {
+        let dependencies = match task.numeric_variables()[numeric_var_id.index()].get_type() {
             NumericType::Regular => BTreeSet::from([numeric_var_id]),
             NumericType::Constant | NumericType::Cost => BTreeSet::new(),
             NumericType::Derived => {
-                let axiom_id = self.assignment_by_affected[numeric_var_id].ok_or_else(|| {
-                    format!("derived numeric variable {numeric_var_id} has no assignment axiom")
-                })?;
+                let axiom_id =
+                    self.assignment_by_affected[numeric_var_id.index()].ok_or_else(|| {
+                        format!("derived numeric variable {numeric_var_id} has no assignment axiom")
+                    })?;
                 let axiom = &task.assignment_axioms()[axiom_id];
                 let mut dependencies =
                     self.collect_regular_dependencies(task, axiom.get_left_var_id(), visiting)?;
@@ -448,19 +463,23 @@ impl SnpNumericSupport {
                 dependencies
             }
         };
-        visiting[numeric_var_id] = false;
-        self.regular_dependencies[numeric_var_id] = Some(dependencies.clone());
+        visiting[numeric_var_id.index()] = false;
+        self.regular_dependencies[numeric_var_id.index()] = Some(dependencies.clone());
         Ok(dependencies)
     }
 
-    fn helper_ids(&self) -> impl Iterator<Item = usize> + '_ {
+    fn helper_ids(&self) -> impl Iterator<Item = VariableIndex> + '_ {
         self.helper_by_derived.iter().filter_map(|id| *id)
     }
 
-    fn is_nonconstant(&self, task: &dyn AbstractNumericTask, numeric_var_id: usize) -> bool {
-        match task.numeric_variables()[numeric_var_id].get_type() {
+    fn is_nonconstant(
+        &self,
+        task: &dyn AbstractNumericTask,
+        numeric_var_id: VariableIndex,
+    ) -> bool {
+        match task.numeric_variables()[numeric_var_id.index()].get_type() {
             NumericType::Regular => true,
-            NumericType::Derived => self.regular_dependencies[numeric_var_id]
+            NumericType::Derived => self.regular_dependencies[numeric_var_id.index()]
                 .as_ref()
                 .is_some_and(|dependencies| !dependencies.is_empty()),
             NumericType::Constant | NumericType::Cost => false,
@@ -470,13 +489,13 @@ impl SnpNumericSupport {
     fn representative(
         &self,
         task: &dyn AbstractNumericTask,
-        numeric_var_id: usize,
-    ) -> Option<usize> {
-        match task.numeric_variables()[numeric_var_id].get_type() {
+        numeric_var_id: VariableIndex,
+    ) -> Option<VariableIndex> {
+        match task.numeric_variables()[numeric_var_id.index()].get_type() {
             NumericType::Regular => Some(numeric_var_id),
             NumericType::Constant | NumericType::Cost => None,
-            NumericType::Derived => self.helper_by_derived[numeric_var_id].or_else(|| {
-                self.regular_dependencies[numeric_var_id]
+            NumericType::Derived => self.helper_by_derived[numeric_var_id.index()].or_else(|| {
+                self.regular_dependencies[numeric_var_id.index()]
                     .as_ref()
                     .and_then(|dependencies| {
                         (dependencies.len() == 1)
@@ -489,19 +508,19 @@ impl SnpNumericSupport {
 
 fn preferred_nonconstant_side(
     task: &dyn AbstractNumericTask,
-    left: usize,
-    right: usize,
-) -> Option<usize> {
+    left: VariableIndex,
+    right: VariableIndex,
+) -> Option<VariableIndex> {
     preferred_nonconstant_side_with(left, right, |id| {
-        task.numeric_variables()[id].get_type() == &NumericType::Regular
+        task.numeric_variables()[id.index()].get_type() == &NumericType::Regular
     })
 }
 
 fn preferred_nonconstant_side_with(
-    left: usize,
-    right: usize,
-    is_nonconstant: impl Fn(usize) -> bool,
-) -> Option<usize> {
+    left: VariableIndex,
+    right: VariableIndex,
+    is_nonconstant: impl Fn(VariableIndex) -> bool,
+) -> Option<VariableIndex> {
     let left_nonconstant = is_nonconstant(left);
     let right_nonconstant = is_nonconstant(right);
     if right_nonconstant {
@@ -513,8 +532,11 @@ fn preferred_nonconstant_side_with(
     }
 }
 
-fn restricted_numeric_var(task: &dyn AbstractNumericTask, numeric_var_id: usize) -> Option<usize> {
-    (task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Regular)
+fn restricted_numeric_var(
+    task: &dyn AbstractNumericTask,
+    numeric_var_id: VariableIndex,
+) -> Option<VariableIndex> {
+    (task.numeric_variables()[numeric_var_id.index()].get_type() == &NumericType::Regular)
         .then_some(numeric_var_id)
 }
 
@@ -524,7 +546,7 @@ fn numeric_effect_target(
 ) -> Option<CausalGraphVariable> {
     if task
         .numeric_variables()
-        .get(effect.affected_var_id())
+        .get(effect.affected_var_id().index())
         .is_none_or(|variable| variable.get_type() != &NumericType::Regular)
     {
         return None;
@@ -534,20 +556,20 @@ fn numeric_effect_target(
         AssignmentOperation::Plus | AssignmentOperation::Minus
     ) && task
         .numeric_variables()
-        .get(effect.var_id())
+        .get(effect.var_id().index())
         .is_some_and(|variable| variable.get_type() == &NumericType::Constant)
         && task
             .get_initial_numeric_state_values()
-            .get(effect.var_id())
+            .get(effect.var_id().index())
             .copied()
-            == Some(0.0)
+            == Some(ZERO_VALUE)
     {
         return None;
     }
     Some(CausalGraphVariable::Numeric(effect.affected_var_id()))
 }
 
-fn is_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: usize) -> bool {
+fn is_regular_propositional_var(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> bool {
     task.get_variable_axiom_layer(var_id)
         .unwrap_or(None)
         .is_none()

@@ -2,7 +2,8 @@ use super::*;
 use planforge_sas::{
     numeric_task::{
         AbstractNumericTask, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-        NumericRootTaskParts, NumericType, NumericVariable, Operator,
+        NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+        OperatorIndex,
     },
     state_registry::StateRegistry,
 };
@@ -10,14 +11,14 @@ use std::sync::Arc;
 
 fn get_root_task() -> NumericRootTask {
     let version = 4;
-    let metric = Metric::new(true, Some(1));
+    let metric = Metric::new(true, Some(VariableIndex::from_usize(1)));
     let variables = vec![
         ExplicitVariable::new(
             2,
             String::from("var13"),
             vec![String::from("new-axiom"), String::from("not-new-axiom")],
             Some(1),
-            0,
+            ExplicitValueIndex::new(0),
         ),
         ExplicitVariable::new(
             7,
@@ -31,7 +32,7 @@ fn get_root_task() -> NumericRootTask {
                 String::from("ontable(d)"),
             ],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ),
     ];
     let numeric_variables = vec![
@@ -40,14 +41,19 @@ fn get_root_task() -> NumericRootTask {
     ];
     let goals = vec![ExplicitFact::propositional(1, 5)];
     let mutexes = Vec::new();
-    let state = vec![1, 1];
-    let numeric_state = vec![1f64, 0f64];
+    let state = vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)];
+    let numeric_state = vec![NumericValue::new(1f64), NumericValue::new(0f64)];
     let operators = vec![Operator::new(
         String::from("drop"),
         vec![ExplicitFact::propositional(1, 1)],
-        vec![Effect::new(Vec::new(), 1, Some(1), 5)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::from_usize(1),
+            Some(ExplicitValueIndex::new(1)),
+            ExplicitValueIndex::new(5),
+        )],
         Vec::new(),
-        1,
+        OperatorCost::new(1),
     )];
     let axioms = Vec::new();
     let comparison_axioms = Vec::new();
@@ -80,20 +86,25 @@ fn immediate_list_straddling_task() -> NumericRootTask {
         String::from("v"),
         vec![String::from("v=0"), String::from("v=1")],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
     let operator = |name: &str, preconditions: Vec<ExplicitFact>| {
         Operator::new(
             String::from(name),
             preconditions,
-            vec![Effect::new(Vec::new(), 0, None, 1)],
+            vec![Effect::new(
+                Vec::new(),
+                VariableIndex::from_usize(0),
+                None,
+                ExplicitValueIndex::new(1),
+            )],
             Vec::new(),
-            1,
+            OperatorCost::new(1),
         )
     };
     NumericRootTask::new(NumericRootTaskParts {
         version: 4,
-        metric: Metric::new(true, Some(0)),
+        metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
         variables,
         numeric_variables: vec![NumericVariable::new(
             String::from("total_cost()"),
@@ -102,8 +113,8 @@ fn immediate_list_straddling_task() -> NumericRootTask {
         )],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: Vec::new(),
-        state: vec![0],
-        numeric_state: vec![0f64],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0f64)],
         operators: vec![
             operator("needs_zero", vec![ExplicitFact::propositional(0, 0)]),
             operator("needs_nothing", Vec::new()),
@@ -129,13 +140,19 @@ fn applicable_operators_are_emitted_in_tree_walk_order() {
     let task = immediate_list_straddling_task();
     let tree = SuccessorTree::new(&task);
 
-    let mut applicable: Vec<u32> = Vec::new();
-    tree.get_applicable_operators(&[0], &mut applicable);
-    assert_eq!(applicable, vec![1, 0]);
+    let mut applicable: Vec<OperatorIndex> = Vec::new();
+    tree.get_applicable_operators(&[ExplicitValueIndex::new(0)], &mut applicable);
+    assert_eq!(
+        applicable,
+        vec![OperatorIndex::new(1), OperatorIndex::new(0)]
+    );
 
     applicable.clear();
-    tree.get_applicable_operators(&[1], &mut applicable);
-    assert_eq!(applicable, vec![1, 2]);
+    tree.get_applicable_operators(&[ExplicitValueIndex::new(1)], &mut applicable);
+    assert_eq!(
+        applicable,
+        vec![OperatorIndex::new(1), OperatorIndex::new(2)]
+    );
 }
 
 /// `get_applicable_operators` appends, so a caller may collect several states'
@@ -145,9 +162,17 @@ fn applicable_operators_leave_the_caller_s_prefix_alone() {
     let task = immediate_list_straddling_task();
     let tree = SuccessorTree::new(&task);
 
-    let mut applicable: Vec<u32> = vec![7, 3];
-    tree.get_applicable_operators(&[0], &mut applicable);
-    assert_eq!(applicable, vec![7, 3, 1, 0]);
+    let mut applicable: Vec<OperatorIndex> = vec![OperatorIndex::new(7), OperatorIndex::new(3)];
+    tree.get_applicable_operators(&[ExplicitValueIndex::new(0)], &mut applicable);
+    assert_eq!(
+        applicable,
+        vec![
+            OperatorIndex::new(7),
+            OperatorIndex::new(3),
+            OperatorIndex::new(1),
+            OperatorIndex::new(0)
+        ]
+    );
 }
 
 #[test]
@@ -156,22 +181,27 @@ fn test_grounded_successor_generator() {
 
     let mut generator = GroundedSuccessorGenerator::new(&task);
 
-    let mut queue: VecDeque<u32> = (0..task.get_operators().len() as u32).collect();
+    let mut queue: VecDeque<OperatorIndex> = (0..task.get_operators().len() as u32)
+        .map(OperatorIndex::new)
+        .collect();
 
     let mut state_registry = StateRegistry::for_task(Arc::new(&task));
 
     let state = state_registry.get_initial_state();
     let state_values = state.get_state(&state_registry);
-    assert_eq!(state_values, [1, 1]);
+    assert_eq!(
+        state_values,
+        [ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)]
+    );
 
     let root = generator.construct(&mut 0, &mut queue).unwrap();
     let tree = generator.into_tree(root);
 
-    let mut applicable_operators: Vec<u32> = Vec::new();
+    let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
     tree.get_applicable_operators(&state_values[..], &mut applicable_operators);
 
     // Only operator id 0 ("drop") is applicable in the initial state.
-    assert_eq!(applicable_operators, vec![0]);
+    assert_eq!(applicable_operators, vec![OperatorIndex::new(0)]);
 }
 
 #[test]
@@ -186,12 +216,15 @@ fn test_generate_immediate_successor_of_init_state() {
     let mut applicable_operators = Vec::new();
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
-    let op = &task.get_operators()[applicable_operators[0] as usize];
+    let op = &task.get_operators()[applicable_operators[0].index()];
 
     let successor = state_registry
         .get_successor_state(&initial_state, op)
         .expect("Failed to get successor state");
-    assert_eq!(successor.get_state(&state_registry), [1, 5]);
+    assert_eq!(
+        successor.get_state(&state_registry),
+        [ExplicitValueIndex::new(1), ExplicitValueIndex::new(5)]
+    );
 }
 
 #[test]
@@ -207,7 +240,7 @@ fn test_duplicate_successor_should_not_generate_new_id() {
     suc_gen.get_applicable_operators(&state, &mut applicable_operators);
 
     // Get the first applicable operator
-    let op = &task.get_operators()[applicable_operators[0] as usize];
+    let op = &task.get_operators()[applicable_operators[0].index()];
 
     assert_eq!(op.name(), "drop");
     assert_eq!(initial_state.get_id(), 0);

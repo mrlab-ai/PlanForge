@@ -4,7 +4,7 @@ mod tests;
 use anyhow::{Result, ensure};
 use planforge_sas::{
     axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, Operator},
+    numeric_task::{AbstractNumericTask, Operator, VariableIndex},
 };
 
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_facts};
@@ -115,7 +115,7 @@ fn get_sequence_progression_flaws(
         let mut chosen_op: Option<&Operator> = None;
         let mut fallback_op: Option<&Operator> = None;
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id) else {
+            let Some(op) = task.get_operators().get(op_id.index()) else {
                 continue;
             };
             if fallback_op.is_none() {
@@ -163,7 +163,7 @@ fn get_sequence_progression_flaws(
             if flawed {
                 // Undeviate the flaws.
                 for (var, value) in state.numeric.iter_mut().enumerate() {
-                    let Some(parts) = partitions.partitions(var) else {
+                    let Some(parts) = partitions.partitions(VariableIndex::from_usize(var)) else {
                         continue;
                     };
                     let correct_values = partitions_for_interval(parts, value);
@@ -208,7 +208,7 @@ fn get_sequence_regression_flaws(
         let mut chosen_op: Option<&Operator> = None;
         let mut fallback_op: Option<&Operator> = None;
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id) else {
+            let Some(op) = task.get_operators().get(op_id.index()) else {
                 continue;
             };
             if fallback_op.is_none() {
@@ -296,12 +296,13 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
         .zip(&successor_state.numeric)
         .enumerate()
     {
+        let var_id = VariableIndex::from_usize(var_id);
         let operator_modified_var = op
             .assignment_effects()
             .iter()
             .any(|eff| eff.affected_var_id() == var_id)
             || numeric_dimension_delta_for_operator(task, var_id, op)
-                .is_some_and(|delta| delta.abs() >= 1e-12);
+                .is_some_and(|delta| delta.value().abs() >= 1e-12);
         if !operator_modified_var {
             continue;
         }
@@ -319,7 +320,7 @@ pub fn get_progression_numeric_sequence_deviation_flaws(
 
         let interval_current_value = current_state
             .numeric
-            .get(var_id)
+            .get(var_id.index())
             .copied()
             .unwrap_or(interval_next_value);
         if interval_next_value == interval_current_value {
@@ -371,8 +372,8 @@ pub fn get_progression_sequence_precondition_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
-        if !state.fact_is_hold(pre) {
-            let prop_var_id = pre.var();
+        if !state.fact_is_held(pre) {
+            let prop_var_id = pre.var_index();
             let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id)
             {
                 dependent_numeric_flaws_in_interval_for_comparison_prop_var(
@@ -403,10 +404,10 @@ pub fn get_goal_sequence_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for requirement in goal_facts(task) {
-        if state.fact_is_hold(&requirement) {
+        if state.fact_is_held(&requirement) {
             continue;
         }
-        let prop_var_id = requirement.var();
+        let prop_var_id = requirement.var_index();
         let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(prop_var_id) {
             dependent_numeric_flaws_in_interval_for_comparison_prop_var(
                 task,

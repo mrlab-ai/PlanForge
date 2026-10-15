@@ -34,10 +34,11 @@ use anyhow::{Context, Result, bail, ensure};
 use ordered_float::NotNan;
 use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
+    NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
     metric_operator_cost_from_initial_values,
 };
-use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::float_tolerance::{self, equal, equal_nv};
 use planforge_sas::utils::state_packer::StatePacker;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -49,7 +50,7 @@ use crate::evaluation::validate_abstractable_goal;
 
 use super::abstraction_collections::cost_partitioning::{
     AbstractOperatorRegions, AbstractTransition, AbstractTransitionSystem, OperatorRegion,
-    PropValueId, StateRegion, build_explicit_goal_distances, sorted_value_sets_overlap,
+    StateRegion, build_explicit_goal_distances, sorted_value_sets_overlap,
 };
 use super::abstraction_collections::portfolio::{
     CollectionStrategy, derive_variant_seed, mix_seed, stable_text_seed,
@@ -68,8 +69,8 @@ use icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use planforge_sas::utils::interval::Interval;
 
 #[inline]
-fn fact_is_hold(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bool {
-    fact.is_hold(
+fn fact_is_held(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bool {
+    fact.is_held(
         planforge_sas::state_registry::ConcreteStateView::from_decoded(packer, buffer, &[]),
     )
 }
@@ -93,7 +94,7 @@ pub struct CartesianAbstractionMetadata {
     pub collection_variant_id: Option<usize>,
     pub refinement_direction: CartesianRefinementDirection,
     pub split_selection_rank: Option<usize>,
-    pub concrete_plan_operator_ids: Option<Vec<usize>>,
+    pub concrete_plan_operator_ids: Option<Vec<OperatorIndex>>,
     pub progressive_refinement_root: bool,
     /// Number of non-loop transitions built before optional standalone compaction.
     pub transition_count: usize,
@@ -190,7 +191,7 @@ impl Default for CartesianAbstractionCollectionConfig {
 #[derive(Debug, Clone)]
 struct CartesianConcreteState {
     propositions: Vec<u64>,
-    numeric: Vec<f64>,
+    numeric: Vec<NumericValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -199,14 +200,14 @@ enum RefinementNode {
         state_id: usize,
     },
     Propositional {
-        var_id: usize,
-        wanted: Vec<PropValueId>,
+        var_id: VariableIndex,
+        wanted: Vec<ExplicitValueIndex>,
         wanted_child: usize,
         other_child: usize,
     },
     Numeric {
-        var_id: usize,
-        boundary: f64,
+        var_id: VariableIndex,
+        boundary: NumericValue,
         lower_includes_boundary: bool,
         lower_child: usize,
         upper_child: usize,
@@ -225,7 +226,11 @@ impl CartesianRefinementHierarchy {
         }
     }
 
-    pub fn map_state(&self, propositional: &[usize], numeric: &[f64]) -> Result<usize> {
+    pub fn map_state(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Result<usize> {
         let mut node_id = 0;
         loop {
             match self
@@ -240,9 +245,9 @@ impl CartesianRefinementHierarchy {
                     wanted_child,
                     other_child,
                 } => {
-                    let value = *propositional.get(*var_id).with_context(|| {
+                    let value = *propositional.get(var_id.index()).with_context(|| {
                         format!("propositional state has no value for var {var_id}")
-                    })? as PropValueId;
+                    })? as ExplicitValueIndex;
                     node_id = if wanted.binary_search(&value).is_ok() {
                         *wanted_child
                     } else {
@@ -257,10 +262,10 @@ impl CartesianRefinementHierarchy {
                     upper_child,
                 } => {
                     let value = *numeric
-                        .get(*var_id)
+                        .get(var_id.index())
                         .with_context(|| format!("numeric state has no value for var {var_id}"))?;
                     ensure!(
-                        value.is_finite(),
+                        value.value().is_finite(),
                         "numeric state var {var_id} is not finite: {value}"
                     );
                     let in_lower =
@@ -276,8 +281,8 @@ impl CartesianRefinementHierarchy {
         leaf_node_id: usize,
         old_state_id: usize,
         new_state_id: usize,
-        var_id: usize,
-        mut wanted: Vec<PropValueId>,
+        var_id: VariableIndex,
+        mut wanted: Vec<ExplicitValueIndex>,
         old_state_is_wanted: bool,
     ) -> Result<()> {
         wanted.sort_unstable();
@@ -329,7 +334,7 @@ impl CartesianRefinementHierarchy {
             old_state_is_lower,
         } = split;
         ensure!(
-            boundary.is_finite(),
+            boundary.value().is_finite(),
             "Cartesian split boundary must be finite"
         );
         let lower_node_id = self.nodes.len();
@@ -379,8 +384,8 @@ struct MemberBudget {
 /// the cut the state being split ends up.
 #[derive(Debug, Clone, Copy)]
 struct NumericSplit {
-    var_id: usize,
-    boundary: f64,
+    var_id: VariableIndex,
+    boundary: NumericValue,
     /// Whether `boundary` itself belongs to the lower child.
     lower_includes_boundary: bool,
     /// Whether the state that existed before the split becomes the lower child.
@@ -392,7 +397,7 @@ pub struct CartesianAbstraction {
     pub hierarchy: CartesianRefinementHierarchy,
     pub distance_table: AbstractDistanceTable,
     pub transition_system: AbstractTransitionSystem,
-    pub relevant_operator_ids: Vec<usize>,
+    pub relevant_operator_ids: Vec<OperatorIndex>,
     pub abstract_operator_regions: Vec<AbstractOperatorRegions>,
     pub metadata: CartesianAbstractionMetadata,
 }
@@ -402,7 +407,11 @@ impl CartesianAbstraction {
         self.distance_table.distances.len()
     }
 
-    pub fn abstract_state_id(&self, propositional: &[usize], numeric: &[f64]) -> Result<usize> {
+    pub fn abstract_state_id(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Result<usize> {
         self.hierarchy.map_state(propositional, numeric)
     }
 
@@ -419,7 +428,7 @@ impl CartesianAbstraction {
 struct WorkingTransition {
     source: usize,
     target: usize,
-    concrete_op_id: usize,
+    concrete_op_id: OperatorIndex,
 }
 
 #[derive(Debug, Clone)]
@@ -436,14 +445,14 @@ impl OperatorBitSet {
         }
     }
 
-    fn insert(&mut self, operator_id: usize) -> bool {
+    fn insert(&mut self, operator_id: OperatorIndex) -> bool {
         debug_assert!(
-            operator_id < self.operator_count,
+            operator_id.index() < self.operator_count,
             "operator {operator_id} exceeds Cartesian operator-set size {}",
             self.operator_count
         );
-        let word = &mut self.words[operator_id / u64::BITS as usize];
-        let mask = 1_u64 << (operator_id % u64::BITS as usize);
+        let word = &mut self.words[operator_id.index() / u64::BITS as usize];
+        let mask = 1_u64 << (operator_id.index() % u64::BITS as usize);
         if *word & mask != 0 {
             return false;
         }
@@ -451,13 +460,14 @@ impl OperatorBitSet {
         true
     }
 
-    fn contains(&self, operator_id: usize) -> bool {
+    fn contains(&self, operator_id: OperatorIndex) -> bool {
         debug_assert!(
-            operator_id < self.operator_count,
+            operator_id.index() < self.operator_count,
             "operator {operator_id} exceeds Cartesian operator-set size {}",
             self.operator_count
         );
-        self.words[operator_id / u64::BITS as usize] & (1_u64 << (operator_id % u64::BITS as usize))
+        self.words[operator_id.index() / u64::BITS as usize]
+            & (1_u64 << (operator_id.index() % u64::BITS as usize))
             != 0
     }
 
@@ -502,7 +512,7 @@ struct OperatorBitSetIntersectionIter<'a> {
 }
 
 impl Iterator for OperatorBitSetIntersectionIter<'_> {
-    type Item = usize;
+    type Item = OperatorIndex;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -514,7 +524,7 @@ impl Iterator for OperatorBitSetIntersectionIter<'_> {
                     operator_id < self.operator_count,
                     "Cartesian operator intersection has a set padding bit"
                 );
-                return Some(operator_id);
+                return Some(OperatorIndex::from_usize(operator_id));
             }
             self.word_id += 1;
             self.remaining = *self.left.get(self.word_id)? & self.right[self.word_id];
@@ -525,7 +535,7 @@ impl Iterator for OperatorBitSetIntersectionIter<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct TransitionKey {
     source: usize,
-    concrete_op_id: usize,
+    concrete_op_id: OperatorIndex,
     target: usize,
 }
 
@@ -539,7 +549,7 @@ struct WorkingAbstraction {
     outgoing: Vec<Vec<usize>>,
     incoming: Vec<Vec<usize>>,
     self_loop_operator_ids: Vec<OperatorBitSet>,
-    icaps_self_loop_order: Option<Vec<Vec<usize>>>,
+    icaps_self_loop_order: Option<Vec<Vec<OperatorIndex>>>,
     transition_ids_by_key: Option<HashMap<TransitionKey, usize>>,
     propositional_refinement_counts: Vec<usize>,
     numeric_refinement_counts: Vec<usize>,
@@ -609,7 +619,7 @@ impl WorkingAbstraction {
         }
     }
 
-    fn add_transition(&mut self, source: usize, op_id: usize, target: usize) {
+    fn add_transition(&mut self, source: usize, op_id: OperatorIndex, target: usize) {
         if source == target {
             if let Some(loop_order) = &mut self.icaps_self_loop_order {
                 debug_assert!(
@@ -753,17 +763,17 @@ impl WorkingAbstraction {
 enum Split {
     Propositional {
         state_id: usize,
-        var_id: usize,
-        wanted: Vec<PropValueId>,
-        witness_value: PropValueId,
+        var_id: VariableIndex,
+        wanted: Vec<ExplicitValueIndex>,
+        witness_value: ExplicitValueIndex,
         description: String,
     },
     Numeric {
         state_id: usize,
-        var_id: usize,
-        boundary: f64,
+        var_id: VariableIndex,
+        boundary: NumericValue,
         lower_includes_boundary: bool,
-        witness_value: f64,
+        witness_value: NumericValue,
         desired_contains_witness: bool,
         integer_lattice: bool,
         description: String,
@@ -797,13 +807,13 @@ impl Split {
 enum SplitIdentity {
     Propositional {
         state_id: usize,
-        var_id: usize,
-        wanted: Vec<PropValueId>,
-        witness_value: PropValueId,
+        var_id: VariableIndex,
+        wanted: Vec<ExplicitValueIndex>,
+        witness_value: ExplicitValueIndex,
     },
     Numeric {
         state_id: usize,
-        var_id: usize,
+        var_id: VariableIndex,
         boundary_bits: u64,
         lower_includes_boundary: bool,
         witness_bits: u64,
@@ -837,9 +847,9 @@ impl From<&Split> for SplitIdentity {
             } => Self::Numeric {
                 state_id: *state_id,
                 var_id: *var_id,
-                boundary_bits: boundary.to_bits(),
+                boundary_bits: boundary.value().to_bits(),
                 lower_includes_boundary: *lower_includes_boundary,
-                witness_bits: witness_value.to_bits(),
+                witness_bits: witness_value.value().to_bits(),
                 integer_lattice: *integer_lattice,
             },
         }
@@ -848,18 +858,18 @@ impl From<&Split> for SplitIdentity {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SplitDimension {
-    Propositional(usize),
-    Numeric(usize),
+    Propositional(VariableIndex),
+    Numeric(VariableIndex),
 }
 
 struct CartesianSemantics<'task> {
     task: &'task dyn AbstractNumericTask,
     propositional_axioms_by_prop_var: Vec<Vec<usize>>,
-    operator_costs: Vec<f64>,
+    operator_costs: Vec<NumericValue>,
     prop_split_dependent_operators: Vec<OperatorBitSet>,
     numeric_split_dependent_operators: Vec<OperatorBitSet>,
     additive_numeric_views: Vec<Option<AdditiveNumericView>>,
-    additive_effect_deltas: Vec<Vec<f64>>,
+    additive_effect_deltas: Vec<Vec<NumericValue>>,
     numeric_integer_lattice: Vec<bool>,
     random_seed: Option<u64>,
     random_split_rng: Option<RefCell<SmallRng>>,
@@ -868,7 +878,7 @@ struct CartesianSemantics<'task> {
     flaw_candidate_generation: CartesianFlawCandidateGeneration,
     split_selection_rank: Option<usize>,
     split_selection: CartesianSplitSelection,
-    target_split_boundaries: Vec<f64>,
+    target_split_boundaries: Vec<NumericValue>,
 }
 
 fn mark_fact_split_dependencies(
@@ -879,27 +889,27 @@ fn mark_fact_split_dependencies(
     prop_dependencies: &mut [bool],
     numeric_dependencies: &mut [bool],
 ) -> Result<()> {
-    let var_id = fact.var();
+    let var_id = fact.var_index();
     if let Some(condition) = task.numeric_conditions().for_var(var_id) {
         let mut dimensions = condition.regular_numeric_var_dependencies().to_vec();
         dimensions.extend(comparison_refinement_dimensions(task, condition));
         dimensions.sort_unstable();
         dimensions.dedup();
         for numeric_var_id in dimensions {
-            numeric_dependencies[numeric_var_id] = true;
+            numeric_dependencies[numeric_var_id.index()] = true;
         }
         return Ok(());
     }
-    if propositional_axioms_by_prop_var[var_id].is_empty() {
-        prop_dependencies[var_id] = true;
+    if propositional_axioms_by_prop_var[var_id.index()].is_empty() {
+        prop_dependencies[var_id.index()] = true;
         return Ok(());
     }
     ensure!(
-        !visiting[var_id],
+        !visiting[var_id.index()],
         "cyclic propositional axiom dependency through variable {var_id}"
     );
-    visiting[var_id] = true;
-    for &axiom_id in &propositional_axioms_by_prop_var[var_id] {
+    visiting[var_id.index()] = true;
+    for &axiom_id in &propositional_axioms_by_prop_var[var_id.index()] {
         let axiom = task
             .axioms()
             .get(axiom_id)
@@ -915,7 +925,7 @@ fn mark_fact_split_dependencies(
             )?;
         }
     }
-    visiting[var_id] = false;
+    visiting[var_id.index()] = false;
     Ok(())
 }
 
@@ -928,7 +938,7 @@ impl<'task> CartesianSemantics<'task> {
         &self.propositional_axioms_by_prop_var
     }
 
-    fn operator_costs(&self) -> &[f64] {
+    fn operator_costs(&self) -> &[NumericValue] {
         &self.operator_costs
     }
 
@@ -936,7 +946,7 @@ impl<'task> CartesianSemantics<'task> {
         &self.additive_numeric_views
     }
 
-    fn additive_effect_deltas(&self) -> &[Vec<f64>] {
+    fn additive_effect_deltas(&self) -> &[Vec<NumericValue>] {
         &self.additive_effect_deltas
     }
 
@@ -956,7 +966,7 @@ impl<'task> CartesianSemantics<'task> {
         self.split_selection
     }
 
-    fn target_split_boundaries(&self) -> &[f64] {
+    fn target_split_boundaries(&self) -> &[NumericValue] {
         &self.target_split_boundaries
     }
 
@@ -966,17 +976,17 @@ impl<'task> CartesianSemantics<'task> {
     ) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         for (op_id, op) in task.get_operators().iter().enumerate() {
-            validate_abstraction_operator(task, op, op_id)?;
+            validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
 
         let mut propositional_axioms_by_prop_var = vec![Vec::new(); task.get_num_variables()];
         for (axiom_id, axiom) in task.axioms().iter().enumerate() {
             let var_id = axiom.var_id();
             ensure!(
-                var_id < propositional_axioms_by_prop_var.len(),
+                var_id.index() < propositional_axioms_by_prop_var.len(),
                 "propositional axiom {axiom_id} affects missing prop var {var_id}"
             );
-            propositional_axioms_by_prop_var[var_id].push(axiom_id);
+            propositional_axioms_by_prop_var[var_id.index()].push(axiom_id);
         }
         let operator_costs = task
             .get_operators()
@@ -985,7 +995,9 @@ impl<'task> CartesianSemantics<'task> {
             .collect();
         let operator_count = task.get_operators().len();
         let additive_numeric_views = (0..task.numeric_variables().len())
-            .map(|numeric_var_id| analyze_additive_numeric_view(task, numeric_var_id))
+            .map(|numeric_var_id| {
+                analyze_additive_numeric_view(task, VariableIndex::from_usize(numeric_var_id))
+            })
             .collect::<Vec<_>>();
         let mut additive_effect_deltas = Vec::with_capacity(task.numeric_variables().len());
         for (numeric_var_id, variable) in task.numeric_variables().iter().enumerate() {
@@ -994,7 +1006,11 @@ impl<'task> CartesianSemantics<'task> {
                     .get_operators()
                     .iter()
                     .filter_map(|operator| {
-                        numeric_dimension_delta_for_operator(task, numeric_var_id, operator)
+                        numeric_dimension_delta_for_operator(
+                            task,
+                            VariableIndex::from_usize(numeric_var_id),
+                            operator,
+                        )
                     })
                     .collect::<Vec<_>>(),
                 NumericType::Derived => additive_numeric_views[numeric_var_id]
@@ -1003,9 +1019,9 @@ impl<'task> CartesianSemantics<'task> {
                     .unwrap_or_default(),
                 NumericType::Constant | NumericType::Cost => Vec::new(),
             };
-            deltas.retain(|delta| delta.abs() > float_tolerance::SEARCH_EPSILON);
-            deltas.sort_by(f64::total_cmp);
-            deltas.dedup_by(|left, right| approximately_equal(*left, *right));
+            deltas.retain(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON);
+            deltas.sort_by(|a, b| a.value().total_cmp(&b.value()));
+            deltas.dedup_by(|left, right| equal_nv(*left, *right));
             additive_effect_deltas.push(deltas);
         }
         let mut target_split_boundaries = task
@@ -1017,12 +1033,13 @@ impl<'task> CartesianSemantics<'task> {
                 task.get_initial_numeric_state_values()
                     .get(numeric_var_id)
                     .copied()
-                    .filter(|value| value.is_finite())
+                    .filter(|value| value.value().is_finite())
             })
-            .map(float_tolerance::canonicalize)
+            .map(float_tolerance::canonicalize_nv)
             .collect::<Vec<_>>();
-        target_split_boundaries.sort_by(f64::total_cmp);
-        target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        target_split_boundaries.sort_by(|a, b| a.value().total_cmp(&b.value()));
+        target_split_boundaries
+            .dedup_by(|left, right| left.value().to_bits() == right.value().to_bits());
         let mut prop_split_dependent_operators = (0..task.get_num_variables())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
@@ -1046,21 +1063,21 @@ impl<'task> CartesianSemantics<'task> {
             for effect in op.effects() {
                 let var_id = effect.var_id();
                 if !task.numeric_conditions().is_condition_var(var_id)
-                    && propositional_axioms_by_prop_var[var_id].is_empty()
+                    && propositional_axioms_by_prop_var[var_id.index()].is_empty()
                 {
-                    prop_dependencies[var_id] = true;
+                    prop_dependencies[var_id.index()] = true;
                 }
             }
             for effect in op.assignment_effects() {
                 let var_id = effect.affected_var_id();
-                if task.numeric_variables()[var_id].get_type() == &NumericType::Regular {
-                    numeric_dependencies[var_id] = true;
+                if task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular {
+                    numeric_dependencies[var_id.index()] = true;
                 }
             }
             for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
                 if view.as_ref().is_some_and(|view| {
-                    view.operator_delta(op_id)
-                        .is_ok_and(|delta| delta.abs() > float_tolerance::SEARCH_EPSILON)
+                    view.operator_delta(OperatorIndex::from_usize(op_id))
+                        .is_ok_and(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON)
                 }) {
                     numeric_dependencies[numeric_var_id] = true;
                 }
@@ -1072,12 +1089,13 @@ impl<'task> CartesianSemantics<'task> {
             );
             for (var_id, depends) in prop_dependencies.into_iter().enumerate() {
                 if depends {
-                    prop_split_dependent_operators[var_id].insert(op_id);
+                    prop_split_dependent_operators[var_id].insert(OperatorIndex::from_usize(op_id));
                 }
             }
             for (var_id, depends) in numeric_dependencies.into_iter().enumerate() {
                 if depends {
-                    numeric_split_dependent_operators[var_id].insert(op_id);
+                    numeric_split_dependent_operators[var_id]
+                        .insert(OperatorIndex::from_usize(op_id));
                 }
             }
         }
@@ -1099,19 +1117,19 @@ impl<'task> CartesianSemantics<'task> {
         let initial_numeric = task.get_initial_numeric_state_values();
         let mut numeric_integer_lattice = initial_numeric
             .iter()
-            .map(|&value| approximately_equal(value, value.round()))
+            .map(|&value| equal(value.value(), value.value().round()))
             .collect::<Vec<_>>();
         for op in task.get_operators() {
             for effect in op.assignment_effects() {
-                let rhs = initial_numeric[effect.var_id()];
+                let rhs = initial_numeric[effect.var_id().index()];
                 let preserves_integers = match effect.operation() {
                     AssignmentOperation::Plus
                     | AssignmentOperation::Minus
                     | AssignmentOperation::Assign
-                    | AssignmentOperation::Times => approximately_equal(rhs, rhs.round()),
-                    AssignmentOperation::Divide => approximately_equal(rhs.abs(), 1.0),
+                    | AssignmentOperation::Times => equal(rhs.value(), rhs.value().round()),
+                    AssignmentOperation::Divide => equal(rhs.value().abs(), 1.0),
                 };
-                numeric_integer_lattice[effect.affected_var_id()] &= preserves_integers;
+                numeric_integer_lattice[effect.affected_var_id().index()] &= preserves_integers;
             }
         }
         for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
@@ -1120,10 +1138,10 @@ impl<'task> CartesianSemantics<'task> {
             };
             let initial_value = view.evaluate(initial_numeric);
             numeric_integer_lattice[numeric_var_id] =
-                approximately_equal(initial_value, initial_value.round())
+                equal(initial_value.value(), initial_value.value().round())
                     && (0..operator_count).all(|op_id| {
-                        view.operator_delta(op_id)
-                            .is_ok_and(|delta| approximately_equal(delta, delta.round()))
+                        view.operator_delta(OperatorIndex::from_usize(op_id))
+                            .is_ok_and(|delta| equal(delta.value(), delta.value().round()))
                     });
         }
         Ok(Self {
@@ -1202,14 +1220,18 @@ impl<'task> CartesianSemantics<'task> {
             .gen_range(0..candidate_count)
     }
 
-    fn operator_depends_on_split(&self, op_id: usize, dimension: SplitDimension) -> bool {
+    fn operator_depends_on_split(&self, op_id: OperatorIndex, dimension: SplitDimension) -> bool {
         self.split_dependent_operators(dimension).contains(op_id)
     }
 
     fn split_dependent_operators(&self, dimension: SplitDimension) -> &OperatorBitSet {
         match dimension {
-            SplitDimension::Propositional(var_id) => &self.prop_split_dependent_operators[var_id],
-            SplitDimension::Numeric(var_id) => &self.numeric_split_dependent_operators[var_id],
+            SplitDimension::Propositional(var_id) => {
+                &self.prop_split_dependent_operators[var_id.index()]
+            }
+            SplitDimension::Numeric(var_id) => {
+                &self.numeric_split_dependent_operators[var_id.index()]
+            }
         }
     }
 
@@ -1221,11 +1243,11 @@ impl<'task> CartesianSemantics<'task> {
     ) -> bool {
         match dimension {
             SplitDimension::Propositional(var_id) => sorted_value_sets_overlap(
-                &source.propositions()[var_id],
-                &target.propositions()[var_id],
+                &source.propositions()[var_id.index()],
+                &target.propositions()[var_id.index()],
             ),
             SplitDimension::Numeric(var_id) => {
-                source.numeric[var_id].intersects(&target.numeric[var_id])
+                source.numeric[var_id.index()].intersects(&target.numeric[var_id.index()])
             }
         }
     }
@@ -1233,7 +1255,7 @@ impl<'task> CartesianSemantics<'task> {
     fn may_transition_after_independent_split(
         &self,
         source: &StateRegion,
-        op_id: usize,
+        op_id: OperatorIndex,
         target: &StateRegion,
         dimension: SplitDimension,
     ) -> Result<bool> {
@@ -1253,14 +1275,14 @@ impl<'task> CartesianSemantics<'task> {
             .map(|var_id| {
                 let size = self
                     .task
-                    .get_variable_domain_size(var_id)
+                    .get_variable_domain_size(VariableIndex::from_usize(var_id))
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
                 ensure!(size > 0, "propositional var {var_id} has an empty domain");
                 ensure!(
                     u32::try_from(size).is_ok(),
                     "propositional var {var_id} domain is too large: {size}"
                 );
-                Ok((0..size as PropValueId).collect())
+                Ok((0..size as u32).map(ExplicitValueIndex::new).collect())
             })
             .collect::<Result<Vec<_>>>()?;
         let initial_numeric = self.task.get_initial_numeric_state_values();
@@ -1271,7 +1293,7 @@ impl<'task> CartesianSemantics<'task> {
             .enumerate()
             .map(|(var_id, var)| {
                 if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
+                    Interval::singleton(float_tolerance::canonicalize_nv(initial_numeric[var_id]))
                 } else {
                     Interval::unbounded()
                 }
@@ -1297,7 +1319,7 @@ impl<'task> CartesianSemantics<'task> {
         fact: &ExplicitFact,
         visiting: &mut [bool],
     ) -> Result<bool> {
-        let var_id = fact.var();
+        let var_id = fact.var_index();
         if let Some(axiom_id) = self.task.numeric_conditions().id_for_var(var_id) {
             let (may_true, may_false) = self.comparison_truths(region, axiom_id)?;
             return Ok(match fact.value() {
@@ -1307,16 +1329,16 @@ impl<'task> CartesianSemantics<'task> {
                 value => bail!("invalid comparison proposition value {value} for var {var_id}"),
             });
         }
-        if !self.propositional_axioms_by_prop_var[var_id].is_empty() {
+        if !self.propositional_axioms_by_prop_var[var_id.index()].is_empty() {
             ensure!(
-                !visiting[var_id],
+                !visiting[var_id.index()],
                 "cyclic propositional axiom support for variable {var_id}"
             );
-            visiting[var_id] = true;
+            visiting[var_id.index()] = true;
             let result = (|| {
-                let default_value = self.propositional_axiom_default(var_id)?;
-                if fact.value() == default_value {
-                    for &axiom_id in &self.propositional_axioms_by_prop_var[var_id] {
+                let default_value = self.propositional_axiom_default(var_id.index())?;
+                if fact.value_index() == default_value {
+                    for &axiom_id in &self.propositional_axioms_by_prop_var[var_id.index()] {
                         let axiom = &self.task.axioms()[axiom_id];
                         if self.all_conditions_guaranteed(region, axiom.conditions(), visiting)? {
                             return Ok(false);
@@ -1325,9 +1347,9 @@ impl<'task> CartesianSemantics<'task> {
                     return Ok(true);
                 }
 
-                for &axiom_id in &self.propositional_axioms_by_prop_var[var_id] {
+                for &axiom_id in &self.propositional_axioms_by_prop_var[var_id.index()] {
                     let axiom = &self.task.axioms()[axiom_id];
-                    if axiom.effect_value() == fact.value()
+                    if axiom.effect_value() == fact.value_index()
                         && self.all_conditions_admitted(region, axiom.conditions(), visiting)?
                     {
                         return Ok(true);
@@ -1335,13 +1357,13 @@ impl<'task> CartesianSemantics<'task> {
                 }
                 Ok(false)
             })();
-            visiting[var_id] = false;
+            visiting[var_id.index()] = false;
             return result;
         }
         Ok(region
             .propositions()
-            .get(var_id)
-            .is_some_and(|values| values.binary_search(&(fact.value() as u32)).is_ok()))
+            .get(var_id.index())
+            .is_some_and(|values| values.binary_search(&(fact.value_index())).is_ok()))
     }
 
     fn region_guarantees_fact(&self, region: &StateRegion, fact: &ExplicitFact) -> Result<bool> {
@@ -1355,7 +1377,7 @@ impl<'task> CartesianSemantics<'task> {
         fact: &ExplicitFact,
         visiting: &mut [bool],
     ) -> Result<bool> {
-        let var_id = fact.var();
+        let var_id = fact.var_index();
         if let Some(axiom_id) = self.task.numeric_conditions().id_for_var(var_id) {
             let (may_true, may_false) = self.comparison_truths(region, axiom_id)?;
             return Ok(match fact.value() {
@@ -1365,16 +1387,16 @@ impl<'task> CartesianSemantics<'task> {
                 value => bail!("invalid comparison proposition value {value} for var {var_id}"),
             });
         }
-        if !self.propositional_axioms_by_prop_var[var_id].is_empty() {
+        if !self.propositional_axioms_by_prop_var[var_id.index()].is_empty() {
             ensure!(
-                !visiting[var_id],
+                !visiting[var_id.index()],
                 "cyclic propositional axiom support for variable {var_id}"
             );
-            visiting[var_id] = true;
+            visiting[var_id.index()] = true;
             let result = (|| {
-                let default_value = self.propositional_axiom_default(var_id)?;
-                if fact.value() == default_value {
-                    for &axiom_id in &self.propositional_axioms_by_prop_var[var_id] {
+                let default_value = self.propositional_axiom_default(var_id.index())?;
+                if fact.value_index() == default_value {
+                    for &axiom_id in &self.propositional_axioms_by_prop_var[var_id.index()] {
                         let axiom = &self.task.axioms()[axiom_id];
                         if self.all_conditions_admitted(region, axiom.conditions(), visiting)? {
                             return Ok(false);
@@ -1383,9 +1405,9 @@ impl<'task> CartesianSemantics<'task> {
                     return Ok(true);
                 }
 
-                for &axiom_id in &self.propositional_axioms_by_prop_var[var_id] {
+                for &axiom_id in &self.propositional_axioms_by_prop_var[var_id.index()] {
                     let axiom = &self.task.axioms()[axiom_id];
-                    if axiom.effect_value() == fact.value()
+                    if axiom.effect_value() == fact.value_index()
                         && self.all_conditions_guaranteed(region, axiom.conditions(), visiting)?
                     {
                         return Ok(true);
@@ -1393,13 +1415,13 @@ impl<'task> CartesianSemantics<'task> {
                 }
                 Ok(false)
             })();
-            visiting[var_id] = false;
+            visiting[var_id.index()] = false;
             return result;
         }
-        let Some(values) = region.propositions().get(var_id) else {
+        let Some(values) = region.propositions().get(var_id.index()) else {
             return Ok(false);
         };
-        Ok(values.len() == 1 && values[0] == fact.value() as u32)
+        Ok(values.len() == 1 && values[0] == fact.value_index())
     }
 
     fn all_conditions_admitted(
@@ -1430,7 +1452,7 @@ impl<'task> CartesianSemantics<'task> {
         Ok(true)
     }
 
-    fn propositional_axiom_default(&self, var_id: usize) -> Result<usize> {
+    fn propositional_axiom_default(&self, var_id: usize) -> Result<ExplicitValueIndex> {
         let axiom_ids = self
             .propositional_axioms_by_prop_var
             .get(var_id)
@@ -1465,11 +1487,11 @@ impl<'task> CartesianSemantics<'task> {
         })
     }
 
-    fn operator_may_apply(&self, source: &StateRegion, op_id: usize) -> Result<bool> {
+    fn operator_may_apply(&self, source: &StateRegion, op_id: OperatorIndex) -> Result<bool> {
         let op = self
             .task
             .get_operators()
-            .get(op_id)
+            .get(op_id.index())
             .with_context(|| format!("missing operator {op_id}"))?;
         for fact in op.preconditions() {
             if !self.region_admits_fact(source, fact)? {
@@ -1482,45 +1504,45 @@ impl<'task> CartesianSemantics<'task> {
     fn propositional_dimension_may_transition(
         &self,
         source: &StateRegion,
-        op_id: usize,
+        op_id: OperatorIndex,
         target: &StateRegion,
-        var_id: usize,
+        var_id: VariableIndex,
     ) -> bool {
         debug_assert!(
             !self.task.numeric_conditions().is_condition_var(var_id)
-                && self.propositional_axioms_by_prop_var[var_id].is_empty(),
+                && self.propositional_axioms_by_prop_var[var_id.index()].is_empty(),
             "derived proposition {var_id} has no explicit transition relation"
         );
-        let op = &self.task.get_operators()[op_id];
+        let op = &self.task.get_operators()[op_id.index()];
         if let Some(effect) = op.effects().iter().find(|effect| effect.var_id() == var_id) {
             debug_assert!(
                 effect.conditions().is_empty(),
                 "validated Cartesian operator {op_id} has a conditional effect"
             );
-            return target.propositions()[var_id]
-                .binary_search(&(effect.value() as PropValueId))
+            return target.propositions()[var_id.index()]
+                .binary_search(&(effect.value() as ExplicitValueIndex))
                 .is_ok();
         }
         if matches!(self.split_selection, CartesianSplitSelection::Icaps26(_))
             && let Some(precondition) = op
                 .preconditions()
                 .iter()
-                .find(|precondition| precondition.var() == var_id)
+                .find(|precondition| precondition.var_index() == var_id)
         {
-            return target.propositions()[var_id]
-                .binary_search(&(precondition.value() as PropValueId))
+            return target.propositions()[var_id.index()]
+                .binary_search(&(precondition.value_index()))
                 .is_ok();
         }
         sorted_value_sets_overlap(
-            &source.propositions()[var_id],
-            &target.propositions()[var_id],
+            &source.propositions()[var_id.index()],
+            &target.propositions()[var_id.index()],
         )
     }
 
     fn split_dimension_may_transition(
         &self,
         source: &StateRegion,
-        op_id: usize,
+        op_id: OperatorIndex,
         target: &StateRegion,
         dimension: SplitDimension,
     ) -> Result<bool> {
@@ -1529,9 +1551,9 @@ impl<'task> CartesianSemantics<'task> {
                 self.propositional_dimension_may_transition(source, op_id, target, var_id)
             }
             SplitDimension::Numeric(var_id) => self.numeric_dimension_may_transition(
-                source.numeric[var_id],
+                source.numeric[var_id.index()],
                 op_id,
-                target.numeric[var_id],
+                target.numeric[var_id.index()],
                 var_id,
             )?,
         })
@@ -1540,9 +1562,9 @@ impl<'task> CartesianSemantics<'task> {
     fn numeric_dimension_may_transition(
         &self,
         source: Interval,
-        op_id: usize,
+        op_id: OperatorIndex,
         target: Interval,
-        var_id: usize,
+        var_id: VariableIndex,
     ) -> Result<bool> {
         let Some(preimage) = self.numeric_effect_preimage(target, op_id, var_id)? else {
             return Ok(false);
@@ -1555,14 +1577,18 @@ impl<'task> CartesianSemantics<'task> {
         Ok(!source.is_empty() && preimage.intersects(&source))
     }
 
-    fn icaps_numeric_precondition(&self, op_id: usize, var_id: usize) -> Result<Interval> {
+    fn icaps_numeric_precondition(
+        &self,
+        op_id: OperatorIndex,
+        var_id: VariableIndex,
+    ) -> Result<Interval> {
         let mut interval = Interval::unbounded();
-        for fact in self.task.get_operators()[op_id].preconditions() {
-            let Some(tree_id) = self.task.numeric_conditions().id_for_var(fact.var()) else {
+        for fact in self.task.get_operators()[op_id.index()].preconditions() {
+            let Some(tree_id) = self.task.numeric_conditions().id_for_var(fact.var_index()) else {
                 continue;
             };
             let (condition_var_id, condition) =
-                desired_comparison_interval(self, tree_id, fact.value())?;
+                desired_comparison_interval(self, tree_id, fact.value_index())?;
             if condition_var_id == var_id {
                 interval = interval.intersection(&condition);
             }
@@ -1573,7 +1599,7 @@ impl<'task> CartesianSemantics<'task> {
     fn parent_loop_source_to_split_children(
         &self,
         source: &StateRegion,
-        op_id: usize,
+        op_id: OperatorIndex,
         targets: [&StateRegion; 2],
         dimension: SplitDimension,
     ) -> Result<[bool; 2]> {
@@ -1599,19 +1625,27 @@ impl<'task> CartesianSemantics<'task> {
     fn may_transition(
         &self,
         source: &StateRegion,
-        op_id: usize,
+        op_id: OperatorIndex,
         target: &StateRegion,
     ) -> Result<bool> {
         if !self.operator_may_apply(source, op_id)? {
             return Ok(false);
         }
         for var_id in 0..self.task.get_num_variables() {
-            if self.task.numeric_conditions().is_condition_var(var_id)
+            if self
+                .task
+                .numeric_conditions()
+                .is_condition_var(VariableIndex::from_usize(var_id))
                 || !self.propositional_axioms_by_prop_var[var_id].is_empty()
             {
                 continue;
             }
-            if !self.propositional_dimension_may_transition(source, op_id, target, var_id) {
+            if !self.propositional_dimension_may_transition(
+                source,
+                op_id,
+                target,
+                VariableIndex::from_usize(var_id),
+            ) {
                 return Ok(false);
             }
         }
@@ -1628,7 +1662,7 @@ impl<'task> CartesianSemantics<'task> {
                         source.numeric[numeric_var_id],
                         op_id,
                         target.numeric[numeric_var_id],
-                        numeric_var_id,
+                        VariableIndex::from_usize(numeric_var_id),
                     )? {
                         return Ok(false);
                     }
@@ -1639,7 +1673,7 @@ impl<'task> CartesianSemantics<'task> {
                             source.numeric[numeric_var_id],
                             op_id,
                             target.numeric[numeric_var_id],
-                            numeric_var_id,
+                            VariableIndex::from_usize(numeric_var_id),
                         )?
                     {
                         return Ok(false);
@@ -1654,24 +1688,24 @@ impl<'task> CartesianSemantics<'task> {
     fn numeric_effect_preimage(
         &self,
         target: Interval,
-        op_id: usize,
-        numeric_var_id: usize,
+        op_id: OperatorIndex,
+        numeric_var_id: VariableIndex,
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
-        if let Some(view) = self.additive_numeric_views[numeric_var_id].as_ref() {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+        if let Some(view) = self.additive_numeric_views[numeric_var_id.index()].as_ref() {
+            let delta = float_tolerance::canonicalize_nv(view.operator_delta(op_id)?);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
         }
-        let op = &self.task.get_operators()[op_id];
+        let op = &self.task.get_operators()[op_id.index()];
         for effect in op
             .assignment_effects()
             .iter()
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
             .rev()
         {
-            let rhs = float_tolerance::canonicalize(
-                self.task.get_initial_numeric_state_values()[effect.var_id()],
+            let rhs = float_tolerance::canonicalize_nv(
+                self.task.get_initial_numeric_state_values()[effect.var_id().index()],
             );
             match effect.operation() {
                 AssignmentOperation::Assign => {
@@ -1689,8 +1723,8 @@ impl<'task> CartesianSemantics<'task> {
                         .apply_reverse_op(&AssignmentOperation::Minus, &Interval::singleton(rhs));
                 }
                 AssignmentOperation::Times => {
-                    if rhs == 0.0 {
-                        if !preimage.contains(0.0) {
+                    if rhs == ZERO_VALUE {
+                        if !preimage.contains(ZERO_VALUE) {
                             return Ok(None);
                         }
                         preimage = Interval::unbounded();
@@ -1714,7 +1748,7 @@ impl<'task> CartesianSemantics<'task> {
     fn operator_region_source_for_transition(
         &self,
         source: &StateRegion,
-        op_id: usize,
+        op_id: OperatorIndex,
         target: &StateRegion,
     ) -> Result<Option<StateRegion>> {
         debug_assert_eq!(
@@ -1734,7 +1768,7 @@ impl<'task> CartesianSemantics<'task> {
                     let Some(preimage) = self.numeric_effect_preimage(
                         target.numeric[numeric_var_id],
                         op_id,
-                        numeric_var_id,
+                        VariableIndex::from_usize(numeric_var_id),
                     )?
                     else {
                         return Ok(None);
@@ -1755,7 +1789,7 @@ impl<'task> CartesianSemantics<'task> {
                         .numeric_effect_preimage(
                             target.numeric[numeric_var_id],
                             op_id,
-                            numeric_var_id,
+                            VariableIndex::from_usize(numeric_var_id),
                         )?
                         .expect("additive-view preimage is always defined");
                     let regressed = source.numeric[numeric_var_id].intersection(&preimage);
@@ -1781,10 +1815,16 @@ impl<'task> CartesianSemantics<'task> {
         Ok(true)
     }
 
-    fn concrete_prop_values(&self, packer: &StatePacker, packed: &[u64], out: &mut Vec<usize>) {
+    fn concrete_prop_values(
+        &self,
+        packer: &StatePacker,
+        packed: &[u64],
+        out: &mut Vec<ExplicitValueIndex>,
+    ) {
         out.clear();
         out.extend(
-            (0..self.task.get_num_variables()).map(|var_id| packer.get(packed, var_id) as usize),
+            (0..self.task.get_num_variables())
+                .map(|var_id| ExplicitValueIndex::from_usize(packer.get(packed, var_id) as usize)),
         );
     }
 }
@@ -1829,8 +1869,12 @@ impl CartesianAbstractionGenerator {
             WorkingAbstraction::new(initial_region, operator_count)
         };
         for op_id in 0..task.get_operators().len() {
-            if semantics.may_transition(&working.states[0], op_id, &working.states[0])? {
-                working.add_transition(0, op_id, 0);
+            if semantics.may_transition(
+                &working.states[0],
+                OperatorIndex::from_usize(op_id),
+                &working.states[0],
+            )? {
+                working.add_transition(0, OperatorIndex::from_usize(op_id), 0);
             }
         }
         let state_packer = Arc::new(make_prop_state_packer(task));
@@ -2801,17 +2845,20 @@ fn initial_cartesian_concrete_state(
 fn replay_cartesian_operator_sequence(
     task: &dyn AbstractNumericTask,
     root: &CartesianConcreteState,
-    operator_ids: &[usize],
+    operator_ids: &[OperatorIndex],
 ) -> Result<CartesianConcreteState> {
     let state_packer = Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
     let mut next = root.clone();
     for (step, &operator_id) in operator_ids.iter().enumerate() {
-        let operator = task.get_operators().get(operator_id).with_context(|| {
-            format!("progressive Cartesian plan step {step} has invalid operator {operator_id}")
-        })?;
+        let operator = task
+            .get_operators()
+            .get(operator_id.index())
+            .with_context(|| {
+                format!("progressive Cartesian plan step {step} has invalid operator {operator_id}")
+            })?;
         ensure!(
-            operator.preconditions().iter().all(|fact| fact_is_hold(
+            operator.preconditions().iter().all(|fact| fact_is_held(
                 fact,
                 &state_packer,
                 &next.propositions
@@ -2843,7 +2890,7 @@ fn count_satisfied_cartesian_goals(
     );
     Ok((0..task.get_num_goals())
         .filter(|&goal_id| {
-            fact_is_hold(
+            fact_is_held(
                 task.get_goal_fact(goal_id),
                 &state_packer,
                 &state.propositions,
@@ -2869,7 +2916,7 @@ fn cartesian_goal_is_satisfied(
         "Cartesian goal id {goal_id} exceeds {} goals",
         task.get_num_goals()
     );
-    Ok(fact_is_hold(
+    Ok(fact_is_held(
         task.get_goal_fact(goal_id),
         &state_packer,
         &state.propositions,
@@ -2939,17 +2986,17 @@ fn icaps26_swap_remove_arc(adjacency: &mut Vec<usize>, transition_id: usize) {
 fn add_icaps26_propositional_loop_replacements(
     working: &mut WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
-    op_id: usize,
-    var_id: usize,
+    op_id: OperatorIndex,
+    var_id: VariableIndex,
     old_state_id: usize,
     new_state_id: usize,
 ) {
-    let op = &semantics.task.get_operators()[op_id];
-    let pre = op
+    let op = &semantics.task.get_operators()[op_id.index()];
+    let pre: Option<ExplicitValueIndex> = op
         .preconditions()
         .iter()
-        .find(|fact| fact.var() == var_id)
-        .map(ExplicitFact::value);
+        .find(|fact| fact.var_index() == var_id)
+        .map(ExplicitFact::value_index);
     let effect = op
         .effects()
         .iter()
@@ -2957,8 +3004,8 @@ fn add_icaps26_propositional_loop_replacements(
         .map(|effect| effect.value());
     let post = effect.or(pre);
     let old_contains = |value: usize| {
-        working.states[old_state_id].propositions()[var_id]
-            .binary_search(&(value as PropValueId))
+        working.states[old_state_id].propositions()[var_id.index()]
+            .binary_search(&ExplicitValueIndex::from_usize(value))
             .is_ok()
     };
 
@@ -2967,24 +3014,24 @@ fn add_icaps26_propositional_loop_replacements(
             working.add_transition(old_state_id, op_id, old_state_id);
             working.add_transition(new_state_id, op_id, new_state_id);
         }
-        (None, Some(post)) if !old_contains(post) => {
+        (None, Some(post)) if !old_contains(post.index()) => {
             working.add_transition(old_state_id, op_id, new_state_id);
             working.add_transition(new_state_id, op_id, new_state_id);
         }
         (None, Some(post)) => {
-            assert!(old_contains(post));
+            assert!(old_contains(post.index()));
             working.add_transition(old_state_id, op_id, old_state_id);
             working.add_transition(new_state_id, op_id, old_state_id);
         }
-        (Some(pre), Some(post)) if old_contains(pre) => {
-            if old_contains(post) {
+        (Some(pre), Some(post)) if old_contains(pre.index()) => {
+            if old_contains(post.index()) {
                 working.add_transition(old_state_id, op_id, old_state_id);
             } else {
                 working.add_transition(old_state_id, op_id, new_state_id);
             }
         }
         (Some(_), Some(post)) => {
-            if old_contains(post) {
+            if old_contains(post.index()) {
                 working.add_transition(new_state_id, op_id, old_state_id);
             } else {
                 working.add_transition(new_state_id, op_id, new_state_id);
@@ -3000,7 +3047,7 @@ fn apply_icaps26_transition_split(
     old_state_id: usize,
     new_state_id: usize,
     split_dimension: SplitDimension,
-    old_loop_order: Vec<usize>,
+    old_loop_order: Vec<OperatorIndex>,
 ) -> Result<()> {
     let old_incoming = std::mem::take(&mut working.incoming[old_state_id]);
     for transition_id in old_incoming {
@@ -3106,7 +3153,7 @@ impl WorkingAbstraction {
             } => {
                 let current = old_region
                     .propositions()
-                    .get(var_id)
+                    .get(var_id.index())
                     .with_context(|| format!("split references missing prop var {var_id}"))?;
                 let wanted_child_values: Vec<_> = current
                     .iter()
@@ -3127,7 +3174,7 @@ impl WorkingAbstraction {
                 wanted_region.narrow_prop(var_id, wanted_child_values);
                 let mut other_region = old_region.clone();
                 other_region.narrow_prop(var_id, other_child_values);
-                working.propositional_refinement_counts[var_id] += 1;
+                working.propositional_refinement_counts[var_id.index()] += 1;
                 working.hierarchy.split_propositional(
                     leaf_node_id,
                     old_state_id,
@@ -3150,7 +3197,7 @@ impl WorkingAbstraction {
                 integer_lattice,
                 ..
             } => {
-                let parent = old_region.numeric[var_id];
+                let parent = old_region.numeric[var_id.index()];
                 let (lower, upper) = numeric_split_intervals(
                     parent,
                     boundary,
@@ -3163,10 +3210,10 @@ impl WorkingAbstraction {
                     "numeric split does not place witness {witness_value} in exactly one child"
                 );
                 let mut lower_region = old_region.clone();
-                Arc::make_mut(&mut lower_region.numeric)[var_id] = lower;
+                Arc::make_mut(&mut lower_region.numeric)[var_id.index()] = lower;
                 let mut upper_region = old_region.clone();
-                Arc::make_mut(&mut upper_region.numeric)[var_id] = upper;
-                working.numeric_refinement_counts[var_id] += 1;
+                Arc::make_mut(&mut upper_region.numeric)[var_id.index()] = upper;
+                working.numeric_refinement_counts[var_id.index()] += 1;
                 working.hierarchy.split_numeric(
                     leaf_node_id,
                     old_state_id,
@@ -3318,8 +3365,8 @@ impl WorkingAbstraction {
 pub struct CartesianAbstractionHeuristic {
     name: String,
     abstraction: CartesianAbstraction,
-    prop_scratch: std::cell::RefCell<Vec<usize>>,
-    numeric_scratch: std::cell::RefCell<Vec<f64>>,
+    prop_scratch: std::cell::RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: std::cell::RefCell<Vec<NumericValue>>,
 }
 
 impl CartesianAbstractionHeuristic {

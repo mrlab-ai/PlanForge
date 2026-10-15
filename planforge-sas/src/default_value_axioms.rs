@@ -35,7 +35,9 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::axioms::PropositionalAxiom;
-use crate::numeric_task::{AbstractNumericTask, ExplicitFact};
+use crate::numeric_task::{
+    AbstractNumericTask, AxiomIndex, ExplicitFact, ExplicitValueIndex, VariableIndex,
+};
 use crate::utils::scc::Scc;
 
 /// How exactly to describe a derived variable's default value.
@@ -61,7 +63,7 @@ pub enum DefaultValueAxiomMode {
 /// the sense that matters here: nothing has to explain how it becomes false.
 struct DerivedVariables {
     is_derived: Vec<bool>,
-    default_value: Vec<usize>,
+    default_value: Vec<ExplicitValueIndex>,
 }
 
 impl DerivedVariables {
@@ -70,24 +72,25 @@ impl DerivedVariables {
         let num_variables = task.get_num_variables();
         let mut is_derived = Vec::with_capacity(num_variables);
         let mut default_value = Vec::with_capacity(num_variables);
-        for var in 0..num_variables {
+        for var in 0..num_variables as u32 {
+            let var_index = VariableIndex::new(var);
             let layer = task
-                .get_variable_axiom_layer(var)
+                .get_variable_axiom_layer(var_index)
                 .expect("variable id below the variable count is in bounds");
-            let derived = layer.is_some() && !conditions.is_condition_var(var);
+            let derived = layer.is_some() && !conditions.is_condition_var(var_index);
             if derived {
                 // The negation is stated as one rule per default value, and
                 // `other_value` needs the complement to be unique, so a derived
                 // variable that is not binary would have no single answer.
                 assert_eq!(
-                    task.get_variable_domain_size(var),
+                    task.get_variable_domain_size(var_index),
                     Ok(2),
                     "derived variable {var} is not binary, so it has no single default-value rule"
                 );
             }
             is_derived.push(derived);
             default_value.push(
-                task.get_variable_default_axiom_value(var)
+                task.get_variable_default_axiom_value(var_index)
                     .expect("variable id below the variable count is in bounds"),
             );
         }
@@ -100,13 +103,13 @@ impl DerivedVariables {
     /// Whether `fact` reads a derived variable at its default value, or `None`
     /// when the variable is not derived.
     fn reads_default(&self, fact: &ExplicitFact) -> Option<bool> {
-        self.is_derived[fact.var()].then(|| fact.value() == self.default_value[fact.var()])
+        self.is_derived[fact.var()].then(|| fact.value() == self.default_value[fact.var()].index())
     }
 }
 
 /// The value a binary derived variable holds when it is not at `value`.
-fn other_value(value: usize) -> usize {
-    1 - value
+fn other_value(value: ExplicitValueIndex) -> ExplicitValueIndex {
+    ExplicitValueIndex::new(1 - value.index() as u32)
 }
 
 /// Which derived variables the body of a proving rule reads, split by whether it
@@ -115,9 +118,9 @@ fn other_value(value: usize) -> usize {
 /// The vectors are indexed by variable id over *all* propositional variables;
 /// only the derived entries are ever non-empty.
 struct Dependencies {
-    nondefault: Vec<Vec<usize>>,
-    default: Vec<Vec<usize>>,
-    proving_axioms: Vec<Vec<usize>>,
+    nondefault: Vec<Vec<VariableIndex>>,
+    default: Vec<Vec<VariableIndex>>,
+    proving_axioms: Vec<Vec<AxiomIndex>>,
 }
 
 impl Dependencies {
@@ -131,20 +134,24 @@ impl Dependencies {
         for (axiom_id, axiom) in task.axioms().iter().enumerate() {
             let head = axiom.var_id();
             assert!(
-                derived.is_derived[head],
-                "axiom {axiom_id} writes variable {head}, which is not a derived variable"
+                derived.is_derived[head.index()],
+                "axiom {axiom_id} writes variable {}, which is not a derived variable",
+                head.index()
             );
             assert_ne!(
                 axiom.effect_value(),
-                derived.default_value[head],
-                "axiom {axiom_id} sets derived variable {head} to its default value; the rules \
-                 that do that are computed here and must not already be in the task"
+                derived.default_value[head.index()],
+                "axiom {axiom_id} sets derived variable {} to its default value; the rules \
+                 that do that are computed here and must not already be in the task",
+                head.index()
             );
-            dependencies.proving_axioms[head].push(axiom_id);
+            dependencies.proving_axioms[head.index()].push(AxiomIndex::new(axiom_id as u32));
             for condition in axiom.conditions() {
                 match derived.reads_default(condition) {
-                    Some(true) => dependencies.default[head].push(condition.var()),
-                    Some(false) => dependencies.nondefault[head].push(condition.var()),
+                    Some(true) => dependencies.default[head.index()].push(condition.var_index()),
+                    Some(false) => {
+                        dependencies.nondefault[head.index()].push(condition.var_index())
+                    }
                     None => (),
                 }
             }
@@ -181,9 +188,9 @@ pub fn default_value_axioms(
 
     let mut axioms = Vec::new();
     for var in needed {
-        let default_value = derived.default_value[var];
+        let default_value = derived.default_value[var.index()];
         let precondition_value = other_value(default_value);
-        if refuted_unconditionally[var] {
+        if refuted_unconditionally[var.index()] {
             axioms.push(PropositionalAxiom::new(
                 Vec::new(),
                 var,
@@ -192,7 +199,7 @@ pub fn default_value_axioms(
             ));
             continue;
         }
-        for body in refuting_bodies(task, &dependencies.proving_axioms[var]) {
+        for body in refuting_bodies(task, &dependencies.proving_axioms[var.index()]) {
             axioms.push(PropositionalAxiom::new(
                 body.into_iter().collect(),
                 var,
@@ -255,16 +262,16 @@ fn relevant_default_values(
     derived: &DerivedVariables,
     dependencies: &Dependencies,
     refuted_unconditionally: &[bool],
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     // `(variable, wants the default value)`, the pairs whose achievability some
     // consumer asks about.
-    let mut needed: BTreeSet<(usize, bool)> = BTreeSet::new();
-    let mut queue: VecDeque<(usize, bool)> = VecDeque::new();
+    let mut needed: BTreeSet<(VariableIndex, bool)> = BTreeSet::new();
+    let mut queue: VecDeque<(VariableIndex, bool)> = VecDeque::new();
     let require = |fact: &ExplicitFact,
-                   needed: &mut BTreeSet<(usize, bool)>,
-                   queue: &mut VecDeque<(usize, bool)>| {
+                   needed: &mut BTreeSet<(VariableIndex, bool)>,
+                   queue: &mut VecDeque<(VariableIndex, bool)>| {
         if let Some(wants_default) = derived.reads_default(fact) {
-            let entry = (fact.var(), wants_default);
+            let entry = (fact.var_index(), wants_default);
             if needed.insert(entry) {
                 queue.push_back(entry);
             }
@@ -293,16 +300,16 @@ fn relevant_default_values(
     while let Some((var, wants_default)) = queue.pop_front() {
         // A default value described by the empty body depends on nothing, so
         // asking for it asks for nothing else.
-        if wants_default && refuted_unconditionally[var] {
+        if wants_default && refuted_unconditionally[var.index()] {
             continue;
         }
-        for &dependency in &dependencies.nondefault[var] {
+        for &dependency in &dependencies.nondefault[var.index()] {
             let entry = (dependency, wants_default);
             if needed.insert(entry) {
                 queue.push_back(entry);
             }
         }
-        for &dependency in &dependencies.default[var] {
+        for &dependency in &dependencies.default[var.index()] {
             let entry = (dependency, !wants_default);
             if needed.insert(entry) {
                 queue.push_back(entry);
@@ -333,21 +340,24 @@ fn relevant_default_values(
 /// hitting set survives and its default holds in every state.
 fn refuting_bodies(
     task: &dyn AbstractNumericTask,
-    proving_axioms: &[usize],
+    proving_axioms: &[AxiomIndex],
 ) -> BTreeSet<BTreeSet<ExplicitFact>> {
     let conditions = task.numeric_conditions();
     let clauses: Vec<BTreeSet<ExplicitFact>> = proving_axioms
         .iter()
         .map(|&axiom_id| {
             let mut clause = BTreeSet::new();
-            for condition in task.axioms()[axiom_id].conditions() {
-                let var = condition.var();
+            for condition in task.axioms()[axiom_id.index()].conditions() {
+                let var = condition.var_index();
                 let domain_size = task
                     .get_variable_domain_size(var)
                     .expect("an axiom condition names a variable of the task");
                 for value in 0..domain_size {
                     if value != condition.value() {
-                        clause.insert(conditions.fact(var, value));
+                        clause.insert(
+                            conditions
+                                .fact_from_indexes(var, ExplicitValueIndex::new(value as u32)),
+                        );
                     }
                 }
             }

@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use ordered_float::OrderedFloat;
 use planforge_sas::axioms::ComparisonAxiom;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, Operator};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType,
+    NumericValue, Operator, VariableIndex, ZERO_VALUE,
+};
 use planforge_sas::utils::linear_effects::linearize_numeric_var;
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -19,6 +22,7 @@ use tracing::{debug, info};
 
 use crate::evaluation::abstraction_collections::portfolio::{CollectionStrategy, mix_seed};
 use crate::evaluation::abstraction_task::{AbstractionUse, SingleGoalTask};
+use crate::evaluation::domain_abstractions::abstract_operator_generator::DomainMapping;
 use crate::evaluation::domain_abstractions::cegar::FlawKind;
 
 use super::additive_numeric_views::{
@@ -37,6 +41,8 @@ use super::utils::compute_abstraction_size_u128;
 use crate::resource_limits;
 use planforge_sas::numeric_conditions::CompOp;
 use planforge_sas::utils::interval::Interval;
+
+const EPSILON: f64 = 1e-12;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -130,15 +136,15 @@ enum ComplementaryDirection {
 
 #[derive(Debug, Clone)]
 struct RootGroup {
-    numeric_var_ids: HashSet<usize>,
+    numeric_var_ids: HashSet<VariableIndex>,
 }
 
 /// Which variables one collection member may split, and where it starts.
 struct MemberVariableChoice {
-    init_split_var_ids: Option<HashSet<usize>>,
+    init_split_var_ids: Option<HashSet<VariableIndex>>,
     initial_seed_splits: Vec<InitialSeedSplit>,
-    blacklisted_prop_var_ids: HashSet<usize>,
-    blacklisted_numeric_var_ids: HashSet<usize>,
+    blacklisted_prop_var_ids: HashSet<VariableIndex>,
+    blacklisted_numeric_var_ids: HashSet<VariableIndex>,
 }
 
 /// How one collection member refines: which flaws it looks for, which way it
@@ -159,11 +165,11 @@ struct NumericRootGroupKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SeedIdentity {
     Propositional {
-        var_id: usize,
-        value: usize,
+        var_id: VariableIndex,
+        value: ExplicitValueIndex,
     },
     Numeric {
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
         value_bits: u64,
         include_in_lower: bool,
     },
@@ -760,11 +766,11 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         &self,
         task: &dyn AbstractNumericTask,
         iteration: usize,
-    ) -> Option<HashSet<usize>> {
+    ) -> Option<HashSet<VariableIndex>> {
         let candidate_var_ids =
             collect_init_split_candidate_var_ids(task, self.config.init_split_candidates);
 
-        let selected_var_ids: HashSet<usize> = match self.config.init_split_quantity {
+        let selected_var_ids: HashSet<VariableIndex> = match self.config.init_split_quantity {
             InitSplitQuantity::None => HashSet::new(),
             InitSplitQuantity::All => candidate_var_ids.iter().copied().collect(),
             InitSplitQuantity::Single => {
@@ -907,7 +913,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             let fallback = all_goal_relevant_numeric_vars(task, goal);
             if fallback.is_empty() {
                 return vec![RootGroup {
-                    numeric_var_ids: (0..task.numeric_variables().len()).collect(),
+                    numeric_var_ids: (0..task.numeric_variables().len())
+                        .map(VariableIndex::from_usize)
+                        .collect(),
                 }];
             }
             return vec![RootGroup {
@@ -921,12 +929,17 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         &self,
         task: &dyn AbstractNumericTask,
         active_root_group: Option<&RootGroup>,
-    ) -> (HashSet<usize>, HashSet<usize>) {
+    ) -> (HashSet<VariableIndex>, HashSet<VariableIndex>) {
         let Some(active_root_group) = active_root_group else {
             return (HashSet::new(), HashSet::new());
         };
         let blacklisted_numeric_var_ids = (0..task.numeric_variables().len())
-            .filter(|numeric_var_id| !active_root_group.numeric_var_ids.contains(numeric_var_id))
+            .filter(|numeric_var_id| {
+                !active_root_group
+                    .numeric_var_ids
+                    .contains(&VariableIndex::from_usize(*numeric_var_id))
+            })
+            .map(VariableIndex::from_usize)
             .collect();
         let blacklisted_prop_var_ids = task
             .comparison_axioms()
@@ -952,8 +965,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         for goal_id in 0..task.get_num_goals() {
             let goal = task.get_goal_fact(goal_id);
             seeds.push(InitialSeedSplit::Propositional {
-                var_id: goal.var(),
-                value: goal.value(),
+                var_id: goal.var_index(),
+                value: goal.value_index(),
             });
 
             for op in task
@@ -969,8 +982,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     ) {
                         let mut requirement_seeds = Vec::new();
                         add_requirement_bounds(&requirement, &mut requirement_seeds);
-                        let Some(source_value) =
-                            initial_numeric.get(requirement.numeric_var_id).copied()
+                        let Some(source_value) = initial_numeric
+                            .get(requirement.numeric_var_id.index())
+                            .copied()
                         else {
                             numeric_seed_groups.push(requirement_seeds);
                             continue;
@@ -1038,8 +1052,8 @@ fn advance_complementary_schedule(
 fn operator_has_unconditional_effect(op: &Operator, fact: &ExplicitFact) -> bool {
     op.effects().iter().any(|effect| {
         effect.conditions().is_empty()
-            && effect.var_id() == fact.var()
-            && effect.value() == fact.value()
+            && effect.var_id() == fact.var_index()
+            && effect.value() == fact.value_index()
     })
 }
 
@@ -1060,8 +1074,9 @@ fn complete_shape_root_groups(
     let mut per_achiever = Vec::with_capacity(achievers.len());
     let mut per_achiever_coarse = Vec::with_capacity(achievers.len());
     for op in achievers {
-        let mut by_shape: HashMap<NumericRootGroupKey, HashSet<usize>> = HashMap::new();
-        let mut by_coarse_shape: HashMap<Vec<OrderedFloat<f64>>, HashSet<usize>> = HashMap::new();
+        let mut by_shape: HashMap<NumericRootGroupKey, HashSet<VariableIndex>> = HashMap::new();
+        let mut by_coarse_shape: HashMap<Vec<OrderedFloat<f64>>, HashSet<VariableIndex>> =
+            HashMap::new();
         for precondition in op.preconditions() {
             for numeric_var_id in comparison_root_vars_for_fact(task, precondition) {
                 let shape = numeric_root_group_key(source_task, task, numeric_var_id)?;
@@ -1095,7 +1110,7 @@ fn complete_shape_root_groups(
         let mut ids = group.numeric_var_ids.iter().copied().collect::<Vec<_>>();
         ids.sort_unstable();
         (
-            ids.first().copied().unwrap_or(usize::MAX),
+            ids.first().copied().unwrap_or(VariableIndex::new(u32::MAX)),
             Reverse(ids.len()),
             ids,
         )
@@ -1103,7 +1118,9 @@ fn complete_shape_root_groups(
     Some(groups)
 }
 
-fn complete_groups_for_keys<K>(per_achiever: &[HashMap<K, HashSet<usize>>]) -> Vec<RootGroup>
+fn complete_groups_for_keys<K>(
+    per_achiever: &[HashMap<K, HashSet<VariableIndex>>],
+) -> Vec<RootGroup>
 where
     K: Eq + Hash,
 {
@@ -1136,7 +1153,7 @@ where
 fn all_goal_relevant_numeric_vars(
     task: &dyn AbstractNumericTask,
     goal: &ExplicitFact,
-) -> HashSet<usize> {
+) -> HashSet<VariableIndex> {
     let mut relevant = HashSet::new();
     for op in task
         .get_operators()
@@ -1153,8 +1170,8 @@ fn all_goal_relevant_numeric_vars(
 fn comparison_root_vars_for_fact(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
-) -> Vec<usize> {
-    let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
+) -> Vec<VariableIndex> {
+    let Some(tree) = task.numeric_conditions().for_var(fact.var_index()) else {
         return Vec::new();
     };
     comparison_refinement_dimensions(task, tree)
@@ -1163,7 +1180,7 @@ fn comparison_root_vars_for_fact(
 fn comparison_root_vars_for_comparison(
     task: &dyn AbstractNumericTask,
     comparison_axiom: &ComparisonAxiom,
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     comparison_root_vars_for_numeric_ids(
         task,
         [
@@ -1175,8 +1192,8 @@ fn comparison_root_vars_for_comparison(
 
 fn comparison_root_vars_for_numeric_ids(
     task: &dyn AbstractNumericTask,
-    numeric_var_ids: [usize; 2],
-) -> Vec<usize> {
+    numeric_var_ids: [VariableIndex; 2],
+) -> Vec<VariableIndex> {
     let mut roots = numeric_var_ids
         .into_iter()
         .filter(|&numeric_var_id| is_refinable_numeric_dimension(task, numeric_var_id))
@@ -1189,9 +1206,9 @@ fn comparison_root_vars_for_numeric_ids(
 fn numeric_root_group_key(
     source_task: &dyn AbstractNumericTask,
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
+    numeric_var_id: VariableIndex,
 ) -> Option<NumericRootGroupKey> {
-    let task_var = task.numeric_variables().get(numeric_var_id)?;
+    let task_var = task.numeric_variables().get(numeric_var_id.index())?;
     if let Some(shape) = restricted_shape_key(task_var.name()) {
         return Some(NumericRootGroupKey {
             coefficient_shape: shape,
@@ -1203,13 +1220,15 @@ fn numeric_root_group_key(
         .numeric_variables()
         .iter()
         .position(|var| var.name() == task_var.name())
-        .and_then(|source_var_id| linearize_numeric_var(source_task, source_var_id).ok())
+        .and_then(|source_var_id| {
+            linearize_numeric_var(source_task, VariableIndex::from_usize(source_var_id)).ok()
+        })
         .or_else(|| linearize_numeric_var(task, numeric_var_id).ok())?;
     let mut coefficients = expr
         .coefficients
         .iter()
         .copied()
-        .filter(|coefficient| coefficient.abs() >= 1e-12)
+        .filter(|coefficient| coefficient.abs() >= EPSILON)
         .map(OrderedFloat)
         .collect::<Vec<_>>();
     if coefficients.is_empty() {
@@ -1222,8 +1241,11 @@ fn numeric_root_group_key(
         .copied()
         .enumerate()
         .filter(|(dependency, coefficient)| {
-            coefficient.abs() >= 1e-12
-                && is_operator_invariant_regular_dimension(source_task, *dependency)
+            coefficient.abs() >= EPSILON
+                && is_operator_invariant_regular_dimension(
+                    source_task,
+                    VariableIndex::from_usize(*dependency),
+                )
         })
         .map(|(dependency, coefficient)| (dependency, OrderedFloat(coefficient)))
         .collect();
@@ -1332,7 +1354,9 @@ fn log_split_propositional_vars(abstraction: &DomainAbstraction, task: &dyn Abst
         .enumerate()
         .filter(|(_, size)| **size > 1)
     {
-        let name = task.get_variable_name(var_id).unwrap_or("<unknown>");
+        let name = task
+            .get_variable_name(VariableIndex::from_usize(var_id))
+            .unwrap_or("<unknown>");
         entries.push(format!("p{var_id}={name}:size{size}"));
     }
     if !entries.is_empty() {
@@ -1356,7 +1380,11 @@ fn log_split_numeric_partitions(abstraction: &DomainAbstraction, task: &dyn Abst
             .get(numeric_var_id)
             .map(|variable| variable.name())
             .unwrap_or("<unknown>");
-        let Some(parts) = abstraction.factory.partitions().partitions(numeric_var_id) else {
+        let Some(parts) = abstraction
+            .factory
+            .partitions()
+            .partitions(VariableIndex::from_usize(numeric_var_id))
+        else {
             continue;
         };
         let preview = partition_preview(parts);
@@ -1383,17 +1411,17 @@ fn partition_preview(parts: &[Interval]) -> String {
 
 #[derive(Debug, Clone, PartialEq)]
 struct NumericRequirement {
-    numeric_var_id: usize,
-    lower: Option<f64>,
-    upper: Option<f64>,
+    numeric_var_id: VariableIndex,
+    lower: Option<NumericValue>,
+    upper: Option<NumericValue>,
 }
 
 impl NumericRequirement {
-    fn from_interval(numeric_var_id: usize, interval: Interval) -> Self {
+    fn from_interval(numeric_var_id: VariableIndex, interval: Interval) -> Self {
         Self {
             numeric_var_id,
-            lower: interval.lower.is_finite().then_some(interval.lower),
-            upper: interval.upper.is_finite().then_some(interval.upper),
+            lower: interval.lower.value().is_finite().then_some(interval.lower),
+            upper: interval.upper.value().is_finite().then_some(interval.upper),
         }
     }
 }
@@ -1401,15 +1429,18 @@ impl NumericRequirement {
 fn target_centered_requirements_for_comparison_fact(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
-    numeric_state: &[f64],
+    numeric_state: &[NumericValue],
 ) -> Vec<NumericRequirement> {
     if let Some((numeric_var_id, interval)) = numeric_requirement_for_comparison_fact(task, fact)
-        && is_refinable_numeric_dimension(task, numeric_var_id)
+        && is_refinable_numeric_dimension(task, VariableIndex::from_usize(numeric_var_id))
     {
-        return vec![NumericRequirement::from_interval(numeric_var_id, interval)];
+        return vec![NumericRequirement::from_interval(
+            VariableIndex::from_usize(numeric_var_id),
+            interval,
+        )];
     }
 
-    let Some(tree) = task.numeric_conditions().for_var(fact.var()) else {
+    let Some(tree) = task.numeric_conditions().for_var(fact.var_index()) else {
         return Vec::new();
     };
     let Ok(left) = linearize_numeric_var(task, tree.left_numeric_var_id()) else {
@@ -1425,7 +1456,7 @@ fn target_centered_requirements_for_comparison_fact(
     let expression = left.subtract(&right);
     let mut requirements = Vec::new();
     for (numeric_var_id, &coefficient) in expression.coefficients.iter().enumerate() {
-        if coefficient.abs() < 1e-12 {
+        if coefficient.abs() < EPSILON {
             continue;
         }
         if task
@@ -1445,7 +1476,7 @@ fn target_centered_requirements_for_comparison_fact(
                 has_all_values = false;
                 break;
             };
-            fixed_constant += other_coefficient * value;
+            fixed_constant += other_coefficient * value.value();
         }
         if !has_all_values {
             continue;
@@ -1453,7 +1484,10 @@ fn target_centered_requirements_for_comparison_fact(
         let Some(interval) = single_var_interval(coefficient, fixed_constant, required_op) else {
             continue;
         };
-        requirements.push(NumericRequirement::from_interval(numeric_var_id, interval));
+        requirements.push(NumericRequirement::from_interval(
+            VariableIndex::from_usize(numeric_var_id),
+            interval,
+        ));
     }
 
     merge_numeric_requirements(&mut requirements);
@@ -1476,25 +1510,26 @@ fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {
 }
 
 fn single_var_interval(coefficient: f64, constant: f64, op: CompOp) -> Option<Interval> {
-    if coefficient.abs() < 1e-12 || op == CompOp::Ne {
+    if coefficient.abs() < EPSILON || op == CompOp::Ne {
         return None;
     }
     let threshold = -constant / coefficient;
     if !threshold.is_finite() {
         return None;
     }
+    let threshold = NumericValue::new(threshold);
     Some(match (op, coefficient.is_sign_positive()) {
         (CompOp::Lt, true) | (CompOp::Gt, false) => {
-            Interval::new(f64::NEG_INFINITY, threshold, false, false)
+            Interval::new(NEG_INF_VALUE, threshold, false, false)
         }
         (CompOp::Le, true) | (CompOp::Ge, false) => {
-            Interval::new(f64::NEG_INFINITY, threshold, false, true)
+            Interval::new(NEG_INF_VALUE, threshold, false, true)
         }
         (CompOp::Gt, true) | (CompOp::Lt, false) => {
-            Interval::new(threshold, f64::INFINITY, false, false)
+            Interval::new(threshold, INF_VALUE, false, false)
         }
         (CompOp::Ge, true) | (CompOp::Le, false) => {
-            Interval::new(threshold, f64::INFINITY, true, false)
+            Interval::new(threshold, INF_VALUE, true, false)
         }
         (CompOp::Eq, _) => Interval::singleton(threshold),
         (CompOp::Ne, _) => return None,
@@ -1509,13 +1544,17 @@ fn merge_numeric_requirements(requirements: &mut Vec<NumericRequirement>) {
             && last.numeric_var_id == requirement.numeric_var_id
         {
             last.lower = match (last.lower, requirement.lower) {
-                (Some(left), Some(right)) => Some(left.max(right)),
+                (Some(left), Some(right)) => {
+                    Some(NumericValue::new(left.value().max(right.value())))
+                }
                 (Some(left), None) => Some(left),
                 (None, Some(right)) => Some(right),
                 (None, None) => None,
             };
             last.upper = match (last.upper, requirement.upper) {
-                (Some(left), Some(right)) => Some(left.min(right)),
+                (Some(left), Some(right)) => {
+                    Some(NumericValue::new(left.value().min(right.value())))
+                }
                 (Some(left), None) => Some(left),
                 (None, Some(right)) => Some(right),
                 (None, None) => None,
@@ -1529,24 +1568,31 @@ fn merge_numeric_requirements(requirements: &mut Vec<NumericRequirement>) {
 
 fn approximate_distance_from_initial(
     requirements: &[NumericRequirement],
-    initial_numeric: &[f64],
-) -> f64 {
-    requirements
-        .iter()
-        .map(|requirement| {
-            let Some(&initial_value) = initial_numeric.get(requirement.numeric_var_id) else {
-                return f64::INFINITY;
-            };
-            if !initial_value.is_finite() {
-                return f64::INFINITY;
-            }
-            match (requirement.lower, requirement.upper) {
-                (Some(lower), _) if initial_value < lower => lower - initial_value,
-                (_, Some(upper)) if initial_value > upper => initial_value - upper,
-                _ => 0.0,
-            }
-        })
-        .sum()
+    initial_numeric: &[NumericValue],
+) -> NumericValue {
+    NumericValue::new(
+        requirements
+            .iter()
+            .map(|requirement| {
+                let Some(&initial_value) = initial_numeric.get(requirement.numeric_var_id.index())
+                else {
+                    return f64::INFINITY;
+                };
+                if !initial_value.value().is_finite() {
+                    return f64::INFINITY;
+                }
+                match (requirement.lower, requirement.upper) {
+                    (Some(lower), _) if initial_value < lower => {
+                        lower.value() - initial_value.value()
+                    }
+                    (_, Some(upper)) if initial_value > upper => {
+                        initial_value.value() - upper.value()
+                    }
+                    _ => 0.0,
+                }
+            })
+            .sum(),
+    )
 }
 
 fn compare_goals_for_collection(
@@ -1557,18 +1603,23 @@ fn compare_goals_for_collection(
     let left_distance = estimate_goal_distance_from_initial(task, left);
     let right_distance = estimate_goal_distance_from_initial(task, right);
     right_distance
-        .total_cmp(&left_distance)
+        .value()
+        .total_cmp(&left_distance.value())
         .then_with(|| left.var().cmp(&right.var()))
         .then_with(|| left.value().cmp(&right.value()))
 }
 
-fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &ExplicitFact) -> f64 {
+fn estimate_goal_distance_from_initial(
+    task: &dyn AbstractNumericTask,
+    goal: &ExplicitFact,
+) -> NumericValue {
     let initial_numeric = initial_numeric_values_with_additive_views(task);
     let mut best_direct = 0.0f64;
     let direct_requirements =
         target_centered_requirements_for_comparison_fact(task, goal, &initial_numeric);
     if !direct_requirements.is_empty() {
-        best_direct = approximate_distance_from_initial(&direct_requirements, &initial_numeric);
+        best_direct =
+            approximate_distance_from_initial(&direct_requirements, &initial_numeric).value();
     }
 
     let mut best_achiever = 0.0f64;
@@ -1586,18 +1637,16 @@ fn estimate_goal_distance_from_initial(task: &dyn AbstractNumericTask, goal: &Ex
             ));
         }
         merge_numeric_requirements(&mut requirements);
-        best_achiever = best_achiever.max(approximate_distance_from_initial(
-            &requirements,
-            &initial_numeric,
-        ));
+        best_achiever = best_achiever
+            .max(approximate_distance_from_initial(&requirements, &initial_numeric).value());
     }
 
-    best_direct.max(best_achiever)
+    NumericValue::new(best_direct.max(best_achiever))
 }
 
 fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<InitialSeedSplit>) {
     if let Some(lower) = requirement.lower
-        && lower.is_finite()
+        && lower.value().is_finite()
     {
         seeds.push(InitialSeedSplit::Numeric {
             numeric_var_id: requirement.numeric_var_id,
@@ -1606,7 +1655,7 @@ fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<Init
         });
     }
     if let Some(upper) = requirement.upper
-        && upper.is_finite()
+        && upper.value().is_finite()
     {
         seeds.push(InitialSeedSplit::Numeric {
             numeric_var_id: requirement.numeric_var_id,
@@ -1618,8 +1667,8 @@ fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<Init
 
 fn add_shells_for_requirement(
     task: &dyn AbstractNumericTask,
-    deltas: &HashMap<usize, Vec<f64>>,
-    source_value: f64,
+    deltas: &HashMap<VariableIndex, Vec<NumericValue>>,
+    source_value: NumericValue,
     target: &NumericRequirement,
     seeds: &mut Vec<InitialSeedSplit>,
 ) {
@@ -1635,7 +1684,7 @@ fn add_shells_for_requirement(
             target.numeric_var_id,
             source_value,
             lower,
-            -step,
+            NumericValue::new(-step.value()),
             false,
             max_shells,
             seeds,
@@ -1649,7 +1698,7 @@ fn add_shells_for_requirement(
             target.numeric_var_id,
             source_value,
             upper,
-            -step,
+            NumericValue::new(-step.value()),
             true,
             max_shells,
             seeds,
@@ -1665,40 +1714,40 @@ fn max_shell_splits_for_var_count(var_count: usize) -> usize {
     (256usize).max(var_count * 4)
 }
 
-fn smallest_positive_delta(deltas: &[f64]) -> Option<f64> {
+fn smallest_positive_delta(deltas: &[NumericValue]) -> Option<NumericValue> {
     deltas
         .iter()
         .copied()
-        .filter(|delta| *delta > 1e-12)
-        .min_by_key(|delta| OrderedFloat(*delta))
+        .filter(|delta| delta.value() > EPSILON)
+        .min_by_key(|delta| OrderedFloat(delta.value()))
 }
 
-fn largest_negative_delta(deltas: &[f64]) -> Option<f64> {
+fn largest_negative_delta(deltas: &[NumericValue]) -> Option<NumericValue> {
     deltas
         .iter()
         .copied()
-        .filter(|delta| *delta < -1e-12)
-        .max_by_key(|delta| OrderedFloat(*delta))
+        .filter(|delta| delta.value() < -EPSILON)
+        .max_by_key(|delta| OrderedFloat(delta.value()))
 }
 
 fn add_monotone_shells(
-    numeric_var_id: usize,
-    source_value: f64,
-    target_value: f64,
-    reverse_step: f64,
+    numeric_var_id: VariableIndex,
+    source_value: NumericValue,
+    target_value: NumericValue,
+    reverse_step: NumericValue,
     include_in_lower: bool,
     max_shells: usize,
     seeds: &mut Vec<InitialSeedSplit>,
 ) {
     let mut value = target_value;
     for _ in 0..max_shells {
-        if !value.is_finite() {
+        if !value.value().is_finite() {
             break;
         }
-        if reverse_step < 0.0 && value <= source_value {
+        if reverse_step < ZERO_VALUE && value <= source_value {
             break;
         }
-        if reverse_step > 0.0 && value >= source_value {
+        if reverse_step > ZERO_VALUE && value >= source_value {
             break;
         }
         seeds.push(InitialSeedSplit::Numeric {
@@ -1706,7 +1755,7 @@ fn add_monotone_shells(
             value,
             include_in_lower,
         });
-        value += reverse_step;
+        value = NumericValue::new(value.value() + reverse_step.value());
     }
 }
 
@@ -1740,13 +1789,13 @@ fn seed_identity(seed: &InitialSeedSplit) -> SeedIdentity {
             include_in_lower,
         } => SeedIdentity::Numeric {
             numeric_var_id: *numeric_var_id,
-            value_bits: value.to_bits(),
+            value_bits: value.value().to_bits(),
             include_in_lower: *include_in_lower,
         },
     }
 }
 
-fn seed_group_key(group: &[InitialSeedSplit]) -> (usize, OrderedFloat<f64>, bool) {
+fn seed_group_key(group: &[InitialSeedSplit]) -> (VariableIndex, OrderedFloat<f64>, bool) {
     group
         .iter()
         .find_map(|seed| match seed {
@@ -1754,13 +1803,17 @@ fn seed_group_key(group: &[InitialSeedSplit]) -> (usize, OrderedFloat<f64>, bool
                 numeric_var_id,
                 value,
                 include_in_lower,
-            } => Some((*numeric_var_id, OrderedFloat(*value), *include_in_lower)),
+            } => Some((
+                *numeric_var_id,
+                OrderedFloat(value.value()),
+                *include_in_lower,
+            )),
             InitialSeedSplit::Propositional { .. } => None,
         })
-        .unwrap_or((usize::MAX, OrderedFloat(0.0), false))
+        .unwrap_or((VariableIndex::new(u32::MAX), OrderedFloat(0.0), false))
 }
 
-fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<usize> {
+fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<VariableIndex> {
     task.axioms().iter().map(|axiom| axiom.var_id()).collect()
 }
 
@@ -1771,22 +1824,23 @@ fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<us
 /// `validate_abstractable_goal` refuses such a goal, so what is left is the goal
 /// variables themselves -- and for a numeric goal that is the comparison variable
 /// the rule body used to hold.
-fn goal_var_ids(task: &dyn AbstractNumericTask) -> HashSet<usize> {
+fn goal_var_ids(task: &dyn AbstractNumericTask) -> HashSet<VariableIndex> {
     (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var())
+        .map(|goal_id| task.get_goal_fact(goal_id).var_index())
         .collect()
 }
 
 fn collect_init_split_candidate_var_ids(
     task: &dyn AbstractNumericTask,
     subset: VariableSubset,
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     let goal_related = goal_var_ids(task);
     let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
 
-    let mut candidates: Vec<usize> = match subset {
+    let mut candidates: Vec<VariableIndex> = match subset {
         VariableSubset::Goals => goal_related.iter().copied().collect(),
         VariableSubset::NonGoals => (0..task.variables().len())
+            .map(VariableIndex::from_usize)
             .filter(|var_id| {
                 !goal_related.contains(var_id)
                     && !logic_axiom_effect_vars.contains(var_id)
@@ -1794,6 +1848,7 @@ fn collect_init_split_candidate_var_ids(
             })
             .collect(),
         VariableSubset::All => (0..task.variables().len())
+            .map(VariableIndex::from_usize)
             .filter(|var_id| {
                 !logic_axiom_effect_vars.contains(var_id)
                     && (!task.numeric_conditions().is_condition_var(*var_id)
@@ -1808,7 +1863,9 @@ fn collect_init_split_candidate_var_ids(
                 .iter()
                 .enumerate()
                 .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
-                .map(|(numeric_var_id, _)| encoded_numeric_offset + numeric_var_id),
+                .map(|(numeric_var_id, _)| {
+                    VariableIndex::from_usize(encoded_numeric_offset + numeric_var_id)
+                }),
         );
     }
     candidates.sort_unstable();
@@ -1819,7 +1876,7 @@ fn collect_init_split_candidate_var_ids(
 fn collect_blacklist_candidate_var_ids(
     task: &dyn AbstractNumericTask,
     subset: VariableSubset,
-) -> Vec<usize> {
+) -> Vec<VariableIndex> {
     let mut candidates = collect_init_split_candidate_var_ids(task, subset);
     if matches!(subset, VariableSubset::NonGoals | VariableSubset::All) {
         let encoded_numeric_offset = task.variables().len();
@@ -1828,7 +1885,9 @@ fn collect_blacklist_candidate_var_ids(
                 .iter()
                 .enumerate()
                 .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
-                .map(|(numeric_var_id, _)| encoded_numeric_offset + numeric_var_id),
+                .map(|(numeric_var_id, _)| {
+                    VariableIndex::from_usize(encoded_numeric_offset + numeric_var_id)
+                }),
         );
     }
     candidates.sort_unstable();
@@ -1838,19 +1897,19 @@ fn collect_blacklist_candidate_var_ids(
 
 fn split_blacklisted_variables(
     task: &dyn AbstractNumericTask,
-    encoded_var_ids: HashSet<usize>,
-) -> (HashSet<usize>, HashSet<usize>) {
+    encoded_var_ids: HashSet<VariableIndex>,
+) -> (HashSet<VariableIndex>, HashSet<VariableIndex>) {
     let num_prop_vars = task.variables().len();
     let mut blacklisted_prop_var_ids = HashSet::new();
     let mut blacklisted_numeric_var_ids = HashSet::new();
 
     for encoded_var_id in encoded_var_ids {
-        if encoded_var_id < num_prop_vars {
+        if encoded_var_id.index() < num_prop_vars {
             blacklisted_prop_var_ids.insert(encoded_var_id);
         } else {
-            let numeric_var_id = encoded_var_id - num_prop_vars;
+            let numeric_var_id = encoded_var_id.index() - num_prop_vars;
             if numeric_var_id < task.numeric_variables().len() {
-                blacklisted_numeric_var_ids.insert(numeric_var_id);
+                blacklisted_numeric_var_ids.insert(VariableIndex::from_usize(numeric_var_id));
             }
         }
     }
@@ -1859,9 +1918,9 @@ fn split_blacklisted_variables(
 }
 
 fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
-    candidates: &[usize],
+    candidates: &[VariableIndex],
     rng: &mut R,
-) -> HashSet<usize> {
+) -> HashSet<VariableIndex> {
     if candidates.is_empty() {
         return HashSet::new();
     }
@@ -1872,7 +1931,10 @@ fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
     shuffled.into_iter().take(blacklist_size).collect()
 }
 
-fn select_single_init_split_var(candidate_var_ids: &[usize], iteration: usize) -> Option<usize> {
+fn select_single_init_split_var(
+    candidate_var_ids: &[VariableIndex],
+    iteration: usize,
+) -> Option<VariableIndex> {
     if candidate_var_ids.is_empty() {
         return None;
     }
@@ -1891,8 +1953,8 @@ struct IntervalFingerprint {
 impl IntervalFingerprint {
     fn from_interval(interval: Interval) -> Self {
         Self {
-            lower: OrderedFloat(interval.lower),
-            upper: OrderedFloat(interval.upper),
+            lower: OrderedFloat(interval.lower.value()),
+            upper: OrderedFloat(interval.upper.value()),
             lower_closed: interval.lower_closed,
             upper_closed: interval.upper_closed,
         }
@@ -1901,7 +1963,7 @@ impl IntervalFingerprint {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AbstractionKey {
-    domain_mapping: Vec<Vec<usize>>,
+    domain_mapping: DomainMapping,
     numeric_fingerprint: Vec<Vec<IntervalFingerprint>>,
 }
 
@@ -1912,7 +1974,7 @@ impl AbstractionKey {
             .map(|numeric_var_id| {
                 factory
                     .partitions()
-                    .partitions(numeric_var_id)
+                    .partitions(VariableIndex::from_usize(numeric_var_id))
                     .unwrap_or(&[])
                     .iter()
                     .copied()

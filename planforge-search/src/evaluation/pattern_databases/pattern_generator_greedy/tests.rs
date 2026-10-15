@@ -1,8 +1,9 @@
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator, PropositionalAxiom};
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -15,7 +16,7 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         axiom_layer,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -30,7 +31,7 @@ fn sample_task() -> NumericRootTask {
                 "cmp".to_string(),
                 vec!["t".to_string(), "f".to_string(), "u".to_string()],
                 Some(0),
-                2,
+                ExplicitValueIndex::new(2),
             ),
         ],
         numeric_variables: vec![
@@ -39,31 +40,31 @@ fn sample_task() -> NumericRootTask {
         ],
         goals: vec![ExplicitFact::propositional(1, 0)],
         mutexes: vec![],
-        state: vec![0, 2],
-        numeric_state: vec![1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(2)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
         operators: vec![Operator::new(
             "inc".to_string(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(1, 0)],
-            0,
-            1,
-            0,
+            VariableIndex::from_usize(0),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
         )],
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            1,
-            0,
+            VariableIndex::new(1),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -83,19 +84,23 @@ fn operator_predecessor_task() -> NumericRootTask {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![0, 0, 0],
+        state: vec![
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(0),
+        ],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(0, 1)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
-                1,
-                Some(0),
-                1,
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::from_usize(0)),
+                ExplicitValueIndex::new(1),
             )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -115,7 +120,7 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
                 "cmp".to_string(),
                 vec!["t".to_string(), "f".to_string(), "u".to_string()],
                 Some(1),
-                2,
+                ExplicitValueIndex::new(2),
             ),
         ],
         numeric_variables: vec![
@@ -126,28 +131,38 @@ fn operator_comparison_predecessor_task() -> NumericRootTask {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0, 2],
-        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(5.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![Operator::new(
             "achieve-goal".to_string(),
             vec![ExplicitFact::propositional(1, 0)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
-                0,
-                Some(1),
-                0,
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(1)),
+                ExplicitValueIndex::new(0),
             )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            1,
-            3,
-            0,
+            VariableIndex::new(1),
+            VariableIndex::new(3),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(2),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     })
 }
@@ -162,14 +177,14 @@ fn numeric_goal_task() -> NumericRootTask {
         ],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            1,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -193,7 +208,10 @@ fn greedy_pattern_config_defaults_match_fd_defaults() {
 fn greedy_pattern_uses_fd_goal_ordering() {
     let task = numeric_goal_task();
     let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
-    assert_eq!(pattern.numeric.first().copied(), Some(1));
+    assert_eq!(
+        pattern.numeric.first().copied(),
+        Some(VariableIndex::from_usize(1))
+    );
 }
 
 #[test]
@@ -215,7 +233,7 @@ fn greedy_pattern_prefers_goal_variables() {
     let task = sample_task();
     let pattern = generate_greedy_pattern(&task, GreedyPatternGeneratorConfig::default());
 
-    assert!(pattern.numeric.contains(&1));
+    assert!(pattern.numeric.contains(&VariableIndex::from_usize(1)));
 }
 
 #[test]
@@ -242,9 +260,9 @@ fn greedy_pattern_expands_via_causal_predecessors_not_all_variables() {
         },
     );
 
-    assert!(pattern.regular.contains(&1));
-    assert!(pattern.regular.contains(&0));
-    assert!(!pattern.regular.contains(&2));
+    assert!(pattern.regular.contains(&VariableIndex::from_usize(1)));
+    assert!(pattern.regular.contains(&VariableIndex::from_usize(0)));
+    assert!(!pattern.regular.contains(&VariableIndex::from_usize(2)));
 }
 
 #[test]
@@ -258,7 +276,7 @@ fn greedy_pattern_respects_estimated_numeric_domain_size_budget() {
         },
     );
 
-    assert!(!pattern.numeric.contains(&1));
+    assert!(!pattern.numeric.contains(&VariableIndex::from_usize(1)));
 }
 
 #[test]
@@ -271,7 +289,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
             "goal".to_string(),
             vec!["off".to_string(), "on".to_string()],
             Some(1),
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![
             NumericVariable::new("c5".to_string(), NumericType::Constant, None),
@@ -281,17 +299,27 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![5.0, 0.0, 0.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(5.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            3,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(3),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(2),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
@@ -299,7 +327,7 @@ fn greedy_pattern_collects_regular_numeric_dependencies_from_comparison_trees() 
     let pattern =
         generate_greedy_pattern(restricted.task(), GreedyPatternGeneratorConfig::default());
 
-    assert!(pattern.numeric.contains(&1));
+    assert!(pattern.numeric.contains(&VariableIndex::from_usize(1)));
 }
 
 #[test]
@@ -309,6 +337,6 @@ fn greedy_pattern_collects_operator_comparison_support_after_restriction() {
     let pattern =
         generate_greedy_pattern(restricted.task(), GreedyPatternGeneratorConfig::default());
 
-    assert!(pattern.regular.contains(&0));
-    assert!(pattern.numeric.contains(&1));
+    assert!(pattern.regular.contains(&VariableIndex::from_usize(0)));
+    assert!(pattern.numeric.contains(&VariableIndex::from_usize(1)));
 }

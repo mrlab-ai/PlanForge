@@ -28,7 +28,7 @@ use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
 };
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, NumericValue, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::{
     ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
@@ -342,6 +342,7 @@ pub fn solve_task(
                     planforge_sas::numeric_task::metric_operator_cost_from_initial_values(
                         task_ref, op,
                     )
+                    .value()
                 })
                 .collect();
             let min_cost = original_costs
@@ -356,7 +357,7 @@ pub fn solve_task(
             let make_blind = || {
                 Box::new(
                     planforge_search::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
-                        min_action_cost,
+                        NumericValue::new(min_action_cost),
                         None,
                     ),
                 ) as Box<dyn planforge_search::evaluation::Heuristic + '_>

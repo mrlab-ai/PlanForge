@@ -151,7 +151,7 @@ pub fn blind_astar_run(task: &NumericRootTask) -> Option<SearchRun> {
         (SearchStatus::Solved(_), Some(plan)) => Some(SearchRun {
             cost: result
                 .solution_cost
-                .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
+                .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum()),
             plan: plan.iter().map(|op| op.name().to_owned()).collect(),
             expanded: result.nodes_expanded,
             generated: result.nodes_generated,

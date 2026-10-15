@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::{NumericValue, VariableIndex};
+
 use super::*;
 
 /// One abstraction's turn in a saturated cost partitioning: the costs earlier
@@ -25,16 +27,18 @@ pub(super) fn apply_operator_costs(
         );
         let mut cost = f64::INFINITY;
         for &concrete_op_id in &op.concrete_op_ids {
-            let concrete_cost = *operator_costs.get(concrete_op_id).with_context(|| {
-                format!("missing residual cost for concrete operator {concrete_op_id}")
-            })?;
+            let concrete_cost = *operator_costs
+                .get(concrete_op_id.index())
+                .with_context(|| {
+                    format!("missing residual cost for concrete operator {concrete_op_id}")
+                })?;
             ensure!(
                 concrete_cost.is_finite(),
                 "residual cost for concrete operator {concrete_op_id} must be finite"
             );
             cost = cost.min(concrete_cost);
         }
-        op.cost = cost;
+        op.cost = NumericValue::new(cost);
     }
     Ok(())
 }
@@ -55,7 +59,7 @@ fn apply_abstract_operator_costs(
             cost.is_finite(),
             "residual cost for abstract operator {abstract_op_id} must be finite"
         );
-        op.cost = cost;
+        op.cost = NumericValue::new(cost);
     }
     Ok(())
 }
@@ -102,18 +106,18 @@ pub(super) fn abstract_operator_costs_from_operator_regions(
 
 pub(super) fn get_comparison_preconditions(
     op: &AbstractOperator,
-    comparison_var_ids: &[usize],
+    comparison_var_ids: &[VariableIndex],
 ) -> Vec<ExplicitFact> {
     op.preconditions
         .iter()
         .copied()
-        .filter(|f| comparison_var_ids.contains(&f.var()))
+        .filter(|f| comparison_var_ids.contains(&f.var_index()))
         .collect()
 }
 
 pub(super) fn comparison_preconditions_by_operator(
     operators: &[AbstractOperator],
-    comparison_var_ids: &[usize],
+    comparison_var_ids: &[VariableIndex],
 ) -> Vec<Vec<ExplicitFact>> {
     operators
         .iter()
@@ -790,7 +794,7 @@ impl DomainAbstractionFactory {
                     {
                         let needed = (src_h - target_h).max(0.0);
                         for &op_id in &op.concrete_op_ids {
-                            if let Some(slot) = saturated_costs.get_mut(op_id) {
+                            if let Some(slot) = saturated_costs.get_mut(op_id.index()) {
                                 *slot = slot.max(needed);
                             }
                         }

@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::VariableIndex;
+
 pub mod abstract_operator_generator;
 pub(crate) mod additive_numeric_views;
 pub mod domain_abstraction;
@@ -26,7 +28,7 @@ pub mod utils;
 #[inline]
 pub const fn abstraction_numeric_var(
     num_propositional_vars: usize,
-    numeric_var_id: usize,
-) -> usize {
-    num_propositional_vars + numeric_var_id
+    numeric_var_id: VariableIndex,
+) -> VariableIndex {
+    VariableIndex::from_usize(num_propositional_vars + numeric_var_id.index())
 }

@@ -3,14 +3,16 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, AssignmentOperation, NumericType};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, VariableIndex,
+};
 
 use crate::task_restriction::validate_restricted_task;
 
 #[derive(Debug, Clone, Copy)]
 struct NumericCondition {
-    var_id: usize,
-    constant: f64,
+    var_id: VariableIndex,
+    constant: NumericValue,
 }
 
 pub struct NumericSizeEstimator {
@@ -29,7 +31,7 @@ impl NumericSizeEstimator {
                 .map(|numeric_var_id| {
                     estimate_numeric_domain_size(
                         task,
-                        numeric_var_id,
+                        VariableIndex::from_usize(numeric_var_id),
                         &base_initial_numeric_values,
                         &conditions,
                     )
@@ -38,9 +40,9 @@ impl NumericSizeEstimator {
         }
     }
 
-    pub fn estimate_domain_size(&self, numeric_var_id: usize) -> usize {
+    pub fn estimate_domain_size(&self, numeric_var_id: VariableIndex) -> usize {
         self.approximate_domain_sizes
-            .get(numeric_var_id)
+            .get(numeric_var_id.index())
             .copied()
             .expect("numeric size estimate requires a valid numeric variable ID")
             .max(1)
@@ -49,7 +51,7 @@ impl NumericSizeEstimator {
 
 fn collect_numeric_conditions(
     task: &dyn AbstractNumericTask,
-    base_initial_numeric_values: &[f64],
+    base_initial_numeric_values: &[NumericValue],
 ) -> Vec<NumericCondition> {
     let mut comparison_axioms_by_var = HashMap::new();
     let mut numeric_condition_vars = HashSet::new();
@@ -63,7 +65,7 @@ fn collect_numeric_conditions(
     let mut conditions = Vec::new();
     for operator in task.get_operators() {
         for fact in operator.preconditions() {
-            let fact_var_id = fact.var();
+            let fact_var_id = fact.var_index();
             if !numeric_condition_vars.contains(&fact_var_id) {
                 continue;
             }
@@ -78,7 +80,7 @@ fn collect_numeric_conditions(
 
     for goal_id in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_id);
-        let goal_var_id = goal.var();
+        let goal_var_id = goal.var_index();
         if !numeric_condition_vars.contains(&goal_var_id) {
             continue;
         }
@@ -96,25 +98,25 @@ fn collect_numeric_conditions(
 fn build_numeric_condition(
     task: &dyn AbstractNumericTask,
     comparison_axiom_id: usize,
-    initial_numeric_values: &[f64],
+    initial_numeric_values: &[NumericValue],
 ) -> Option<NumericCondition> {
     let comparison_axiom = &task.comparison_axioms()[comparison_axiom_id];
     let left = comparison_axiom.get_left_var_id();
     let right = comparison_axiom.get_right_var_id();
-    let left_type = task.numeric_variables()[left].get_type();
-    let right_type = task.numeric_variables()[right].get_type();
+    let left_type = task.numeric_variables()[left.index()].get_type();
+    let right_type = task.numeric_variables()[right.index()].get_type();
 
     match (left_type, right_type) {
         (NumericType::Regular, NumericType::Constant | NumericType::Cost) => {
             Some(NumericCondition {
                 var_id: left,
-                constant: initial_numeric_values[right],
+                constant: initial_numeric_values[right.index()],
             })
         }
         (NumericType::Constant | NumericType::Cost, NumericType::Regular) => {
             Some(NumericCondition {
                 var_id: right,
-                constant: initial_numeric_values[left],
+                constant: initial_numeric_values[left.index()],
             })
         }
         (NumericType::Regular, NumericType::Regular)
@@ -129,12 +131,12 @@ fn build_numeric_condition(
 
 fn estimate_numeric_domain_size(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
-    base_initial_numeric_values: &[f64],
+    numeric_var_id: VariableIndex,
+    base_initial_numeric_values: &[NumericValue],
     conditions: &[NumericCondition],
 ) -> usize {
     assert!(
-        numeric_var_id < task.numeric_variables().len(),
+        numeric_var_id.index() < task.numeric_variables().len(),
         "numeric size estimation requires a valid numeric variable ID"
     );
 
@@ -158,17 +160,17 @@ fn estimate_numeric_domain_size(
                 return usize::MAX;
             }
             let source_var_id = effect.var_id();
-            let source_type = task.numeric_variables()[source_var_id].get_type();
+            let source_type = task.numeric_variables()[source_var_id.index()].get_type();
             if !matches!(source_type, NumericType::Constant | NumericType::Cost) {
                 return usize::MAX;
             }
-            let source_value = base_initial_numeric_values[source_var_id];
+            let source_value = base_initial_numeric_values[source_var_id.index()];
             match effect.operation() {
                 AssignmentOperation::Plus if assigned_value.is_none() => {
-                    additive_change += source_value;
+                    additive_change += source_value.value();
                 }
                 AssignmentOperation::Minus if assigned_value.is_none() => {
-                    additive_change -= source_value;
+                    additive_change -= source_value.value();
                 }
                 AssignmentOperation::Assign
                     if assigned_value.is_none() && additive_change == 0.0 =>
@@ -184,8 +186,8 @@ fn estimate_numeric_domain_size(
         }
 
         if let Some(assigned_value) = assigned_value {
-            min_const = min_const.min(assigned_value);
-            max_const = max_const.max(assigned_value);
+            min_const = min_const.min(assigned_value.value());
+            max_const = max_const.max(assigned_value.value());
         } else if additive_change > 0.0 {
             increments.push(additive_change);
             min_change = min_change.min(additive_change);
@@ -197,14 +199,14 @@ fn estimate_numeric_domain_size(
         }
     }
 
-    let initial_value = base_initial_numeric_values[numeric_var_id];
-    min_const = min_const.min(initial_value);
-    max_const = max_const.max(initial_value);
+    let initial_value = base_initial_numeric_values[numeric_var_id.index()];
+    min_const = min_const.min(initial_value.value());
+    max_const = max_const.max(initial_value.value());
 
     for condition in conditions {
         if condition.var_id == numeric_var_id {
-            min_const = min_const.min(condition.constant);
-            max_const = max_const.max(condition.constant);
+            min_const = min_const.min(condition.constant.value());
+            max_const = max_const.max(condition.constant.value());
         }
     }
 

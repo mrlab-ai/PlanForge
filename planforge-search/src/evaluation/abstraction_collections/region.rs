@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use planforge_sas::utils::interval::Interval;
-
-/// Sparse propositional active-set ID, narrowed to `u32` to halve the per-value
-/// storage cost of `StateRegion::propositions`. Variable / value IDs come from
-/// the SAS preprocessor, which already bounds them well below `u32::MAX`.
-pub type PropValueId = u32;
+use planforge_sas::{
+    numeric_task::{ExplicitValueIndex, VariableIndex},
+    utils::interval::Interval,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StateRegion {
@@ -14,7 +12,7 @@ pub struct StateRegion {
     /// [`Self::constrained_props`]; a missing entry there would make two
     /// disjoint regions look overlapping, which silently inflates the cost a
     /// region may claim. Narrow through [`Self::narrow_prop`] instead.
-    propositions: Arc<[Vec<PropValueId>]>,
+    propositions: Arc<[Vec<ExplicitValueIndex>]>,
     pub numeric: Arc<[Interval]>,
     /// Propositional dimensions that exclude at least one of their values,
     /// ascending. A dimension outside this list admits its whole domain, so it
@@ -43,7 +41,7 @@ impl StateRegion {
     /// Panics on a length mismatch, which would mean the caller built the
     /// region against a different variable ordering than it is describing.
     pub fn new(
-        propositions: Vec<Vec<PropValueId>>,
+        propositions: Vec<Vec<ExplicitValueIndex>>,
         numeric: Vec<Interval>,
         prop_domain_sizes: &[usize],
     ) -> Self {
@@ -74,7 +72,7 @@ impl StateRegion {
     /// derived from others (intersections, subtraction pieces) where the
     /// inputs' lists already bound which dimensions can be constrained.
     pub fn with_constrained_props(
-        propositions: Vec<Vec<PropValueId>>,
+        propositions: Vec<Vec<ExplicitValueIndex>>,
         numeric: Vec<Interval>,
         constrained_props: Arc<[u32]>,
     ) -> Self {
@@ -103,7 +101,7 @@ impl StateRegion {
     /// keeps the tests measuring what they were written to measure.
     #[cfg(test)]
     pub(crate) fn with_all_props_constrained(
-        propositions: Vec<Vec<PropValueId>>,
+        propositions: Vec<Vec<ExplicitValueIndex>>,
         numeric: Vec<Interval>,
     ) -> Self {
         let constrained_props = (0..propositions.len())
@@ -118,7 +116,7 @@ impl StateRegion {
     }
 
     /// The per-dimension value sets, indexed by propositional variable.
-    pub fn propositions(&self) -> &[Vec<PropValueId>] {
+    pub fn propositions(&self) -> &[Vec<ExplicitValueIndex>] {
         &self.propositions
     }
 
@@ -128,7 +126,7 @@ impl StateRegion {
     /// instead of deep-copying it. Immutable: narrowing still has to go through
     /// [`Self::narrow_prop`].
     #[cfg(test)]
-    pub(crate) fn propositions_arc(&self) -> &Arc<[Vec<PropValueId>]> {
+    pub(crate) fn propositions_arc(&self) -> &Arc<[Vec<ExplicitValueIndex>]> {
         &self.propositions
     }
 
@@ -137,19 +135,19 @@ impl StateRegion {
     ///
     /// `values` must be sorted, deduplicated and a subset of the dimension's
     /// current values: this narrows a region, it does not redefine it.
-    pub fn narrow_prop(&mut self, var_id: usize, values: Vec<PropValueId>) {
+    pub fn narrow_prop(&mut self, var_id: VariableIndex, values: Vec<ExplicitValueIndex>) {
         debug_assert!(
             values.windows(2).all(|w| w[0] < w[1]),
             "propositional values must be ascending and deduplicated"
         );
         debug_assert!(
-            values
-                .iter()
-                .all(|value| self.propositions[var_id].binary_search(value).is_ok()),
+            values.iter().all(|value| self.propositions[var_id.index()]
+                .binary_search(value)
+                .is_ok()),
             "narrowing dimension {var_id} to values outside the region"
         );
-        Arc::make_mut(&mut self.propositions)[var_id] = values;
-        let dim = u32::try_from(var_id).expect("propositional var id exceeds u32");
+        Arc::make_mut(&mut self.propositions)[var_id.index()] = values;
+        let dim = var_id.index() as u32;
         if let Err(insert_at) = self.constrained_props.binary_search(&dim) {
             let mut dims = self.constrained_props.to_vec();
             dims.insert(insert_at, dim);
@@ -255,7 +253,7 @@ fn region_contains(outer: &StateRegion, inner: &StateRegion) -> bool {
 }
 
 /// Whether every value of `inner` appears in `outer`. Both must be sorted.
-fn sorted_value_set_contains(outer: &[PropValueId], inner: &[PropValueId]) -> bool {
+fn sorted_value_set_contains(outer: &[ExplicitValueIndex], inner: &[ExplicitValueIndex]) -> bool {
     if inner.len() > outer.len() {
         return false;
     }
@@ -324,7 +322,10 @@ pub(crate) fn state_region_intersection(
     ))
 }
 
-fn sorted_value_intersection(left: &[PropValueId], right: &[PropValueId]) -> Vec<PropValueId> {
+fn sorted_value_intersection(
+    left: &[ExplicitValueIndex],
+    right: &[ExplicitValueIndex],
+) -> Vec<ExplicitValueIndex> {
     let mut intersection = Vec::with_capacity(left.len().min(right.len()));
     let (mut left_index, mut right_index) = (0, 0);
     while left_index < left.len() && right_index < right.len() {
@@ -341,7 +342,10 @@ fn sorted_value_intersection(left: &[PropValueId], right: &[PropValueId]) -> Vec
     intersection
 }
 
-fn sorted_value_difference(left: &[PropValueId], right: &[PropValueId]) -> Vec<PropValueId> {
+fn sorted_value_difference(
+    left: &[ExplicitValueIndex],
+    right: &[ExplicitValueIndex],
+) -> Vec<ExplicitValueIndex> {
     left.iter()
         .copied()
         .filter(|value| right.binary_search(value).is_err())
@@ -449,7 +453,10 @@ fn prop_regions_overlap(left: &StateRegion, right: &StateRegion) -> bool {
     })
 }
 
-pub(crate) fn sorted_value_sets_overlap(left: &[PropValueId], right: &[PropValueId]) -> bool {
+pub(crate) fn sorted_value_sets_overlap(
+    left: &[ExplicitValueIndex],
+    right: &[ExplicitValueIndex],
+) -> bool {
     let mut i = 0;
     let mut j = 0;
     while i < left.len() && j < right.len() {
@@ -484,15 +491,15 @@ mod tests {
 
     impl SmallSpace {
         /// Every concrete point of the space, as one value per dimension.
-        fn points(&self) -> Vec<Vec<PropValueId>> {
+        fn points(&self) -> Vec<Vec<ExplicitValueIndex>> {
             let mut points = vec![Vec::new()];
             for &size in &self.domain_sizes {
                 points = points
                     .into_iter()
                     .flat_map(|point| {
-                        (0..size as PropValueId).map(move |value| {
+                        (0..size as u32).map(move |value| {
                             let mut extended = point.clone();
-                            extended.push(value);
+                            extended.push(ExplicitValueIndex::new(value));
                             extended
                         })
                     })
@@ -502,7 +509,7 @@ mod tests {
         }
 
         /// The points a region admits: the oracle every assertion compares to.
-        fn admitted(&self, region: &StateRegion) -> Vec<Vec<PropValueId>> {
+        fn admitted(&self, region: &StateRegion) -> Vec<Vec<ExplicitValueIndex>> {
             self.points()
                 .into_iter()
                 .filter(|point| {
@@ -513,7 +520,7 @@ mod tests {
                 .collect()
         }
 
-        fn region(&self, values: Vec<Vec<PropValueId>>) -> StateRegion {
+        fn region(&self, values: Vec<Vec<ExplicitValueIndex>>) -> StateRegion {
             StateRegion::new(values, Vec::new(), &self.domain_sizes)
         }
 
@@ -524,8 +531,9 @@ mod tests {
                 .iter()
                 .map(|&size| {
                     loop {
-                        let keep: Vec<PropValueId> = (0..size as PropValueId)
+                        let keep: Vec<ExplicitValueIndex> = (0..size as u32)
                             .filter(|_| rng.next_bool())
+                            .map(ExplicitValueIndex::new)
                             .collect();
                         if !keep.is_empty() {
                             return keep;
@@ -596,7 +604,7 @@ mod tests {
                             );
                         }
                     }
-                    let mut covered: Vec<Vec<PropValueId>> = shared.clone();
+                    let mut covered: Vec<Vec<ExplicitValueIndex>> = shared.clone();
                     for piece in &pieces {
                         covered.extend(space.admitted(piece));
                     }

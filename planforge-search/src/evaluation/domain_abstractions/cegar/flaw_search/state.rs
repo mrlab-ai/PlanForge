@@ -1,7 +1,9 @@
 use anyhow::{Result, ensure};
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericType, NumericValue, VariableIndex,
+};
 use planforge_sas::utils::errors::{AxiomEvalError, InvalidIndex};
 use planforge_sas::{
     axioms::AxiomEvaluator, numeric_task::Operator, utils::state_packer::StatePacker,
@@ -21,8 +23,8 @@ use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
 /// than the `Interval`s of the abstract plan states).
 #[derive(Clone, Debug)]
 pub struct FlawSearchState<'a> {
-    pub concrete_prop: Vec<Option<usize>>,
-    pub abstract_prop: Vec<Option<usize>>,
+    pub concrete_prop: Vec<Option<ExplicitValueIndex>>,
+    pub abstract_prop: Vec<Option<ExplicitValueIndex>>,
     pub numeric: Vec<Interval>,
     pub domain_mapping: &'a DomainMapping,
     pub unbounded: bool,
@@ -31,14 +33,14 @@ pub struct FlawSearchState<'a> {
 impl<'a> FlawSearchState<'a> {
     /// Transform a decoded concrete state into a `FlawSearchState`.
     pub fn from_decoded_state(
-        prop: Vec<usize>,
-        numeric: Vec<f64>,
+        prop: Vec<ExplicitValueIndex>,
+        numeric: Vec<NumericValue>,
         domain_mapping: &'a DomainMapping,
     ) -> FlawSearchState<'a> {
         let abstract_prop = prop
             .iter()
             .enumerate()
-            .map(|(i, v)| Some(domain_mapping[i][*v]))
+            .map(|(i, v)| Some(domain_mapping[i][v.index()]))
             .collect();
         FlawSearchState {
             concrete_prop: prop.into_iter().map(Some).collect(),
@@ -75,19 +77,21 @@ impl<'a> FlawSearchState<'a> {
         }
 
         for requirement in goal_facts(task) {
-            state.set_prop_value(requirement.var(), requirement.value());
+            state.set_prop_value(requirement.var_index(), requirement.value_index());
         }
 
         state
     }
 
-    pub fn set_prop_value(&mut self, var: usize, value: usize) {
-        self.concrete_prop[var] = Some(value);
-        self.abstract_prop[var] = Some(self.domain_mapping[var][self.concrete_prop[var].unwrap()]);
+    pub fn set_prop_value(&mut self, var: VariableIndex, value: ExplicitValueIndex) {
+        self.concrete_prop[var.index()] = Some(value);
+        self.abstract_prop[var.index()] = Some(
+            self.domain_mapping[var.index()][self.concrete_prop[var.index()].unwrap().index()],
+        );
     }
 
-    pub fn set_numeric_value(&mut self, var: usize, value: f64) {
-        self.numeric[var] = Interval::singleton(value);
+    pub fn set_numeric_value(&mut self, var: VariableIndex, value: NumericValue) {
+        self.numeric[var.index()] = Interval::singleton(value);
     }
 
     pub fn num_concrete_variables(&self) -> usize {
@@ -98,16 +102,17 @@ impl<'a> FlawSearchState<'a> {
         self.numeric.len()
     }
 
-    pub fn fact_is_hold(&self, fact: &ExplicitFact) -> bool {
-        self.value_is_hold_for_var(fact.var(), fact.value())
+    pub fn fact_is_held(&self, fact: &ExplicitFact) -> bool {
+        self.value_is_held_for_var(fact.var_index(), fact.value_index())
     }
 
-    pub fn value_is_hold_for_var(&self, var: usize, value: usize) -> bool {
-        match self.concrete_prop[var] {
+    pub fn value_is_held_for_var(&self, var: VariableIndex, value: ExplicitValueIndex) -> bool {
+        match self.concrete_prop[var.index()] {
             Some(v) => v == value,
             None => {
-                self.abstract_prop[var].is_none()
-                    || self.domain_mapping[var][value] == self.abstract_prop[var].unwrap()
+                self.abstract_prop[var.index()].is_none()
+                    || self.domain_mapping[var.index()][value.index()]
+                        == self.abstract_prop[var.index()].unwrap()
             }
         }
     }
@@ -116,15 +121,15 @@ impl<'a> FlawSearchState<'a> {
         let mut affected_prop_vars_by_axioms = Vec::with_capacity(self.concrete_prop.len());
         axiom_evaluator.affected_propositional_vars(&mut affected_prop_vars_by_axioms);
         for var in &affected_prop_vars_by_axioms {
-            self.concrete_prop[*var] = None;
-            self.abstract_prop[*var] = None;
+            self.concrete_prop[var.index()] = None;
+            self.abstract_prop[var.index()] = None;
         }
 
         if !self.unbounded {
             let mut affected_numeric_vars_by_axioms = Vec::with_capacity(self.numeric.len());
             axiom_evaluator.affected_numeric_vars(&mut affected_numeric_vars_by_axioms);
             for var in &affected_numeric_vars_by_axioms {
-                self.numeric[*var] = UNBOUNDED_INTERVAL;
+                self.numeric[var.index()] = UNBOUNDED_INTERVAL;
             }
         }
         Ok(())
@@ -152,25 +157,28 @@ impl<'a> FlawSearchState<'a> {
         axiom_evaluator: &AxiomEvaluator,
     ) -> Result<bool, AxiomEvalError> {
         for axiom in axiom_evaluator.numeric_task.comparison_axioms() {
-            let is_hold = self.is_hold(axiom).map_err(|e| {
+            let is_held = self.is_held(axiom).map_err(|e| {
                 AxiomEvalError::InvalidIndex(InvalidIndex {
                     length: self.numeric.len(),
                     index: e.index,
                 })
             })?;
-            self.set_prop_value(axiom.get_affected_var_id(), !is_hold as usize);
+            self.set_prop_value(
+                axiom.get_affected_var_id(),
+                ExplicitValueIndex::from_usize(!is_held as usize),
+            );
         }
 
         Ok(true)
     }
 
-    pub fn is_hold(&self, axiom: &ComparisonAxiom) -> Result<bool, InvalidIndex> {
+    pub fn is_held(&self, axiom: &ComparisonAxiom) -> Result<bool, InvalidIndex> {
         let left = axiom.left_hand_side;
         let right = axiom.right_hand_side;
-        if left >= self.numeric.len() || right >= self.numeric.len() {
+        if left.index() >= self.numeric.len() || right.index() >= self.numeric.len() {
             return Err(InvalidIndex {
                 length: self.numeric.len(),
-                index: left,
+                index: left.index(),
             });
         }
         let comp_op = &axiom.operator;
@@ -178,8 +186,13 @@ impl<'a> FlawSearchState<'a> {
         Ok(result)
     }
 
-    pub fn compare(&self, op: &ComparisonOperator, left: usize, right: usize) -> bool {
-        let (left, right) = (self.numeric[left], self.numeric[right]);
+    pub fn compare(
+        &self,
+        op: &ComparisonOperator,
+        left: VariableIndex,
+        right: VariableIndex,
+    ) -> bool {
+        let (left, right) = (self.numeric[left.index()], self.numeric[right.index()]);
         match op {
             ComparisonOperator::LessThan => left.lower_is_lower(&right),
             ComparisonOperator::LessThanOrEqual => left.lower_is_lower_or_equal(&right),
@@ -207,31 +220,31 @@ impl<'a> FlawSearchState<'a> {
     ) -> Result<(), InvalidIndex> {
         let left = axiom.left_hand_side;
         let right = axiom.right_hand_side;
-        if left >= self.numeric.len() || right >= self.numeric.len() {
+        if left.index() >= self.numeric.len() || right.index() >= self.numeric.len() {
             return Err(InvalidIndex {
                 length: self.numeric.len(),
-                index: left,
+                index: left.index(),
             });
         }
         let affected = axiom.affected_var_id;
-        if affected >= self.numeric.len() {
+        if affected.index() >= self.numeric.len() {
             return Err(InvalidIndex {
                 length: self.numeric.len(),
-                index: affected,
+                index: affected.index(),
             });
         }
-        self.numeric[affected] = match axiom.operator {
-            CalOperator::Sum => self.numeric[left] + self.numeric[right],
-            CalOperator::Difference => self.numeric[left] - self.numeric[right],
-            CalOperator::Product => self.numeric[left] * self.numeric[right],
+        self.numeric[affected.index()] = match axiom.operator {
+            CalOperator::Sum => self.numeric[left.index()] + self.numeric[right.index()],
+            CalOperator::Difference => self.numeric[left.index()] - self.numeric[right.index()],
+            CalOperator::Product => self.numeric[left.index()] * self.numeric[right.index()],
             CalOperator::Division => {
-                if self.numeric[right].any_bound_is_zero() {
+                if self.numeric[right.index()].any_bound_is_zero() {
                     return Err(InvalidIndex {
                         length: self.numeric.len(),
-                        index: right,
+                        index: right.index(),
                     });
                 }
-                self.numeric[left] / self.numeric[right]
+                self.numeric[left.index()] / self.numeric[right.index()]
             }
         };
 
@@ -243,7 +256,7 @@ impl<'a> FlawSearchState<'a> {
         for eff in op.effects().iter() {
             let mut ok = true;
             for cond in eff.conditions().iter() {
-                if !self.fact_is_hold(cond) {
+                if !self.fact_is_held(cond) {
                     ok = false;
                     break;
                 }
@@ -258,7 +271,7 @@ impl<'a> FlawSearchState<'a> {
             if eff.is_conditional() {
                 let mut ok = true;
                 for cond in eff.conditions().iter() {
-                    if !self.fact_is_hold(cond) {
+                    if !self.fact_is_held(cond) {
                         ok = false;
                         break;
                     }
@@ -271,17 +284,17 @@ impl<'a> FlawSearchState<'a> {
             let assignment_var_id = eff.var_id();
             let affected_var_id = eff.affected_var_id();
             ensure!(
-                assignment_var_id < self.numeric.len(),
+                assignment_var_id.index() < self.numeric.len(),
                 "assignment effect source numeric var {assignment_var_id} out of bounds for {} numeric vars",
                 self.numeric.len()
             );
             ensure!(
-                affected_var_id < self.numeric.len(),
+                affected_var_id.index() < self.numeric.len(),
                 "assignment effect target numeric var {affected_var_id} out of bounds for {} numeric vars",
                 self.numeric.len()
             );
-            let operand = self.numeric[assignment_var_id];
-            self.numeric[affected_var_id].apply_op(eff.operation(), &operand);
+            let operand = self.numeric[assignment_var_id.index()];
+            self.numeric[affected_var_id.index()].apply_op(eff.operation(), &operand);
         }
 
         self.evaluate_arithmetic_axioms(axiom_evaluator)
@@ -300,12 +313,12 @@ impl<'a> FlawSearchState<'a> {
 
         // Propositional effects (conditional effects not supported).
         for eff in op.effects().iter() {
-            self.concrete_prop[eff.var_id()] = None;
-            self.abstract_prop[eff.var_id()] = None;
+            self.concrete_prop[eff.var_id().index()] = None;
+            self.abstract_prop[eff.var_id().index()] = None;
         }
         // Propositional preconditions.
         for cond in op.preconditions() {
-            self.concrete_prop[cond.var()] = Some(cond.value());
+            self.concrete_prop[cond.var()] = Some(cond.value_index());
             self.abstract_prop[cond.var()] = Some(self.domain_mapping[cond.var()][cond.value()]);
         }
 
@@ -313,14 +326,16 @@ impl<'a> FlawSearchState<'a> {
         for eff in op.assignment_effects().iter() {
             let assignment_var_id = eff.var_id();
             let affected_var_id = eff.affected_var_id();
-            if assignment_var_id >= self.numeric.len() || affected_var_id >= self.numeric.len() {
+            if assignment_var_id.index() >= self.numeric.len()
+                || affected_var_id.index() >= self.numeric.len()
+            {
                 continue;
             }
-            if self.numeric[affected_var_id] == UNBOUNDED_INTERVAL {
+            if self.numeric[affected_var_id.index()] == UNBOUNDED_INTERVAL {
                 continue;
             }
-            let operand = self.numeric[assignment_var_id];
-            self.numeric[affected_var_id].apply_reverse_op(eff.operation(), &operand);
+            let operand = self.numeric[assignment_var_id.index()];
+            self.numeric[affected_var_id.index()].apply_reverse_op(eff.operation(), &operand);
         }
 
         Ok(())
@@ -337,7 +352,7 @@ pub fn get_initial_flaw_search_state<'a>(
     let prop_state = domain_mapping
         .iter()
         .enumerate()
-        .map(|(var, _)| state_packer.get(&buffer, var) as usize)
+        .map(|(var, _)| ExplicitValueIndex::from_usize(state_packer.get(&buffer, var) as usize))
         .collect();
 
     Ok(FlawSearchState::from_decoded_state(

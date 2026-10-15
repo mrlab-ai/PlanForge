@@ -25,7 +25,11 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 use std::fmt;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact};
+#[allow(unused_imports)]
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue,
+    OperatorCost, VariableIndex,
+};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
@@ -55,8 +59,8 @@ use planforge_sas::utils::interval::Interval;
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericFlaw {
-    pub numeric_var_id: usize,
-    pub value: f64,
+    pub numeric_var_id: VariableIndex,
+    pub value: NumericValue,
     pub include_in_lower: bool,
     pub step: usize,
 }
@@ -252,7 +256,7 @@ fn score_flaw(
 ) -> usize {
     match flaw {
         Flaw::Numeric(nf) => numeric_domain_sizes
-            .get(nf.numeric_var_id)
+            .get(nf.numeric_var_id.index())
             .copied()
             .unwrap_or(0),
         Flaw::Propositional(pf) => {
@@ -261,7 +265,7 @@ fn score_flaw(
             let max_dep = pf
                 .dependent_numeric_flaws
                 .iter()
-                .filter_map(|nf| numeric_domain_sizes.get(nf.numeric_var_id).copied())
+                .filter_map(|nf| numeric_domain_sizes.get(nf.numeric_var_id.index()).copied())
                 .max()
                 .unwrap_or(0);
             base + max_dep
@@ -272,8 +276,8 @@ fn score_flaw(
 fn dependent_numeric_flaws_for_comparison_prop_var(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    prop_var_id: usize,
-    numeric_state: &[f64],
+    prop_var_id: VariableIndex,
+    numeric_state: &[NumericValue],
     step: usize,
 ) -> Vec<NumericFlaw> {
     let Some(tree) = task.numeric_conditions().for_var(prop_var_id) else {
@@ -282,7 +286,7 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
 
     let mut out: Vec<NumericFlaw> = Vec::new();
     for dep_var_id in comparison_refinement_dimensions(task, tree) {
-        let Some(&concrete_value) = numeric_state.get(dep_var_id) else {
+        let Some(&concrete_value) = numeric_state.get(dep_var_id.index()) else {
             continue;
         };
         let include_in_lower =
@@ -310,7 +314,7 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
 fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    prop_var_id: usize,
+    prop_var_id: VariableIndex,
     state: &FlawSearchState,
     step: usize,
 ) -> Vec<NumericFlaw> {
@@ -325,24 +329,24 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
         if can_split_numeric_var(
             partitions,
             dep_var_id,
-            state.numeric[dep_var_id].upper,
+            state.numeric[dep_var_id.index()].upper,
             include_in_lower,
         ) {
             out.push(NumericFlaw {
                 numeric_var_id: dep_var_id,
-                value: state.numeric[dep_var_id].upper,
+                value: state.numeric[dep_var_id.index()].upper,
                 include_in_lower,
                 step,
             });
         } else if can_split_numeric_var(
             partitions,
             dep_var_id,
-            state.numeric[dep_var_id].lower,
+            state.numeric[dep_var_id.index()].lower,
             !include_in_lower,
         ) {
             out.push(NumericFlaw {
                 numeric_var_id: dep_var_id,
-                value: state.numeric[dep_var_id].lower,
+                value: state.numeric[dep_var_id.index()].lower,
                 include_in_lower: !include_in_lower,
                 step,
             });
@@ -355,7 +359,7 @@ pub(crate) fn numeric_requirement_for_comparison_fact(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
 ) -> Option<(usize, Interval)> {
-    let tree = task.numeric_conditions().for_var(fact.var())?;
+    let tree = task.numeric_conditions().for_var(fact.var_index())?;
     let required_op = required_comparison_op(tree.op(), fact.value())?;
     let left = linearize_numeric_var(task, tree.left_numeric_var_id()).ok()?;
     let right = linearize_numeric_var(task, tree.right_numeric_var_id()).ok()?;
@@ -418,23 +422,23 @@ fn single_var_interval_for_linear_zero_comparison(
         return None;
     }
 
-    let threshold = -expression.constant / *coefficient;
-    if !threshold.is_finite() {
+    let threshold = NumericValue::new(-expression.constant / *coefficient);
+    if !threshold.value().is_finite() {
         return None;
     }
 
     let interval = match (op, coefficient.is_sign_positive()) {
         (CompOp::Lt, true) | (CompOp::Gt, false) => {
-            Interval::new(f64::NEG_INFINITY, threshold, false, false)
+            Interval::new(NEG_INF_VALUE, threshold, false, false)
         }
         (CompOp::Le, true) | (CompOp::Ge, false) => {
-            Interval::new(f64::NEG_INFINITY, threshold, false, true)
+            Interval::new(NEG_INF_VALUE, threshold, false, true)
         }
         (CompOp::Gt, true) | (CompOp::Lt, false) => {
-            Interval::new(threshold, f64::INFINITY, false, false)
+            Interval::new(threshold, INF_VALUE, false, false)
         }
         (CompOp::Ge, true) | (CompOp::Le, false) => {
-            Interval::new(threshold, f64::INFINITY, true, false)
+            Interval::new(threshold, INF_VALUE, true, false)
         }
         (CompOp::Eq, _) => Interval::singleton(threshold),
         (CompOp::Ne, _) => return None,
@@ -444,11 +448,13 @@ fn single_var_interval_for_linear_zero_comparison(
 
 pub(crate) fn can_split_numeric_var(
     partitions: &NumericPartitions,
-    numeric_var_id: usize,
-    value: f64,
+    numeric_var_id: VariableIndex,
+    value: NumericValue,
     include_in_lower: bool,
 ) -> bool {
-    let value = f64::from_bits(float_tolerance::canonical_bits(value));
+    let value = NumericValue::new(f64::from_bits(float_tolerance::canonical_bits(
+        value.value(),
+    )));
     let Some(parts) = partitions.partitions(numeric_var_id) else {
         return false;
     };
@@ -468,8 +474,8 @@ pub(crate) fn can_split_numeric_var(
 #[cfg(test)]
 pub(crate) fn single_switch_task(
     domain_size: usize,
-    goal_value: usize,
-    initial: Vec<usize>,
+    goal_value: ExplicitValueIndex,
+    initial: Vec<ExplicitValueIndex>,
 ) -> planforge_sas::numeric_task::NumericRootTask {
     use planforge_sas::numeric_task::{
         Effect, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
@@ -480,21 +486,26 @@ pub(crate) fn single_switch_task(
         "v".into(),
         (0..domain_size).map(|value| format!("v{value}")).collect(),
         None,
-        0,
+        ExplicitValueIndex::new(0),
     );
     let set = Operator::new(
         "set".into(),
         vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(vec![], 0, Some(0), 1)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
         vec![],
-        1,
+        OperatorCost::new(1),
     );
     NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
         variables: vec![variable],
         numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(0, goal_value)],
+        goals: vec![ExplicitFact::propositional(0, goal_value.index())],
         mutexes: vec![],
         state: initial,
         numeric_state: vec![],

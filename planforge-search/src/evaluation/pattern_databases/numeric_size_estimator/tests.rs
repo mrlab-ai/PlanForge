@@ -1,8 +1,7 @@
-use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom};
-use planforge_sas::numeric_task::{ExplicitVariable, Metric, NumericVariable, Operator};
-use planforge_sas::{
-    axioms::ComparisonOperator,
-    numeric_task::{ExplicitFact, NumericRootTask, NumericRootTaskParts},
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_task::{
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericValue, NumericVariable, Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -17,7 +16,7 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
             "cmp".to_string(),
             vec!["t".to_string(), "f".to_string(), "u".to_string()],
             Some(0),
-            2,
+            ExplicitValueIndex::new(2),
         )],
         numeric_variables: vec![
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
@@ -25,26 +24,26 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![2],
-        numeric_state: vec![1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(2)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
         operators: vec![Operator::new(
             "inc".to_string(),
             vec![],
             vec![],
             vec![planforge_sas::numeric_task::AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            1,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -53,7 +52,10 @@ fn estimates_regular_numeric_domain_size_from_bounds_and_effects() {
 
     let estimator = NumericSizeEstimator::new(&task);
 
-    assert_eq!(estimator.estimate_domain_size(1), 3);
+    assert_eq!(
+        estimator.estimate_domain_size(VariableIndex::from_usize(1)),
+        3
+    );
 }
 
 #[test]
@@ -67,7 +69,7 @@ fn rejects_unrestricted_numeric_conditions() {
             "cmp".to_string(),
             vec!["t".to_string(), "f".to_string(), "u".to_string()],
             Some(1),
-            2,
+            ExplicitValueIndex::new(2),
         )],
         numeric_variables: vec![
             NumericVariable::new("c1".to_string(), NumericType::Constant, None),
@@ -78,29 +80,40 @@ fn rejects_unrestricted_numeric_conditions() {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![2],
-        numeric_state: vec![1.0, 5.0, 0.0, 1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(2)],
+        numeric_state: vec![
+            NumericValue::new(1.0),
+            NumericValue::new(5.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![Operator::new(
             "inc-x".to_string(),
             vec![],
             vec![],
             vec![planforge_sas::numeric_task::AssignmentEffect::new(
-                2,
+                VariableIndex::from_usize(2),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            4,
-            1,
+            VariableIndex::new(0),
+            VariableIndex::new(4),
+            VariableIndex::new(1),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(4, CalOperator::Sum, 2, 3)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(4),
+            CalOperator::Sum,
+            VariableIndex::from_usize(2),
+            VariableIndex::from_usize(3),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 

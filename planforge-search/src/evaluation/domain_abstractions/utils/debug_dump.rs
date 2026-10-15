@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+
 use super::*;
 
 pub(crate) fn debug_print_abstraction_stats(
@@ -152,7 +154,7 @@ pub(crate) fn debug_print_wildcard_plan(
         let choice_count = choices.len();
         let rep = choices
             .first()
-            .and_then(|&id| ops.get(id).map(|op| op.name().to_string()))
+            .and_then(|&id| ops.get(id.index()).map(|op| op.name().to_string()))
             .unwrap_or_else(|| "<none>".to_string());
         representative.push(rep);
 
@@ -160,7 +162,10 @@ pub(crate) fn debug_print_wildcard_plan(
         let _ = write!(&mut line, "  step {i}: options={choice_count}");
         let preview = 10usize;
         for &op_id in choices.iter().take(preview) {
-            let name = ops.get(op_id).map(|op| op.name()).unwrap_or("<bad-op-id>");
+            let name = ops
+                .get(op_id.index())
+                .map(|op| op.name())
+                .unwrap_or("<bad-op-id>");
             let _ = write!(&mut line, " [{op_id}:{name}]");
         }
         if choice_count > preview {
@@ -202,7 +207,7 @@ fn debug_print_concrete_trace(
 
     let mut buffer = vec![0u64; state_packer.num_bins()];
     set_initial_prop_values(task, &state_packer, &mut buffer);
-    let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+    let mut numeric_state: Vec<NumericValue> = task.get_initial_numeric_state_values().to_vec();
 
     axiom_evaluator
         .evaluate(&mut buffer, &mut numeric_state)
@@ -235,21 +240,21 @@ fn debug_print_concrete_trace(
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        let mut chosen: Option<(usize, Vec<u64>, Vec<f64>)> = None;
+        let mut chosen: Option<(OperatorIndex, Vec<u64>, Vec<NumericValue>)> = None;
         let mut tries = 0usize;
         for &op_id in choices.iter() {
             if tries >= max_tries_per_step {
                 debug!("  step {step}: ... (tried first {max_tries_per_step} options)");
                 break;
             }
-            let Some(op) = task.get_operators().get(op_id) else {
+            let Some(op) = task.get_operators().get(op_id.index()) else {
                 continue;
             };
             tries += 1;
 
             // Debug-trace only; we use Forward direction which does not
             // consult `deltas`, so an empty map is fine here.
-            let deltas: HashMap<usize, Vec<f64>> = HashMap::new();
+            let deltas: HashMap<VariableIndex, Vec<NumericValue>> = HashMap::new();
             let applicable = get_progression_precondition_flaws(
                 PartitionedTask {
                     task,
@@ -337,30 +342,30 @@ fn trace_variable_scope(
     task: &dyn AbstractNumericTask,
     plan: &WildcardPlanResult,
     shown_steps: usize,
-) -> (Vec<usize>, Vec<usize>) {
+) -> (Vec<VariableIndex>, Vec<VariableIndex>) {
     let ops = task.get_operators();
-    let mut prop_vars: BTreeSet<usize> = BTreeSet::new();
-    let mut num_vars: BTreeSet<usize> = BTreeSet::new();
+    let mut prop_vars: BTreeSet<VariableIndex> = BTreeSet::new();
+    let mut num_vars: BTreeSet<VariableIndex> = BTreeSet::new();
 
     for choices in plan.wildcard_plan.iter().take(shown_steps) {
         for &op_id in choices.iter() {
-            let Some(op) = ops.get(op_id) else {
+            let Some(op) = ops.get(op_id.index()) else {
                 continue;
             };
             for pre in op.preconditions().iter() {
-                prop_vars.insert(pre.var());
+                prop_vars.insert(pre.var_index());
             }
             for eff in op.effects().iter() {
                 prop_vars.insert(eff.var_id());
                 for c in eff.conditions().iter() {
-                    prop_vars.insert(c.var());
+                    prop_vars.insert(c.var_index());
                 }
             }
             for neff in op.assignment_effects().iter() {
                 num_vars.insert(neff.var_id());
                 num_vars.insert(neff.affected_var_id());
                 for c in neff.conditions().iter() {
-                    prop_vars.insert(c.var());
+                    prop_vars.insert(c.var_index());
                 }
             }
         }
@@ -376,7 +381,7 @@ fn fmt_concrete_props(
     task: &dyn AbstractNumericTask,
     packer: &StatePacker,
     buffer: &[u64],
-    var_ids: &[usize],
+    var_ids: &[VariableIndex],
     max_items: usize,
 ) -> String {
     let mut out = String::new();
@@ -388,7 +393,7 @@ fn fmt_concrete_props(
         }
         let dom = task
             .variables()
-            .get(var_id)
+            .get(var_id.index())
             .map(|v| v.domain_size())
             .unwrap_or(0);
         if dom <= 1 {
@@ -397,7 +402,7 @@ fn fmt_concrete_props(
         if shown > 0 {
             out.push(' ');
         }
-        let val = packer.get(buffer, var_id);
+        let val = packer.get(buffer, var_id.index());
         let _ = write!(&mut out, "v{var_id}={val}");
         shown += 1;
     }
@@ -409,8 +414,8 @@ fn fmt_concrete_props(
 }
 
 fn fmt_concrete_nums(
-    numeric_state: &[f64],
-    var_ids: &[usize],
+    numeric_state: &[NumericValue],
+    var_ids: &[VariableIndex],
     partitions: &NumericPartitions,
     max_items: usize,
 ) -> String {
@@ -421,7 +426,7 @@ fn fmt_concrete_nums(
             let _ = write!(&mut out, " ...");
             break;
         }
-        let Some(&v) = numeric_state.get(num_id) else {
+        let Some(&v) = numeric_state.get(num_id.index()) else {
             continue;
         };
         if shown > 0 {
@@ -437,7 +442,12 @@ fn fmt_concrete_nums(
                 .unwrap_or_else(|| "<missing-interval>".to_string());
             part_s = format!(" p{pid}:{iv_s}");
         }
-        let _ = write!(&mut out, "n{num_id}={}{}", fmt_f64_compact(v), part_s);
+        let _ = write!(
+            &mut out,
+            "n{num_id}={}{}",
+            fmt_f64_compact(v.value()),
+            part_s
+        );
         shown += 1;
     }
     if out.is_empty() {
@@ -517,7 +527,7 @@ fn fmt_nontrivial_nums(
         }
         let part = values[num_id];
         let iv_s = partitions
-            .partition_interval(num_id, part)
+            .partition_interval(VariableIndex::from_usize(num_id), part)
             .map(fmt_interval)
             .unwrap_or_else(|| "<missing-interval>".to_string());
         let _ = write!(&mut out, "n{num_id}=p{part}:{iv_s}");
@@ -553,11 +563,11 @@ fn fmt_delta_numeric_partitions(
             out.push(' ');
         }
         let a_s = partitions
-            .partition_interval(num_id, a)
+            .partition_interval(VariableIndex::from_usize(num_id), a)
             .map(fmt_interval)
             .unwrap_or_else(|| "<missing-interval>".to_string());
         let b_s = partitions
-            .partition_interval(num_id, b)
+            .partition_interval(VariableIndex::from_usize(num_id), b)
             .map(fmt_interval)
             .unwrap_or_else(|| "<missing-interval>".to_string());
         let _ = write!(&mut out, "n{num_id}:p{a}:{a_s}->p{b}:{b_s}");
@@ -603,8 +613,8 @@ pub(crate) fn dump_distances(
     let mut is_axiom_var: Vec<bool> = vec![false; num_prop_vars];
     for ax in task.axioms().iter() {
         let v = ax.var_id();
-        if v < is_axiom_var.len() {
-            is_axiom_var[v] = true;
+        if v.index() < is_axiom_var.len() {
+            is_axiom_var[v.index()] = true;
         }
     }
 
@@ -640,7 +650,10 @@ pub(crate) fn dump_distances(
                 .get(num_var_id)
                 .map(|v| v.name())
                 .unwrap_or("<unknown>");
-            let parts = factory.partitions().partitions(num_var_id).unwrap_or(&[]);
+            let parts = factory
+                .partitions()
+                .partitions(VariableIndex::from_usize(num_var_id))
+                .unwrap_or(&[]);
             debug!("  n{num_var_id}({name}) parts={}", parts.len());
             for (pid, iv) in parts.iter().enumerate() {
                 debug!("    p{pid}: {}", fmt_interval(*iv));

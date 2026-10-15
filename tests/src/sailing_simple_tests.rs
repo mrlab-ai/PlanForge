@@ -47,7 +47,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
@@ -527,8 +527,16 @@ fn sailing_simple_ratchet_equilibrium() {
                 factory_task,
                 &["difference", "x(?boat_0)", "(b1, p0)"],
             )?;
-            let near_count = abstraction.factory.partitions().partitions(near_x)?.len();
-            let far_count = abstraction.factory.partitions().partitions(far_x)?.len();
+            let near_count = abstraction
+                .factory
+                .partitions()
+                .partitions(VariableIndex::from_usize(near_x))?
+                .len();
+            let far_count = abstraction
+                .factory
+                .partitions()
+                .partitions(VariableIndex::from_usize(far_x))?
+                .len();
             (near_count > 1 && far_count > 1).then_some((near_count, far_count))
         })
         .collect::<Vec<_>>();

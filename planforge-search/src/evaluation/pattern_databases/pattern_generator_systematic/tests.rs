@@ -2,8 +2,9 @@ use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericValue, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -14,7 +15,7 @@ fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         axiom_layer,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -26,19 +27,19 @@ fn propositional_predecessor_task() -> NumericRootTask {
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![0, 0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "set-goal".to_string(),
             vec![ExplicitFact::propositional(0, 1)],
             vec![planforge_sas::numeric_task::Effect::new(
                 vec![],
-                1,
-                Some(0),
-                1,
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
             )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -61,19 +62,19 @@ fn numeric_goal_task() -> NumericRootTask {
         ],
         goals: vec![ExplicitFact::propositional(0, 0)],
         mutexes: vec![],
-        state: vec![0, 0],
-        numeric_state: vec![1.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
         operators: vec![],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 0)],
-            1,
-            0,
-            1,
+            VariableIndex::from_usize(1),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(1),
         )],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            1,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![],
@@ -92,17 +93,27 @@ fn eff_eff_goal_join_task() -> NumericRootTask {
             ExplicitFact::propositional(1, 1),
         ],
         mutexes: vec![],
-        state: vec![0, 0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "set-both".to_string(),
             vec![],
             vec![
-                Effect::new(vec![], 0, Some(0), 1),
-                Effect::new(vec![], 1, Some(0), 1),
+                Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                ),
+                Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                ),
             ],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -124,34 +135,44 @@ fn helper_goal_with_unsupported_numeric_effect_task() -> NumericRootTask {
         ],
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![0, 0],
-        numeric_state: vec![2.0, 1.0, 1.0, 2.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+        ],
         operators: vec![Operator::new(
             "scale-x".to_string(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Times,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![PropositionalAxiom::new(
             vec![ExplicitFact::propositional(0, 0)],
-            1,
-            0,
-            1,
+            VariableIndex::from_usize(1),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(1),
         )],
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            3,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(3),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThanOrEqual,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(3, CalOperator::Sum, 1, 2)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(2),
+        )],
         global_constraint: ExplicitFact::propositional(0, 0),
     })
 }
@@ -167,8 +188,11 @@ fn systematic_generator_includes_goal_singleton_and_predecessor_pair() {
         },
     );
 
-    assert!(collection.contains(&Pattern::new(vec![1], vec![])));
-    assert!(collection.contains(&Pattern::new(vec![0, 1], vec![])));
+    assert!(collection.contains(&Pattern::new(vec![VariableIndex::from_usize(1)], vec![])));
+    assert!(collection.contains(&Pattern::new(
+        vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+        vec![]
+    )));
 }
 
 #[test]
@@ -177,7 +201,7 @@ fn systematic_generator_returns_projectable_numeric_patterns() {
     let collection =
         generate_systematic_patterns(&task, SystematicPatternGeneratorConfig::default());
 
-    assert!(collection.contains(&Pattern::new(vec![], vec![1])));
+    assert!(collection.contains(&Pattern::new(vec![], vec![VariableIndex::from_usize(1)])));
 }
 
 #[test]
@@ -191,9 +215,12 @@ fn systematic_generator_joins_disjoint_sga_patterns_via_connection_points() {
         },
     );
 
-    assert!(collection.contains(&Pattern::new(vec![0], vec![])));
-    assert!(collection.contains(&Pattern::new(vec![1], vec![])));
-    assert!(collection.contains(&Pattern::new(vec![0, 1], vec![])));
+    assert!(collection.contains(&Pattern::new(vec![VariableIndex::from_usize(0)], vec![])));
+    assert!(collection.contains(&Pattern::new(vec![VariableIndex::from_usize(1)], vec![])));
+    assert!(collection.contains(&Pattern::new(
+        vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+        vec![]
+    )));
 }
 
 #[test]

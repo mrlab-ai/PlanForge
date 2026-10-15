@@ -1,6 +1,7 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    NumericType, NumericVariable, Operator,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    VariableIndex,
 };
 
 use super::*;
@@ -11,7 +12,7 @@ fn simple_var(name: &str) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         None,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -27,14 +28,19 @@ fn sample_task() -> NumericRootTask {
         )],
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![0, 0],
-        numeric_state: vec![0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0)],
         operators: vec![Operator::new(
             "advance".to_string(),
             vec![ExplicitFact::propositional(0, 1)],
-            vec![Effect::new(vec![], 1, Some(0), 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -47,8 +53,11 @@ fn sample_task() -> NumericRootTask {
 fn pdb_collection_builds_all_patterns() {
     let task = sample_task();
     let patterns = PatternCollection::new(vec![
-        Pattern::new(vec![1], vec![]),
-        Pattern::new(vec![0, 1], vec![]),
+        Pattern::new(vec![VariableIndex::from_usize(1)], vec![]),
+        Pattern::new(
+            vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+            vec![],
+        ),
     ]);
 
     let collection = PdbCollection::new(&task, patterns, 32).unwrap();

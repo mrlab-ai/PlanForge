@@ -132,26 +132,26 @@ fn validate_and_normalize_pattern(task: &dyn AbstractNumericTask, pattern: &mut 
 
     if let Some(&var_id) = pattern.regular.first() {
         assert!(
-            var_id < task.variables().len(),
+            var_id.index() < task.variables().len(),
             "regular variable number too low/high in pattern"
         );
     }
     if let Some(&var_id) = pattern.regular.last() {
         assert!(
-            var_id < task.variables().len(),
+            var_id.index() < task.variables().len(),
             "regular variable number too high in pattern"
         );
     }
 
     if let Some(&var_id) = pattern.numeric.first() {
         assert!(
-            var_id < task.numeric_variables().len(),
+            var_id.index() < task.numeric_variables().len(),
             "numeric variable number too low/high in pattern"
         );
     }
     if let Some(&var_id) = pattern.numeric.last() {
         assert!(
-            var_id < task.numeric_variables().len(),
+            var_id.index() < task.numeric_variables().len(),
             "numeric variable number too high in pattern"
         );
     }

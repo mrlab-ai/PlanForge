@@ -1,15 +1,25 @@
+use planforge_sas::numeric_task::VariableIndex;
+
 use super::*;
 
 #[test]
 fn collection_normalizes_and_deduplicates_patterns() {
     let collection = PatternCollection::new(vec![
         Pattern {
-            regular: vec![3, 1, 3],
-            numeric: vec![5, 4, 5],
+            regular: vec![
+                VariableIndex::from_usize(3),
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(3),
+            ],
+            numeric: vec![
+                VariableIndex::from_usize(5),
+                VariableIndex::from_usize(4),
+                VariableIndex::from_usize(5),
+            ],
         },
         Pattern {
-            regular: vec![1, 3],
-            numeric: vec![4, 5],
+            regular: vec![VariableIndex::from_usize(1), VariableIndex::from_usize(3)],
+            numeric: vec![VariableIndex::from_usize(4), VariableIndex::from_usize(5)],
         },
     ]);
 
@@ -17,8 +27,8 @@ fn collection_normalizes_and_deduplicates_patterns() {
     assert_eq!(
         collection.as_slice(),
         &[Pattern {
-            regular: vec![1, 3],
-            numeric: vec![4, 5],
+            regular: vec![VariableIndex::from_usize(1), VariableIndex::from_usize(3)],
+            numeric: vec![VariableIndex::from_usize(4), VariableIndex::from_usize(5)],
         }]
     );
 }

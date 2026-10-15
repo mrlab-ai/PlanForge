@@ -17,9 +17,12 @@ use std::{
 };
 
 use candle_core::{DType, Device, Result as CandleResult, Tensor, Var};
-use planforge_sas::numeric_task::{ExplicitFact, Operator, TaskRef};
 use planforge_sas::plan_verification::{PlanRejection, Replay, ReplayOutcome, replay_plan};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_sas::{
+    numeric_task::{ExplicitFact, Operator, TaskRef},
+    state_registry::ConcreteStateView,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
@@ -733,15 +736,15 @@ fn recurrent_loss_route(
             source: RecurrentLossSource::Execution,
             goal: RecurrentGoalMode::DeleteAwareTerminal,
         }),
-        (true, CausalStage::Shadow) if update % 4 == 0 => Some(RecurrentLossRoute {
+        (true, CausalStage::Shadow) if update.is_multiple_of(4) => Some(RecurrentLossRoute {
             source: RecurrentLossSource::Execution,
             goal: RecurrentGoalMode::ProducerDiscovery,
         }),
-        (true, CausalStage::Discovery) if update % 4 == 0 => Some(RecurrentLossRoute {
+        (true, CausalStage::Discovery) if update.is_multiple_of(4) => Some(RecurrentLossRoute {
             source: RecurrentLossSource::CausalCopy,
             goal: RecurrentGoalMode::ProducerDiscovery,
         }),
-        (false, CausalStage::Shadow | CausalStage::Discovery) if update % 4 == 0 => {
+        (false, CausalStage::Shadow | CausalStage::Discovery) if update.is_multiple_of(4) => {
             Some(RecurrentLossRoute {
                 source: RecurrentLossSource::Execution,
                 goal: RecurrentGoalMode::ProducerDiscovery,
@@ -4687,13 +4690,20 @@ fn solve_direct_transcription(
                     outcome.verifier_calls += 1;
                     let mut feedback = interpret(&replay, task.get_num_goals());
                     if feedback.solved.is_none() {
-                        let exact = replay
+                        let exact_state = replay
                             .states
                             .last()
                             .expect("exact replay always retains at least the initial state");
+                        let prop = exact_state.buffer(&registry);
+                        let numeric = exact_state.get_numeric_state(&registry);
+                        let exact = ConcreteStateView::from_decoded(
+                            registry.global_state_packer(),
+                            prop,
+                            &numeric,
+                        );
                         let missing: Vec<ExplicitFact> = (0..task.get_num_goals())
                             .map(|goal| task.get_goal_fact(goal))
-                            .filter(|fact| !fact.is_hold(exact, &registry))
+                            .filter(|fact| !fact.is_held(exact))
                             .copied()
                             .collect();
                         feedback.goals_reached = task.get_num_goals().saturating_sub(missing.len());
@@ -4823,16 +4833,23 @@ fn solve_direct_transcription(
                     }
                     let mut replay_step = 0usize;
                     for slot in 0..protected_until {
-                        let exact = replay
+                        let exact_state = replay
                             .states
                             .get(replay_step)
                             .expect("exact replay retains every state in its applicable prefix");
-                        let values = exact.get_state(&registry);
+                        let prop = exact_state.buffer(&registry);
+                        let numeric = exact_state.get_numeric_state(&registry);
+                        let exact = ConcreteStateView::from_decoded(
+                            registry.global_state_packer(),
+                            prop,
+                            &numeric,
+                        );
+                        let values = exact_state.get_state(&registry);
                         for (local_var, &task_var) in
                             transcription.primary_vars().iter().enumerate()
                         {
-                            let fact =
-                                transcription.var_offset()[local_var] as usize + values[task_var];
+                            let fact = transcription.var_offset()[local_var] as usize
+                                + values[task_var].index();
                             let index = (particle * (horizon + 1) + slot) * plan.num_facts + fact;
                             exact_state_target[index] = 1.0;
                             exact_state_active[index] = 1.0;
@@ -4849,7 +4866,7 @@ fn solve_direct_transcription(
                                     operators[operator]
                                         .preconditions()
                                         .iter()
-                                        .all(|fact| fact.is_hold(exact, &registry)),
+                                        .all(|fact| fact.is_held(exact)),
                                 ),
                             };
                         }
@@ -4858,10 +4875,17 @@ fn solve_direct_transcription(
                         }
                     }
                     if let Some(row) = failed_slot {
-                        let exact = replay
+                        let exact_state = replay
                             .states
                             .last()
                             .expect("a failed replay retains its failure state");
+                        let prop = exact_state.buffer(&registry);
+                        let numeric = exact_state.get_numeric_state(&registry);
+                        let exact = ConcreteStateView::from_decoded(
+                            registry.global_state_packer(),
+                            prop,
+                            &numeric,
+                        );
                         let placement_start = (particle * horizon + row) * plan.num_actions;
                         for (action, target) in temporal_applicable_mask
                             [placement_start..placement_start + plan.num_actions]
@@ -4874,7 +4898,7 @@ fn solve_direct_transcription(
                                     operators[operator]
                                         .preconditions()
                                         .iter()
-                                        .all(|fact| fact.is_hold(exact, &registry)),
+                                        .all(|fact| fact.is_held(exact)),
                                 ),
                             };
                         }
@@ -4884,16 +4908,16 @@ fn solve_direct_transcription(
                             replay_step, replay.applied,
                             "a complete applicable decode and replay must have equal lengths"
                         );
-                        let exact = replay
+                        let exact_state = replay
                             .states
                             .last()
                             .expect("exact replay always retains an initial state");
-                        let values = exact.get_state(&registry);
+                        let values = exact_state.get_state(&registry);
                         for (local_var, &task_var) in
                             transcription.primary_vars().iter().enumerate()
                         {
-                            let fact =
-                                transcription.var_offset()[local_var] as usize + values[task_var];
+                            let fact = transcription.var_offset()[local_var] as usize
+                                + values[task_var].index();
                             let index =
                                 (particle * (horizon + 1) + horizon) * plan.num_facts + fact;
                             exact_state_target[index] = 1.0;
@@ -5009,10 +5033,17 @@ fn solve_direct_transcription(
                         }
                     }
                     let controller_feedback = if let Some(row) = failed_slot {
-                        let exact = replay
+                        let exact_state = replay
                             .states
                             .last()
                             .expect("a rejected replay retains its failure state");
+                        let prop = exact_state.buffer(&registry);
+                        let numeric = exact_state.get_numeric_state(&registry);
+                        let exact = ConcreteStateView::from_decoded(
+                            registry.global_state_packer(),
+                            prop,
+                            &numeric,
+                        );
                         let target_start = (particle * horizon + row) * plan.num_actions;
                         let target =
                             &mut applicable_mask[target_start..target_start + plan.num_actions];
@@ -5026,7 +5057,7 @@ fn solve_direct_transcription(
                                     operators[operator]
                                         .preconditions()
                                         .iter()
-                                        .all(|fact| fact.is_hold(exact, &registry)),
+                                        .all(|fact| fact.is_held(exact)),
                                 ),
                             };
                         }
@@ -5137,10 +5168,17 @@ fn solve_direct_transcription(
                         );
                         let mut scaffold_replay_step = 0usize;
                         for gap in 0..=temporal_scaffold_order[particle].len() {
-                            let exact = replay
+                            let exact_state = replay
                                 .states
                                 .get(scaffold_replay_step)
                                 .expect("applicable scaffold replay retains every gap state");
+                            let prop = exact_state.buffer(&registry);
+                            let numeric = exact_state.get_numeric_state(&registry);
+                            let exact = ConcreteStateView::from_decoded(
+                                registry.global_state_packer(),
+                                prop,
+                                &numeric,
+                            );
                             let fact_begin = (particle * (horizon + 1) + gap) * plan.num_facts;
                             for (variable, &task_variable) in
                                 transcription.primary_vars().iter().enumerate()
@@ -5150,7 +5188,7 @@ fn solve_direct_transcription(
                                     temporal_scaffold_gap_fact_values[fact_begin + fact] =
                                         f64::from(
                                             ExplicitFact::propositional(task_variable, value)
-                                                .is_hold(exact, &registry),
+                                                .is_held(exact),
                                         );
                                 }
                             }

@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
@@ -157,7 +157,7 @@ fn fixture_task(name: &str) -> NumericRootTask {
 fn comparison_heads(task: &NumericRootTask) -> BTreeSet<usize> {
     task.comparison_axioms()
         .iter()
-        .map(|axiom| axiom.get_affected_var_id())
+        .map(|axiom| axiom.get_affected_var_id().index())
         .collect()
 }
 
@@ -165,7 +165,7 @@ fn derived_propositional_variables(task: &NumericRootTask) -> Vec<usize> {
     let comparisons = comparison_heads(task);
     (0..task.get_num_variables())
         .filter(|&var| {
-            task.get_variable_axiom_layer(var)
+            task.get_variable_axiom_layer(VariableIndex::from_usize(var))
                 .expect("variable is in range")
                 .is_some()
                 && !comparisons.contains(&var)
@@ -180,15 +180,15 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
         .iter()
         .map(|&var| {
             assert_eq!(
-                task.get_variable_domain_size(var),
+                task.get_variable_domain_size(VariableIndex::from_usize(var)),
                 Ok(2),
                 "{name}: derived variable {var} is not binary, so it has no single \
                  negation-by-failure value"
             );
             let default = task
-                .get_variable_default_axiom_value(var)
+                .get_variable_default_axiom_value(VariableIndex::from_usize(var))
                 .expect("variable is in range");
-            (var, default)
+            (var, default.index())
         })
         .collect();
 
@@ -209,14 +209,16 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
     for axiom in task.axioms() {
         let head = axiom.var_id();
         assert!(
-            defaults.contains_key(&head),
+            defaults.contains_key(&head.index()),
             "{name}: axiom writes non-derived variable {head}"
         );
-        *proofs_of.entry((head, axiom.effect_value())).or_default() += 1;
+        *proofs_of
+            .entry((head.index(), axiom.effect_value().index()))
+            .or_default() += 1;
         for condition in axiom.conditions() {
             let var = condition.var();
             if defaults.get(&var).is_some_and(|&d| d != condition.value()) {
-                supports.entry(head).or_default().insert(var);
+                supports.entry(head.index()).or_default().insert(var);
             }
         }
     }
@@ -225,7 +227,7 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
         layers: derived
             .iter()
             .map(|&var| {
-                task.get_variable_axiom_layer(var)
+                task.get_variable_axiom_layer(VariableIndex::from_usize(var))
                     .expect("variable is in range")
                     .expect("derived variable has a layer")
             })
@@ -360,7 +362,7 @@ fn astar_solution<'task>(
     Solution {
         cost: result
             .solution_cost
-            .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum()),
+            .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum()),
         length: plan.len() as u64,
     }
 }
@@ -566,7 +568,7 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
             .filter(|&var| {
                 propositional[var]
                     != task
-                        .get_variable_default_axiom_value(var)
+                        .get_variable_default_axiom_value(VariableIndex::from_usize(var))
                         .expect("variable is in range")
             })
             .collect()

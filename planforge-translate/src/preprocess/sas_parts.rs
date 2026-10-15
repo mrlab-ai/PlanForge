@@ -17,7 +17,8 @@ use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, Metric, NumericVariable,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, Metric,
+    NumericValue, NumericVariable, OperatorCost, VariableIndex,
 };
 use planforge_sas::sas_format::{
     SAS_FILE_VERSION, SasOperator, SasTaskParts, SasVariable, axiom_layer_from_sas,
@@ -69,17 +70,19 @@ pub fn build(reordered: &ReorderedTask) -> SasTaskParts {
         })
         .collect();
 
-    let state = prop_order
-        .iter()
-        .map(|&var| {
-            let value = sas.init.values[var];
-            usize::try_from(value)
-                .unwrap_or_else(|_| panic!("variable {var} has no initial value (got {value})"))
-        })
-        .collect();
+    let state =
+        prop_order
+            .iter()
+            .map(|&var| {
+                let value = sas.init.values[var];
+                ExplicitValueIndex::from_usize(usize::try_from(value).unwrap_or_else(|_| {
+                    panic!("variable {var} has no initial value (got {value})")
+                }))
+            })
+            .collect();
     let numeric_state = numeric_order
         .iter()
-        .map(|&var| sas.init.num_values[var])
+        .map(|&var| NumericValue::new(sas.init.num_values[var]))
         .collect();
 
     let operators = sas
@@ -97,9 +100,9 @@ pub fn build(reordered: &ReorderedTask) -> SasTaskParts {
             // does not derive, so the rule requires the value it overwrites.
             PropositionalAxiom::new(
                 facts(&axiom.condition),
-                reordered.prop_level(effect_var),
-                1 - effect_value,
-                effect_value,
+                VariableIndex::from_usize(reordered.prop_level(effect_var)),
+                ExplicitValueIndex::from_usize(1 - effect_value),
+                ExplicitValueIndex::from_usize(effect_value),
             )
         })
         .collect();
@@ -109,9 +112,9 @@ pub fn build(reordered: &ReorderedTask) -> SasTaskParts {
         .iter()
         .map(|axiom| {
             ComparisonAxiom::new(
-                reordered.prop_level(axiom.effect),
-                reordered.numeric_level(axiom.parts[0]),
-                reordered.numeric_level(axiom.parts[1]),
+                VariableIndex::from_usize(reordered.prop_level(axiom.effect)),
+                VariableIndex::from_usize(reordered.numeric_level(axiom.parts[0])),
+                VariableIndex::from_usize(reordered.numeric_level(axiom.parts[1])),
                 ComparisonOperator::from_sas(&axiom.comp)
                     .unwrap_or_else(|| panic!("{:?} is not a comparator", axiom.comp)),
             )
@@ -123,26 +126,32 @@ pub fn build(reordered: &ReorderedTask) -> SasTaskParts {
         .iter()
         .map(|axiom| {
             AssignmentAxiom::new(
-                reordered.numeric_level(axiom.effect),
+                VariableIndex::from_usize(reordered.numeric_level(axiom.effect)),
                 CalOperator::from_sas(&axiom.op).unwrap_or_else(|| {
                     panic!("{:?} does not combine a numeric axiom's operands", axiom.op)
                 }),
-                reordered.numeric_level(axiom.parts[0]),
-                reordered.numeric_level(axiom.parts[1]),
+                VariableIndex::from_usize(reordered.numeric_level(axiom.parts[0])),
+                VariableIndex::from_usize(reordered.numeric_level(axiom.parts[1])),
             )
         })
         .collect();
 
     let parts = SasTaskParts {
         version: SAS_FILE_VERSION,
-        metric: Metric::from_sas(metric.optimization_criterion, metric.index).unwrap_or_else(
-            || {
-                panic!(
-                    "{:?} is not an optimization criterion",
-                    metric.optimization_criterion
-                )
+        metric: Metric::from_sas(
+            metric.optimization_criterion,
+            if metric.index > 0 {
+                Some(VariableIndex::from_usize(metric.index))
+            } else {
+                None
             },
-        ),
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "{:?} is not an optimization criterion",
+                metric.optimization_criterion
+            )
+        }),
         variables,
         numeric_variables,
         mutexes: sas
@@ -179,9 +188,9 @@ fn build_operator(reordered: &ReorderedTask, op: &crate::sas_tasks::SASOperator)
         .map(|(var, precondition_field, effect_value, conditions)| {
             Effect::new(
                 conditions.iter().map(fact).collect(),
-                reordered.prop_level(*var),
+                VariableIndex::from_usize(reordered.prop_level(*var)),
                 effect_precondition_from_sas(*precondition_field),
-                *effect_value,
+                ExplicitValueIndex::from_usize(*effect_value),
             )
         })
         .collect();
@@ -193,10 +202,10 @@ fn build_operator(reordered: &ReorderedTask, op: &crate::sas_tasks::SASOperator)
         .iter()
         .map(|(var, operator, operand, conditions)| {
             AssignmentEffect::new(
-                reordered.numeric_level(*var),
+                VariableIndex::from_usize(reordered.numeric_level(*var)),
                 AssignmentOperation::from_sas(operator)
                     .unwrap_or_else(|| panic!("{operator:?} is not an assignment operator")),
-                reordered.numeric_level(*operand),
+                VariableIndex::from_usize(reordered.numeric_level(*operand)),
                 !conditions.is_empty(),
                 conditions.iter().map(fact).collect(),
             )
@@ -208,6 +217,6 @@ fn build_operator(reordered: &ReorderedTask, op: &crate::sas_tasks::SASOperator)
         prevail: op.prevail.iter().map(fact).collect(),
         effects,
         assignment_effects,
-        cost: operator_cost_from_sas(op.cost),
+        cost: OperatorCost::new(operator_cost_from_sas(op.cost)),
     }
 }

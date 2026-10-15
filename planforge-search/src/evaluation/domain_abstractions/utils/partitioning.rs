@@ -1,11 +1,12 @@
+use planforge_sas::numeric_task::{INF_VALUE, NEG_INF_VALUE, NumericValue};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 pub(crate) fn fmt_interval(iv: Interval) -> String {
     let l = if iv.lower_closed { '[' } else { '(' };
     let r = if iv.upper_closed { ']' } else { ')' };
-    let lo = fmt_f64_compact(iv.lower);
-    let hi = fmt_f64_compact(iv.upper);
+    let lo = fmt_f64_compact(iv.lower.value());
+    let hi = fmt_f64_compact(iv.upper.value());
     format!("{l}{lo}, {hi}{r}")
 }
 
@@ -35,15 +36,15 @@ pub(crate) fn fmt_f64_compact(v: f64) -> String {
 }
 
 #[inline]
-fn interval_contains_value_tolerant(iv: &Interval, value: f64) -> bool {
-    if value.is_nan() || iv.is_empty() {
+fn interval_contains_value_tolerant(iv: &Interval, value: NumericValue) -> bool {
+    if value.value().is_nan() || iv.is_empty() {
         return false;
     }
 
     // Parity-over-quality: exact match at partition boundaries, matching
     // C++ numeric-FD's `get_partition_index`. Tolerant comparison drifted
     // boundary-aligned values into the wrong partition relative to C++.
-    let lower_ok = if iv.lower == f64::NEG_INFINITY {
+    let lower_ok = if iv.lower == NEG_INF_VALUE {
         true
     } else if iv.lower_closed {
         value >= iv.lower
@@ -51,7 +52,7 @@ fn interval_contains_value_tolerant(iv: &Interval, value: f64) -> bool {
         value > iv.lower
     };
 
-    let upper_ok = if iv.upper == f64::INFINITY {
+    let upper_ok = if iv.upper == INF_VALUE {
         true
     } else if iv.upper_closed {
         value <= iv.upper
@@ -62,7 +63,7 @@ fn interval_contains_value_tolerant(iv: &Interval, value: f64) -> bool {
     lower_ok && upper_ok
 }
 
-pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option<usize> {
+pub(crate) fn partition_for_value(partitions: &[Interval], value: NumericValue) -> Option<usize> {
     if partitions.len() <= 8 {
         return partitions
             .iter()
@@ -74,10 +75,10 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option
     while low < high {
         let mid = low + (high - low) / 2;
         let iv = &partitions[mid];
-        let below_lower = if iv.lower.is_finite() {
-            let tolerance = float_tolerance::tolerance(value, iv.lower);
-            value < iv.lower - tolerance
-                || (value - iv.lower).abs() <= tolerance && !iv.lower_closed
+        let below_lower = if iv.lower.value().is_finite() {
+            let tolerance = float_tolerance::tolerance_nv(value, iv.lower);
+            value.value() < iv.lower.value() - tolerance.value()
+                || (value.value() - iv.lower.value()).abs() <= tolerance.value() && !iv.lower_closed
         } else {
             false
         };
@@ -86,10 +87,10 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option
             continue;
         }
 
-        let above_upper = if iv.upper.is_finite() {
-            let tolerance = float_tolerance::tolerance(value, iv.upper);
-            value > iv.upper + tolerance
-                || (value - iv.upper).abs() <= tolerance && !iv.upper_closed
+        let above_upper = if iv.upper.value().is_finite() {
+            let tolerance = float_tolerance::tolerance_nv(value, iv.upper);
+            value.value() > iv.upper.value() + tolerance.value()
+                || (value.value() - iv.upper.value()).abs() <= tolerance.value() && !iv.upper_closed
         } else {
             false
         };
@@ -120,9 +121,9 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: f64) -> Option
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct EquispacedPartitioning {
     /// Lower bound of the first fully-finite partition.
-    base: f64,
+    base: NumericValue,
     /// Width of one finite partition.
-    step: f64,
+    step: NumericValue,
     /// Number of fully-finite partitions covering `[base, base+step*finite_count)`.
     finite_count: usize,
     /// Index of the first finite partition (0 if no lower unbounded tail, 1 otherwise).
@@ -138,12 +139,12 @@ impl EquispacedPartitioning {
         }
 
         let mut finite_offset = 0;
-        if !partitions[0].lower.is_finite() {
+        if !partitions[0].lower.value().is_finite() {
             finite_offset = 1;
         }
 
         let mut finite_end = partitions.len();
-        if !partitions[finite_end - 1].upper.is_finite() {
+        if !partitions[finite_end - 1].upper.value().is_finite() {
             finite_end -= 1;
         }
 
@@ -152,13 +153,13 @@ impl EquispacedPartitioning {
             return None;
         }
         for iv in &partitions[finite_offset..finite_end] {
-            if !iv.lower.is_finite() || !iv.upper.is_finite() {
+            if !iv.lower.value().is_finite() || !iv.upper.value().is_finite() {
                 return None;
             }
         }
 
         let first = &partitions[finite_offset];
-        let step = first.upper - first.lower;
+        let step = first.upper.value() - first.lower.value();
         if !(step.is_finite() && step > 0.0) {
             return None;
         }
@@ -173,14 +174,14 @@ impl EquispacedPartitioning {
             if iv.lower_closed != lower_closed || iv.upper_closed != upper_closed {
                 return None;
             }
-            if (iv.lower - expected_lower).abs() > step_tol {
+            if (iv.lower.value() - expected_lower.value()).abs() > step_tol {
                 return None;
             }
-            if (iv.upper - iv.lower - step).abs() > step_tol {
+            if (iv.upper.value() - iv.lower.value() - step).abs() > step_tol {
                 return None;
             }
             count += 1;
-            expected_lower = iv.lower + step;
+            expected_lower = NumericValue::new(iv.lower.value() + step);
         }
         if count < 2 {
             return None;
@@ -190,21 +191,21 @@ impl EquispacedPartitioning {
         // base; same for an unbounded-upper partition.
         if finite_offset == 1 {
             let head = &partitions[0];
-            if head.lower != f64::NEG_INFINITY || (head.upper - base).abs() > step_tol {
+            if head.lower != NEG_INF_VALUE || (head.upper.value() - base.value()).abs() > step_tol {
                 return None;
             }
         }
         if finite_end < partitions.len() {
             let tail = &partitions[finite_end];
-            let last_upper = base + step * count as f64;
-            if tail.upper != f64::INFINITY || (tail.lower - last_upper).abs() > step_tol {
+            let last_upper = base.value() + step * count as f64;
+            if tail.upper != INF_VALUE || (tail.lower.value() - last_upper).abs() > step_tol {
                 return None;
             }
         }
 
         Some(Self {
             base,
-            step,
+            step: NumericValue::new(step),
             finite_count: count,
             finite_offset,
             total: partitions.len(),
@@ -225,8 +226,8 @@ impl EquispacedPartitioning {
     /// `NumericPartitions::equispaced` for context.
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn lookup(&self, value: f64) -> Option<usize> {
-        if !value.is_finite() {
+    pub(crate) fn lookup(&self, value: NumericValue) -> Option<usize> {
+        if !value.value().is_finite() {
             return None;
         }
 
@@ -238,27 +239,29 @@ impl EquispacedPartitioning {
                 // Value is below the first finite partition with no head tail.
                 // Tolerate values that round to `base` (matches the legacy
                 // tolerant binary search).
-                let tol = float_tolerance::tolerance(value, self.base);
-                ((self.base - value) <= tol).then_some(0)
+                let tol = float_tolerance::tolerance_nv(value, self.base);
+                ((self.base.value() - value.value()) <= tol.value()).then_some(0)
             };
         }
 
-        let last_upper = self.base + self.step * self.finite_count as f64;
+        let last_upper =
+            NumericValue::new(self.base.value() + self.step.value() * self.finite_count as f64);
         let upper_tail_present = self.finite_offset + self.finite_count < self.total;
         if value >= last_upper {
-            let tol = float_tolerance::tolerance(value, last_upper);
+            let tol = float_tolerance::tolerance_nv(value, last_upper);
             if !upper_tail_present {
-                return ((value - last_upper) <= tol).then_some(self.total - 1);
+                return ((value.value() - last_upper.value()) <= tol.value())
+                    .then_some(self.total - 1);
             }
             // If value is *exactly* at the boundary, the lower-closed
             // convention puts it in the finite partition; otherwise the tail.
-            if (value - last_upper).abs() <= tol {
+            if (value.value() - last_upper.value()).abs() <= tol.value() {
                 return Some(self.finite_offset + self.finite_count - 1);
             }
             return Some(self.finite_offset + self.finite_count);
         }
 
-        let raw = (value - self.base) / self.step;
+        let raw = (value.value() - self.base.value()) / self.step.value();
         let mut idx = raw as usize;
         // Defensive clamp against tiny rounding edge cases at the right edge.
         if idx >= self.finite_count {

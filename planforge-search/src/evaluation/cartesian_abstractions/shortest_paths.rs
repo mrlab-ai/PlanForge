@@ -119,8 +119,8 @@ impl StableAbstractSearch {
             }
             for &transition_id in &working.outgoing()[state_id] {
                 let transition = working.transition(transition_id);
-                let candidate =
-                    self.g_values[state_id] + semantics.operator_costs()[transition.concrete_op_id];
+                let candidate = self.g_values[state_id]
+                    + semantics.operator_costs()[transition.concrete_op_id.index()].value();
                 if candidate < self.g_values[transition.target] {
                     self.g_values[transition.target] = candidate;
                     self.predecessors[transition.target] = Some(TransitionKey {
@@ -160,7 +160,7 @@ impl StableAbstractSearch {
 
         for transition in plan.iter().rev() {
             let path_h = self.h_values[transition.target]
-                + semantics.operator_costs()[transition.concrete_op_id];
+                + semantics.operator_costs()[transition.concrete_op_id.index()].value();
             ensure!(
                 path_h + float_tolerance::SEARCH_EPSILON >= self.h_values[transition.source],
                 "ICAPS Cartesian inherited h-value decreased along selected abstract plan"
@@ -250,12 +250,12 @@ pub(super) fn compute_shortest_paths_with_goals(
             if transition.source == target {
                 continue;
             }
-            let cost = semantics.operator_costs()[transition.concrete_op_id];
+            let cost = semantics.operator_costs()[transition.concrete_op_id.index()];
             ensure!(
-                cost >= -float_tolerance::SEARCH_EPSILON && cost.is_finite(),
+                cost.value() >= -float_tolerance::SEARCH_EPSILON && cost.value().is_finite(),
                 "invalid operator cost {cost}"
             );
-            let alternative = distance + cost.max(0.0);
+            let alternative = distance + cost.value().max(0.0);
             let source = transition.source;
             if alternative + float_tolerance::SEARCH_EPSILON < distances[source] {
                 distances[source] = alternative;
@@ -380,8 +380,10 @@ pub(super) fn update_shortest_paths_after_split(
             if !target_distance.is_finite() {
                 continue;
             }
-            let candidate =
-                target_distance + semantics.operator_costs()[transition.concrete_op_id].max(0.0);
+            let candidate = target_distance
+                + semantics.operator_costs()[transition.concrete_op_id.index()]
+                    .value()
+                    .max(0.0);
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
                 shortest_paths.set_generating_transition(
@@ -407,8 +409,10 @@ pub(super) fn update_shortest_paths_after_split(
             if transition.source == target || !shortest_paths.invalid[transition.source] {
                 continue;
             }
-            let alternative =
-                distance + semantics.operator_costs()[transition.concrete_op_id].max(0.0);
+            let alternative = distance
+                + semantics.operator_costs()[transition.concrete_op_id.index()]
+                    .value()
+                    .max(0.0);
             if alternative + float_tolerance::SEARCH_EPSILON
                 < shortest_paths.distances[transition.source]
             {

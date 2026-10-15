@@ -24,42 +24,50 @@ pub trait AbstractNumericTask: Send + Sync {
     fn metric(&self) -> &Metric;
 
     fn get_num_variables(&self) -> usize;
-    fn get_variable_name(&self, index: usize) -> Result<&str, &str>;
-    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str>;
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str>;
-    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str>;
+    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str>;
+    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str>;
+    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str>;
+    fn get_variable_default_axiom_value(
+        &self,
+        index: VariableIndex,
+    ) -> Result<ExplicitValueIndex, &str>;
     fn get_fact_name(&self, fact: &ExplicitFact) -> &str;
 
     fn are_facts_mutex(&self, fact1: &ExplicitFact, fact2: &ExplicitFact) -> bool;
 
     fn get_operators(&self) -> &Vec<Operator>;
-    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64;
-    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str;
+    fn get_operator_cost(&self, index: OperatorIndex, is_axiom: bool) -> OperatorCost;
+    fn get_operator_name(&self, index: OperatorIndex, is_axiom: bool) -> &str;
     fn get_num_operators(&self) -> usize;
-    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize;
+    fn get_num_operator_preconditions(&self, index: OperatorIndex, is_axiom: bool) -> usize;
     fn get_operator_precondition(
         &self,
-        index: usize,
+        index: OperatorIndex,
         precond_index: usize,
         is_axiom: bool,
     ) -> &ExplicitFact;
-    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize;
+    fn get_num_operator_effects(&self, index: OperatorIndex, is_axiom: bool) -> usize;
     fn get_num_operator_effect_conditions(
         &self,
-        index: usize,
+        index: OperatorIndex,
         eff_index: usize,
         is_axiom: bool,
     ) -> usize;
     fn get_operator_effect_condition(
         &self,
-        index: usize,
+        index: OperatorIndex,
         eff_index: usize,
         cond_index: usize,
         is_axiom: bool,
     ) -> &ExplicitFact;
-    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact;
+    fn get_operator_effect(
+        &self,
+        index: OperatorIndex,
+        eff_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact;
 
-    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask);
+    fn convert_operator_index(&self, index: OperatorIndex, ancestor_task: &dyn AbstractNumericTask);
 
     fn get_num_axioms(&self) -> usize;
     fn goals(&self) -> &[ExplicitFact];
@@ -68,10 +76,10 @@ pub trait AbstractNumericTask: Send + Sync {
 
     /// The initial values of the propositional variables, already closed
     /// under the task's axioms.
-    fn get_initial_propositional_state_values(&self) -> &[usize];
+    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex];
     /// The initial values of the numeric variables, already closed under the
     /// task's axioms.
-    fn get_initial_numeric_state_values(&self) -> &[f64];
+    fn get_initial_numeric_state_values(&self) -> &[NumericValue];
 
     fn convert_ancestor_state_values(
         &self,
@@ -84,16 +92,18 @@ pub trait AbstractNumericTask: Send + Sync {
     /// Customization hook used by [`NumericTaskExt::abstract_state_values`].
     fn project_state_values(
         &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String>;
+        propositional_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String>;
 
     /// Customization hook used by
     /// [`NumericTaskExt::evaluated_initial_abstract_state_values`].
-    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String>;
+    fn evaluate_initial_state_values(
+        &self,
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String>;
 
     /// Customization hook used by [`NumericTaskExt::abstract_operator_cost`].
-    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64;
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue;
 }
 
 /// Derived task operations shared by every [`AbstractNumericTask`].
@@ -104,70 +114,75 @@ pub trait AbstractNumericTask: Send + Sync {
 pub trait NumericTaskExt: AbstractNumericTask {
     fn abstract_state_values(
         &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        propositional_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         self.project_state_values(propositional_values, numeric_values)
     }
 
-    fn evaluated_initial_abstract_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+    fn evaluated_initial_abstract_state_values(
+        &self,
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         self.evaluate_initial_state_values()
     }
 
-    fn abstract_operator_cost(&self, operator_id: usize) -> f64 {
+    fn abstract_operator_cost(&self, operator_id: OperatorIndex) -> NumericValue {
         self.operator_cost_for_abstraction(operator_id)
     }
 
-    fn min_abstract_operator_cost(&self) -> f64 {
+    fn min_abstract_operator_cost(&self) -> NumericValue {
         let min_operator_cost = (0..self.get_operators().len())
-            .map(|operator_id| self.abstract_operator_cost(operator_id))
-            .fold(f64::INFINITY, f64::min);
-        if min_operator_cost.is_finite() {
-            min_operator_cost.max(0.0)
+            .map(|operator_id| self.abstract_operator_cost(OperatorIndex::from_usize(operator_id)))
+            .fold(NumericValue::new(f64::INFINITY), |acc, x| {
+                NumericValue::new(f64::min(acc.value(), x.value()))
+            });
+        if min_operator_cost.value().is_finite() {
+            NumericValue::new(min_operator_cost.value().max(0.0))
         } else {
-            0.0
+            NumericValue::new(0.0)
         }
     }
 
-    fn assignment_axiom_lookup(&self) -> Result<Vec<Option<usize>>, NumericConditionError> {
+    fn assignment_axiom_lookup(&self) -> Result<Vec<Option<AxiomIndex>>, NumericConditionError> {
         assignment_axiom_lookup(self.numeric_variables().len(), self.assignment_axioms())
     }
 
     fn linearize_numeric_var(
         &self,
-        numeric_var_id: usize,
+        numeric_var_id: VariableIndex,
     ) -> Result<crate::utils::linear_effects::LinearExpression, LinearizationError> {
         linearize_numeric_var(self, numeric_var_id)
     }
 
     fn linearized_assignment_effects(
         &self,
-        operator_id: usize,
+        operator_id: OperatorIndex,
     ) -> Result<Vec<LinearNumericEffect>, LinearizationError> {
         linearize_operator_assignment_effects(self, operator_id)
     }
 
-    fn regular_numeric_variable_ids(&self) -> Vec<usize> {
+    fn regular_numeric_variable_ids(&self) -> Vec<VariableIndex> {
         self.numeric_variables()
             .iter()
             .enumerate()
             .filter_map(|(numeric_var_id, numeric_var)| {
-                (numeric_var.get_type() == &NumericType::Regular).then_some(numeric_var_id)
+                (numeric_var.get_type() == &NumericType::Regular)
+                    .then_some(VariableIndex::from_usize(numeric_var_id))
             })
             .collect()
     }
 
-    fn is_linear_cost_operator(&self, operator_id: usize) -> bool {
+    fn is_linear_cost_operator(&self, operator_id: OperatorIndex) -> bool {
         linear_metric_operator_cost_expression(self, operator_id).is_some()
     }
 
-    fn operator_cost_coefficients(&self, operator_id: usize) -> Vec<f64> {
+    fn operator_cost_coefficients(&self, operator_id: OperatorIndex) -> Vec<f64> {
         let regular_numeric_variable_ids = self.regular_numeric_variable_ids();
         linear_metric_operator_cost_expression(self, operator_id)
             .map(|expression| {
                 regular_numeric_variable_ids
                     .iter()
-                    .map(|&numeric_var_id| expression.coefficients[numeric_var_id])
+                    .map(|&numeric_var_id| expression.coefficients[numeric_var_id.index()])
                     .collect()
             })
             .unwrap_or_else(|| {
@@ -177,7 +192,7 @@ pub trait NumericTaskExt: AbstractNumericTask {
             })
     }
 
-    fn operator_cost_constant(&self, operator_id: usize) -> f64 {
+    fn operator_cost_constant(&self, operator_id: OperatorIndex) -> f64 {
         linear_metric_operator_cost_expression(self, operator_id)
             .map(|expression| expression.constant)
             .unwrap_or_else(|| {
@@ -192,9 +207,9 @@ impl<T: AbstractNumericTask + ?Sized> NumericTaskExt for T {}
 
 fn identity_state_values(
     task: &(impl AbstractNumericTask + ?Sized),
-    propositional_values: &[usize],
-    numeric_values: &[f64],
-) -> Result<(Vec<usize>, Vec<f64>), String> {
+    propositional_values: &[ExplicitValueIndex],
+    numeric_values: &[NumericValue],
+) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
     if propositional_values.len() != task.variables().len() {
         return Err(format!(
             "expected {} propositional values, got {}",
@@ -214,28 +229,29 @@ fn identity_state_values(
 
 pub fn evaluate_metric_from_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    numeric_values: &[f64],
-) -> f64 {
+    numeric_values: &[NumericValue],
+) -> NumericValue {
     let metric_var_id = task.metric().var_id();
     match metric_var_id {
-        Some(var_id) => *numeric_values.get(var_id).unwrap_or_else(|| {
+        Some(var_id) => *numeric_values.get(var_id.index()).unwrap_or_else(|| {
             panic!(
-                "metric variable {var_id} is out of bounds for {} numeric values",
+                "metric variable {} is out of bounds for {} numeric values",
+                var_id.index(),
                 numeric_values.len()
             )
         }),
-        None => 0.0,
+        None => NumericValue::new(0.0),
     }
 }
 
 pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    numeric_values: &mut [f64],
+    numeric_values: &mut [NumericValue],
 ) -> Result<(), AssignmentAxiomError> {
     // Assignment axioms are stored in dependency-layer order, so each RHS is
     // complete when it is visited and one forward pass closes the values.
     for axiom in task.assignment_axioms() {
-        let affected_var_id = axiom.get_affected_var_id();
+        let affected_var_id = axiom.get_affected_var_id().index();
         assert!(
             affected_var_id < numeric_values.len(),
             "assignment axiom target {affected_var_id} is out of bounds for {} numeric values",
@@ -249,9 +265,9 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
 pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
     task: &T,
     operator: &Operator,
-) -> f64 {
+) -> NumericValue {
     if !task.metric().use_metric() {
-        return operator.cost() as f64;
+        return NumericValue::new(operator.cost().value() as f64);
     }
 
     let initial_numeric_values = task.get_initial_numeric_state_values();
@@ -267,27 +283,29 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
         let assignment_var_id = effect.var_id();
         let affected_var_id = effect.affected_var_id();
         assert!(
-            assignment_var_id < numeric_values.len(),
-            "assignment variable {assignment_var_id} of operator {} is out of bounds for {} numeric variables",
+            (assignment_var_id.index()) < numeric_values.len(),
+            "assignment variable {} of operator {} is out of bounds for {} numeric variables",
+            assignment_var_id.index(),
             operator.name(),
             numeric_values.len(),
         );
         assert!(
-            affected_var_id < numeric_values.len(),
-            "affected variable {affected_var_id} of operator {} is out of bounds for {} numeric variables",
+            (affected_var_id.index()) < numeric_values.len(),
+            "affected variable {} of operator {} is out of bounds for {} numeric variables",
+            affected_var_id.index(),
             operator.name(),
             numeric_values.len(),
         );
 
         let result = AssignmentOperation::apply(
-            numeric_values[affected_var_id],
+            numeric_values[affected_var_id.index()],
             effect.operation(),
-            numeric_values[assignment_var_id],
+            numeric_values[assignment_var_id.index()],
         );
         results.push((affected_var_id, result));
     }
     for (affected_var_id, result) in results {
-        numeric_values[affected_var_id] = result;
+        numeric_values[affected_var_id.index()] = result;
     }
 
     propagate_assignment_axiom_values(task, &mut numeric_values).unwrap_or_else(|error| {
@@ -299,35 +317,38 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
     });
     let new_metric = evaluate_metric_from_values(task, &numeric_values);
     let delta = if task.metric().is_min() {
-        new_metric - old_metric
+        new_metric.value() - old_metric.value()
     } else {
-        old_metric - new_metric
+        old_metric.value() - new_metric.value()
     };
     assert!(
         delta >= 0.0,
         "operator {} has negative metric cost {delta}, which search does not support",
         operator.name()
     );
-    delta
+    NumericValue::new(delta)
 }
 
 fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
     task: &T,
-    operator_id: usize,
+    operator_id: OperatorIndex,
 ) -> Option<crate::utils::linear_effects::LinearExpression> {
     if !task.metric().use_metric() {
         return None;
     }
 
     let metric_var_id = task.metric().var_id().unwrap();
-    let metric_variable = task.numeric_variables().get(metric_var_id)?;
+    let metric_variable = task.numeric_variables().get(metric_var_id.index())?;
     if metric_variable.get_type() != &NumericType::Cost {
         return None;
     }
 
-    let operator = task.get_operators().get(operator_id).unwrap_or_else(|| {
-        panic!("operator id {operator_id} is out of bounds for linear metric-cost extraction")
-    });
+    let operator = task
+        .get_operators()
+        .get(operator_id.index())
+        .unwrap_or_else(|| {
+            panic!("operator id {operator_id} is out of bounds for linear metric-cost extraction")
+        });
     let metric_direction = if task.metric().is_min() { 1.0 } else { -1.0 };
     let mut linear_cost_expression = None;
 
@@ -344,7 +365,7 @@ fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
             .unwrap_or_else(|error| {
                 panic!(
                     "failed to linearize metric-cost source variable {} for operator {operator_id}: {error}",
-                    assignment_effect.var_id()
+                    assignment_effect.var_id().index()
                 )
             });
         let candidate = match assignment_effect.operation() {
@@ -414,16 +435,19 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn get_num_variables(&self) -> usize {
         (**self).get_num_variables()
     }
-    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
+    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str> {
         (**self).get_variable_name(index)
     }
-    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
+    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str> {
         (**self).get_variable_domain_size(index)
     }
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
+    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str> {
         (**self).get_variable_axiom_layer(index)
     }
-    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
+    fn get_variable_default_axiom_value(
+        &self,
+        index: VariableIndex,
+    ) -> Result<ExplicitValueIndex, &str> {
         (**self).get_variable_default_axiom_value(index)
     }
     fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
@@ -435,32 +459,32 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn get_operators(&self) -> &Vec<Operator> {
         (**self).get_operators()
     }
-    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
+    fn get_operator_cost(&self, index: OperatorIndex, is_axiom: bool) -> OperatorCost {
         (**self).get_operator_cost(index, is_axiom)
     }
-    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
+    fn get_operator_name(&self, index: OperatorIndex, is_axiom: bool) -> &str {
         (**self).get_operator_name(index, is_axiom)
     }
     fn get_num_operators(&self) -> usize {
         (**self).get_num_operators()
     }
-    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
+    fn get_num_operator_preconditions(&self, index: OperatorIndex, is_axiom: bool) -> usize {
         (**self).get_num_operator_preconditions(index, is_axiom)
     }
     fn get_operator_precondition(
         &self,
-        index: usize,
+        index: OperatorIndex,
         precond_index: usize,
         is_axiom: bool,
     ) -> &ExplicitFact {
         (**self).get_operator_precondition(index, precond_index, is_axiom)
     }
-    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
+    fn get_num_operator_effects(&self, index: OperatorIndex, is_axiom: bool) -> usize {
         (**self).get_num_operator_effects(index, is_axiom)
     }
     fn get_num_operator_effect_conditions(
         &self,
-        index: usize,
+        index: OperatorIndex,
         eff_index: usize,
         is_axiom: bool,
     ) -> usize {
@@ -468,17 +492,26 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     }
     fn get_operator_effect_condition(
         &self,
-        index: usize,
+        index: OperatorIndex,
         eff_index: usize,
         cond_index: usize,
         is_axiom: bool,
     ) -> &ExplicitFact {
         (**self).get_operator_effect_condition(index, eff_index, cond_index, is_axiom)
     }
-    fn get_operator_effect(&self, index: usize, eff_index: usize, is_axiom: bool) -> &ExplicitFact {
+    fn get_operator_effect(
+        &self,
+        index: OperatorIndex,
+        eff_index: usize,
+        is_axiom: bool,
+    ) -> &ExplicitFact {
         (**self).get_operator_effect(index, eff_index, is_axiom)
     }
-    fn convert_operator_index(&self, index: usize, ancestor_task: &dyn AbstractNumericTask) {
+    fn convert_operator_index(
+        &self,
+        index: OperatorIndex,
+        ancestor_task: &dyn AbstractNumericTask,
+    ) {
         (**self).convert_operator_index(index, ancestor_task)
     }
     fn get_num_axioms(&self) -> usize {
@@ -493,10 +526,10 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     fn get_goal_fact(&self, index: usize) -> &ExplicitFact {
         (**self).get_goal_fact(index)
     }
-    fn get_initial_propositional_state_values(&self) -> &[usize] {
+    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex] {
         (**self).get_initial_propositional_state_values()
     }
-    fn get_initial_numeric_state_values(&self) -> &[f64] {
+    fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
         (**self).get_initial_numeric_state_values()
     }
     fn convert_ancestor_state_values(
@@ -511,15 +544,17 @@ impl<T: AbstractNumericTask + ?Sized> AbstractNumericTask for &T {
     }
     fn project_state_values(
         &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        propositional_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         (**self).project_state_values(propositional_values, numeric_values)
     }
-    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+    fn evaluate_initial_state_values(
+        &self,
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         (**self).evaluate_initial_state_values()
     }
-    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64 {
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
         (**self).operator_cost_for_abstraction(operator_id)
     }
 }
@@ -545,7 +580,7 @@ pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
             fact.var(),
             conditions.num_propositional_vars()
         );
-        let expected = conditions.namespace_of(fact.var());
+        let expected = conditions.namespace_of(fact.var_index());
         assert_eq!(
             fact.namespace(),
             expected,
@@ -601,10 +636,10 @@ pub struct NumericRootTask {
     goals: Vec<ExplicitFact>,
     mutexes: Vec<Vec<ExplicitFact>>,
     mutex_pairs: HashSet<(ExplicitFact, ExplicitFact)>,
-    state: Vec<usize>,
-    numeric_state: Vec<f64>,
+    state: Vec<ExplicitValueIndex>,
+    numeric_state: Vec<NumericValue>,
     operators: Vec<Operator>,
-    operator_costs: Vec<f64>,
+    operator_costs: Vec<NumericValue>,
     axioms: Vec<PropositionalAxiom>,
     comparison_axioms: Vec<ComparisonAxiom>,
     assignment_axioms: Vec<AssignmentAxiom>,
@@ -631,8 +666,8 @@ pub struct NumericRootTaskParts {
     pub mutexes: Vec<Vec<ExplicitFact>>,
     /// One entry per variable, in variable order. For a derived variable this
     /// is its axiom default rather than its initial value.
-    pub state: Vec<usize>,
-    pub numeric_state: Vec<f64>,
+    pub state: Vec<ExplicitValueIndex>,
+    pub numeric_state: Vec<NumericValue>,
     pub operators: Vec<Operator>,
     pub axioms: Vec<PropositionalAxiom>,
     pub comparison_axioms: Vec<ComparisonAxiom>,
@@ -729,10 +764,11 @@ impl NumericRootTask {
         if let Some(metric_var_id) = self.metric.var_id() {
             let metric_var = self
                 .numeric_variables
-                .get(metric_var_id)
+                .get(metric_var_id.index())
                 .unwrap_or_else(|| {
                     panic!(
-                        "metric variable {metric_var_id} is out of bounds for {} numeric variables",
+                        "metric variable {} is out of bounds for {} numeric variables",
+                        metric_var_id.index(),
                         self.numeric_variables.len()
                     )
                 });
@@ -741,7 +777,8 @@ impl NumericRootTask {
                     metric_var.get_type(),
                     NumericType::Cost | NumericType::Derived
                 ),
-                "metric variable {metric_var_id} has type {:?}, expected Cost or Derived",
+                "metric variable {} has type {:?}, expected Cost or Derived",
+                metric_var_id.index(),
                 metric_var.get_type(),
             );
         }
@@ -779,7 +816,7 @@ impl NumericRootTask {
             let expected_comparison_layer = last_arithmetic_layer.map_or(0, |layer| layer + 1);
             let mut comparison_layer = None;
             for (axiom_id, axiom) in self.comparison_axioms.iter().enumerate() {
-                let head = axiom.get_affected_var_id();
+                let head = axiom.get_affected_var_id().index();
                 let layer = self.variables[head].axiom_layer().unwrap_or_else(|| {
                     panic!("comparison axiom {axiom_id} writes non-derived variable {head}")
                 });
@@ -823,7 +860,7 @@ impl NumericRootTask {
     fn assign_fact_namespaces(&mut self) {
         let conditions = Arc::clone(&self.numeric_conditions);
         let retag = |fact: &mut ExplicitFact| {
-            *fact = fact.with_namespace(conditions.namespace_of(fact.var()));
+            *fact = fact.with_namespace(conditions.namespace_of(fact.var_index()));
         };
 
         self.goals.iter_mut().for_each(retag);
@@ -916,9 +953,9 @@ impl NumericRootTask {
 impl AbstractNumericTask for NumericRootTask {
     fn project_state_values(
         &self,
-        propositional_values: &[usize],
-        numeric_values: &[f64],
-    ) -> Result<(Vec<usize>, Vec<f64>), String> {
+        propositional_values: &[ExplicitValueIndex],
+        numeric_values: &[NumericValue],
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         identity_state_values(self, propositional_values, numeric_values)
     }
 
@@ -962,32 +999,35 @@ impl AbstractNumericTask for NumericRootTask {
         self.variables.len()
     }
 
-    fn get_variable_name(&self, index: usize) -> Result<&str, &str> {
-        if index >= (self.variables.len()) {
+    fn get_variable_name(&self, index: VariableIndex) -> Result<&str, &str> {
+        if index.index() >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(&self.variables[index].name)
+        Ok(&self.variables[index.index()].name)
     }
 
-    fn get_variable_domain_size(&self, index: usize) -> Result<usize, &str> {
-        if index >= (self.variables.len()) {
+    fn get_variable_domain_size(&self, index: VariableIndex) -> Result<usize, &str> {
+        if index.index() >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(self.variables[index].domain_size)
+        Ok(self.variables[index.index()].domain_size)
     }
 
-    fn get_variable_axiom_layer(&self, index: usize) -> Result<Option<usize>, &str> {
-        if index >= (self.variables.len()) {
+    fn get_variable_axiom_layer(&self, index: VariableIndex) -> Result<Option<usize>, &str> {
+        if index.index() >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(self.variables[index].axiom_layer)
+        Ok(self.variables[index.index()].axiom_layer)
     }
 
-    fn get_variable_default_axiom_value(&self, index: usize) -> Result<usize, &str> {
-        if index >= (self.variables.len()) {
+    fn get_variable_default_axiom_value(
+        &self,
+        index: VariableIndex,
+    ) -> Result<ExplicitValueIndex, &str> {
+        if index.index() >= (self.variables.len()) {
             return Err("Index out of bounds");
         }
-        Ok(self.variables[index].axiom_default_value)
+        Ok(self.variables[index.index()].axiom_default_value)
     }
 
     fn get_fact_name(&self, fact: &ExplicitFact) -> &str {
@@ -1025,27 +1065,37 @@ impl AbstractNumericTask for NumericRootTask {
         self.mutex_pairs.contains(&pair)
     }
 
-    fn operator_cost_for_abstraction(&self, operator_id: usize) -> f64 {
-        self.operator_costs[operator_id]
+    fn operator_cost_for_abstraction(&self, operator_id: OperatorIndex) -> NumericValue {
+        self.operator_costs[operator_id.index()]
     }
 
-    fn get_operator_cost(&self, index: usize, is_axiom: bool) -> u64 {
+    fn get_operator_cost(&self, index: OperatorIndex, is_axiom: bool) -> OperatorCost {
         if is_axiom {
-            return 0;
+            return ZERO_OP_COST;
         }
         self.operators
-            .get(index)
-            .unwrap_or_else(|| panic!("operator id {index} is out of bounds for cost lookup"))
+            .get(index.index())
+            .unwrap_or_else(|| {
+                panic!(
+                    "operator id {} is out of bounds for cost lookup",
+                    index.index()
+                )
+            })
             .cost()
     }
 
-    fn get_operator_name(&self, index: usize, is_axiom: bool) -> &str {
+    fn get_operator_name(&self, index: OperatorIndex, is_axiom: bool) -> &str {
         if is_axiom {
             return "<axiom>";
         }
         self.operators
-            .get(index)
-            .unwrap_or_else(|| panic!("operator id {index} is out of bounds for name lookup"))
+            .get(index.index())
+            .unwrap_or_else(|| {
+                panic!(
+                    "operator id {} is out of bounds for name lookup",
+                    index.index()
+                )
+            })
             .name()
     }
 
@@ -1053,15 +1103,18 @@ impl AbstractNumericTask for NumericRootTask {
         self.operators.len()
     }
 
-    fn get_num_operator_preconditions(&self, index: usize, is_axiom: bool) -> usize {
+    fn get_num_operator_preconditions(&self, index: OperatorIndex, is_axiom: bool) -> usize {
         if is_axiom {
             // Axioms don't have preconditions in the same way
             return 0;
         }
         self.operators
-            .get(index)
+            .get(index.index())
             .unwrap_or_else(|| {
-                panic!("operator id {index} is out of bounds for precondition lookup")
+                panic!(
+                    "operator id {} is out of bounds for precondition lookup",
+                    index.index()
+                )
             })
             .preconditions()
             .len()
@@ -1069,28 +1122,33 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn get_operator_precondition(
         &self,
-        _index: usize,
+        _index: OperatorIndex,
         _precond_index: usize,
         _is_axiom: bool,
     ) -> &ExplicitFact {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn get_num_operator_effects(&self, index: usize, is_axiom: bool) -> usize {
+    fn get_num_operator_effects(&self, index: OperatorIndex, is_axiom: bool) -> usize {
         if is_axiom {
             // Handle axiom effects differently.
             return 0;
         }
         self.operators
-            .get(index)
-            .unwrap_or_else(|| panic!("operator id {index} is out of bounds for effect lookup"))
+            .get(index.index())
+            .unwrap_or_else(|| {
+                panic!(
+                    "operator id {} is out of bounds for effect lookup",
+                    index.index()
+                )
+            })
             .effects()
             .len()
     }
 
     fn get_num_operator_effect_conditions(
         &self,
-        _index: usize,
+        _index: OperatorIndex,
         _eff_index: usize,
         _is_axiom: bool,
     ) -> usize {
@@ -1099,7 +1157,7 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn get_operator_effect_condition(
         &self,
-        _index: usize,
+        _index: OperatorIndex,
         _eff_index: usize,
         _cond_index: usize,
         _is_axiom: bool,
@@ -1109,14 +1167,19 @@ impl AbstractNumericTask for NumericRootTask {
 
     fn get_operator_effect(
         &self,
-        _index: usize,
+        _index: OperatorIndex,
         _eff_index: usize,
         _is_axiom: bool,
     ) -> &ExplicitFact {
         unimplemented!("This function is not yet implemented");
     }
 
-    fn convert_operator_index(&self, _index: usize, _ancestor_task: &dyn AbstractNumericTask) {}
+    fn convert_operator_index(
+        &self,
+        _index: OperatorIndex,
+        _ancestor_task: &dyn AbstractNumericTask,
+    ) {
+    }
 
     fn get_num_axioms(&self) -> usize {
         self.axioms.len()
@@ -1133,11 +1196,11 @@ impl AbstractNumericTask for NumericRootTask {
         &self.goals[index]
     }
 
-    fn get_initial_propositional_state_values(&self) -> &[usize] {
+    fn get_initial_propositional_state_values(&self) -> &[ExplicitValueIndex] {
         &self.state
     }
 
-    fn get_initial_numeric_state_values(&self) -> &[f64] {
+    fn get_initial_numeric_state_values(&self) -> &[NumericValue] {
         &self.numeric_state
     }
 
@@ -1153,7 +1216,9 @@ impl AbstractNumericTask for NumericRootTask {
         self.comparison_axioms.len()
     }
 
-    fn evaluate_initial_state_values(&self) -> Result<(Vec<usize>, Vec<f64>), String> {
+    fn evaluate_initial_state_values(
+        &self,
+    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
         let mut propositional = self.get_initial_propositional_state_values().to_vec();
         let mut numeric = self.get_initial_numeric_state_values().to_vec();
         evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
@@ -1175,7 +1240,7 @@ impl AbstractNumericTask for NumericRootTask {
 fn narrow_condition_variables(
     conditions: &NumericConditions,
     variables: &mut [ExplicitVariable],
-    state: &mut [usize],
+    state: &mut [ExplicitValueIndex],
 ) {
     /// The value a legacy file's `<none of those>` occupies, one past the domain.
     const LEGACY_PLACEHOLDER: usize = ConditionValue::DOMAIN_SIZE;
@@ -1200,13 +1265,14 @@ fn narrow_condition_variables(
         // stand where it stood.
         for value in [&mut variable.axiom_default_value, &mut state[var_id]] {
             assert!(
-                *value <= LEGACY_PLACEHOLDER,
-                "condition variable {var_id} holds value {value}, which is outside \
+                value.index() <= LEGACY_PLACEHOLDER,
+                "condition variable {var_id} holds value {}, which is outside \
                  even the legacy domain of {} values",
+                value.index(),
                 LEGACY_PLACEHOLDER + 1
             );
-            if *value == LEGACY_PLACEHOLDER {
-                *value = ConditionValue::False.as_usize();
+            if value.index() == LEGACY_PLACEHOLDER {
+                *value = ExplicitValueIndex::new(ConditionValue::False.as_u32());
             }
         }
     }
@@ -1214,13 +1280,13 @@ fn narrow_condition_variables(
 
 fn evaluate_state_with_axiom_closure(
     task: &dyn AbstractNumericTask,
-    propositional: &mut [usize],
-    numeric: &mut [f64],
+    propositional: &mut [ExplicitValueIndex],
+    numeric: &mut [NumericValue],
 ) -> Result<(), String> {
     let packer = Arc::new(abstract_propositional_packer(task));
     let mut packed = vec![0u64; packer.num_bins()];
     for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut packed, var_id, *value as u64);
+        packer.set(&mut packed, var_id, value.index() as u64);
     }
     let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), packer.clone());
     finish_axiom_closure(
@@ -1243,8 +1309,8 @@ fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> S
 
 fn finish_axiom_closure(
     packer: &StatePacker,
-    propositional: &mut [usize],
-    numeric: &mut [f64],
+    propositional: &mut [ExplicitValueIndex],
+    numeric: &mut [NumericValue],
     packed: &mut [u64],
     axiom_evaluator: &AxiomEvaluator<'_>,
 ) -> Result<(), String> {
@@ -1253,7 +1319,7 @@ fn finish_axiom_closure(
         .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
 
     for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = packer.get(packed, var_id) as usize;
+        *slot = ExplicitValueIndex::new(packer.get(packed, var_id) as u32);
     }
 
     Ok(())
@@ -1290,13 +1356,13 @@ mod root_task_invariants {
     fn valid_parts() -> NumericRootTaskParts {
         NumericRootTaskParts {
             version: 4,
-            metric: Metric::new(true, Some(0)),
+            metric: Metric::new(true, Some(VariableIndex::new(0))),
             variables: vec![ExplicitVariable::new(
                 2,
                 "location".to_string(),
                 vec!["here".to_string(), "there".to_string()],
                 None,
-                0,
+                ExplicitValueIndex::new(0),
             )],
             numeric_variables: vec![NumericVariable::new(
                 "total-cost".to_string(),
@@ -1308,8 +1374,8 @@ mod root_task_invariants {
                 ExplicitFact::propositional(0, 0),
                 ExplicitFact::propositional(0, 1),
             ]],
-            state: vec![0],
-            numeric_state: vec![0.0],
+            state: vec![ExplicitValueIndex::new(0)],
+            numeric_state: vec![NumericValue::new(0.0)],
             operators: Vec::new(),
             axioms: Vec::new(),
             comparison_axioms: Vec::new(),
@@ -1338,7 +1404,7 @@ mod root_task_invariants {
     #[should_panic(expected = "metric variable 1 is out of bounds for 1 numeric variables")]
     fn rejects_out_of_range_metric_variable() {
         let mut parts = valid_parts();
-        parts.metric = Metric::new(true, Some(1));
+        parts.metric = Metric::new(true, Some(VariableIndex::new(1)));
         NumericRootTask::new(parts);
     }
 
@@ -1389,7 +1455,7 @@ mod root_task_invariants {
                 "not-sum-exceeds-left".to_string(),
             ],
             Some(2),
-            ConditionValue::False.as_usize(),
+            ExplicitValueIndex::new(ConditionValue::False.as_u32()),
         );
         parts.numeric_variables = vec![
             NumericVariable::new("left".to_string(), NumericType::Constant, None),
@@ -1397,13 +1463,23 @@ mod root_task_invariants {
             NumericVariable::new("sum".to_string(), NumericType::Derived, Some(0)),
             NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
         ];
-        parts.metric = Metric::new(true, Some(3));
-        parts.numeric_state = vec![2.0, 3.0, 0.0, 0.0];
-        parts.assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
+        parts.metric = Metric::new(true, Some(VariableIndex::new(3)));
+        parts.numeric_state = vec![
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ];
+        parts.assignment_axioms = vec![AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )];
         parts.comparison_axioms = vec![ComparisonAxiom::new(
-            0,
-            2,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(2),
+            VariableIndex::new(0),
             crate::axioms::ComparisonOperator::GreaterThan,
         )];
         NumericRootTask::new(parts);

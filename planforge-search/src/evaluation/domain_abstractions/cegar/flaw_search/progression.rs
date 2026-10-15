@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use anyhow::{Result, ensure};
 use planforge_sas::{
     axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, ExplicitFact, Operator},
+    numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue, Operator, VariableIndex},
     state_registry::ConcreteStateView,
 };
 
@@ -33,7 +33,7 @@ use crate::evaluation::domain_abstractions::{
 pub struct PartitionedTask<'a> {
     pub task: &'a dyn AbstractNumericTask,
     pub partitions: &'a NumericPartitions,
-    pub deltas: &'a HashMap<usize, Vec<f64>>,
+    pub deltas: &'a HashMap<VariableIndex, Vec<NumericValue>>,
 }
 
 /// Walk the wildcard plan and emit flaws using the chosen split direction.
@@ -79,7 +79,7 @@ pub fn get_progression_flaws(
         );
 
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id) else {
+            let Some(op) = task.get_operators().get(op_id.index()) else {
                 continue;
             };
             let state = ConcreteStateView::from_decoded(&state_packer, &prop_state, &numeric_state);
@@ -163,7 +163,7 @@ pub fn get_execute_entire_plan_flaws(
         let mut chosen_op: Option<&Operator> = None;
         let mut fallback_op: Option<&Operator> = None;
         for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id) else {
+            let Some(op) = task.get_operators().get(op_id.index()) else {
                 continue;
             };
             if fallback_op.is_none() {
@@ -213,7 +213,7 @@ pub fn get_execute_entire_plan_flaws(
 
 /// The successor of one plan step -- packed propositional half, numeric values
 /// -- and the deviation flaws that step exposed.
-type ProgressedStateAndFlaws = (Vec<u64>, Vec<f64>, Vec<Flaw>);
+type ProgressedStateAndFlaws = (Vec<u64>, Vec<NumericValue>, Vec<Flaw>);
 /// Apply `op` to `state` and report the successor together with the numeric
 /// deviation flaws it exposes. An empty flaw list means the concrete successor
 /// lands in the partitions the abstract plan expected.
@@ -258,9 +258,9 @@ pub(crate) fn progress_and_get_deviation_flaws(
 /// The concrete and abstract numeric states either side of one plan step.
 pub struct NumericTransitionStates<'a> {
     /// Concrete numeric values before the operator.
-    pub current: &'a [f64],
+    pub current: &'a [NumericValue],
     /// Concrete numeric values after the operator.
-    pub successor: &'a [f64],
+    pub successor: &'a [NumericValue],
     /// Partition ids the abstract plan expects after the operator.
     pub abstract_successor: &'a [usize],
 }
@@ -302,27 +302,36 @@ pub fn get_progression_numeric_deviation_flaws(
             let operator_modified_var = op
                 .assignment_effects()
                 .iter()
-                .any(|eff| eff.affected_var_id() == var_id)
-                || numeric_dimension_delta_for_operator(task, var_id, op)
-                    .is_some_and(|delta| delta.abs() >= 1e-12);
+                .any(|eff| eff.affected_var_id() == VariableIndex::from_usize(var_id))
+                || numeric_dimension_delta_for_operator(
+                    task,
+                    VariableIndex::from_usize(var_id),
+                    op,
+                )
+                .is_some_and(|delta| delta.value().abs() >= 1e-12);
             if !operator_modified_var {
                 continue;
             }
         }
 
-        let abstract_value = abstract_successor[var_id];
+        let var_id = VariableIndex::from_usize(var_id);
+        let abstract_value = abstract_successor[var_id.index()];
         let Some(parts) = partitions.partitions(var_id) else {
             continue;
         };
-        let Some(correct_abstract_value) = partition_for_value(parts, successor[var_id]) else {
+        let Some(correct_abstract_value) = partition_for_value(parts, successor[var_id.index()])
+        else {
             continue;
         };
         if abstract_value == correct_abstract_value {
             continue;
         }
 
-        let concrete_next_value = successor[var_id];
-        let concrete_current_value = current.get(var_id).copied().unwrap_or(concrete_next_value);
+        let concrete_next_value = successor[var_id.index()];
+        let concrete_current_value = current
+            .get(var_id.index())
+            .copied()
+            .unwrap_or(concrete_next_value);
         if concrete_next_value == concrete_current_value {
             continue;
         }
@@ -375,7 +384,8 @@ pub fn get_progression_numeric_deviation_flaws(
                 let Some(expected_interval) = parts.get(abstract_value).copied() else {
                     continue;
                 };
-                let delta = concrete_next_value - concrete_current_value;
+                let delta =
+                    NumericValue::new(concrete_next_value.value() - concrete_current_value.value());
                 let Some((value, include_in_lower)) = preimage_split_for_expected_successor(
                     expected_interval,
                     concrete_next_value,
@@ -407,7 +417,7 @@ pub fn get_progression_precondition_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for pre in op.preconditions().iter() {
-        if !pre.is_hold(state) {
+        if !pre.is_held(state) {
             out.push(build_prop_flaw_for_fact(
                 partitioned,
                 pre,
@@ -430,7 +440,7 @@ pub fn get_goal_flaws(
 ) -> Vec<Flaw> {
     let mut out: Vec<Flaw> = Vec::new();
     for requirement in goal_facts(partitioned.task) {
-        if !requirement.is_hold(state) {
+        if !requirement.is_held(state) {
             out.push(build_prop_flaw_for_fact(
                 partitioned,
                 &requirement,
@@ -452,7 +462,7 @@ pub fn get_goal_flaws(
 fn build_prop_flaw_for_fact(
     partitioned: PartitionedTask<'_>,
     fact: &ExplicitFact,
-    numeric_state: &[f64],
+    numeric_state: &[NumericValue],
     step: usize,
     direction: SplitDirection,
 ) -> Flaw {
@@ -461,13 +471,13 @@ fn build_prop_flaw_for_fact(
         partitions,
         deltas,
     } = partitioned;
-    let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(fact.var()) {
+    let dependent_numeric_flaws = if task.numeric_conditions().is_condition_var(fact.var_index()) {
         match direction {
             SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {
                 dependent_numeric_flaws_for_comparison_prop_var(
                     task,
                     partitions,
-                    fact.var(),
+                    fact.var_index(),
                     numeric_state,
                     step,
                 )

@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
-use crate::numeric_task::{NumericType, NumericVariable};
+use crate::numeric_task::{NAN_VALUE, NumericType, NumericVariable, ONE_VALUE, ZERO_VALUE};
 use crate::utils::interval::Interval;
 
 fn numeric_var(name: &str, numeric_type: NumericType) -> NumericVariable {
@@ -17,13 +17,23 @@ fn shared_subexpression_conditions() -> NumericConditions {
         numeric_var("d3", NumericType::Derived),
     ];
     let assignment_axioms = vec![
-        AssignmentAxiom::new(2, CalOperator::Sum, 0, 1),
-        AssignmentAxiom::new(3, CalOperator::Product, 2, 1),
+        AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        ),
+        AssignmentAxiom::new(
+            VariableIndex::new(3),
+            CalOperator::Product,
+            VariableIndex::new(2),
+            VariableIndex::new(1),
+        ),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        3,
-        0,
+        VariableIndex::new(0),
+        VariableIndex::new(3),
+        VariableIndex::new(0),
         ComparisonOperator::GreaterThan,
     )];
 
@@ -41,12 +51,17 @@ fn build_expands_assignment_axioms_and_collects_regular_dependencies() {
     let conditions = shared_subexpression_conditions();
     assert_eq!(conditions.len(), 1);
 
-    let condition = conditions.for_var(0).expect("prop var 0 carries condition");
+    let condition = conditions
+        .for_var(VariableIndex::from_usize(0))
+        .expect("prop var 0 carries condition");
     assert_eq!(condition.id(), 0);
     assert_eq!(condition.op(), CompOp::Gt);
-    assert_eq!(condition.left_numeric_var_id(), 3);
-    assert_eq!(condition.right_numeric_var_id(), 0);
-    assert_eq!(condition.regular_numeric_var_dependencies(), [0, 1]);
+    assert_eq!(condition.left_numeric_var_id(), VariableIndex::new(3));
+    assert_eq!(condition.right_numeric_var_id(), VariableIndex::new(0));
+    assert_eq!(
+        condition.regular_numeric_var_dependencies(),
+        [VariableIndex::new(0), VariableIndex::new(1)]
+    );
     assert_eq!(condition.required_numeric_len(), 4);
 
     match condition.node(condition.left_root()) {
@@ -57,10 +72,10 @@ fn build_expands_assignment_axioms_and_collects_regular_dependencies() {
             right_numeric_var_id,
             ..
         } => {
-            assert_eq!(*result_numeric_var_id, 3);
+            assert_eq!(*result_numeric_var_id, VariableIndex::new(3));
             assert_eq!(*op, ArithOp::Mul);
-            assert_eq!(*left_numeric_var_id, 2);
-            assert_eq!(*right_numeric_var_id, 1);
+            assert_eq!(*left_numeric_var_id, VariableIndex::new(2));
+            assert_eq!(*right_numeric_var_id, VariableIndex::new(1));
         }
         other => panic!("expected arith node, got {other:?}"),
     }
@@ -74,8 +89,18 @@ fn build_shares_subexpressions_between_operands() {
         numeric_var("x1", NumericType::Regular),
         numeric_var("d", NumericType::Derived),
     ];
-    let assignment_axioms = vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)];
-    let comparison_axioms = vec![ComparisonAxiom::new(0, 2, 2, ComparisonOperator::Equal)];
+    let assignment_axioms = vec![AssignmentAxiom::new(
+        VariableIndex::new(2),
+        CalOperator::Sum,
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(2),
+        VariableIndex::new(2),
+        ComparisonOperator::Equal,
+    )];
 
     let conditions = NumericConditions::build(
         1,
@@ -111,20 +136,20 @@ fn point_evaluation_recomputes_derived_variables() {
     let condition = conditions.get(0).unwrap();
 
     // Stale derived slots are ignored: (1 + 2) * 2 = 6 > 1.
-    assert!(condition.evaluate_point(&[1.0, 2.0, f64::NAN, f64::NAN]));
+    assert!(condition.evaluate_point(&[ONE_VALUE, NumericValue::new(2.0), NAN_VALUE, NAN_VALUE]));
     // (1 + 0) * 0 = 0, not > 1.
-    assert!(!condition.evaluate_point(&[1.0, 0.0, 0.0, 0.0]));
+    assert!(!condition.evaluate_point(&[ONE_VALUE, ZERO_VALUE, ZERO_VALUE, ZERO_VALUE]));
 }
 
 #[test]
 fn interval_evaluation_is_three_valued() {
     let conditions = shared_subexpression_conditions();
     let condition = conditions.get(0).unwrap();
-    let nothing_known = Interval::new(0.0, 0.0, false, false);
+    let nothing_known = Interval::new(ZERO_VALUE, ZERO_VALUE, false, false);
 
     let definitely_true = [
-        Interval::singleton(1.0),
-        Interval::singleton(2.0),
+        Interval::singleton(ONE_VALUE),
+        Interval::singleton(NumericValue::new(2.0)),
         nothing_known,
         nothing_known,
     ];
@@ -133,8 +158,8 @@ fn interval_evaluation_is_three_valued() {
     assert!(!condition.admits_false(&definitely_true));
 
     let unknown = [
-        Interval::closed(0.0, 4.0),
-        Interval::closed(0.0, 1.0),
+        Interval::closed(ZERO_VALUE, NumericValue::new(4.0)),
+        Interval::closed(ZERO_VALUE, ONE_VALUE),
         nothing_known,
         nothing_known,
     ];
@@ -152,13 +177,23 @@ fn interval_evaluation_fills_derived_intervals() {
         numeric_var("d3", NumericType::Derived),
     ];
     let assignment_axioms = vec![
-        AssignmentAxiom::new(2, CalOperator::Sum, 0, 1),
-        AssignmentAxiom::new(3, CalOperator::Product, 2, 1),
+        AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        ),
+        AssignmentAxiom::new(
+            VariableIndex::new(3),
+            CalOperator::Product,
+            VariableIndex::new(2),
+            VariableIndex::new(1),
+        ),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        3,
-        1,
+        VariableIndex::new(0),
+        VariableIndex::new(3),
+        VariableIndex::new(1),
         ComparisonOperator::GreaterThan,
     )];
 
@@ -172,32 +207,32 @@ fn interval_evaluation_fills_derived_intervals() {
     let condition = conditions.get(0).unwrap();
 
     let mut intervals = vec![
-        Interval::singleton(1.0),
-        Interval::singleton(2.0),
-        Interval::new(0.0, 0.0, false, false),
-        Interval::new(0.0, 0.0, false, false),
+        Interval::singleton(ONE_VALUE),
+        Interval::singleton(NumericValue::new(2.0)),
+        Interval::new(ZERO_VALUE, ZERO_VALUE, false, false),
+        Interval::new(ZERO_VALUE, ZERO_VALUE, false, false),
     ];
     assert_eq!(
         condition.evaluate_interval_and_fill(&mut intervals),
         Some(true)
     );
-    assert_eq!(intervals[2], Interval::singleton(3.0));
-    assert_eq!(intervals[3], Interval::singleton(6.0));
+    assert_eq!(intervals[2], Interval::singleton(NumericValue::new(3.0)));
+    assert_eq!(intervals[3], Interval::singleton(NumericValue::new(6.0)));
 }
 
 #[test]
 fn lhs_minus_rhs_interval_shifts_the_comparison_to_zero() {
     let conditions = shared_subexpression_conditions();
     let condition = conditions.get(0).unwrap();
-    let nothing_known = Interval::new(0.0, 0.0, false, false);
+    let nothing_known = Interval::new(ZERO_VALUE, ZERO_VALUE, false, false);
 
     let difference = condition.lhs_minus_rhs_interval(&[
-        Interval::singleton(1.0),
-        Interval::singleton(2.0),
+        Interval::singleton(ONE_VALUE),
+        Interval::singleton(NumericValue::new(2.0)),
         nothing_known,
         nothing_known,
     ]);
-    assert_eq!(difference, Interval::singleton(5.0));
+    assert_eq!(difference, Interval::singleton(NumericValue::new(5.0)));
 }
 
 #[test]
@@ -207,8 +242,18 @@ fn build_rejects_cyclic_assignment_axioms() {
         numeric_var("x0", NumericType::Regular),
         numeric_var("d1", NumericType::Derived),
     ];
-    let assignment_axioms = vec![AssignmentAxiom::new(1, CalOperator::Sum, 1, 0)];
-    let comparison_axioms = vec![ComparisonAxiom::new(0, 1, 0, ComparisonOperator::Equal)];
+    let assignment_axioms = vec![AssignmentAxiom::new(
+        VariableIndex::new(1),
+        CalOperator::Sum,
+        VariableIndex::new(1),
+        VariableIndex::new(0),
+    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+        VariableIndex::new(0),
+        ComparisonOperator::Equal,
+    )];
 
     assert_eq!(
         NumericConditions::build(
@@ -217,7 +262,9 @@ fn build_rejects_cyclic_assignment_axioms() {
             &comparison_axioms,
             &assignment_axioms
         ),
-        Err(NumericConditionError::CycleDetected { numeric_var_id: 1 })
+        Err(NumericConditionError::CycleDetected {
+            numeric_var_id: VariableIndex::new(1)
+        })
     );
 }
 
@@ -228,10 +275,25 @@ fn build_rejects_duplicate_assignment_targets() {
         numeric_var("d1", NumericType::Derived),
     ];
     let assignment_axioms = vec![
-        AssignmentAxiom::new(1, CalOperator::Sum, 0, 0),
-        AssignmentAxiom::new(1, CalOperator::Product, 0, 0),
+        AssignmentAxiom::new(
+            VariableIndex::new(1),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+        ),
+        AssignmentAxiom::new(
+            VariableIndex::new(1),
+            CalOperator::Product,
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+        ),
     ];
-    let comparison_axioms = vec![ComparisonAxiom::new(0, 1, 0, ComparisonOperator::Equal)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+        VariableIndex::new(0),
+        ComparisonOperator::Equal,
+    )];
 
     assert_eq!(
         NumericConditions::build(
@@ -241,9 +303,9 @@ fn build_rejects_duplicate_assignment_targets() {
             &assignment_axioms
         ),
         Err(NumericConditionError::DuplicateAssignmentTarget {
-            numeric_var_id: 1,
-            first_assignment_axiom_id: 0,
-            second_assignment_axiom_id: 1,
+            numeric_var_id: VariableIndex::new(1),
+            first_assignment_axiom_id: AxiomIndex::new(0),
+            second_assignment_axiom_id: AxiomIndex::new(1),
         })
     );
 }
@@ -252,16 +314,26 @@ fn build_rejects_duplicate_assignment_targets() {
 fn build_rejects_two_axioms_writing_the_same_propositional_var() {
     let numeric_variables = vec![numeric_var("x0", NumericType::Regular)];
     let comparison_axioms = vec![
-        ComparisonAxiom::new(0, 0, 0, ComparisonOperator::Equal),
-        ComparisonAxiom::new(0, 0, 0, ComparisonOperator::LessThan),
+        ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            ComparisonOperator::Equal,
+        ),
+        ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            ComparisonOperator::LessThan,
+        ),
     ];
 
     assert_eq!(
         NumericConditions::build(1, &numeric_variables, &comparison_axioms, &[]),
         Err(NumericConditionError::DuplicatePropositionalVar {
-            prop_var_id: 0,
-            first_comparison_axiom_id: 0,
-            second_comparison_axiom_id: 1,
+            prop_var_id: VariableIndex::new(0),
+            first_comparison_axiom_id: AxiomIndex::new(0),
+            second_comparison_axiom_id: AxiomIndex::new(1),
         })
     );
 }
@@ -269,13 +341,18 @@ fn build_rejects_two_axioms_writing_the_same_propositional_var() {
 #[test]
 fn build_rejects_unknown_propositional_var() {
     let numeric_variables = vec![numeric_var("x0", NumericType::Regular)];
-    let comparison_axioms = vec![ComparisonAxiom::new(7, 0, 0, ComparisonOperator::Equal)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(7),
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        ComparisonOperator::Equal,
+    )];
 
     assert_eq!(
         NumericConditions::build(1, &numeric_variables, &comparison_axioms, &[]),
         Err(NumericConditionError::UnknownPropositionalVar {
-            comparison_axiom_id: 0,
-            provided: 7,
+            comparison_axiom_id: AxiomIndex::new(0),
+            provided: VariableIndex::new(7),
             num_propositional_vars: 1,
         })
     );
@@ -284,12 +361,17 @@ fn build_rejects_unknown_propositional_var() {
 #[test]
 fn build_rejects_unknown_numeric_var() {
     let numeric_variables = vec![numeric_var("x0", NumericType::Regular)];
-    let comparison_axioms = vec![ComparisonAxiom::new(0, 0, 3, ComparisonOperator::Equal)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        VariableIndex::new(3),
+        ComparisonOperator::Equal,
+    )];
 
     assert_eq!(
         NumericConditions::build(1, &numeric_variables, &comparison_axioms, &[]),
         Err(NumericConditionError::UnknownNumericVar {
-            provided: 3,
+            provided: VariableIndex::new(3),
             num_numeric_vars: 1,
         })
     );
@@ -298,27 +380,32 @@ fn build_rejects_unknown_numeric_var() {
 #[test]
 fn condition_vars_are_distinguished_from_ordinary_prop_vars() {
     let numeric_variables = vec![numeric_var("x0", NumericType::Regular)];
-    let comparison_axioms = vec![ComparisonAxiom::new(2, 0, 0, ComparisonOperator::Equal)];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(2),
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        ComparisonOperator::Equal,
+    )];
 
     let conditions =
         NumericConditions::build(4, &numeric_variables, &comparison_axioms, &[]).unwrap();
 
-    assert!(conditions.is_condition_var(2));
-    assert!(!conditions.is_condition_var(0));
-    assert!(!conditions.is_condition_var(9));
-    assert_eq!(conditions.id_for_var(2), Some(0));
-    assert_eq!(conditions.id_for_var(0), None);
+    assert!(conditions.is_condition_var(VariableIndex::new(2)));
+    assert!(!conditions.is_condition_var(VariableIndex::new(0)));
+    assert!(!conditions.is_condition_var(VariableIndex::new(9)));
+    assert_eq!(conditions.id_for_var(VariableIndex::from_usize(2)), Some(0));
+    assert_eq!(conditions.id_for_var(VariableIndex::from_usize(0)), None);
     assert_eq!(conditions.condition_var_ids().collect::<Vec<_>>(), [2]);
 }
 
 #[test]
 fn precondition_is_contradicted_only_for_condition_vars() {
     let conditions = shared_subexpression_conditions();
-    let nothing_known = Interval::new(0.0, 0.0, false, false);
+    let nothing_known = Interval::new(ZERO_VALUE, ZERO_VALUE, false, false);
     // (1 + 2) * 2 = 6 > 1 always holds here.
     let intervals = [
-        Interval::singleton(1.0),
-        Interval::singleton(2.0),
+        Interval::singleton(ONE_VALUE),
+        Interval::singleton(NumericValue::new(2.0)),
         nothing_known,
         nothing_known,
     ];

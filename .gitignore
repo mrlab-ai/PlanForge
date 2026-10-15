@@ -86,3 +86,4 @@ codex-implement.log
 # Python bindings crate: track its Python sources despite the blanket *.py ignore above
 !planforge-py/**/*.py
 !tutorials/**/*.py
+planforge-py/python/planforge/planforge.abi3.so

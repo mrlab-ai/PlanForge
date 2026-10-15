@@ -1,7 +1,8 @@
 use super::*;
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, Operator, OperatorCost, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
@@ -20,7 +21,7 @@ fn binary_variable(name: &str) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         None,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -35,22 +36,32 @@ fn independent_goals_task() -> NumericRootTask {
             ExplicitFact::propositional(1, 1),
         ],
         mutexes: vec![],
-        state: vec![0, 0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![
             Operator::new(
                 "set-p".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 0, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                2,
+                OperatorCost::new(2),
             ),
             Operator::new(
                 "set-q".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                3,
+                OperatorCost::new(3),
             ),
         ],
         axioms: vec![],
@@ -544,7 +555,7 @@ fn abstract_operator_scp_combines_all_backend_types() {
         .unwrap()
         .generate(&task)
         .unwrap();
-    let pattern = Pattern::new(vec![1], vec![]);
+    let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 32).unwrap();
     let components = vec![
         AbstractionComponent::domain(None, domain),
@@ -575,7 +586,7 @@ fn offline_diversification_supports_mixed_abstraction_backends() {
         .unwrap()
         .generate(&*task)
         .unwrap();
-    let pattern = Pattern::new(vec![1], vec![]);
+    let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&*task, &pattern).unwrap(), 32).unwrap();
     let components = vec![
         AbstractionComponent::domain(None, domain),
@@ -811,7 +822,8 @@ mod handcrafted_sailing_tests {
     use std::time::Duration;
 
     use planforge_sas::numeric_task::{
-        AbstractNumericTask, ExplicitFact, NumericRootTask, NumericType,
+        AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE,
+        NumericRootTask, NumericType, NumericValue, VariableIndex, ZERO_VALUE,
     };
     use planforge_translate::translate_to_sas_to_path_fast;
 
@@ -839,9 +851,9 @@ mod handcrafted_sailing_tests {
                 vec![Interval::new(lower, upper, lower_closed, upper_closed)],
             )
         };
-        let left_tail = region(f64::NEG_INFINITY, 0.0, false, true);
-        let right_tail = region(0.0, f64::INFINITY, false, false);
-        let overlapping_tail = region(-1.0, f64::INFINITY, true, false);
+        let left_tail = region(NEG_INF_VALUE, ZERO_VALUE, false, true);
+        let right_tail = region(ZERO_VALUE, INF_VALUE, false, false);
+        let overlapping_tail = region(NumericValue::new(-1.0), INF_VALUE, true, false);
 
         assert_eq!(
             pair_regional_conflict(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
@@ -1203,23 +1215,31 @@ mod handcrafted_sailing_tests {
         let domain_mapping = (0..transformed_task.get_num_variables())
             .map(|var_id| {
                 let domain_size = transformed_task
-                    .get_variable_domain_size(var_id)
+                    .get_variable_domain_size(VariableIndex::from_usize(var_id))
                     .expect("valid transformed prop var id");
                 if goal_vars.contains(&var_id) {
-                    (0..domain_size).collect::<Vec<_>>()
+                    (0..domain_size)
+                        .map(ExplicitValueIndex::from_usize)
+                        .collect::<Vec<_>>()
                 } else {
-                    vec![0; domain_size]
+                    vec![ExplicitValueIndex::new(0); domain_size]
                 }
             })
             .collect::<Vec<_>>();
         let domain_sizes = domain_mapping
             .iter()
-            .map(|mapping| mapping.iter().copied().max().map_or(0, |value| value + 1))
+            .map(|mapping| {
+                mapping
+                    .iter()
+                    .copied()
+                    .max()
+                    .map_or(0, |value| value.index() + 1)
+            })
             .collect::<Vec<_>>();
         let numeric_domain_sizes = (0..transformed_task.numeric_variables().len())
             .map(|numeric_var_id| {
                 partitions
-                    .partitions(numeric_var_id)
+                    .partitions(VariableIndex::from_usize(numeric_var_id))
                     .expect("trivial partitions contain every numeric variable")
                     .len()
             })
@@ -1337,7 +1357,7 @@ mod handcrafted_sailing_tests {
             .filter(|operator| operator.name().ends_with(&suffix))
             .flat_map(|operator| operator.effects().iter())
             .filter(|effect| effect.conditions().is_empty())
-            .map(|effect| ExplicitFact::propositional(effect.var_id(), effect.value()))
+            .map(|effect| ExplicitFact::propositional_from_indexes(effect.var_id(), effect.value()))
             .collect::<Vec<_>>();
         candidates.sort();
         candidates.dedup();
@@ -1356,10 +1376,31 @@ mod handcrafted_sailing_tests {
         let initial = task.get_initial_numeric_state_values();
         let mut seeds = Vec::new();
         for &view_id in view_ids {
-            add_split(&mut seeds, view_id, initial[view_id], false);
-            add_split(&mut seeds, view_id, 0.0, true);
-            add_split(&mut seeds, view_id, 25.0, true);
-            add_route_grid_values(&mut seeds, view_id, initial[view_id], 25.0, 3.0);
+            add_split(
+                &mut seeds,
+                VariableIndex::from_usize(view_id),
+                initial[view_id],
+                false,
+            );
+            add_split(
+                &mut seeds,
+                VariableIndex::from_usize(view_id),
+                NumericValue::new(0.0),
+                true,
+            );
+            add_split(
+                &mut seeds,
+                VariableIndex::from_usize(view_id),
+                NumericValue::new(25.0),
+                true,
+            );
+            add_route_grid_values(
+                &mut seeds,
+                VariableIndex::from_usize(view_id),
+                initial[view_id],
+                NumericValue::new(25.0),
+                3.0,
+            );
         }
         seeds.sort_by_key(seed_description);
         seeds.dedup();
@@ -1368,24 +1409,26 @@ mod handcrafted_sailing_tests {
 
     fn add_route_grid_values(
         seeds: &mut Vec<InitialSeedSplit>,
-        numeric_var_id: usize,
-        start: f64,
-        end: f64,
+        numeric_var_id: VariableIndex,
+        start: NumericValue,
+        end: NumericValue,
         step: f64,
     ) {
-        assert!(start.is_finite() && end.is_finite() && step.is_finite() && step > 0.0);
+        assert!(
+            start.value().is_finite() && end.value().is_finite() && step.is_finite() && step > 0.0
+        );
         let direction = if start <= end { 1.0 } else { -1.0 };
         let mut value = start;
-        while (end - value) * direction > step {
-            value += direction * step;
+        while (end.value() - value.value()) * direction > step {
+            value = NumericValue::new(value.value() + direction * step);
             add_split(seeds, numeric_var_id, value, true);
         }
     }
 
     fn add_split(
         seeds: &mut Vec<InitialSeedSplit>,
-        numeric_var_id: usize,
-        value: f64,
+        numeric_var_id: VariableIndex,
+        value: NumericValue,
         include_in_lower: bool,
     ) {
         seeds.push(InitialSeedSplit::Numeric {
@@ -1407,7 +1450,7 @@ mod handcrafted_sailing_tests {
                 let num_parts = abstraction
                     .factory
                     .partitions()
-                    .partitions(view_id)
+                    .partitions(VariableIndex::from_usize(view_id))
                     .expect("missing partition for handcrafted view")
                     .len();
                 format!("n{view_id}:{name} parts={num_parts}")

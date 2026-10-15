@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -87,9 +90,9 @@ fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
         Flaw::Propositional(pf) => (0, pf.fact.var(), pf.fact.value(), 0, false),
         Flaw::Numeric(nf) => (
             1,
-            nf.numeric_var_id,
+            nf.numeric_var_id.index(),
             0,
-            float_tolerance::canonical_bits(nf.value),
+            float_tolerance::canonical_bits(nf.value.value()),
             nf.include_in_lower,
         ),
     }
@@ -98,7 +101,7 @@ fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
 fn flaw_variable_key(flaw: &Flaw) -> (u8, usize) {
     match flaw {
         Flaw::Propositional(pf) => (0, pf.fact.var()),
-        Flaw::Numeric(nf) => (1, nf.numeric_var_id),
+        Flaw::Numeric(nf) => (1, nf.numeric_var_id.index()),
     }
 }
 
@@ -315,17 +318,18 @@ fn compute_max_refined(
         let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
         let score: usize = match flaw {
             Flaw::Numeric(nf) => numeric_domain_sizes
-                .get(nf.numeric_var_id)
+                .get(nf.numeric_var_id.index())
                 .copied()
                 .unwrap_or(0),
             Flaw::Propositional(pf) => {
-                let var_id = pf.fact.var();
-                let base: usize = domain_sizes.get(var_id).copied().unwrap_or(0) * prop_multiplier;
+                let var_id = pf.fact.var_index();
+                let base: usize =
+                    domain_sizes.get(var_id.index()).copied().unwrap_or(0) * prop_multiplier;
                 if conditions.is_condition_var(var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
                         let partitions = numeric_domain_sizes
-                            .get(nf.numeric_var_id)
+                            .get(nf.numeric_var_id.index())
                             .copied()
                             .unwrap_or(0);
                         by_partition_count.entry(partitions).or_default().push(nf);
@@ -409,7 +413,7 @@ fn best_min_growth_dependent_flaws(
     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
     for nf in dependent_numeric_flaws.iter().cloned() {
         let partitions = numeric_domain_sizes
-            .get(nf.numeric_var_id)
+            .get(nf.numeric_var_id.index())
             .copied()
             .unwrap_or(1)
             .max(1);
@@ -432,13 +436,17 @@ pub(super) fn fix_single_flaw_min_growth(
         let growth = match flaw {
             Flaw::Numeric(nf) => growth_key_for_domain_size(
                 numeric_domain_sizes
-                    .get(nf.numeric_var_id)
+                    .get(nf.numeric_var_id.index())
                     .copied()
                     .unwrap_or(1),
             ),
             Flaw::Propositional(pf) => {
-                let var_id = pf.fact.var();
-                let prop_size = domain_sizes.get(var_id).copied().unwrap_or(1).max(1);
+                let var_id = pf.fact.var_index();
+                let prop_size = domain_sizes
+                    .get(var_id.index())
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1);
                 let prop_growth = if conditions.is_condition_var(var_id) && prop_size >= 2 {
                     (1, 1)
                 } else {
@@ -526,145 +534,4 @@ pub(super) fn fix_balance_max_refined_closest_to_goal(
     });
 
     candidates
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
-    use planforge_sas::numeric_task::{ExplicitFact, NumericType, NumericVariable};
-    use rand::SeedableRng;
-
-    use super::*;
-    use crate::evaluation::domain_abstractions::cegar::flaw_search::PropFlaw;
-
-    /// One numeric condition `x0 = x0` writing propositional variable
-    /// `prop_var_id`; only the "is this a condition variable?" answer matters
-    /// for flaw scoring.
-    fn condition_on_prop_var(prop_var_id: usize) -> NumericConditions {
-        NumericConditions::build(
-            prop_var_id + 1,
-            &[NumericVariable::new(
-                "x0".into(),
-                NumericType::Regular,
-                None,
-            )],
-            &[ComparisonAxiom::new(
-                prop_var_id,
-                0,
-                0,
-                ComparisonOperator::Equal,
-            )],
-            &[],
-        )
-        .unwrap()
-    }
-
-    fn prop_flaw(var: usize, deps: Vec<NumericFlaw>) -> Flaw {
-        Flaw::Propositional(PropFlaw {
-            fact: ExplicitFact::propositional(var, 0),
-            dependent_numeric_flaws: deps,
-            step: 0,
-        })
-    }
-
-    fn numeric_flaw(var: usize) -> NumericFlaw {
-        NumericFlaw {
-            numeric_var_id: var,
-            value: 0.0,
-            include_in_lower: true,
-            step: 0,
-        }
-    }
-
-    #[test]
-    fn max_refined_scores_comparison_flaws_like_numeric_fd() {
-        let flaws = vec![
-            prop_flaw(1, Vec::new()),
-            prop_flaw(0, vec![numeric_flaw(0)]),
-        ];
-        let conditions = condition_on_prop_var(0);
-        let domain_sizes = vec![1, 2];
-        let numeric_domain_sizes = vec![1];
-        let mut rng = SmallRng::seed_from_u64(1);
-
-        let chosen = fix_single_flaw_max_refined(
-            &flaws,
-            &conditions,
-            &domain_sizes,
-            &numeric_domain_sizes,
-            1,
-            &mut rng,
-        );
-
-        assert_eq!(chosen[0].idx, 0);
-    }
-
-    #[test]
-    fn max_refined_continues_most_refined_dependent_numeric_view() {
-        let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
-        let conditions = condition_on_prop_var(0);
-        let domain_sizes = vec![2];
-        let numeric_domain_sizes = vec![7, 2];
-
-        let (chosen, _) =
-            compute_max_refined(&flaws, &conditions, &domain_sizes, &numeric_domain_sizes, 1);
-
-        let restricted = chosen[0]
-            .restricted_dep
-            .as_ref()
-            .expect("comparison flaw should restrict dependent numeric flaws");
-        assert_eq!(restricted, &vec![numeric_flaw(0)]);
-    }
-
-    #[test]
-    fn min_growth_continues_most_refined_dependent_numeric_view() {
-        let flaws = vec![prop_flaw(0, vec![numeric_flaw(0), numeric_flaw(1)])];
-        let conditions = condition_on_prop_var(0);
-        let domain_sizes = vec![2];
-        let numeric_domain_sizes = vec![7, 2];
-        let mut rng = SmallRng::seed_from_u64(1);
-
-        let chosen = fix_single_flaw_min_growth(
-            &flaws,
-            &conditions,
-            &domain_sizes,
-            &numeric_domain_sizes,
-            &mut rng,
-        );
-
-        let restricted = chosen[0]
-            .restricted_dep
-            .as_ref()
-            .expect("comparison flaw should restrict dependent numeric flaws");
-        assert_eq!(restricted, &vec![numeric_flaw(0)]);
-    }
-
-    #[test]
-    fn min_growth_randomizes_equal_growth_candidates_across_seeds() {
-        let flaws = vec![
-            Flaw::Numeric(numeric_flaw(0)),
-            Flaw::Numeric(numeric_flaw(1)),
-            Flaw::Numeric(numeric_flaw(2)),
-        ];
-        let conditions = NumericConditions::default();
-        let mut first_choices = HashSet::new();
-
-        for seed in 0..32 {
-            let domain_sizes = Vec::new();
-            let numeric_domain_sizes = vec![1, 1, 1];
-            let mut rng = SmallRng::seed_from_u64(seed);
-            let chosen = fix_single_flaw_min_growth(
-                &flaws,
-                &conditions,
-                &domain_sizes,
-                &numeric_domain_sizes,
-                &mut rng,
-            );
-            first_choices.insert(chosen[0].idx);
-        }
-
-        assert_eq!(first_choices, HashSet::from([0, 1, 2]));
-    }
 }

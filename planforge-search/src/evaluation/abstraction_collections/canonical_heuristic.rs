@@ -4,7 +4,7 @@ mod tests;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -18,7 +18,7 @@ pub struct CanonicalAbstractionHeuristic<'task> {
     name: String,
     components: Vec<AbstractionComponent<'task>>,
     max_additive_subsets: Vec<Vec<usize>>,
-    relevant_operator_ids: Vec<BTreeSet<usize>>,
+    relevant_operator_ids: Vec<BTreeSet<OperatorIndex>>,
     component_value_cache: RefCell<Vec<Option<f64>>>,
     state_value_cache: RefCell<StateValueCache>,
     component_state_values: RefCell<ComponentStateValues>,
@@ -36,7 +36,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
                 "canonical abstraction heuristic requires at least one component".to_string(),
             );
         }
-        let relevant_operator_ids = components
+        let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
             .iter()
             .map(|component| component.relevant_operator_ids(task))
             .collect::<Result<Vec<_>, _>>()?;
@@ -55,7 +55,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
                 "canonical abstraction heuristic requires at least one component".to_string(),
             );
         }
-        let relevant_operator_ids = components
+        let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
             .iter()
             .map(|component| component.relevant_operator_ids(task))
             .collect::<Result<Vec<_>, _>>()?;
@@ -76,7 +76,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
         name: Option<String>,
         mut components: Vec<AbstractionComponent<'task>>,
         max_additive_subsets: Vec<Vec<usize>>,
-        relevant_operator_ids: Vec<BTreeSet<usize>>,
+        relevant_operator_ids: Vec<BTreeSet<OperatorIndex>>,
     ) -> Result<Self, String> {
         if max_additive_subsets.is_empty() {
             return Err("canonical abstraction heuristic has no additive subsets".to_string());
@@ -221,7 +221,7 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
 fn validate_additive_subsets(
     component_count: usize,
     subsets: &[Vec<usize>],
-    relevant_operator_ids: &[BTreeSet<usize>],
+    relevant_operator_ids: &[BTreeSet<OperatorIndex>],
 ) -> Result<(), String> {
     if subsets.is_empty() {
         return Err("canonical abstraction heuristic requires at least one subset".to_string());
@@ -261,12 +261,15 @@ fn validate_additive_subsets(
     Ok(())
 }
 
-fn are_operator_sets_additive(left: &BTreeSet<usize>, right: &BTreeSet<usize>) -> bool {
+fn are_operator_sets_additive(
+    left: &BTreeSet<OperatorIndex>,
+    right: &BTreeSet<OperatorIndex>,
+) -> bool {
     !left.iter().any(|operator_id| right.contains(operator_id))
 }
 
 fn compute_max_additive_subsets_from_relevant_operators(
-    relevant_operators: &[BTreeSet<usize>],
+    relevant_operators: &[BTreeSet<OperatorIndex>],
 ) -> Vec<Vec<usize>> {
     let mut maximal_cliques = maximal_cliques(relevant_operators.len(), |left, right| {
         are_operator_sets_additive(&relevant_operators[left], &relevant_operators[right])

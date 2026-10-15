@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use planforge_sas::numeric_task::VariableIndex;
 use tracing::{debug, info};
 
 use super::max_dag::MaxDag;
@@ -430,10 +431,14 @@ fn strongly_connected_components(
     num_numeric_vars: usize,
     weighted_graph: &WeightedGraph,
 ) -> Partition {
-    let mut unweighted_graph: Vec<Vec<usize>> = vec![Vec::new(); num_vars + num_numeric_vars];
+    let mut unweighted_graph: Vec<Vec<VariableIndex>> =
+        vec![Vec::new(); num_vars + num_numeric_vars];
     for (node, successors) in weighted_graph {
-        unweighted_graph[node_index(*node, num_vars)]
-            .extend(successors.keys().map(|&succ| node_index(succ, num_vars)));
+        unweighted_graph[node_index(*node, num_vars)].extend(
+            successors
+                .keys()
+                .map(|&succ| VariableIndex::from_usize(node_index(succ, num_vars))),
+        );
     }
 
     Scc::new(unweighted_graph)

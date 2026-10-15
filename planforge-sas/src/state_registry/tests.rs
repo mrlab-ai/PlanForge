@@ -1,8 +1,9 @@
 use crate::{
     axioms::PropositionalAxiom,
     numeric_task::{
-        Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-        NumericType, NumericVariable, Operator, TaskRef,
+        Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+        NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+        TaskRef, VariableIndex,
     },
     state_registry::StateRegistry,
 };
@@ -15,7 +16,14 @@ fn test_state_registry_initial_state() {
     let task: TaskRef = Arc::new(get_root_task());
     let mut state_registry = StateRegistry::for_task(task);
     let initial_state = state_registry.get_initial_state();
-    assert_eq!(initial_state.get_state(&state_registry), [1, 1, 0]);
+    assert_eq!(
+        initial_state.get_state(&state_registry),
+        [
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0)
+        ]
+    );
 }
 
 #[test]
@@ -44,15 +52,20 @@ fn initial_state_registration_does_not_mutate_shared_task() {
             "derived".into(),
             vec!["false".into(), "true".into()],
             Some(0),
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![],
-        axioms: vec![PropositionalAxiom::new(vec![], 0, 0, 1)],
+        axioms: vec![PropositionalAxiom::new(
+            vec![],
+            VariableIndex::new(0),
+            ExplicitValueIndex::new(0),
+            ExplicitValueIndex::new(1),
+        )],
         comparison_axioms: vec![],
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
@@ -63,7 +76,7 @@ fn initial_state_registration_does_not_mutate_shared_task() {
 
     let initial = registry.get_initial_state();
 
-    assert_eq!(initial.get_state(&registry), [1]);
+    assert_eq!(initial.get_state(&registry), [ExplicitValueIndex::new(1)]);
     assert_eq!(
         task.get_initial_propositional_state_values(),
         original_propositions
@@ -79,7 +92,7 @@ fn test_cost_information_storage() {
     let initial_state = state_registry.get_initial_state();
 
     let cost_info = state_registry.get_cost_information(&initial_state);
-    assert_eq!(cost_info, [0.0]);
+    assert_eq!(cost_info, [NumericValue::new(0.0)]);
     assert_eq!(cost_info.len(), 1);
 }
 
@@ -103,7 +116,7 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         "v0".to_string(),
         vec!["off".to_string(), "on".to_string()],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
     let numeric_variables = vec![
         NumericVariable::new("total_cost()".to_string(), NumericType::Cost, None),
@@ -114,39 +127,53 @@ fn duplicate_state_keeps_better_metric_cost_information() {
     let expensive_op = Operator::new(
         "expensive".to_string(),
         vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(Vec::new(), 0, Some(0), 1)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
         vec![crate::numeric_task::AssignmentEffect::new(
-            0,
+            VariableIndex::new(0),
             crate::numeric_task::AssignmentOperation::Plus,
-            2,
+            VariableIndex::new(2),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let cheap_op = Operator::new(
         "cheap".to_string(),
         vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(Vec::new(), 0, Some(0), 1)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
         vec![crate::numeric_task::AssignmentEffect::new(
-            0,
+            VariableIndex::new(0),
             crate::numeric_task::AssignmentOperation::Plus,
-            1,
+            VariableIndex::new(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
 
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,
-        metric: Metric::new(true, Some(0)),
+        metric: Metric::new(true, Some(VariableIndex::new(0))),
         variables,
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 1.0, 5.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(5.0),
+        ],
         operators: vec![expensive_op, cheap_op],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -165,7 +192,10 @@ fn duplicate_state_keeps_better_metric_cost_information() {
         .unwrap();
 
     assert_eq!(expensive_successor.get_id(), cheap_successor.get_id());
-    assert_eq!(state_registry.get_cost_information(&cheap_successor), [1.0]);
+    assert_eq!(
+        state_registry.get_cost_information(&cheap_successor),
+        [NumericValue::new(1.0)]
+    );
 }
 
 #[test]
@@ -175,7 +205,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         "v0".to_string(),
         vec!["off".to_string(), "on".to_string()],
         None,
-        0,
+        ExplicitValueIndex::new(0),
     )];
     let numeric_variables = vec![
         NumericVariable::new("x".to_string(), NumericType::Regular, None),
@@ -187,26 +217,26 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         vec![],
         vec![],
         vec![crate::numeric_task::AssignmentEffect::new(
-            0,
+            VariableIndex::new(0),
             crate::numeric_task::AssignmentOperation::Plus,
-            1,
+            VariableIndex::new(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let add_c2 = Operator::new(
         "add-c2".to_string(),
         vec![],
         vec![],
         vec![crate::numeric_task::AssignmentEffect::new(
-            0,
+            VariableIndex::new(0),
             crate::numeric_task::AssignmentOperation::Plus,
-            2,
+            VariableIndex::new(2),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let task: TaskRef = Arc::new(NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -215,8 +245,12 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 0.1 + 0.2, 0.3],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.1 + 0.2),
+            NumericValue::new(0.3),
+        ],
         operators: vec![add_c1, add_c2],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -239,7 +273,7 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
         state_registry
             .get_numeric_var_value_unevaluated(&first, 0)
             .unwrap(),
-        0.3
+        NumericValue::new(0.3)
     );
 }
 
@@ -253,7 +287,7 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
             "v0".into(),
             vec!["off".into(), "on".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![
             NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -261,8 +295,8 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![1.25, -7.5],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(1.25), NumericValue::new(-7.5)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -273,7 +307,10 @@ fn numeric_states_pack_exact_value_ids_with_propositions() {
     let initial = registry.get_initial_state();
 
     assert_eq!(initial.buffer(&registry).len(), 2);
-    assert_eq!(initial.get_numeric_state(&registry), [1.25, -7.5]);
+    assert_eq!(
+        initial.get_numeric_state(&registry),
+        [NumericValue::new(1.25), NumericValue::new(-7.5)]
+    );
 }
 
 #[test]
@@ -288,13 +325,13 @@ fn numeric_states_support_more_than_u16_distinct_values() {
             "v0".into(),
             vec!["off".into(), "on".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables: vec![NumericVariable::new("x".into(), NumericType::Regular, None)],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0)],
         operators: vec![],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -305,10 +342,13 @@ fn numeric_states_support_more_than_u16_distinct_values() {
 
     let mut last = 0;
     for value in 0..=u16::MAX as u32 + 1 {
-        last = registry.pack_regular_numeric(value as f64);
+        last = registry.pack_regular_numeric(NumericValue::new(value as f64));
     }
     assert_eq!(last, u16::MAX as u64 + 1);
-    assert_eq!(registry.unpack_regular_numeric(last), u16::MAX as f64 + 1.0);
+    assert_eq!(
+        registry.unpack_regular_numeric(last),
+        NumericValue::new(u16::MAX as f64 + 1.0)
+    );
 }
 
 #[test]

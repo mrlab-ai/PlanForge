@@ -9,7 +9,8 @@
 
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, Operator,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, Operator, OperatorCost, VariableIndex,
 };
 
 /// Deterministic splitmix64, so failures are reproducible without pulling in an
@@ -52,7 +53,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
         String::from("var0"),
         vec![String::from("gc"), String::from("not-gc")],
         Some(0),
-        1,
+        ExplicitValueIndex::new(1),
     )];
     for (index, &size) in domains.iter().enumerate() {
         variables.push(ExplicitVariable::new(
@@ -60,7 +61,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
             format!("var{}", index + 1),
             (0..size).map(|value| format!("v{index}_{value}")).collect(),
             None,
-            0,
+            ExplicitValueIndex::new(0),
         ));
     }
 
@@ -102,7 +103,12 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
                     None
                 };
                 let value = rng.below(domains[index]);
-                effects.push(Effect::new(conditions, task_var(index), required, value));
+                effects.push(Effect::new(
+                    conditions,
+                    VariableIndex::from_usize(task_var(index)),
+                    required.map(ExplicitValueIndex::from_usize),
+                    ExplicitValueIndex::from_usize(value),
+                ));
             }
         }
 
@@ -111,7 +117,7 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
             preconditions,
             effects,
             Vec::new(),
-            1,
+            OperatorCost::new(1),
         ));
     }
 
@@ -121,9 +127,9 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
         rng.below(domains[goal_var]),
     )];
 
-    let mut state = vec![1];
+    let mut state = vec![ExplicitValueIndex::new(1)];
     for &size in &domains {
-        state.push(rng.below(size));
+        state.push(ExplicitValueIndex::from_usize(rng.below(size)));
     }
 
     NumericRootTask::new(NumericRootTaskParts {
@@ -139,7 +145,12 @@ pub fn random_task(rng: &mut Rng) -> NumericRootTask {
         state,
         numeric_state: Vec::new(),
         operators,
-        axioms: vec![PropositionalAxiom::new(Vec::new(), 0, 1, 0)],
+        axioms: vec![PropositionalAxiom::new(
+            Vec::new(),
+            VariableIndex::from_usize(0),
+            ExplicitValueIndex::from_usize(1),
+            ExplicitValueIndex::from_usize(0),
+        )],
         comparison_axioms: Vec::new(),
         assignment_axioms: Vec::new(),
         global_constraint: ExplicitFact::propositional(0, 0),

@@ -28,6 +28,8 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use planforge_sas::numeric_task::VariableIndex;
+
 use super::options::LayerStrategy;
 use super::pddl::actions::PropositionalAction;
 use super::pddl::axioms::PropositionalAxiom;
@@ -246,13 +248,13 @@ fn strongly_connected_components(
         .map(|(index, variable)| (variable, index))
         .collect();
 
-    let graph: Vec<Vec<usize>> = sorted_variables
+    let graph: Vec<Vec<VariableIndex>> = sorted_variables
         .iter()
         .map(|variable| {
-            let mut successors: Vec<usize> = dependencies
+            let mut successors: Vec<VariableIndex> = dependencies
                 .positive_edges(variable)
                 .chain(dependencies.negative_edges(variable))
-                .map(|body_atom| index_of[body_atom])
+                .map(|body_atom| VariableIndex::from_usize(index_of[body_atom]))
                 .collect();
             successors.sort_unstable();
             successors.dedup();

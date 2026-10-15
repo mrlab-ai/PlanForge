@@ -3,8 +3,9 @@ use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_s
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericVariable, Operator, OperatorCost, OperatorIndex,
 };
 use planforge_sas::utils::interval::Interval;
 
@@ -15,7 +16,11 @@ use crate::evaluation::domain_abstractions::cegar::flaw_search::{
 
 #[test]
 fn progression_flaws_find_precondition_violation() {
-    let task = single_switch_task(2, 1, vec![0]);
+    let task = single_switch_task(
+        2,
+        ExplicitValueIndex::new(1),
+        vec![ExplicitValueIndex::new(0)],
+    );
 
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let partitions = NumericPartitions::trivial(&task);
@@ -35,7 +40,11 @@ fn progression_flaws_find_precondition_violation() {
 
     // The same task started at `v=1` makes the stored wildcard plan invalid:
     // the operator's precondition `v=0` no longer holds.
-    let flawed_task = single_switch_task(2, 1, vec![1]);
+    let flawed_task = single_switch_task(
+        2,
+        ExplicitValueIndex::new(1),
+        vec![ExplicitValueIndex::new(1)],
+    );
     let flaws = get_progression_flaws(
         &flawed_task,
         factory.partitions(),
@@ -52,11 +61,19 @@ fn progression_flaws_find_precondition_violation() {
 
 #[test]
 fn progression_flaws_find_goal_violation() {
-    let task = single_switch_task(3, 2, vec![0]);
+    let task = single_switch_task(
+        3,
+        ExplicitValueIndex::new(2),
+        vec![ExplicitValueIndex::new(0)],
+    );
 
     let (mut domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     // Put 1 and 2 in the same mapping group.
-    domain_mapping[0] = vec![0, 1, 1];
+    domain_mapping[0] = vec![
+        ExplicitValueIndex::new(0),
+        ExplicitValueIndex::new(1),
+        ExplicitValueIndex::new(1),
+    ];
     let partitions = NumericPartitions::trivial(&task);
     let numeric_domain_sizes: Vec<usize> = vec![];
     let factory = DomainAbstractionFactory::new(
@@ -92,9 +109,15 @@ fn progression_flaws_find_numeric_deviation_flaw() {
             "gt".into(),
             vec!["true".into(), "false".into()],
             Some(0),
-            ConditionValue::False.as_usize(),
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
         ),
-        ExplicitVariable::new(2, "g".into(), vec!["g0".into(), "g1".into()], None, 0),
+        ExplicitVariable::new(
+            2,
+            "g".into(),
+            vec!["g0".into(), "g1".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
     ];
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
@@ -102,9 +125,9 @@ fn progression_flaws_find_numeric_deviation_flaw() {
         NumericVariable::new("thresh".into(), NumericType::Constant, None),
     ];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        0,
-        0,
-        2,
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(2),
         ComparisonOperator::GreaterThan,
     )];
     let op0 = Operator::new(
@@ -112,20 +135,25 @@ fn progression_flaws_find_numeric_deviation_flaw() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            0,
+            VariableIndex::from_usize(0),
             AssignmentOperation::Plus,
-            1,
+            VariableIndex::from_usize(1),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     );
     let op1 = Operator::new(
         "set_g".into(),
         vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(vec![], 1, Some(0), 1)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(1),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
         vec![],
-        1,
+        OperatorCost::new(1),
     );
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -134,8 +162,12 @@ fn progression_flaws_find_numeric_deviation_flaw() {
         numeric_variables,
         goals: vec![ExplicitFact::propositional(1, 1)],
         mutexes: vec![],
-        state: vec![2, 0],
-        numeric_state: vec![-10.0, 3.0, -5.0],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(-10.0),
+            NumericValue::new(3.0),
+            NumericValue::new(-5.0),
+        ],
         operators: vec![op0, op1],
         axioms: vec![],
         comparison_axioms,
@@ -145,18 +177,18 @@ fn progression_flaws_find_numeric_deviation_flaw() {
 
     let partitions = NumericPartitions::with_partitions(vec![
         vec![
-            Interval::new(f64::NEG_INFINITY, -5.0, false, true),
-            Interval::new(-5.0, f64::INFINITY, false, false),
+            Interval::new(NEG_INF_VALUE, NumericValue::new(-5.0), false, true),
+            Interval::new(NumericValue::new(-5.0), INF_VALUE, false, false),
         ],
-        vec![Interval::singleton(3.0)],
-        vec![Interval::singleton(-5.0)],
+        vec![Interval::singleton(NumericValue::new(3.0))],
+        vec![Interval::singleton(NumericValue::new(-5.0))],
     ]);
 
     // Hand-constructed wildcard plan:
     // - step 0 applies `op0` (inc)
     // - the abstract plan (optimistically) expects x to end up in the UPPER partition (index 1).
     let plan = WildcardPlanResult {
-        wildcard_plan: vec![vec![0]],
+        wildcard_plan: vec![vec![OperatorIndex::new(0)]],
         abstract_state_hashes: vec![],
         abstract_prop_states: vec![],
         abstract_numeric_states: vec![
@@ -180,7 +212,7 @@ fn progression_flaws_find_numeric_deviation_flaw() {
             _ => None,
         })
         .unwrap();
-    assert_eq!(forward_numeric.value, -10.0);
+    assert_eq!(forward_numeric.value, NumericValue::new(-10.0));
 
     // Backward direction splits at the *boundary* of the expected target
     // interval regressed by the operator's effect (+3): boundary 0.0 (the
@@ -203,5 +235,5 @@ fn progression_flaws_find_numeric_deviation_flaw() {
     // The regressed boundary for the UPPER partition `(-5, +inf)` mapped back
     // through `+3` lands at `-5 - 3 = -8.0`; the boundary is open on the lower
     // side so include_in_lower flips to true on the regressed side.
-    assert_eq!(backward_numeric.value, -8.0);
+    assert_eq!(backward_numeric.value, NumericValue::new(-8.0));
 }

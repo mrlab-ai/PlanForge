@@ -2,8 +2,9 @@ use crate::{
     axioms::{ComparisonAxiom, PropositionalAxiom},
     numeric_conditions::ConditionValue,
     numeric_task::{
-        AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-        NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
+        AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+        ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
+        NumericVariable, Operator, OperatorCost, VariableIndex,
     },
 };
 
@@ -21,14 +22,14 @@ pub(crate) fn root_task_with_extra_preconditions(
     extra_preconditions: Vec<ExplicitFact>,
 ) -> NumericRootTask {
     let version = 4;
-    let metric = Metric::new(true, Some(1));
+    let metric = Metric::new(true, Some(VariableIndex::new(1)));
     let variables = vec![
         ExplicitVariable::new(
             2,
             String::from("var13"),
             vec![String::from("new-axiom"), String::from("not-new-axiom")],
             Some(1),
-            1,
+            ExplicitValueIndex::new(1),
         ),
         ExplicitVariable::new(
             7,
@@ -42,7 +43,7 @@ pub(crate) fn root_task_with_extra_preconditions(
                 String::from("ontable(d)"),
             ],
             None,
-            1,
+            ExplicitValueIndex::new(1),
         ),
         // The comparison axiom's target: a derived variable carrying the
         // verdict of `1.0 > total_cost`, two-valued like every numeric
@@ -55,7 +56,7 @@ pub(crate) fn root_task_with_extra_preconditions(
                 String::from("not-cost-below-one"),
             ],
             Some(0),
-            ConditionValue::False.as_usize(),
+            ExplicitValueIndex::new(ConditionValue::False.as_u32()),
         ),
     ];
     let numeric_variables = vec![
@@ -70,8 +71,12 @@ pub(crate) fn root_task_with_extra_preconditions(
         ExplicitFact::propositional(CONDITION_VAR, 0),
     ];
     let mutexes = Vec::new();
-    let state = vec![1, 1, 2];
-    let numeric_state = vec![1f64, 0f64];
+    let state = vec![
+        ExplicitValueIndex::new(1),
+        ExplicitValueIndex::new(1),
+        ExplicitValueIndex::new(2),
+    ];
+    let numeric_state = vec![NumericValue::new(1f64), NumericValue::new(0f64)];
     // `drop` bumps the cost counter by one, which flips the comparison below
     // and therefore distinguishes the successor from the initial state.
     let mut preconditions = vec![ExplicitFact::propositional(1, 1)];
@@ -79,21 +84,31 @@ pub(crate) fn root_task_with_extra_preconditions(
     let operators = vec![Operator::new(
         String::from("drop"),
         preconditions,
-        vec![Effect::new(Vec::new(), 1, Some(1), 5)],
+        vec![Effect::new(
+            Vec::new(),
+            VariableIndex::new(1),
+            Some(ExplicitValueIndex::new(1)),
+            ExplicitValueIndex::new(5),
+        )],
         vec![AssignmentEffect::new(
-            1,
+            VariableIndex::new(1),
             AssignmentOperation::Plus,
-            0,
+            VariableIndex::new(0),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     )];
-    let axioms = vec![PropositionalAxiom::new(vec![], 0, 0, 1)];
+    let axioms = vec![PropositionalAxiom::new(
+        vec![],
+        VariableIndex::new(0),
+        ExplicitValueIndex::new(0),
+        ExplicitValueIndex::new(1),
+    )];
     let comparison_axioms = vec![ComparisonAxiom::new(
-        2,
-        0,
-        1,
+        VariableIndex::new(2),
+        VariableIndex::new(0),
+        VariableIndex::new(1),
         crate::axioms::ComparisonOperator::GreaterThan,
     )];
     // Accumulating a variable into itself is an operator effect, not an
@@ -122,7 +137,7 @@ pub(crate) fn root_task_with_extra_preconditions(
 mod fact_namespace {
     use super::{CONDITION_VAR, get_root_task};
     use crate::numeric_task::{
-        AbstractNumericTask, ExplicitFact, FactNamespace, assert_fact_namespaces,
+        AbstractNumericTask, ExplicitFact, FactNamespace, VariableIndex, assert_fact_namespaces,
     };
 
     #[test]
@@ -168,7 +183,10 @@ mod fact_namespace {
     #[test]
     fn the_task_tags_facts_on_its_condition_variables() {
         let task = get_root_task();
-        assert!(task.numeric_conditions().is_condition_var(CONDITION_VAR));
+        assert!(
+            task.numeric_conditions()
+                .is_condition_var(VariableIndex::from_usize(CONDITION_VAR))
+        );
         assert_eq!(
             task.numeric_conditions().fact(CONDITION_VAR, 0).namespace(),
             FactNamespace::Condition

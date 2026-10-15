@@ -17,8 +17,8 @@ use pyo3::exceptions::{PyException, PyFileNotFoundError, PyIndexError, PyValueEr
 use pyo3::prelude::*;
 
 use planforge_sas::numeric_task::{
-    AssignmentOperation, Effect, ExplicitFact, NumericRootTask, NumericTaskExt, NumericType,
-    Operator, TaskRef,
+    AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex, NumericRootTask, NumericTaskExt,
+    NumericType, NumericValue, Operator, OperatorIndex, TaskRef, VariableIndex,
 };
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -162,9 +162,9 @@ fn split_operator_name(name: &str) -> (Option<String>, Vec<String>) {
 #[pyclass(name = "Atom", frozen, get_all)]
 struct PyAtom {
     /// Index of the finite-domain variable this atom belongs to.
-    variable: usize,
+    variable: u32,
     /// The variable's value that makes this atom true.
-    value: usize,
+    value: u32,
     /// The translator's name for the atom, e.g. `Atom at(rover1, waypoint2)`.
     name: String,
     /// The predicate, or `None` when the name is not of the form `pred(args)`.
@@ -288,16 +288,34 @@ impl PyStateSpace {
             ))
         })?;
         let state_count = self.graph.num_states();
+        let prop_values: Vec<usize> = self
+            .graph
+            .propositional_values
+            .iter()
+            .map(ExplicitValueIndex::index)
+            .collect();
+        let num_values: Vec<f64> = self
+            .graph
+            .numeric_values
+            .iter()
+            .map(NumericValue::value)
+            .collect();
+        let ops: Vec<usize> = self
+            .graph
+            .transition_operator_ids
+            .iter()
+            .map(OperatorIndex::index)
+            .collect();
         let built = StateSpaceArrays {
             propositional_values: numpy
-                .call_method1("asarray", (&self.graph.propositional_values,))?
+                .call_method1("asarray", (prop_values,))?
                 .call_method1(
                     "reshape",
                     ((state_count, self.graph.num_propositional_variables),),
                 )?
                 .unbind(),
             numeric_values: numpy
-                .call_method1("asarray", (&self.graph.numeric_values,))?
+                .call_method1("asarray", (num_values,))?
                 .call_method1(
                     "reshape",
                     ((state_count, self.graph.num_numeric_variables),),
@@ -306,9 +324,7 @@ impl PyStateSpace {
             transition_offsets: numpy
                 .call_method1("asarray", (&self.graph.transition_offsets,))?
                 .unbind(),
-            transition_operator_ids: numpy
-                .call_method1("asarray", (&self.graph.transition_operator_ids,))?
-                .unbind(),
+            transition_operator_ids: numpy.call_method1("asarray", (ops,))?.unbind(),
             transition_successor_ids: numpy
                 .call_method1("asarray", (&self.graph.transition_successor_ids,))?
                 .unbind(),
@@ -339,7 +355,7 @@ impl PyStateSpace {
     }
 
     fn edge(&self, py: Python<'_>, source: usize, transition_id: usize) -> PyResult<Py<PyEdge>> {
-        let operator_id = self.graph.transition_operator_ids[transition_id] as usize;
+        let operator_id = self.graph.transition_operator_ids[transition_id].index();
         let target = self.graph.transition_successor_ids[transition_id] as usize;
         Py::new(
             py,
@@ -601,7 +617,7 @@ impl PyStateSpace {
         Ok(row
             .iter()
             .enumerate()
-            .map(|(variable, &value)| (variable, value as usize))
+            .map(|(variable, &value)| (variable, value.index()))
             .collect())
     }
 
@@ -609,7 +625,12 @@ impl PyStateSpace {
     fn get_numeric_variables(&self, state: usize) -> PyResult<Vec<f64>> {
         let state = self.checked_state(state)?;
         let width = self.graph.num_numeric_variables;
-        Ok(self.graph.numeric_values[state * width..(state + 1) * width].to_vec())
+        Ok(
+            self.graph.numeric_values[state * width..(state + 1) * width]
+                .iter()
+                .map(NumericValue::value)
+                .collect(),
+        )
     }
 
     /// The atoms true in `state`, by name.
@@ -621,7 +642,7 @@ impl PyStateSpace {
             .iter()
             .enumerate()
             .filter_map(|(variable, &value)| {
-                let name = self.fact_names.get(variable)?.get(value as usize)?;
+                let name = self.fact_names.get(variable)?.get(value.index())?;
                 // A variable's negated and sentinel values are not atoms that
                 // hold; only the positive ones label the state.
                 (!name.is_empty() && !name.starts_with("NegatedAtom") && !name.starts_with('<'))
@@ -657,11 +678,14 @@ impl PyStateSpace {
                     )));
                 }
             };
-            let actual = *row.get(variable).ok_or_else(|| {
-                PyIndexError::new_err(format!(
-                    "literal names variable {variable} but the task has {width}"
-                ))
-            })? as usize;
+            let actual = row
+                .get(variable)
+                .ok_or_else(|| {
+                    PyIndexError::new_err(format!(
+                        "literal names variable {variable} but the task has {width}"
+                    ))
+                })?
+                .index();
             if (actual == value) != expected {
                 return Ok(false);
             }
@@ -858,7 +882,7 @@ impl PySearchResult {
 #[derive(Clone)]
 struct State {
     #[pyo3(get)]
-    values: Vec<usize>,
+    values: Vec<u32>,
     #[pyo3(get)]
     numeric_values: Vec<f64>,
     registry_id: usize,
@@ -868,7 +892,7 @@ struct State {
 #[pymethods]
 impl State {
     /// Read one finite-domain variable without copying the complete snapshot.
-    fn value(&self, variable: usize) -> PyResult<usize> {
+    fn value(&self, variable: usize) -> PyResult<u32> {
         self.values.get(variable).copied().ok_or_else(|| {
             PyIndexError::new_err(format!(
                 "propositional variable {variable} is out of bounds for {} values",
@@ -919,8 +943,16 @@ impl State {
 impl State {
     fn snapshot(cstate: &ConcreteState, reg: &StateRegistry) -> State {
         State {
-            values: cstate.get_state(reg),
-            numeric_values: cstate.get_numeric_state(reg),
+            values: cstate
+                .get_state(reg)
+                .iter()
+                .map(|v| v.index() as u32)
+                .collect(),
+            numeric_values: cstate
+                .get_numeric_state(reg)
+                .iter()
+                .map(NumericValue::value)
+                .collect(),
             registry_id: reg.id(),
             state_id: cstate.get_id(),
         }
@@ -1048,9 +1080,9 @@ fn numeric_type_name(numeric_type: &NumericType) -> &'static str {
 fn effect_data(effect: &Effect) -> EffectData {
     EffectData {
         conditions: effect.conditions().iter().map(fact_to_py).collect(),
-        variable: effect.var_id(),
-        precondition_value: effect.precondition_value(),
-        value: effect.value(),
+        variable: effect.var_id().index(),
+        precondition_value: effect.precondition_value().map(|v| v.index()),
+        value: effect.value().index(),
     }
 }
 
@@ -1066,9 +1098,9 @@ fn operator_to_py(
         .iter()
         .map(|effect| NumericEffectData {
             conditions: effect.conditions().iter().map(fact_to_py).collect(),
-            affected_variable: effect.affected_var_id(),
+            affected_variable: effect.affected_var_id().index(),
             operation: operation_name(effect.operation()).to_string(),
-            source_variable: effect.var_id(),
+            source_variable: effect.var_id().index(),
             conditional: effect.is_conditional(),
         })
         .collect();
@@ -1229,7 +1261,7 @@ impl Task {
         (0..self.task.variables().len())
             .map(|i| {
                 self.task
-                    .get_variable_name(i)
+                    .get_variable_name(VariableIndex::from_usize(i))
                     .expect("variable index came from task.variables()")
                     .to_string()
             })
@@ -1286,8 +1318,8 @@ impl Task {
                 Py::new(
                     py,
                     PyAtom {
-                        variable,
-                        value,
+                        variable: variable as u32,
+                        value: value as u32,
                         name,
                         predicate,
                         arguments,
@@ -1311,7 +1343,9 @@ impl Task {
                     operator,
                     Some(operator_id),
                     Some(task_id),
-                    self.task.abstract_operator_cost(operator_id),
+                    self.task
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
+                        .value(),
                 )
                 .expect("creating a Python Operator should not fail")
             })
@@ -1330,7 +1364,7 @@ impl Task {
         let mut all = true;
         for i in 0..self.task.get_num_goals() {
             let g = self.task.get_goal_fact(i);
-            if !g.is_hold(reg.view(&cstate)) {
+            if !g.is_held(reg.view(&cstate)) {
                 all = false;
                 break;
             }
@@ -1349,7 +1383,6 @@ impl Task {
         let task_id = reg.id();
         ids.into_iter()
             .map(|operator_id| {
-                let operator_id = operator_id as usize;
                 let operator = self
                     .task
                     .get_operators()
@@ -1362,7 +1395,9 @@ impl Task {
                     operator,
                     Some(operator_id),
                     Some(task_id),
-                    self.task.abstract_operator_cost(operator_id),
+                    self.task
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
+                        .value(),
                 )
             })
             .collect()
@@ -1421,7 +1456,7 @@ impl Task {
         let mut out = Vec::with_capacity(ids.len());
         let (mut b1, mut b2) = (Vec::new(), Vec::new());
         for op_id in ids {
-            let operator_id = op_id as usize;
+            let operator_id = op_id;
             let op = operators.get(operator_id).unwrap_or_else(|| {
                 panic!("successor generator returned invalid operator id {operator_id}")
             });
@@ -1438,10 +1473,12 @@ impl Task {
                 op,
                 Some(operator_id),
                 Some(task_id),
-                self.task.abstract_operator_cost(operator_id),
+                self.task
+                    .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
+                    .value(),
             )?;
             let snap = State::snapshot(&succ, &reg);
-            out.push((py_op, snap, cost));
+            out.push((py_op, snap, cost.value()));
         }
         Ok(out)
     }
@@ -1527,12 +1564,16 @@ impl Task {
             .map_err(|e| PlanforgeError::new_err(format!("state lookup failed: {e:?}")))
     }
 
-    fn applicable_operator_ids(&self, state: &ConcreteState, registry: &StateRegistry) -> Vec<u32> {
+    fn applicable_operator_ids(
+        &self,
+        state: &ConcreteState,
+        registry: &StateRegistry,
+    ) -> Vec<usize> {
         let mut values = Vec::new();
         state.fill_state(registry, &mut values);
         let mut ids = Vec::new();
         self.succ.get_applicable_operators(&values, &mut ids);
-        ids
+        ids.iter().map(OperatorIndex::index).collect()
     }
 
     fn validate_operator(&self, operator: &PyOperator, task_id: usize) -> PyResult<usize> {
@@ -1562,7 +1603,7 @@ impl Task {
         let concrete = self.lookup(state, &registry)?;
         let operator_id = self.validate_operator(operator, registry.id())?;
         let applicable = self.applicable_operator_ids(&concrete, &registry);
-        if !applicable.contains(&(operator_id as u32)) {
+        if !applicable.contains(&(operator_id)) {
             return Err(PyValueError::new_err(format!(
                 "operator {} ({}) is not applicable in this state",
                 operator_id, operator.name
@@ -1583,7 +1624,7 @@ impl Task {
                     rust_operator.name()
                 ))
             })?;
-        Ok((State::snapshot(&successor, &registry), cost))
+        Ok((State::snapshot(&successor, &registry), cost.value()))
     }
 }
 
@@ -1687,7 +1728,7 @@ fn search_result_to_py(py: Python<'_>, result: SearchResult) -> PySearchResult {
         operators
             .iter()
             .map(|operator: &Operator| {
-                operator_to_py(py, operator, None, None, operator.cost() as f64)
+                operator_to_py(py, operator, None, None, operator.cost().value() as f64)
                     .expect("creating a Python Operator should not fail")
             })
             .collect()

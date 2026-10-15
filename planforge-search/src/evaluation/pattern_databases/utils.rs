@@ -1,4 +1,4 @@
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{AbstractNumericTask, VariableIndex};
 use tracing::{debug, info};
 
 use super::pattern_database::PatternDatabase;
@@ -66,7 +66,10 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
     let prop_headers: Vec<String> = pattern_regular_projected_ids
         .iter()
         .map(|&var_id| {
-            let name = pdb.task.get_variable_name(var_id).unwrap_or("<unknown>");
+            let name = pdb
+                .task
+                .get_variable_name(VariableIndex::from_usize(var_id))
+                .unwrap_or("<unknown>");
             format!("p{var_id}({name})")
         })
         .collect();
@@ -100,7 +103,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
             let value_width = pdb
                 .states
                 .iter()
-                .map(|state| fmt_numeric(pdb.state_numeric_values(state)[var_id]).len())
+                .map(|state| fmt_numeric(pdb.state_numeric_values(state)[var_id].value()).len())
                 .max()
                 .unwrap_or(3);
             header.len().max(value_width)
@@ -162,7 +165,7 @@ pub(crate) fn dump_distance_table(pdb: &PatternDatabase<'_>) {
         {
             line.push_str(&format!(
                 "{:>width$} | ",
-                fmt_numeric(pdb.state_numeric_values(state)[projected_numeric_id]),
+                fmt_numeric(pdb.state_numeric_values(state)[projected_numeric_id].value()),
                 width = *width
             ));
         }

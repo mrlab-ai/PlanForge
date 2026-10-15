@@ -3,7 +3,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as _;
 
 use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, VariableIndex,
+};
 use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
@@ -57,10 +59,10 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
     for var_id in 0..num_vars {
         let size = task
-            .get_variable_domain_size(var_id)
+            .get_variable_domain_size(VariableIndex::from_usize(var_id))
             .map_err(|e| anyhow!(e.to_string()))
             .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
-        domain_mapping.push((0..size).collect());
+        domain_mapping.push((0..size).map(ExplicitValueIndex::from_usize).collect());
         domain_sizes.push(size);
     }
 
@@ -82,7 +84,7 @@ pub(crate) fn set_initial_prop_values(
 ) {
     let init = task.get_initial_propositional_state_values();
     for (var_id, &val) in init.iter().enumerate() {
-        packer.set(buffer, var_id, val as u64);
+        packer.set(buffer, var_id, val.index() as u64);
     }
 }
 
@@ -90,12 +92,12 @@ pub(crate) fn get_initial_state(
     task: &dyn AbstractNumericTask,
     state_packer: &StatePacker,
     axiom_evaluator: &AxiomEvaluator,
-) -> Result<(Vec<u64>, Vec<f64>)> {
+) -> Result<(Vec<u64>, Vec<NumericValue>)> {
     let mut buffer = vec![0u64; state_packer.num_bins()];
     set_initial_prop_values(task, state_packer, &mut buffer);
-    let mut numeric_state: Vec<f64> = task.get_initial_numeric_state_values().to_vec();
+    let mut numeric_state: Vec<NumericValue> = task.get_initial_numeric_state_values().to_vec();
     for value in &mut numeric_state {
-        *value = float_tolerance::canonicalize(*value);
+        *value = float_tolerance::canonicalize_nv(*value);
     }
 
     axiom_evaluator

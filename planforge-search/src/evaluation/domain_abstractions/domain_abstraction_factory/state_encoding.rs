@@ -1,3 +1,5 @@
+use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
+
 use super::*;
 
 /// What one comparison-enumeration loop remembers across calls: the resolved
@@ -105,7 +107,7 @@ impl MatchTree {
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         operators: &[AbstractOperator],
-        _comparison_var_ids: &[usize],
+        _comparison_var_ids: &[VariableIndex],
     ) -> Self {
         let total_vars = domain_sizes.len() + numeric_domain_sizes.len();
         let mut var_counts = vec![0usize; total_vars];
@@ -289,8 +291,8 @@ pub(super) fn decode_state_to_vectors(
     }
     let mut nums: Vec<usize> = Vec::with_capacity(numeric_domain_sizes.len());
     for (num_id, &dom_u) in numeric_domain_sizes.iter().enumerate() {
-        let abs_var = abstraction_numeric_var(num_props, num_id);
-        let mult = hash_multipliers[abs_var];
+        let abs_var = abstraction_numeric_var(num_props, VariableIndex::from_usize(num_id));
+        let mult = hash_multipliers[abs_var.index()];
         let dom = dom_u;
         let part = (state_hash / mult) % dom;
         nums.push(part);
@@ -356,7 +358,7 @@ impl DomainAbstractionFactory {
         for fact in facts {
             if fact.var() < num_props {
                 propositions[fact.var()] =
-                    self.concrete_values_for_abstract_value(fact.var(), fact.value())?;
+                    self.concrete_values_for_abstract_value(fact.var_index(), fact.value_index())?;
                 constrained_props
                     .push(u32::try_from(fact.var()).expect("propositional var id exceeds u32"));
             } else {
@@ -368,7 +370,7 @@ impl DomainAbstractionFactory {
                 );
                 numeric[numeric_var_id] = self
                     .partitions
-                    .partition_interval(numeric_var_id, fact.value())
+                    .partition_interval(VariableIndex::from_usize(numeric_var_id), fact.value())
                     .with_context(|| {
                         format!(
                             "missing interval for numeric var {numeric_var_id} partition {}",
@@ -387,7 +389,7 @@ impl DomainAbstractionFactory {
         Ok(region)
     }
 
-    pub(super) fn full_propositional_region(&self) -> Result<Vec<Vec<u32>>> {
+    pub(super) fn full_propositional_region(&self) -> Result<Vec<Vec<ExplicitValueIndex>>> {
         let mut region = Vec::with_capacity(self.domain_sizes.len());
         for var_id in 0..self.domain_sizes.len() {
             let mapping = self
@@ -398,16 +400,20 @@ impl DomainAbstractionFactory {
                 !mapping.is_empty(),
                 "empty concrete value set for propositional var {var_id}"
             );
-            region.push((0..mapping.len() as u32).collect());
+            region.push(
+                (0..mapping.len())
+                    .map(ExplicitValueIndex::from_usize)
+                    .collect(),
+            );
         }
         Ok(region)
     }
 
     pub(super) fn concrete_values_for_abstract_value(
         &self,
-        var_id: usize,
-        abstract_value: usize,
-    ) -> Result<Vec<u32>> {
+        var_id: VariableIndex,
+        abstract_value: ExplicitValueIndex,
+    ) -> Result<Vec<ExplicitValueIndex>> {
         // `filter_map().collect()` preallocates capacity matching the inner iterator's
         // upper-bound size_hint (here the full domain mapping length), so a var that
         // only has a handful of concrete values mapped to this abstract slot leaves
@@ -416,14 +422,15 @@ impl DomainAbstractionFactory {
         // state regions dominates the propositional representation.
         let mut values = self
             .domain_mapping
-            .get(var_id)
+            .get(var_id.index())
             .with_context(|| format!("missing domain mapping for var {var_id}"))?
             .iter()
             .enumerate()
             .filter_map(|(concrete_value, &mapped_value)| {
-                (mapped_value == abstract_value).then_some(concrete_value as u32)
+                (mapped_value == abstract_value)
+                    .then_some(ExplicitValueIndex::from_usize(concrete_value))
             })
-            .collect::<Vec<u32>>();
+            .collect::<Vec<ExplicitValueIndex>>();
         ensure!(
             !values.is_empty(),
             "empty concrete value set for var {var_id} abstract value {abstract_value}"
@@ -436,7 +443,7 @@ impl DomainAbstractionFactory {
         &self,
         state_hash: usize,
         hash_multipliers: &[usize],
-    ) -> Result<Vec<Vec<u32>>> {
+    ) -> Result<Vec<Vec<ExplicitValueIndex>>> {
         let mut region = Vec::with_capacity(self.domain_sizes.len());
         for (var_id, &domain_size) in self.domain_sizes.iter().enumerate() {
             ensure!(domain_size > 0, "domain size must be > 0 for var {var_id}");
@@ -444,7 +451,10 @@ impl DomainAbstractionFactory {
                 .get(var_id)
                 .with_context(|| format!("missing hash multiplier for var {var_id}"))?;
             let abstract_value = (state_hash / multiplier) % domain_size;
-            region.push(self.concrete_values_for_abstract_value(var_id, abstract_value)?);
+            region.push(self.concrete_values_for_abstract_value(
+                VariableIndex::from_usize(var_id),
+                ExplicitValueIndex::from_usize(abstract_value),
+            )?);
         }
         Ok(region)
     }
@@ -458,12 +468,13 @@ impl DomainAbstractionFactory {
         let num_props = self.domain_sizes.len();
         let mut region = Vec::with_capacity(numeric_domain_sizes.len());
         for (numeric_var_id, &domain_size) in numeric_domain_sizes.iter().enumerate() {
+            let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
             ensure!(
                 domain_size > 0,
                 "numeric domain size must be > 0 for var {numeric_var_id}"
             );
             let abs_var_id = abstraction_numeric_var(num_props, numeric_var_id);
-            let multiplier = *hash_multipliers.get(abs_var_id).with_context(|| {
+            let multiplier = *hash_multipliers.get(abs_var_id.index()).with_context(|| {
                 format!("missing hash multiplier for numeric var {numeric_var_id}")
             })?;
             let partition_id = (state_hash / multiplier) % domain_size;
@@ -480,10 +491,11 @@ impl DomainAbstractionFactory {
         Ok(region)
     }
 
-    pub(super) fn comparison_var_ids(&self) -> Vec<usize> {
+    pub(super) fn comparison_var_ids(&self) -> Vec<VariableIndex> {
         self.numeric_conditions
             .condition_var_ids()
             .filter(|&var_id| self.domain_sizes.get(var_id).copied().unwrap_or(1) > 1)
+            .map(VariableIndex::from_usize)
             .collect()
     }
 
@@ -501,17 +513,17 @@ impl DomainAbstractionFactory {
         let mut out: Vec<ExplicitFact> = Vec::new();
         for goal_index in 0..task.get_num_goals() {
             let fact = task.get_goal_fact(goal_index);
-            let var = fact.var();
-            if self.domain_sizes.get(var).copied().unwrap_or(1) <= 1 {
+            let var = fact.var_index();
+            if self.domain_sizes.get(var.index()).copied().unwrap_or(1) <= 1 {
                 continue;
             }
             let mapped = self
                 .domain_mapping
-                .get(var)
+                .get(var.index())
                 .and_then(|mapping| mapping.get(fact.value()))
                 .copied()
-                .unwrap_or(fact.value());
-            out.push(ExplicitFact::propositional(var, mapped));
+                .unwrap_or(fact.value_index());
+            out.push(ExplicitFact::propositional_from_indexes(var, mapped));
         }
 
         out
@@ -549,7 +561,7 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
+        comparison_var_ids: &[VariableIndex],
     ) -> Result<usize> {
         let prop_init = task.get_initial_propositional_state_values();
         let num_init = task.get_initial_numeric_state_values();
@@ -568,35 +580,39 @@ impl DomainAbstractionFactory {
 
         let mut index: usize = 0;
         for var in 0..num_props {
-            let mult = hash_multipliers[var];
+            let var = VariableIndex::from_usize(var);
+            let mult = hash_multipliers[var.index()];
             let concrete_value = if comparison_var_ids.contains(&var)
                 && let Some(tree) = self.numeric_conditions.for_var(var)
             {
-                ConditionValue::from(tree.evaluate_point(num_init)).as_usize()
+                ExplicitValueIndex::from_usize(
+                    ConditionValue::from(tree.evaluate_point(num_init)).as_usize(),
+                )
             } else {
-                prop_init[var]
+                prop_init[var.index()]
             };
-            let abs_val = *self.domain_mapping[var]
-                .get(concrete_value)
+            let abs_val = *self.domain_mapping[var.index()]
+                .get(concrete_value.index())
                 .with_context(|| {
                     format!(
                         "missing mapping for propositional var {var} value index {concrete_value}"
                     )
                 })?;
-            index += mult * abs_val;
+            index += mult * abs_val.index();
         }
 
         for num_var_id in 0..numeric_domain_sizes.len() {
+            let num_var_id = VariableIndex::from_usize(num_var_id);
             let abs_var = abstraction_numeric_var(num_props, num_var_id);
-            let mult = hash_multipliers[abs_var];
+            let mult = hash_multipliers[abs_var.index()];
             let concrete_value = self
                 .additive_numeric_views
-                .get(num_var_id)
+                .get(num_var_id.index())
                 .map(|view| view.evaluate(num_init))
-                .unwrap_or(num_init[num_var_id]);
-            let val = float_tolerance::canonicalize(concrete_value);
+                .unwrap_or(num_init[num_var_id.index()]);
+            let val = float_tolerance::canonicalize_nv(concrete_value);
             ensure!(
-                val.is_finite() && !val.is_nan(),
+                val.value().is_finite() && !val.value().is_nan(),
                 "initial numeric value for var {num_var_id} must be finite, got {val}"
             );
             let parts = self
@@ -618,8 +634,11 @@ impl DomainAbstractionFactory {
     /// for this abstract state is derived: the class of [`ConditionValue::False`],
     /// which is also the class every abstract operator's comparison effect
     /// targets.
-    pub(super) fn cleared_comparison_class(&self, var_id: usize) -> Result<usize> {
-        self.domain_mapping[var_id]
+    pub(super) fn cleared_comparison_class(
+        &self,
+        var_id: VariableIndex,
+    ) -> Result<ExplicitValueIndex> {
+        self.domain_mapping[var_id.index()]
             .get(ConditionValue::False.as_usize())
             .copied()
             .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))
@@ -632,29 +651,29 @@ impl DomainAbstractionFactory {
         &self,
         state_hash: usize,
         hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
+        comparison_var_ids: &[VariableIndex],
         fixed_comparisons: &[ExplicitFact],
     ) -> Result<usize> {
         let mut out = state_hash;
         for &var_id in comparison_var_ids {
             ensure!(
-                var_id < self.domain_sizes.len(),
+                var_id.index() < self.domain_sizes.len(),
                 "comparison var id out of range: {var_id}"
             );
-            if self.domain_sizes[var_id] <= 1 {
+            if self.domain_sizes[var_id.index()] <= 1 {
                 continue;
             }
-            let mult = hash_multipliers[var_id];
-            let dom = self.domain_sizes[var_id];
+            let mult = hash_multipliers[var_id.index()];
+            let dom = self.domain_sizes[var_id.index()];
             ensure!(dom > 0, "domain size must be > 0 for var {var_id}");
             let cur = (out / mult) % dom;
             let target_abs = if let Some(fixed_value) = fixed_comparisons
                 .iter()
-                .find(|fact| fact.var() == var_id)
-                .map(|fact| fact.value())
+                .find(|fact| fact.var_index() == var_id)
+                .map(|fact| fact.value_index())
             {
                 ensure!(
-                    fixed_value < dom,
+                    fixed_value.index() < dom,
                     "fixed comparison value {fixed_value} out of abstract domain for var {var_id} with size {dom}"
                 );
                 fixed_value
@@ -665,6 +684,7 @@ impl DomainAbstractionFactory {
                 .checked_mul(mult)
                 .context("comparison current digit offset overflow")?;
             let target_offset = target_abs
+                .index()
                 .checked_mul(mult)
                 .context("comparison target digit offset overflow")?;
             out = out
@@ -704,7 +724,7 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-        comparison_var_ids: &[usize],
+        comparison_var_ids: &[VariableIndex],
         fixed_comparisons: &[ExplicitFact],
     ) -> Result<Vec<usize>> {
         if comparison_var_ids.is_empty() {
@@ -721,9 +741,11 @@ impl DomainAbstractionFactory {
         // `fixed_comparisons` is typically empty or has 1-3 entries — replace the
         // per-call `HashMap<usize, usize>` (with default SipHash + heap alloc) with
         // a stack-friendly slice scan.
-        let is_fixed_var =
-            |var_id: usize| -> bool { fixed_comparisons.iter().any(|f| f.var() == var_id) };
-        let is_evaluated_var = |var_id: usize| -> bool { comparison_var_ids.contains(&var_id) };
+        let is_fixed_var = |var_id: VariableIndex| -> bool {
+            fixed_comparisons.iter().any(|f| f.var_index() == var_id)
+        };
+        let is_evaluated_var =
+            |var_id: VariableIndex| -> bool { comparison_var_ids.contains(&var_id) };
 
         // Build the numeric intervals for this abstract state ONCE, then
         // evaluate each comparison tree against the shared buffer. The old
@@ -737,13 +759,13 @@ impl DomainAbstractionFactory {
         for tree in self.numeric_conditions.iter() {
             let var_id = tree.prop_var_id();
             ensure!(
-                var_id < num_props,
+                var_id.index() < num_props,
                 "numeric condition variable out of range: {var_id} >= {num_props}"
             );
             if !is_evaluated_var(var_id) {
                 continue;
             }
-            if self.domain_sizes[var_id] <= 1 {
+            if self.domain_sizes[var_id.index()] <= 1 {
                 continue;
             }
             if is_fixed_var(var_id) {
@@ -751,13 +773,13 @@ impl DomainAbstractionFactory {
             }
 
             // The digit starts at the class of `False`, so only `True` moves it.
-            let mult = hash_multipliers[var_id];
-            let delta_true = (self.domain_mapping[var_id]
+            let mult = hash_multipliers[var_id.index()];
+            let delta_true = (self.domain_mapping[var_id.index()]
                 .get(ConditionValue::True.as_usize())
                 .copied()
                 .with_context(|| format!("missing TRUE mapping for comparison var {var_id}"))?
-                as i32
-                - self.cleared_comparison_class(var_id)? as i32)
+                .index() as i32
+                - self.cleared_comparison_class(var_id)?.index() as i32)
                 * mult as i32;
 
             if !intervals_built {

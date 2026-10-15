@@ -4,7 +4,9 @@
 //! domain-abstraction partitions, CEGAR flaw search and the numeric
 //! condition evaluator in [`crate::numeric_conditions`].
 
-use crate::numeric_task::AssignmentOperation;
+use crate::numeric_task::{
+    AssignmentOperation, INF_VALUE, NEG_INF_VALUE, NumericValue, ONE_VALUE, ZERO_VALUE,
+};
 use crate::utils::float_tolerance;
 
 #[cfg(test)]
@@ -12,28 +14,33 @@ mod tests;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Interval {
-    pub lower: f64,
-    pub upper: f64,
+    pub lower: NumericValue,
+    pub upper: NumericValue,
     pub lower_closed: bool,
     pub upper_closed: bool,
 }
 
 pub const EMPTY_INTERVAL: Interval = Interval {
-    lower: 1.0,
-    upper: 0.0,
+    lower: ONE_VALUE,
+    upper: ZERO_VALUE,
     lower_closed: false,
     upper_closed: false,
 };
 pub const UNBOUNDED_INTERVAL: Interval = Interval {
-    lower: f64::NEG_INFINITY,
-    upper: f64::INFINITY,
+    lower: NEG_INF_VALUE,
+    upper: INF_VALUE,
     lower_closed: false,
     upper_closed: false,
 };
 
 impl Interval {
     #[inline]
-    pub fn new(lower: f64, upper: f64, lower_closed: bool, upper_closed: bool) -> Self {
+    pub fn new(
+        lower: NumericValue,
+        upper: NumericValue,
+        lower_closed: bool,
+        upper_closed: bool,
+    ) -> Self {
         Self {
             lower,
             upper,
@@ -44,17 +51,17 @@ impl Interval {
     }
 
     #[inline]
-    pub fn closed(lower: f64, upper: f64) -> Self {
+    pub fn closed(lower: NumericValue, upper: NumericValue) -> Self {
         Self::new(lower, upper, true, true)
     }
 
     #[inline]
-    pub fn open(lower: f64, upper: f64) -> Self {
+    pub fn open(lower: NumericValue, upper: NumericValue) -> Self {
         Self::new(lower, upper, false, false)
     }
 
     #[inline]
-    pub fn singleton(value: f64) -> Self {
+    pub fn singleton(value: NumericValue) -> Self {
         Self {
             lower: value,
             upper: value,
@@ -73,8 +80,8 @@ impl Interval {
     #[inline]
     pub fn canonicalized(self) -> Self {
         Self::new(
-            float_tolerance::canonicalize(self.lower),
-            float_tolerance::canonicalize(self.upper),
+            float_tolerance::canonicalize_nv(self.lower),
+            float_tolerance::canonicalize_nv(self.upper),
             self.lower_closed,
             self.upper_closed,
         )
@@ -82,7 +89,7 @@ impl Interval {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        if self.lower.is_nan() || self.upper.is_nan() {
+        if self.lower.value().is_nan() || self.upper.value().is_nan() {
             return true;
         }
         if self.lower > self.upper {
@@ -95,23 +102,23 @@ impl Interval {
     }
 
     #[inline]
-    pub fn is_constant(&self, constant: f64) -> bool {
+    pub fn is_constant(&self, constant: NumericValue) -> bool {
         self.lower_closed && self.upper_closed && self.lower == constant && self.upper == constant
     }
 
     #[inline]
     pub fn is_zero(&self) -> bool {
-        self.is_constant(0.0)
+        self.is_constant(ZERO_VALUE)
     }
 
     #[inline]
     pub fn any_bound_is_zero(&self) -> bool {
-        self.lower == 0.0 || self.upper == 0.0
+        self.lower == ZERO_VALUE || self.upper == ZERO_VALUE
     }
 
     #[inline]
-    pub fn contains(&self, value: f64) -> bool {
-        if value.is_nan() || self.is_empty() {
+    pub fn contains(&self, value: NumericValue) -> bool {
+        if value.value().is_nan() || self.is_empty() {
             return false;
         }
 
@@ -222,8 +229,8 @@ impl Interval {
     }
 
     #[inline]
-    pub fn can_split_at(&self, value: f64, include_in_lower: bool) -> bool {
-        if self.is_empty() || value.is_nan() || value.is_infinite() {
+    pub fn can_split_at(&self, value: NumericValue, include_in_lower: bool) -> bool {
+        if self.is_empty() || value.value().is_nan() || value.value().is_infinite() {
             return false;
         }
         if !self.contains(value) {
@@ -240,10 +247,10 @@ impl Interval {
 
     #[inline]
     fn normalized(mut self) -> Self {
-        if self.lower.is_infinite() && self.lower.is_sign_negative() {
+        if self.lower.value().is_infinite() && self.lower.value().is_sign_negative() {
             self.lower_closed = false;
         }
-        if self.upper.is_infinite() && self.upper.is_sign_positive() {
+        if self.upper.value().is_infinite() && self.upper.value().is_sign_positive() {
             self.upper_closed = false;
         }
 
@@ -254,12 +261,12 @@ impl Interval {
     }
 
     #[inline]
-    pub(crate) fn min_bound(&self) -> (f64, bool) {
+    pub(crate) fn min_bound(&self) -> (NumericValue, bool) {
         (self.lower, self.lower_closed)
     }
 
     #[inline]
-    pub(crate) fn max_bound(&self) -> (f64, bool) {
+    pub(crate) fn max_bound(&self) -> (NumericValue, bool) {
         (self.upper, self.upper_closed)
     }
 
@@ -270,7 +277,7 @@ impl Interval {
 
     #[inline]
     pub(crate) fn contains_zero(&self) -> bool {
-        self.contains(0.0)
+        self.contains(ZERO_VALUE)
     }
 
     pub fn apply_op(&mut self, op: &AssignmentOperation, operand: &Interval) {
@@ -311,8 +318,8 @@ impl std::ops::Add for Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         Interval {
-            lower: self.lower + rhs.lower,
-            upper: self.upper + rhs.upper,
+            lower: NumericValue::new(self.lower.value() + rhs.lower.value()),
+            upper: NumericValue::new(self.upper.value() + rhs.upper.value()),
             lower_closed: self.lower_closed && rhs.lower_closed,
             upper_closed: self.upper_closed && rhs.upper_closed,
         }
@@ -328,8 +335,8 @@ impl std::ops::Sub for Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         Interval {
-            lower: self.lower - rhs.upper,
-            upper: self.upper - rhs.lower,
+            lower: NumericValue::new(self.lower.value() - rhs.upper.value()),
+            upper: NumericValue::new(self.upper.value() - rhs.lower.value()),
             lower_closed: self.lower_closed && rhs.upper_closed,
             upper_closed: self.upper_closed && rhs.lower_closed,
         }
@@ -345,7 +352,7 @@ impl std::ops::Mul for Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         if self.is_zero() || rhs.is_zero() {
-            return Interval::singleton(0.0);
+            return Interval::singleton(ZERO_VALUE);
         }
 
         let left = [
@@ -360,10 +367,10 @@ impl std::ops::Mul for Interval {
 
         for (left_value, left_closed) in left {
             for (right_value, right_closed) in right {
-                let value = extended_product(left_value, right_value);
+                let value = extended_product(left_value.value(), right_value.value());
                 let attained = if value == 0.0 {
-                    (left_value == 0.0 && self.contains(0.0))
-                        || (right_value == 0.0 && rhs.contains(0.0))
+                    (left_value.value() == 0.0 && self.contains(ZERO_VALUE))
+                        || (right_value.value() == 0.0 && rhs.contains(ZERO_VALUE))
                 } else {
                     value.is_finite() && left_closed && right_closed
                 };
@@ -382,7 +389,12 @@ impl std::ops::Mul for Interval {
             }
         }
 
-        Interval::new(lower, upper, lower_closed, upper_closed)
+        Interval::new(
+            NumericValue::new(lower),
+            NumericValue::new(upper),
+            lower_closed,
+            upper_closed,
+        )
     }
 }
 
@@ -397,10 +409,10 @@ impl std::ops::Div for Interval {
         }
 
         let reciprocal = Interval::new(
-            1.0 / rhs.upper,
-            1.0 / rhs.lower,
-            rhs.upper_closed && rhs.upper.is_finite(),
-            rhs.lower_closed && rhs.lower.is_finite(),
+            NumericValue::new(1.0 / rhs.upper.value()),
+            NumericValue::new(1.0 / rhs.lower.value()),
+            rhs.upper_closed && rhs.upper.value().is_finite(),
+            rhs.lower_closed && rhs.lower.value().is_finite(),
         );
         self * reciprocal
     }

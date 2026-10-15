@@ -1,8 +1,8 @@
 use super::*;
 use crate::axioms::{AssignmentAxiom, ComparisonAxiom};
 use crate::numeric_task::{
-    AssignmentEffect, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    NumericVariable, Operator,
+    AssignmentEffect, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, NumericVariable, Operator, OperatorCost,
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
@@ -11,7 +11,7 @@ fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> Explic
         name.to_string(),
         values.iter().map(|value| value.to_string()).collect(),
         axiom_layer,
-        0,
+        ExplicitValueIndex::new(0),
     )
 }
 
@@ -19,7 +19,7 @@ fn base_task(
     numeric_variables: Vec<NumericVariable>,
     operators: Vec<Operator>,
     assignment_axioms: Vec<AssignmentAxiom>,
-    numeric_state: Vec<f64>,
+    numeric_state: Vec<NumericValue>,
 ) -> NumericRootTask {
     NumericRootTask::new(NumericRootTaskParts {
         version: 3,
@@ -28,7 +28,7 @@ fn base_task(
         numeric_variables,
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state,
         operators,
         axioms: vec![],
@@ -47,11 +47,21 @@ fn linearizes_derived_sum_expression() {
             NumericVariable::new("sum".to_string(), NumericType::Derived, None),
         ],
         vec![],
-        vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-        vec![1.0, 2.0, 3.0],
+        vec![AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )],
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+        ],
     );
 
-    let expression = linearize_numeric_var(&task, 2).expect("derived sum should be linear");
+    let expression =
+        linearize_numeric_var(&task, VariableIndex::new(2)).expect("derived sum should be linear");
 
     assert_eq!(expression.coefficients, vec![1.0, 1.0, 0.0]);
     assert_eq!(expression.constant, 0.0);
@@ -64,13 +74,13 @@ fn linearizes_operator_assignment_effect_through_derived_var() {
         vec![],
         vec![],
         vec![AssignmentEffect::new(
-            3,
+            VariableIndex::new(3),
             AssignmentOperation::Plus,
-            2,
+            VariableIndex::new(2),
             false,
             vec![],
         )],
-        1,
+        OperatorCost::new(1),
     )];
     let task = base_task(
         vec![
@@ -80,15 +90,25 @@ fn linearizes_operator_assignment_effect_through_derived_var() {
             NumericVariable::new("z".to_string(), NumericType::Regular, None),
         ],
         operators,
-        vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
-        vec![1.0, 2.0, 3.0, 0.0],
+        vec![AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )],
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+            NumericValue::new(0.0),
+        ],
     );
 
-    let effects = linearize_operator_assignment_effects(&task, 0)
+    let effects = linearize_operator_assignment_effects(&task, OperatorIndex::new(0))
         .expect("operator effect through derived sum should be linear");
 
     assert_eq!(effects.len(), 1);
-    assert_eq!(effects[0].affected_var_id, 3);
+    assert_eq!(effects[0].affected_var_id, VariableIndex::new(3));
     assert_eq!(effects[0].delta.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
     assert_eq!(effects[0].delta.constant, 0.0);
 }
@@ -102,12 +122,21 @@ fn rejects_non_linear_product_of_two_variables() {
             NumericVariable::new("prod".to_string(), NumericType::Derived, None),
         ],
         vec![],
-        vec![AssignmentAxiom::new(2, CalOperator::Product, 0, 1)],
-        vec![2.0, 3.0, 6.0],
+        vec![AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Product,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )],
+        vec![
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+            NumericValue::new(6.0),
+        ],
     );
 
-    let error =
-        linearize_numeric_var(&task, 2).expect_err("product of two variables should not linearize");
+    let error = linearize_numeric_var(&task, VariableIndex::new(2))
+        .expect_err("product of two variables should not linearize");
 
     assert!(matches!(
         error,
@@ -128,12 +157,18 @@ fn rejects_short_initial_numeric_value_table() {
         )],
         vec![],
         vec![],
-        vec![1.0],
+        vec![NumericValue::new(1.0)],
     );
     let mut visiting = vec![false];
 
-    let error = linearize_numeric_var_with_lookup(&task, 0, &[None], &[], &mut visiting)
-        .expect_err("a missing initial numeric value must not become zero");
+    let error = linearize_numeric_var_with_lookup(
+        &task,
+        VariableIndex::new(0),
+        &[None],
+        &[],
+        &mut visiting,
+    )
+    .expect_err("a missing initial numeric value must not become zero");
 
     assert!(format!("{error:?}").contains("InitialNumericStateTooShort"));
 }

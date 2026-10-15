@@ -1,7 +1,7 @@
 //! Base trait for heuristic evaluators.
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_sas::numeric_task::Operator;
+use planforge_sas::numeric_task::{NumericValue, Operator, OperatorIndex};
 use planforge_sas::state_registry::ConcreteState;
 
 /// Base trait for heuristic functions.
@@ -87,7 +87,7 @@ pub trait Heuristic {
     ///
     /// The default leaves `out` empty for heuristics that do not implement
     /// preferred operators.
-    fn copy_preferred_operator_ids(&self, out: &mut Vec<u32>) {
+    fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         out.clear();
     }
 
@@ -119,20 +119,20 @@ pub enum CostType {
 pub struct BlindHeuristic {
     name: String,
     // Cost to return for non-goal states (minimum action cost).
-    min_action_cost: f64,
+    min_action_cost: NumericValue,
 }
 
 impl BlindHeuristic {
     pub fn new(name: Option<String>) -> Self {
         Self {
             name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
-            min_action_cost: 1.0,
+            min_action_cost: NumericValue::new(1.0),
         }
     }
 
     /// Create a `BlindHeuristic` that uses the provided `min_action_cost` for
     /// non-goal states.
-    pub fn with_min_action_cost(min_action_cost: f64, name: Option<String>) -> Self {
+    pub fn with_min_action_cost(min_action_cost: NumericValue, name: Option<String>) -> Self {
         Self {
             name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
             min_action_cost,
@@ -149,7 +149,7 @@ impl Heuristic for BlindHeuristic {
         Ok(if eval_state.is_goal() {
             0.0
         } else {
-            self.min_action_cost
+            self.min_action_cost.value()
         })
     }
 

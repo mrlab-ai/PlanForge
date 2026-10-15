@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, TaskRef, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, NumericValue, TaskRef, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use rand::seq::SliceRandom;
@@ -553,7 +553,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let original_costs: Vec<f64> = task
             .get_operators()
             .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
+            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
             .collect();
 
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());
@@ -1987,7 +1987,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     })?;
                 let operator = sampling_task
                     .get_operators()
-                    .get(operator_id as usize)
+                    .get(operator_id.index())
                     .expect("successor generator returned an invalid operator id");
                 let (successor, _) = registry
                     .apply_operator_in_context(
@@ -3580,14 +3580,14 @@ fn compute_regional_conflict_scores(
         let mut by_operator = HashMap::<usize, Vec<&StateRegion>>::new();
         for operator_region in operator_regions {
             for label in &operator_region.labels {
-                if label.concrete_op_id >= operator_costs.len() {
+                if label.concrete_op_id.index() >= operator_costs.len() {
                     return Err(EvaluationError::ComputationFailed(format!(
                         "region SCP component {component_id} operator region references missing operator {}",
                         label.concrete_op_id
                     )));
                 }
                 by_operator
-                    .entry(label.concrete_op_id)
+                    .entry(label.concrete_op_id.index())
                     .or_default()
                     .push(&label.source);
             }
@@ -3697,11 +3697,14 @@ fn apply_operator_costs_from_slice(
         }
         let mut cost = f64::INFINITY;
         for &concrete_op_id in &op.concrete_op_ids {
-            let concrete_cost = operator_costs.get(concrete_op_id).copied().ok_or_else(|| {
-                EvaluationError::ComputationFailed(format!(
-                    "missing residual cost for concrete operator {concrete_op_id}"
-                ))
-            })?;
+            let concrete_cost = operator_costs
+                .get(concrete_op_id.index())
+                .copied()
+                .ok_or_else(|| {
+                    EvaluationError::ComputationFailed(format!(
+                        "missing residual cost for concrete operator {concrete_op_id}"
+                    ))
+                })?;
             if !concrete_cost.is_finite() {
                 return Err(EvaluationError::ComputationFailed(format!(
                     "residual cost for concrete operator {concrete_op_id} must be finite"
@@ -3709,7 +3712,7 @@ fn apply_operator_costs_from_slice(
             }
             cost = cost.min(concrete_cost);
         }
-        op.cost = cost;
+        op.cost = NumericValue::new(cost);
     }
     Ok(())
 }

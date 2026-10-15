@@ -5,24 +5,28 @@ pub(super) fn split_failed_fact(
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
     fact: &ExplicitFact,
-    prop_values: &[usize],
-    numeric_values: &[f64],
+    prop_values: &[ExplicitValueIndex],
+    numeric_values: &[NumericValue],
     description: String,
 ) -> Result<Split> {
-    if let Some(tree_id) = semantics.task().numeric_conditions().id_for_var(fact.var()) {
+    if let Some(tree_id) = semantics
+        .task()
+        .numeric_conditions()
+        .id_for_var(fact.var_index())
+    {
         return comparison_refinement(
             working,
             semantics,
             state_id,
             tree_id,
             numeric_values,
-            ComparisonRefinementGoal::exclude(fact.value())?,
+            ComparisonRefinementGoal::exclude(fact.value_index())?,
             description,
         );
     }
     if !semantics.propositional_axioms_by_prop_var()[fact.var()].is_empty() {
         let default_value = semantics.propositional_axiom_default(fact.var())?;
-        if fact.value() == default_value {
+        if fact.value_index() == default_value {
             let concrete_value = *prop_values
                 .get(fact.var())
                 .with_context(|| format!("missing concrete prop var {}", fact.var()))?;
@@ -64,7 +68,7 @@ pub(super) fn split_failed_fact(
         }
         for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
             let axiom = &semantics.task().axioms()[axiom_id];
-            if axiom.effect_value() != fact.value()
+            if axiom.effect_value() != fact.value_index()
                 || !all_conditions_admitted(
                     semantics,
                     &working.states()[state_id],
@@ -77,7 +81,7 @@ pub(super) fn split_failed_fact(
                 let value = *prop_values
                     .get(condition.var())
                     .with_context(|| format!("missing concrete prop var {}", condition.var()))?;
-                if value != condition.value() {
+                if value != condition.value_index() {
                     return split_failed_fact(
                         working,
                         semantics,
@@ -97,15 +101,15 @@ pub(super) fn split_failed_fact(
     let witness_value = *prop_values
         .get(fact.var())
         .with_context(|| format!("missing concrete prop var {}", fact.var()))?
-        as PropValueId;
+        as ExplicitValueIndex;
     ensure!(
-        witness_value != fact.value() as PropValueId,
+        witness_value != fact.value_index(),
         "failed fact split witness unexpectedly satisfies {fact:?}"
     );
     Ok(Split::Propositional {
         state_id,
-        var_id: fact.var(),
-        wanted: vec![fact.value() as PropValueId],
+        var_id: fact.var_index(),
+        wanted: vec![fact.value_index()],
         witness_value,
         description,
     })
@@ -116,31 +120,35 @@ fn split_to_guarantee_fact(
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
     fact: &ExplicitFact,
-    prop_values: &[usize],
-    numeric_values: &[f64],
+    prop_values: &[ExplicitValueIndex],
+    numeric_values: &[NumericValue],
     description: String,
 ) -> Result<Split> {
     let concrete_value = *prop_values
         .get(fact.var())
         .with_context(|| format!("missing concrete prop var {}", fact.var()))?;
     ensure!(
-        concrete_value == fact.value(),
+        concrete_value == fact.value_index(),
         "cannot guarantee fact {fact:?}: concrete value is {concrete_value}"
     );
-    if let Some(tree_id) = semantics.task().numeric_conditions().id_for_var(fact.var()) {
+    if let Some(tree_id) = semantics
+        .task()
+        .numeric_conditions()
+        .id_for_var(fact.var_index())
+    {
         return comparison_refinement(
             working,
             semantics,
             state_id,
             tree_id,
             numeric_values,
-            ComparisonRefinementGoal::guarantee(fact.value())?,
+            ComparisonRefinementGoal::guarantee(fact.value_index())?,
             description,
         );
     }
     if !semantics.propositional_axioms_by_prop_var()[fact.var()].is_empty() {
         let default_value = semantics.propositional_axiom_default(fact.var())?;
-        if fact.value() == default_value {
+        if fact.value_index() == default_value {
             for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
                 let axiom = &semantics.task().axioms()[axiom_id];
                 if !all_conditions_admitted(
@@ -156,7 +164,7 @@ fn split_to_guarantee_fact(
                     .find(|condition| {
                         prop_values
                             .get(condition.var())
-                            .is_some_and(|&value| value != condition.value())
+                            .is_some_and(|&value| value != condition.value_index())
                     })
                     .with_context(|| {
                         format!(
@@ -165,7 +173,8 @@ fn split_to_guarantee_fact(
                         )
                     })?;
                 let witness_value = prop_values[condition.var()];
-                let witness_fact = ExplicitFact::propositional(condition.var(), witness_value);
+                let witness_fact =
+                    ExplicitFact::propositional(condition.var(), witness_value.index());
                 return split_to_guarantee_fact(
                     working,
                     semantics,
@@ -183,7 +192,7 @@ fn split_to_guarantee_fact(
 
         for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
             let axiom = &semantics.task().axioms()[axiom_id];
-            if axiom.effect_value() != fact.value()
+            if axiom.effect_value() != fact.value_index()
                 || !conditions_hold_concretely(axiom.conditions(), prop_values)?
             {
                 continue;
@@ -208,7 +217,7 @@ fn split_to_guarantee_fact(
         bail!("concrete derived fact {fact:?} has no supporting axiom");
     }
 
-    let witness_value = concrete_value as PropValueId;
+    let witness_value = concrete_value as ExplicitValueIndex;
     let allowed = working
         .states
         .get(state_id)
@@ -220,7 +229,7 @@ fn split_to_guarantee_fact(
     );
     Ok(Split::Propositional {
         state_id,
-        var_id: fact.var(),
+        var_id: fact.var_index(),
         wanted: vec![witness_value],
         witness_value,
         description,
@@ -234,11 +243,11 @@ enum ComparisonRefinementGoal {
 }
 
 impl ComparisonRefinementGoal {
-    fn exclude(prop_value: usize) -> Result<Self> {
+    fn exclude(prop_value: ExplicitValueIndex) -> Result<Self> {
         Ok(Self::ExcludeDesired(comparison_truth(prop_value)?))
     }
 
-    fn guarantee(prop_value: usize) -> Result<Self> {
+    fn guarantee(prop_value: ExplicitValueIndex) -> Result<Self> {
         Ok(Self::GuaranteeDesired(comparison_truth(prop_value)?))
     }
 
@@ -254,7 +263,7 @@ fn comparison_refinement(
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
     tree_id: usize,
-    numeric_values: &[f64],
+    numeric_values: &[NumericValue],
     goal: ComparisonRefinementGoal,
     description: String,
 ) -> Result<Split> {
@@ -276,28 +285,28 @@ fn comparison_refinement(
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
     let mut candidates = Vec::new();
     for var_id in tree.regular_numeric_var_dependencies().iter().copied() {
-        let witness_value = float_tolerance::canonicalize(
+        let witness_value = float_tolerance::canonicalize_nv(
             *numeric_values
-                .get(var_id)
+                .get(var_id.index())
                 .with_context(|| format!("missing concrete numeric var {var_id}"))?,
         );
         ensure!(
-            witness_value.is_finite(),
+            witness_value.value().is_finite(),
             "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"
         );
         let parent = *state
             .numeric
-            .get(var_id)
+            .get(var_id.index())
             .with_context(|| format!("missing Cartesian numeric var {var_id}"))?;
         let mut boundaries = Vec::new();
         if semantics.refinement_direction() == CartesianRefinementDirection::Regression {
             boundaries.extend(semantics.target_split_boundaries().iter().copied());
         }
         boundaries.push(witness_value);
-        boundaries.sort_by(f64::total_cmp);
-        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        boundaries.sort_by(|a, b| f64::total_cmp(&a.value(), &b.value()));
+        boundaries.dedup_by(|left, right| left.value().to_bits() == right.value().to_bits());
 
-        let integer_lattice = semantics.numeric_integer_lattice()[var_id];
+        let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         for boundary in boundaries {
             for lower_includes_boundary in [true, false] {
                 let Ok((lower, upper)) = numeric_split_intervals(
@@ -318,13 +327,13 @@ fn comparison_refinement(
                     (upper, lower)
                 };
                 let mut child_numeric = state.numeric.clone();
-                Arc::make_mut(&mut child_numeric)[var_id] = witness_child;
+                Arc::make_mut(&mut child_numeric)[var_id.index()] = witness_child;
                 let witness_result = tree.evaluate_interval(&child_numeric);
                 ensure!(
                     witness_result != Some(!concrete_truth),
                     "comparison interval for tree {tree_id} excludes its concrete witness after splitting numeric var {var_id}"
                 );
-                Arc::make_mut(&mut child_numeric)[var_id] = other_child;
+                Arc::make_mut(&mut child_numeric)[var_id.index()] = other_child;
                 let other_result = tree.evaluate_interval(&child_numeric);
                 let achieved = match goal {
                     ComparisonRefinementGoal::ExcludeDesired(_) => {
@@ -379,20 +388,23 @@ fn comparison_refinement(
     )
 }
 
-pub(super) fn comparison_truth(prop_value: usize) -> Result<bool> {
-    match prop_value {
+pub(super) fn comparison_truth(prop_value: ExplicitValueIndex) -> Result<bool> {
+    match prop_value.index() {
         0 => Ok(true),
         1 => Ok(false),
         _ => bail!("invalid comparison fact value {prop_value}"),
     }
 }
 
-fn conditions_hold_concretely(conditions: &[ExplicitFact], prop_values: &[usize]) -> Result<bool> {
+fn conditions_hold_concretely(
+    conditions: &[ExplicitFact],
+    prop_values: &[ExplicitValueIndex],
+) -> Result<bool> {
     for condition in conditions {
         let value = *prop_values
             .get(condition.var())
             .with_context(|| format!("missing concrete prop var {}", condition.var()))?;
-        if value != condition.value() {
+        if value != condition.value_index() {
             return Ok(false);
         }
     }
@@ -416,20 +428,20 @@ fn all_conditions_admitted(
 pub(super) struct DeviationWitness<'a> {
     source_state_id: usize,
     target_state_id: usize,
-    op_id: usize,
-    successor_prop: &'a [usize],
-    source_numeric: &'a [f64],
-    successor_numeric: &'a [f64],
+    op_id: OperatorIndex,
+    successor_prop: &'a [ExplicitValueIndex],
+    source_numeric: &'a [NumericValue],
+    successor_numeric: &'a [NumericValue],
 }
 
 impl<'a> DeviationWitness<'a> {
     pub(super) fn new(
         source_state_id: usize,
         target_state_id: usize,
-        op_id: usize,
-        successor_prop: &'a [usize],
-        source_numeric: &'a [f64],
-        successor_numeric: &'a [f64],
+        op_id: OperatorIndex,
+        successor_prop: &'a [ExplicitValueIndex],
+        source_numeric: &'a [NumericValue],
+        successor_numeric: &'a [NumericValue],
     ) -> Self {
         Self {
             source_state_id,
@@ -468,17 +480,18 @@ pub(super) fn split_deviation_candidates(
     let mut candidates = Vec::new();
     let mut rejected_numeric_splits = Vec::new();
     for (var_id, allowed) in target.propositions().iter().enumerate() {
+        let var_id = VariableIndex::from_usize(var_id);
         if semantics
             .task()
             .numeric_conditions()
             .is_condition_var(var_id)
-            || !semantics.propositional_axioms_by_prop_var()[var_id].is_empty()
+            || !semantics.propositional_axioms_by_prop_var()[var_id.index()].is_empty()
         {
             continue;
         }
-        let value = successor_prop[var_id] as PropValueId;
+        let value = successor_prop[var_id.index()];
         if allowed.binary_search(&value).is_err() {
-            let op = &semantics.task().get_operators()[op_id];
+            let op = &semantics.task().get_operators()[op_id.index()];
             let unaffected = !op.effects().iter().any(|effect| effect.var_id() == var_id);
             ensure!(
                 unaffected,
@@ -497,7 +510,8 @@ pub(super) fn split_deviation_candidates(
     }
 
     for (var_id, target_interval) in target.numeric.iter().copied().enumerate() {
-        let successor = successor_numeric[var_id];
+        let var_id = VariableIndex::from_usize(var_id);
+        let successor = successor_numeric[var_id.index()];
         if target_interval.contains(successor) {
             continue;
         }
@@ -508,7 +522,7 @@ pub(super) fn split_deviation_candidates(
                     "Cartesian transition for operator {op_id} has no numeric preimage for var {var_id} and target {target_interval:?}"
                 )
             })?;
-        let source = source_numeric[var_id];
+        let source = source_numeric[var_id.index()];
         if preimage.contains(source) {
             rejected_numeric_splits.push(format!(
                 "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?} contains source"
@@ -525,18 +539,18 @@ pub(super) fn split_deviation_candidates(
                 );
                 (preimage.upper, preimage.upper_closed)
             };
-        let parent = working.states()[source_state_id].numeric[var_id];
+        let parent = working.states()[source_state_id].numeric[var_id.index()];
         ensure!(
             parent.contains(source),
             "Cartesian source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"
         );
-        if !boundary.is_finite() {
+        if !boundary.value().is_finite() {
             rejected_numeric_splits.push(format!(
                 "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?}, parent={parent:?} has only infinite separating boundary"
             ));
             continue;
         }
-        let integer_lattice = semantics.numeric_integer_lattice()[var_id];
+        let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         if numeric_split_intervals(parent, boundary, lower_includes_boundary, integer_lattice)
             .is_err()
         {
@@ -561,7 +575,7 @@ pub(super) fn split_deviation_candidates(
     ensure!(
         !candidates.is_empty(),
         "concrete successor maps from Cartesian state {source_state_id} to a state other than abstract target {target_state_id}, but no sound strict split exists for operator {op_id} ({}); numeric split rejections: [{}]",
-        semantics.task().get_operators()[op_id].name(),
+        semantics.task().get_operators()[op_id.index()].name(),
         rejected_numeric_splits.join("; ")
     );
     Ok(candidates)

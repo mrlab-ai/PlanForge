@@ -1,6 +1,7 @@
 use planforge_sas::numeric_task::{
-    AssignmentEffect, Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericVariable, Operator,
+    AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric,
+    NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator,
+    OperatorCost, VariableIndex,
 };
 
 use super::*;
@@ -11,7 +12,7 @@ fn simple_var(name: &str) -> ExplicitVariable {
         name.to_string(),
         vec![format!("{name}=0"), format!("{name}=1")],
         None,
-        1,
+        ExplicitValueIndex::new(1),
     )
 }
 
@@ -30,22 +31,32 @@ fn disjoint_effect_task() -> NumericRootTask {
             ExplicitFact::propositional(1, 1),
         ],
         mutexes: vec![],
-        state: vec![0, 0],
-        numeric_state: vec![0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0)],
         operators: vec![
             Operator::new(
                 "set-p".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 0, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "set-q".to_string(),
                 vec![],
-                vec![Effect::new(vec![], 1, Some(0), 1)],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::new(1),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
                 vec![],
-                1,
+                OperatorCost::new(1),
             ),
         ],
         axioms: vec![],
@@ -67,20 +78,29 @@ fn shared_effect_task() -> NumericRootTask {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0, 0],
-        numeric_state: vec![1.0, 0.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
         operators: vec![Operator::new(
             "touch-both".to_string(),
             vec![],
-            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -100,20 +120,25 @@ fn zero_additive_effect_task() -> NumericRootTask {
         ],
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 0.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
         operators: vec![Operator::new(
             "set-p-and-add-zero".to_string(),
             vec![],
-            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                0,
+                VariableIndex::from_usize(0),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -126,8 +151,8 @@ fn zero_additive_effect_task() -> NumericRootTask {
 fn computes_additive_patterns_for_disjoint_effects() {
     let task = disjoint_effect_task();
     let patterns = PatternCollection::new(vec![
-        Pattern::new(vec![0], vec![]),
-        Pattern::new(vec![1], vec![]),
+        Pattern::new(vec![VariableIndex::from_usize(0)], vec![]),
+        Pattern::new(vec![VariableIndex::from_usize(1)], vec![]),
     ]);
 
     let additivity = compute_additive_vars(&task);

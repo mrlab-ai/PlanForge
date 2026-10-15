@@ -8,8 +8,17 @@ use crate::tests::*;
 
 #[test]
 fn assignment_axiom_reports_division_by_zero_distinctly() {
-    let axiom = AssignmentAxiom::new(2, CalOperator::Division, 0, 1);
-    let mut values = [4.0, 0.0, 99.0];
+    let axiom = AssignmentAxiom::new(
+        VariableIndex::new(2),
+        CalOperator::Division,
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+    );
+    let mut values = [
+        NumericValue::new(4.0),
+        NumericValue::new(0.0),
+        NumericValue::new(99.0),
+    ];
 
     let error = axiom
         .update_values(&mut values)
@@ -23,8 +32,13 @@ fn assignment_axiom_reports_division_by_zero_distinctly() {
 
 #[test]
 fn assignment_axiom_reports_the_invalid_right_operand() {
-    let axiom = AssignmentAxiom::new(1, CalOperator::Sum, 0, 3);
-    let mut values = [4.0, 0.0];
+    let axiom = AssignmentAxiom::new(
+        VariableIndex::new(1),
+        CalOperator::Sum,
+        VariableIndex::new(0),
+        VariableIndex::new(3),
+    );
+    let mut values = [NumericValue::new(4.0), NumericValue::new(0.0)];
 
     let error = axiom
         .update_values(&mut values)
@@ -38,10 +52,15 @@ fn assignment_axiom_reports_the_invalid_right_operand() {
 
 #[test]
 fn comparison_axiom_reports_the_invalid_right_operand() {
-    let axiom = ComparisonAxiom::new(0, 0, 3, ComparisonOperator::Equal);
+    let axiom = ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        VariableIndex::new(3),
+        ComparisonOperator::Equal,
+    );
 
     let error = axiom
-        .is_hold(&[4.0, 0.0])
+        .is_hold(&[NumericValue::new(4.0), NumericValue::new(0.0)])
         .expect_err("right operand is out of bounds");
 
     assert_eq!(error.index, 3);
@@ -60,7 +79,7 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
                 "not-sum-exceeds-left".to_string(),
             ],
             Some(1),
-            ConditionValue::False.as_usize(),
+            ExplicitValueIndex::new(ConditionValue::False.as_u32()),
         )],
         numeric_variables: vec![
             NumericVariable::new("left".to_string(), NumericType::Constant, None),
@@ -69,30 +88,43 @@ fn complete_evaluation_runs_arithmetic_before_comparisons() {
         ],
         goals: vec![ExplicitFact::condition(0, ConditionValue::True.as_usize())],
         mutexes: Vec::new(),
-        state: vec![ConditionValue::False.as_usize()],
-        numeric_state: vec![2.0, 3.0, 0.0],
+        state: vec![ExplicitValueIndex::new(ConditionValue::False.as_u32())],
+        numeric_state: vec![
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+            NumericValue::new(0.0),
+        ],
         operators: Vec::new(),
         axioms: Vec::new(),
         comparison_axioms: vec![ComparisonAxiom::new(
-            0,
-            2,
-            0,
+            VariableIndex::new(0),
+            VariableIndex::new(2),
+            VariableIndex::new(0),
             ComparisonOperator::GreaterThan,
         )],
-        assignment_axioms: vec![AssignmentAxiom::new(2, CalOperator::Sum, 0, 1)],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::new(2),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )],
         global_constraint: ExplicitFact::condition(0, ConditionValue::True.as_usize()),
     }));
     let state_packer = std::sync::Arc::new(StatePacker::new(&[ConditionValue::DOMAIN_SIZE as u64]));
     let axiom_evaluator = AxiomEvaluator::new(problem, state_packer.clone());
     let mut buffer = vec![0; state_packer.num_bins()];
     state_packer.set(&mut buffer, 0, ConditionValue::False.as_usize() as u64);
-    let mut numeric_state = vec![2.0, 3.0, 0.0];
+    let mut numeric_state = vec![
+        NumericValue::new(2.0),
+        NumericValue::new(3.0),
+        NumericValue::new(0.0),
+    ];
 
     axiom_evaluator
         .evaluate(&mut buffer, &mut numeric_state)
         .unwrap();
 
-    assert_eq!(numeric_state[2], 5.0);
+    assert_eq!(numeric_state[2], NumericValue::new(5.0));
     assert_eq!(
         state_packer.get(&buffer, 0),
         ConditionValue::True.as_usize() as u64
@@ -117,13 +149,20 @@ fn test_axiom_evaluator_creation() {
     // derived by the unconditional propositional axiom, var1 keeps its value
     // and var2 holds the verdict of `1.0 > total_cost`, true initially.
     let init_state = problem.get_initial_propositional_state_values();
-    assert_eq!(*init_state, vec![1, 1, 0]);
+    assert_eq!(
+        *init_state,
+        vec![
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0)
+        ]
+    );
 
     let mut buffer = vec![0; axiom_evaluator.state_packer.num_bins()];
     for (i, value) in init_state.iter().enumerate() {
         axiom_evaluator
             .state_packer
-            .set(&mut buffer, i, *value as u64);
+            .set(&mut buffer, i, value.index() as u64);
     }
 
     assert_eq!(axiom_evaluator.state_packer.get(&buffer, 0), 1);

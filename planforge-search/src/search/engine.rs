@@ -14,7 +14,9 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, Operator};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitFact, NumericValue, Operator, OperatorIndex,
+};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
@@ -37,8 +39,8 @@ enum PoppedNode {
 struct AppliedOperator<'a> {
     operator: &'a Operator,
     operator_id: usize,
-    op_id: u32,
-    metric_op_cost: f64,
+    op_id: OperatorIndex,
+    metric_op_cost: NumericValue,
 }
 
 /// The values every successor of one expansion shares.
@@ -47,7 +49,7 @@ struct ParentExpansion {
     g_value: f64,
     /// Operators the heuristic called helpful in the parent, or `None` when
     /// the heuristic does not report preferred operators.
-    preferred_operator_range: Option<(u32, u32)>,
+    preferred_operator_range: Option<(OperatorIndex, OperatorIndex)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -215,7 +217,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         let min_action_cost = operator_costs
             .iter()
             .copied()
-            .fold(f64::INFINITY, |a, b| a.min(b));
+            .fold(f64::INFINITY, |a, b| a.min(b.value()));
 
         let min_action_cost = if min_action_cost.is_finite() {
             min_action_cost.max(0.0)
@@ -225,7 +227,10 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
         // Use `BlindHeuristic` as default, configured with `min_action_cost`.
         let heuristic = heuristic.unwrap_or_else(|| {
-            Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
+            Box::new(BlindHeuristic::with_min_action_cost(
+                NumericValue::new(min_action_cost),
+                None,
+            ))
         });
         let heuristic_name = heuristic.heuristic_name().to_string();
         let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();
@@ -403,7 +408,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
     /// Check if a state satisfies a specific fact.
     fn state_satisfies_fact(&self, state: &ConcreteState, fact: &ExplicitFact) -> bool {
-        fact.is_hold(self.state_registry.view(state))
+        fact.is_held(self.state_registry.view(state))
     }
 
     /// Evaluate a state for A* without materializing named evaluator results.
@@ -789,7 +794,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         }
 
         for &op_id in applicable_operators.iter() {
-            let operator_id = op_id as usize;
+            let operator_id = op_id.index();
             let operator = self
                 .operators
                 .get(operator_id)
@@ -846,7 +851,10 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             metric_op_cost,
         } = applied;
         let succ_state_id = succ_state.get_id();
-        let new_g_value = parent.g_value + self.operator_cost(operator_id, metric_op_cost);
+        let new_g_value = parent.g_value
+            + self
+                .operator_cost(OperatorIndex::from_usize(operator_id), metric_op_cost)
+                .value();
 
         // Count every successfully constructed successor state.
         self.stats.nodes_generated += 1;
@@ -898,7 +906,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             succ_state_id,
             SearchNodeInfo {
                 parent_state: Some(parent.state_id),
-                parent_operator_id: Some(operator_id),
+                parent_operator_id: Some(OperatorIndex::from_usize(operator_id)),
                 g_value: new_g_value,
                 is_dead_end: evaluation.is_dead_end,
                 is_closed: false,
@@ -925,11 +933,15 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     /// Cost charged for applying `operator`: the task metric when the search
     /// optimises it, otherwise the configured (unit or per-operator) cost.
     #[inline]
-    fn operator_cost(&self, operator_id: usize, metric_op_cost: f64) -> f64 {
+    fn operator_cost(
+        &self,
+        operator_id: OperatorIndex,
+        metric_op_cost: NumericValue,
+    ) -> NumericValue {
         if self.config.use_metric {
             metric_op_cost
         } else {
-            self.config.operator_costs[operator_id]
+            self.config.operator_costs[operator_id.index()]
         }
     }
 

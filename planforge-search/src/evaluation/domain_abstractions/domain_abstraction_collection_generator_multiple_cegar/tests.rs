@@ -13,8 +13,9 @@ fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
 }
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator};
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericVariable,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericVariable, OperatorCost,
+    VariableIndex,
 };
 
 #[test]
@@ -27,19 +28,24 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             "goal".into(),
             vec!["false".into(), "true".into()],
             None,
-            1,
+            ExplicitValueIndex::new(1),
         )],
         numeric_variables: vec![],
         goals: vec![ExplicitFact::propositional(0, 1)],
         mutexes: vec![],
-        state: vec![0],
+        state: vec![ExplicitValueIndex::new(0)],
         numeric_state: vec![],
         operators: vec![Operator::new(
             "set-goal".into(),
             vec![],
-            vec![Effect::new(vec![], 0, Some(0), 1)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
             vec![],
-            1,
+            OperatorCost::new(1),
         )],
         axioms: vec![],
         comparison_axioms: vec![],
@@ -67,12 +73,30 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
 
 #[test]
 fn single_init_split_selection_uses_round_robin_iteration_order() {
-    let candidates = [0usize, 1, 2, 3, 4];
+    let candidates = [
+        VariableIndex::from_usize(0usize),
+        VariableIndex::from_usize(1),
+        VariableIndex::from_usize(2),
+        VariableIndex::from_usize(3),
+        VariableIndex::from_usize(4),
+    ];
     let selected = (1..=8)
         .map(|iteration| select_single_init_split_var(&candidates, iteration).unwrap())
         .collect::<Vec<_>>();
 
-    assert_eq!(selected, vec![1, 2, 3, 4, 0, 1, 2, 3]);
+    assert_eq!(
+        selected,
+        vec![
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(2),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(2),
+            VariableIndex::from_usize(3)
+        ]
+    );
 }
 
 #[test]
@@ -201,15 +225,22 @@ fn numeric_seed_shells_are_interleaved_across_dimensions() {
         include_in_lower: true,
     };
     let mut seeds = vec![InitialSeedSplit::Propositional {
-        var_id: 3,
-        value: 1,
+        var_id: VariableIndex::from_usize(3),
+        value: ExplicitValueIndex::new(1),
     }];
 
     append_interleaved_numeric_seeds(
         &mut seeds,
         vec![
-            vec![numeric(9, 0.0), numeric(9, 1.0)],
-            vec![numeric(2, 0.0), numeric(2, 1.0), numeric(2, 2.0)],
+            vec![
+                numeric(VariableIndex::from_usize(9), NumericValue::new(0.0)),
+                numeric(VariableIndex::from_usize(9), NumericValue::new(1.0)),
+            ],
+            vec![
+                numeric(VariableIndex::from_usize(2), NumericValue::new(0.0)),
+                numeric(VariableIndex::from_usize(2), NumericValue::new(1.0)),
+                numeric(VariableIndex::from_usize(2), NumericValue::new(2.0)),
+            ],
         ],
     );
 
@@ -217,14 +248,14 @@ fn numeric_seed_shells_are_interleaved_across_dimensions() {
         seeds,
         vec![
             InitialSeedSplit::Propositional {
-                var_id: 3,
-                value: 1,
+                var_id: VariableIndex::from_usize(3),
+                value: ExplicitValueIndex::new(1),
             },
-            numeric(2, 0.0),
-            numeric(9, 0.0),
-            numeric(2, 1.0),
-            numeric(9, 1.0),
-            numeric(2, 2.0),
+            numeric(VariableIndex::from_usize(2), NumericValue::new(0.0)),
+            numeric(VariableIndex::from_usize(9), NumericValue::new(0.0)),
+            numeric(VariableIndex::from_usize(2), NumericValue::new(1.0)),
+            numeric(VariableIndex::from_usize(9), NumericValue::new(1.0)),
+            numeric(VariableIndex::from_usize(2), NumericValue::new(2.0)),
         ]
     );
 }
@@ -247,26 +278,26 @@ fn affine_root_groups_share_immutable_anchors_without_merging_independent_ones()
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                0,
+                VariableIndex::from_usize(0),
                 AssignmentOperation::Plus,
-                7,
+                VariableIndex::from_usize(7),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         ),
         Operator::new(
             "change-b".into(),
             vec![],
             vec![],
             vec![AssignmentEffect::new(
-                1,
+                VariableIndex::from_usize(1),
                 AssignmentOperation::Plus,
-                7,
+                VariableIndex::from_usize(7),
                 false,
                 vec![],
             )],
-            1,
+            OperatorCost::new(1),
         ),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
@@ -277,27 +308,51 @@ fn affine_root_groups_share_immutable_anchors_without_merging_independent_ones()
             "global-constraint".into(),
             vec!["true".into()],
             None,
-            0,
+            ExplicitValueIndex::new(0),
         )],
         numeric_variables,
         goals: vec![],
         mutexes: vec![],
-        state: vec![0],
-        numeric_state: vec![0.0, 0.0, 10.0, 20.0, 0.0, 0.0, 0.0, 1.0],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(10.0),
+            NumericValue::new(20.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+        ],
         operators,
         axioms: vec![],
         comparison_axioms: vec![],
         assignment_axioms: vec![
-            AssignmentAxiom::new(4, CalOperator::Difference, 0, 2),
-            AssignmentAxiom::new(5, CalOperator::Difference, 1, 2),
-            AssignmentAxiom::new(6, CalOperator::Difference, 0, 3),
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(4),
+                CalOperator::Difference,
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(2),
+            ),
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(5),
+                CalOperator::Difference,
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(2),
+            ),
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(6),
+                CalOperator::Difference,
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(3),
+            ),
         ],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let first = numeric_root_group_key(&task, &task, 4).unwrap();
-    let second = numeric_root_group_key(&task, &task, 5).unwrap();
-    let independent = numeric_root_group_key(&task, &task, 6).unwrap();
+    let first = numeric_root_group_key(&task, &task, VariableIndex::from_usize(4)).unwrap();
+    let second = numeric_root_group_key(&task, &task, VariableIndex::from_usize(5)).unwrap();
+    let independent = numeric_root_group_key(&task, &task, VariableIndex::from_usize(6)).unwrap();
 
     assert_eq!(first, second);
     assert_ne!(first, independent);

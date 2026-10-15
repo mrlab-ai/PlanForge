@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericRootTask, NumericType, VariableIndex,
+};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
     LandmarkCutNumericHeuristic, LmCutNumericConfig,
@@ -228,7 +230,7 @@ fn translated_tasks_satisfy_the_axiom_layering_contract() {
 
 pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask) {
     let layer_of = |var: usize| -> Option<usize> {
-        task.get_variable_axiom_layer(var)
+        task.get_variable_axiom_layer(VariableIndex::from_usize(var))
             .unwrap_or_else(|e| panic!("{name}: variable {var} out of range: {e}"))
     };
     let numeric_count = task.numeric_variables().len();
@@ -252,23 +254,23 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
     for (index, axiom) in task.assignment_axioms().iter().enumerate() {
         let target = axiom.get_affected_var_id();
         assert!(
-            target < numeric_count,
+            target.index() < numeric_count,
             "{name}: assignment axiom {index} targets numeric variable {target} of {numeric_count}"
         );
         assert!(
-            written_by.insert(target, index).is_none(),
+            written_by.insert(target.index(), index).is_none(),
             "{name}: numeric variable {target} is written by two assignment axioms"
         );
 
-        let target_layer = numeric_layer_of[target].unwrap_or_else(|| {
+        let target_layer = numeric_layer_of[target.index()].unwrap_or_else(|| {
             panic!("{name}: assignment axiom {index} writes non-derived numeric variable {target}")
         });
         for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
             assert!(
-                operand < numeric_count,
+                operand.index() < numeric_count,
                 "{name}: assignment axiom {index} reads numeric variable {operand} of {numeric_count}"
             );
-            if let Some(operand_layer) = numeric_layer_of[operand] {
+            if let Some(operand_layer) = numeric_layer_of[operand.index()] {
                 assert!(
                     operand_layer < target_layer,
                     "{name}: assignment axiom {index} reads derived variable {operand} at layer \
@@ -304,16 +306,18 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
             );
             assert_eq!(
                 task.get_variable_default_axiom_value(head),
-                Ok(ConditionValue::False.as_usize()),
+                Ok(ExplicitValueIndex::from_usize(
+                    ConditionValue::False.as_usize()
+                )),
                 "{name}: comparison-axiom head {head} must default to `False`"
             );
             for operand in [axiom.get_left_var_id(), axiom.get_right_var_id()] {
                 assert!(
-                    operand < numeric_count,
+                    operand.index() < numeric_count,
                     "{name}: comparison axiom reads numeric variable {operand} of {numeric_count}"
                 );
             }
-            layer_of(head).unwrap_or_else(|| {
+            layer_of(head.index()).unwrap_or_else(|| {
                 panic!("{name}: comparison axiom writes non-derived variable {head}")
             })
         })
@@ -339,7 +343,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
             "{name}: the comparison layer must sit directly above the last arithmetic layer"
         );
         for axiom in task.axioms() {
-            let layer = layer_of(axiom.var_id()).unwrap_or_else(|| {
+            let layer = layer_of(axiom.var_id().index()).unwrap_or_else(|| {
                 panic!(
                     "{name}: propositional axiom writes non-derived variable {}",
                     axiom.var_id()
@@ -355,7 +359,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
     } else {
         for axiom in task.axioms() {
             assert!(
-                layer_of(axiom.var_id()).is_some(),
+                layer_of(axiom.var_id().index()).is_some(),
                 "{name}: propositional axiom writes non-derived variable {}",
                 axiom.var_id()
             );
@@ -370,7 +374,7 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
     for operator in task.get_operators() {
         for effect in operator.effects() {
             assert!(
-                layer_of(effect.var_id()).is_none(),
+                layer_of(effect.var_id().index()).is_none(),
                 "{name}: operator {:?} writes derived variable {}",
                 operator.name(),
                 effect.var_id()
@@ -379,19 +383,19 @@ pub fn assert_axiom_layering_contract(name: &str, task: &dyn AbstractNumericTask
         for effect in operator.assignment_effects() {
             let affected = effect.affected_var_id();
             assert!(
-                affected < numeric_count,
+                affected.index() < numeric_count,
                 "{name}: operator {:?} writes numeric variable {affected} of {numeric_count}",
                 operator.name()
             );
             assert!(
                 matches!(
-                    task.numeric_variables()[affected].get_type(),
+                    task.numeric_variables()[affected.index()].get_type(),
                     NumericType::Regular | NumericType::Cost
                 ),
                 "{name}: operator {:?} writes {:?} numeric variable {:?}",
                 operator.name(),
-                task.numeric_variables()[affected].get_type(),
-                task.numeric_variables()[affected].name()
+                task.numeric_variables()[affected.index()].get_type(),
+                task.numeric_variables()[affected.index()].name()
             );
         }
     }
@@ -447,7 +451,7 @@ fn assert_negation_by_failure_reads_a_settled_layer(
 ) {
     let derived_layer = |var: usize| -> Option<usize> {
         let layer = task
-            .get_variable_axiom_layer(var)
+            .get_variable_axiom_layer(VariableIndex::from_usize(var))
             .unwrap_or_else(|e| panic!("{name}: variable {var} out of range: {e}"))?;
         // A comparison head also carries a layer, but its value comes from the
         // numeric pass rather than from Horn rules, and its `unknown` default is
@@ -457,7 +461,7 @@ fn assert_negation_by_failure_reads_a_settled_layer(
 
     for axiom in task.axioms() {
         let head = axiom.var_id();
-        let Some(head_layer) = derived_layer(head) else {
+        let Some(head_layer) = derived_layer(head.index()) else {
             continue;
         };
         for condition in axiom.conditions() {
@@ -466,9 +470,9 @@ fn assert_negation_by_failure_reads_a_settled_layer(
                 continue;
             };
             let default = task
-                .get_variable_default_axiom_value(read)
+                .get_variable_default_axiom_value(VariableIndex::from_usize(read))
                 .unwrap_or_else(|e| panic!("{name}: variable {read} out of range: {e}"));
-            if condition.value() != default {
+            if condition.value_index() != default {
                 continue;
             }
             assert!(
@@ -625,7 +629,7 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     };
     let solution_cost = result
         .solution_cost
-        .unwrap_or_else(|| plan.iter().map(|op| op.cost() as f64).sum());
+        .unwrap_or_else(|| plan.iter().map(|op| op.cost().value() as f64).sum());
 
     assert_eq!(
         result.dead_ends, 0,
