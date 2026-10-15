@@ -15,7 +15,8 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use ordered_float::OrderedFloat;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, NumericValue, Operator, OperatorIndex,
+    AbstractNumericTask, ExplicitFact, INF_VALUE, NumericValue, ONE_VALUE, Operator, OperatorIndex,
+    ZERO_VALUE,
 };
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 use std::time::{Duration, Instant};
@@ -217,20 +218,17 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         let min_action_cost = operator_costs
             .iter()
             .copied()
-            .fold(f64::INFINITY, |a, b| a.min(b.value()));
+            .fold(INF_VALUE, NumericValue::min);
 
         let min_action_cost = if min_action_cost.is_finite() {
-            min_action_cost.max(0.0)
+            min_action_cost.max(ZERO_VALUE)
         } else {
-            1.0
+            ONE_VALUE
         };
 
         // Use `BlindHeuristic` as default, configured with `min_action_cost`.
         let heuristic = heuristic.unwrap_or_else(|| {
-            Box::new(BlindHeuristic::with_min_action_cost(
-                NumericValue::new(min_action_cost),
-                None,
-            ))
+            Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
         });
         let heuristic_name = heuristic.heuristic_name().to_string();
         let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();

@@ -523,7 +523,7 @@ impl DomainAbstractionFactory {
                 .and_then(|mapping| mapping.get(fact.value()))
                 .copied()
                 .unwrap_or(fact.value_index());
-            out.push(ExplicitFact::propositional_from_indexes(var, mapped));
+            out.push(ExplicitFact::propositional(var.index(), mapped.index()));
         }
 
         out
@@ -610,9 +610,9 @@ impl DomainAbstractionFactory {
                 .get(num_var_id.index())
                 .map(|view| view.evaluate(num_init))
                 .unwrap_or(num_init[num_var_id.index()]);
-            let val = float_tolerance::canonicalize_nv(concrete_value);
+            let val = float_tolerance::canonicalize(concrete_value);
             ensure!(
-                val.value().is_finite() && !val.value().is_nan(),
+                val.is_finite() && !val.is_nan(),
                 "initial numeric value for var {num_var_id} must be finite, got {val}"
             );
             let parts = self

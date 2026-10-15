@@ -115,7 +115,7 @@ impl NumericBound {
         self.epsilon = epsilon;
     }
 
-    pub fn calculate_bounds(&mut self, _state: &[NumericValue], iterations: usize) {
+    pub fn calculate_bounds(&mut self, state: &[NumericValue], iterations: usize) {
         assert!(
             self.initialized,
             "numeric bound must be initialized before use"
@@ -129,29 +129,7 @@ impl NumericBound {
         let mut completed_iterations = 0usize;
 
         while completed_iterations < iterations
-            && (self.update_variable_bounds(_state)
-                || self.update_action_bounds()
-                || self.update_before_action_bounds())
-        {
-            completed_iterations += 1;
-        }
-    }
-
-    pub fn calculate_bounds_nv(&mut self, _state: &[NumericValue], iterations: usize) {
-        assert!(
-            self.initialized,
-            "numeric bound must be initialized before use"
-        );
-        assert!(
-            iterations <= i32::MAX as usize,
-            "bound iterations exceed supported range"
-        );
-        self.prepare();
-        self.update_before_action_bounds();
-        let mut completed_iterations = 0usize;
-
-        while completed_iterations < iterations
-            && (self.update_variable_bounds(_state)
+            && (self.update_variable_bounds(state)
                 || self.update_action_bounds()
                 || self.update_before_action_bounds())
         {
@@ -402,9 +380,12 @@ impl NumericBound {
             let mut has_ub = true;
             let mut has_lb = true;
             let actual_var_id = self.numeric_variable_ids[var_id];
-            let mut ub = *state.get(actual_var_id.index()).unwrap_or_else(|| {
-                panic!("numeric bound state is missing numeric variable {actual_var_id}")
-            });
+            let mut ub = state
+                .get(actual_var_id.index())
+                .unwrap_or_else(|| {
+                    panic!("numeric bound state is missing numeric variable {actual_var_id}")
+                })
+                .value();
             let mut lb = ub;
 
             for op_id in 0..self.num_actions {
@@ -431,7 +412,7 @@ impl NumericBound {
                     }
 
                     if has_effect {
-                        ub = NumericValue::new(ub.value().max(local_ub));
+                        ub = ub.max(local_ub);
                     }
                     if !upper_bounded {
                         has_ub = false;
@@ -461,7 +442,7 @@ impl NumericBound {
                     }
 
                     if has_effect {
-                        lb = NumericValue::new(lb.value().min(local_lb));
+                        lb = lb.min(local_lb);
                     }
                     if !lower_bounded {
                         has_lb = false;
@@ -476,23 +457,23 @@ impl NumericBound {
             if has_ub {
                 if !change
                     && (!self.variable_has_ub[var_id]
-                        || (self.variable_ub[var_id] - ub.value()).abs() >= self.precision)
+                        || (self.variable_ub[var_id] - ub).abs() >= self.precision)
                 {
                     change = true;
                 }
                 self.variable_has_ub[var_id] = true;
-                self.variable_ub[var_id] = ub.value();
+                self.variable_ub[var_id] = ub;
             }
 
             if has_lb {
                 if !change
                     && (!self.variable_has_lb[var_id]
-                        || (self.variable_lb[var_id] - lb.value()).abs() >= self.precision)
+                        || (self.variable_lb[var_id] - lb).abs() >= self.precision)
                 {
                     change = true;
                 }
                 self.variable_has_lb[var_id] = true;
-                self.variable_lb[var_id] = lb.value();
+                self.variable_lb[var_id] = lb;
             }
         }
 

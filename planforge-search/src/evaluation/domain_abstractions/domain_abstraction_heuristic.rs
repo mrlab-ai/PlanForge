@@ -171,7 +171,7 @@ impl DomainAbstractionHeuristic {
         num_var_id: VariableIndex,
         value: NumericValue,
     ) -> Result<usize, EvaluationError> {
-        if !value.value().is_finite() || value.value().is_nan() {
+        if !value.is_finite() || value.is_nan() {
             return Err(EvaluationError::InvalidState(format!(
                 "numeric value for var {num_var_id} must be finite, got {value}"
             )));

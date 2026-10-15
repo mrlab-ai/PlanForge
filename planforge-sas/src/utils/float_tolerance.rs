@@ -1,4 +1,4 @@
-use crate::numeric_task::NumericValue;
+use crate::numeric_task::{NumericValue, ZERO_VALUE};
 
 pub const ABS_EPSILON: f64 = 1e-12;
 pub const REL_EPSILON: f64 = 1e-12;
@@ -11,84 +11,62 @@ const _: () = assert!(ABS_EPSILON < 1.0);
 const _: () = assert!(REL_EPSILON < 1.0);
 
 #[inline]
-pub fn tolerance(lhs: f64, rhs: f64) -> f64 {
-    ABS_EPSILON.max(REL_EPSILON * lhs.abs().max(rhs.abs()))
+pub fn tolerance(lhs: NumericValue, rhs: NumericValue) -> NumericValue {
+    NumericValue::new(ABS_EPSILON.max(REL_EPSILON * lhs.abs().max(rhs.abs()).value()))
 }
 
 #[inline]
-pub fn tolerance_nv(lhs: NumericValue, rhs: NumericValue) -> NumericValue {
-    NumericValue::new(ABS_EPSILON.max(REL_EPSILON * lhs.value().abs().max(rhs.value().abs())))
-}
-
-#[inline]
-pub fn canonicalize(value: f64) -> f64 {
+pub fn canonicalize(value: NumericValue) -> NumericValue {
     if value.is_nan() || value.is_infinite() {
-        return value;
-    }
-    (value / ABS_EPSILON).round() * ABS_EPSILON
-}
-
-#[inline]
-pub fn canonicalize_nv(value: NumericValue) -> NumericValue {
-    if value.value().is_nan() || value.value().is_infinite() {
         return value;
     }
     NumericValue::new((value.value() / ABS_EPSILON).round() * ABS_EPSILON)
 }
 
+/// Bits of [`canonicalize`]d `value`, with `-0.0` folded into `0.0` so the
+/// two zeros hash alike.
 #[inline]
-pub fn canonical_bits(value: f64) -> u64 {
+pub fn canonical_bits(value: NumericValue) -> u64 {
     let canonical = canonicalize(value);
-    if canonical == 0.0 {
-        0.0f64.to_bits()
+    if canonical == ZERO_VALUE {
+        ZERO_VALUE.to_bits()
     } else {
         canonical.to_bits()
     }
 }
 
 #[inline]
-pub fn canonical_bits_nv(value: NumericValue) -> u64 {
-    let canonical = canonicalize_nv(value);
-    if canonical.value() == 0.0 {
-        0.0f64.to_bits()
-    } else {
-        canonical.value().to_bits()
-    }
-}
-
-#[inline]
-pub fn equal(lhs: f64, rhs: f64) -> bool {
+pub fn equal(lhs: NumericValue, rhs: NumericValue) -> bool {
     (lhs - rhs).abs() <= tolerance(lhs, rhs)
-}
-
-#[inline]
-pub fn equal_nv(lhs: NumericValue, rhs: NumericValue) -> bool {
-    (lhs.value() - rhs.value()).abs() <= tolerance_nv(lhs, rhs).value()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn nv(value: f64) -> NumericValue {
+        NumericValue::new(value)
+    }
+
     #[test]
     fn canonicalize_rounds_to_abs_epsilon_grid() {
-        assert_eq!(canonicalize(1.0 + 0.4e-12), 1.0);
-        assert_eq!(canonicalize(1.0 + 1.4e-12), 1.0 + 1e-12);
+        assert_eq!(canonicalize(nv(1.0 + 0.4e-12)), nv(1.0));
+        assert_eq!(canonicalize(nv(1.0 + 1.4e-12)), nv(1.0 + 1e-12));
     }
 
     #[test]
     fn canonical_bits_deduplicate_close_values() {
-        assert_eq!(canonical_bits(0.1 + 0.2), canonical_bits(0.3));
+        assert_eq!(canonical_bits(nv(0.1 + 0.2)), canonical_bits(nv(0.3)));
     }
 
     #[test]
     fn canonical_bits_deduplicate_negative_zero() {
-        assert_eq!(canonical_bits(-0.0), canonical_bits(0.0));
+        assert_eq!(canonical_bits(nv(-0.0)), canonical_bits(nv(0.0)));
     }
 
     #[test]
     fn nonfinite_values_are_preserved() {
-        assert!(canonicalize(f64::NAN).is_nan());
-        assert_eq!(canonicalize(f64::INFINITY), f64::INFINITY);
+        assert!(canonicalize(nv(f64::NAN)).is_nan());
+        assert_eq!(canonicalize(nv(f64::INFINITY)), nv(f64::INFINITY));
     }
 }

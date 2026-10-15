@@ -206,8 +206,8 @@ fn canonicalized_interval_preserves_open_transition_boundaries() {
         true,
     );
     let preimage = Interval::new(
-        NumericValue::new(target.lower.value() + 7.35),
-        NumericValue::new(target.upper.value() + 7.35),
+        target.lower + NumericValue::new(7.35),
+        target.upper + NumericValue::new(7.35),
         target.lower_closed,
         target.upper_closed,
     )

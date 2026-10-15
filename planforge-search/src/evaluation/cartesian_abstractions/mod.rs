@@ -38,7 +38,7 @@ use planforge_sas::numeric_task::{
     NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
     metric_operator_cost_from_initial_values,
 };
-use planforge_sas::utils::float_tolerance::{self, equal, equal_nv};
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
@@ -265,7 +265,7 @@ impl CartesianRefinementHierarchy {
                         .get(var_id.index())
                         .with_context(|| format!("numeric state has no value for var {var_id}"))?;
                     ensure!(
-                        value.value().is_finite(),
+                        value.is_finite(),
                         "numeric state var {var_id} is not finite: {value}"
                     );
                     let in_lower =
@@ -334,7 +334,7 @@ impl CartesianRefinementHierarchy {
             old_state_is_lower,
         } = split;
         ensure!(
-            boundary.value().is_finite(),
+            boundary.is_finite(),
             "Cartesian split boundary must be finite"
         );
         let lower_node_id = self.nodes.len();
@@ -847,9 +847,9 @@ impl From<&Split> for SplitIdentity {
             } => Self::Numeric {
                 state_id: *state_id,
                 var_id: *var_id,
-                boundary_bits: boundary.value().to_bits(),
+                boundary_bits: boundary.to_bits(),
                 lower_includes_boundary: *lower_includes_boundary,
-                witness_bits: witness_value.value().to_bits(),
+                witness_bits: witness_value.to_bits(),
                 integer_lattice: *integer_lattice,
             },
         }
@@ -1020,8 +1020,8 @@ impl<'task> CartesianSemantics<'task> {
                 NumericType::Constant | NumericType::Cost => Vec::new(),
             };
             deltas.retain(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON);
-            deltas.sort_by(|a, b| a.value().total_cmp(&b.value()));
-            deltas.dedup_by(|left, right| equal_nv(*left, *right));
+            deltas.sort_by(NumericValue::total_cmp);
+            deltas.dedup_by(|left, right| approximately_equal(left.value(), right.value()));
             additive_effect_deltas.push(deltas);
         }
         let mut target_split_boundaries = task
@@ -1033,13 +1033,12 @@ impl<'task> CartesianSemantics<'task> {
                 task.get_initial_numeric_state_values()
                     .get(numeric_var_id)
                     .copied()
-                    .filter(|value| value.value().is_finite())
+                    .filter(|value| value.is_finite())
             })
-            .map(float_tolerance::canonicalize_nv)
+            .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
-        target_split_boundaries.sort_by(|a, b| a.value().total_cmp(&b.value()));
-        target_split_boundaries
-            .dedup_by(|left, right| left.value().to_bits() == right.value().to_bits());
+        target_split_boundaries.sort_by(NumericValue::total_cmp);
+        target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         let mut prop_split_dependent_operators = (0..task.get_num_variables())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
@@ -1117,7 +1116,7 @@ impl<'task> CartesianSemantics<'task> {
         let initial_numeric = task.get_initial_numeric_state_values();
         let mut numeric_integer_lattice = initial_numeric
             .iter()
-            .map(|&value| equal(value.value(), value.value().round()))
+            .map(|&value| approximately_equal(value.value(), value.value().round()))
             .collect::<Vec<_>>();
         for op in task.get_operators() {
             for effect in op.assignment_effects() {
@@ -1126,8 +1125,10 @@ impl<'task> CartesianSemantics<'task> {
                     AssignmentOperation::Plus
                     | AssignmentOperation::Minus
                     | AssignmentOperation::Assign
-                    | AssignmentOperation::Times => equal(rhs.value(), rhs.value().round()),
-                    AssignmentOperation::Divide => equal(rhs.value().abs(), 1.0),
+                    | AssignmentOperation::Times => {
+                        approximately_equal(rhs.value(), rhs.value().round())
+                    }
+                    AssignmentOperation::Divide => approximately_equal(rhs.value().abs(), 1.0),
                 };
                 numeric_integer_lattice[effect.affected_var_id().index()] &= preserves_integers;
             }
@@ -1138,10 +1139,12 @@ impl<'task> CartesianSemantics<'task> {
             };
             let initial_value = view.evaluate(initial_numeric);
             numeric_integer_lattice[numeric_var_id] =
-                equal(initial_value.value(), initial_value.value().round())
+                approximately_equal(initial_value.value(), initial_value.value().round())
                     && (0..operator_count).all(|op_id| {
                         view.operator_delta(OperatorIndex::from_usize(op_id))
-                            .is_ok_and(|delta| equal(delta.value(), delta.value().round()))
+                            .is_ok_and(|delta| {
+                                approximately_equal(delta.value(), delta.value().round())
+                            })
                     });
         }
         Ok(Self {
@@ -1293,7 +1296,7 @@ impl<'task> CartesianSemantics<'task> {
             .enumerate()
             .map(|(var_id, var)| {
                 if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(float_tolerance::canonicalize_nv(initial_numeric[var_id]))
+                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
                 } else {
                     Interval::unbounded()
                 }
@@ -1693,7 +1696,7 @@ impl<'task> CartesianSemantics<'task> {
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
         if let Some(view) = self.additive_numeric_views[numeric_var_id.index()].as_ref() {
-            let delta = float_tolerance::canonicalize_nv(view.operator_delta(op_id)?);
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
         }
@@ -1704,7 +1707,7 @@ impl<'task> CartesianSemantics<'task> {
             .filter(|effect| effect.affected_var_id() == numeric_var_id)
             .rev()
         {
-            let rhs = float_tolerance::canonicalize_nv(
+            let rhs = float_tolerance::canonicalize(
                 self.task.get_initial_numeric_state_values()[effect.var_id().index()],
             );
             match effect.operation() {

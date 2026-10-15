@@ -45,19 +45,19 @@ pub(super) fn preimage_split_for_expected_successor(
     }
     if (concrete_successor < expected_interval.lower
         || (concrete_successor == expected_interval.lower && !expected_interval.lower_closed))
-        && expected_interval.lower.value().is_finite()
+        && expected_interval.lower.is_finite()
     {
         return Some((
-            NumericValue::new(expected_interval.lower.value() - delta.value()),
+            expected_interval.lower - delta,
             !expected_interval.lower_closed,
         ));
     }
     if (concrete_successor > expected_interval.upper
         || (concrete_successor == expected_interval.upper && !expected_interval.upper_closed))
-        && expected_interval.upper.value().is_finite()
+        && expected_interval.upper.is_finite()
     {
         return Some((
-            NumericValue::new(expected_interval.upper.value() - delta.value()),
+            expected_interval.upper - delta,
             expected_interval.upper_closed,
         ));
     }
@@ -196,21 +196,21 @@ fn target_centered_shell_flaws(
             .iter()
             .copied()
             .filter(|delta| *delta > epsilon())
-            .min_by(|left, right| left.value().total_cmp(&right.value()))
+            .min_by(NumericValue::total_cmp)
     } else {
         var_deltas
             .iter()
             .copied()
             .filter(|delta| *delta < neg_epsilon())
-            .max_by(|left, right| left.value().total_cmp(&right.value()))
+            .max_by(NumericValue::total_cmp)
     };
     let Some(shell_delta) = shell_delta else {
         return flaws;
     };
 
-    let mut value = NumericValue::new(boundary.value() - shell_delta.value());
+    let mut value = boundary - shell_delta;
     for _ in 0..128 {
-        if !value.value().is_finite() {
+        if !value.is_finite() {
             break;
         }
         if shell_delta > ZERO_VALUE && value <= concrete_value {
@@ -227,7 +227,7 @@ fn target_centered_shell_flaws(
             step,
             &mut flaws,
         );
-        value = NumericValue::new(value.value() - shell_delta.value());
+        value -= shell_delta;
     }
     flaws
 }
@@ -270,7 +270,7 @@ fn single_var_interval(coefficient: f64, constant: f64, op: CompOp) -> Option<In
         return None;
     }
     let threshold = NumericValue::new(-constant / coefficient);
-    if !threshold.value().is_finite() {
+    if !threshold.is_finite() {
         return None;
     }
     Some(match (op, coefficient.is_sign_positive()) {
@@ -297,13 +297,13 @@ fn split_for_missing_numeric_requirement(
 ) -> Option<(NumericValue, bool)> {
     if (concrete_value < requirement.lower
         || (concrete_value == requirement.lower && !requirement.lower_closed))
-        && requirement.lower.value().is_finite()
+        && requirement.lower.is_finite()
     {
         return Some((requirement.lower, !requirement.lower_closed));
     }
     if (concrete_value > requirement.upper
         || (concrete_value == requirement.upper && !requirement.upper_closed))
-        && requirement.upper.value().is_finite()
+        && requirement.upper.is_finite()
     {
         return Some((requirement.upper, requirement.upper_closed));
     }

@@ -1,4 +1,4 @@
-use planforge_sas::numeric_task::{NumericValue, OperatorIndex, VariableIndex};
+use planforge_sas::numeric_task::{NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE};
 
 use super::*;
 
@@ -67,10 +67,9 @@ impl DeterministicNumericEffectImage {
 
     fn inverse_source_for_target(&self, target_interval: Interval) -> Option<Interval> {
         match self.inverse {
-            DeterministicNumericEffectInverse::Additive { delta } => Some(shift_interval(
-                target_interval,
-                NumericValue::new(-delta.value()),
-            )),
+            DeterministicNumericEffectInverse::Additive { delta } => {
+                Some(shift_interval(target_interval, -delta))
+            }
             DeterministicNumericEffectInverse::AssignmentConstant { value } => target_interval
                 .contains(value)
                 .then_some(Interval::unbounded()),
@@ -85,7 +84,7 @@ fn deterministic_numeric_effect_image(
     source_interval: Interval,
 ) -> Option<DeterministicNumericEffectImage> {
     let initial_numeric = task.get_initial_numeric_state_values();
-    let mut delta = 0.0;
+    let mut delta = ZERO_VALUE;
     let mut assignment = None;
     let mut touched = false;
     for effect in operator
@@ -98,11 +97,11 @@ fn deterministic_numeric_effect_image(
         }
         let rhs_value = match task.numeric_variables()[effect.var_id().index()].get_type() {
             NumericType::Constant | NumericType::Cost => {
-                float_tolerance::canonicalize_nv(*initial_numeric.get(effect.var_id().index())?)
+                float_tolerance::canonicalize(*initial_numeric.get(effect.var_id().index())?)
             }
             _ => return None,
         };
-        if !rhs_value.value().is_finite() {
+        if !rhs_value.is_finite() {
             return None;
         }
         match effect.operation() {
@@ -110,14 +109,14 @@ fn deterministic_numeric_effect_image(
                 if assignment.is_some() {
                     return None;
                 }
-                delta = float_tolerance::canonicalize(delta + rhs_value.value());
+                delta = float_tolerance::canonicalize(delta + rhs_value);
                 touched = true;
             }
             AssignmentOperation::Minus => {
                 if assignment.is_some() {
                     return None;
                 }
-                delta = float_tolerance::canonicalize(delta - rhs_value.value());
+                delta = float_tolerance::canonicalize(delta - rhs_value);
                 touched = true;
             }
             AssignmentOperation::Assign => {
@@ -135,12 +134,10 @@ fn deterministic_numeric_effect_image(
             image: Interval::singleton(value),
             inverse: DeterministicNumericEffectInverse::AssignmentConstant { value },
         })
-    } else if touched && delta.abs() > float_tolerance::DIJKSTRA_EPSILON {
+    } else if touched && delta.abs().value() > float_tolerance::DIJKSTRA_EPSILON {
         Some(DeterministicNumericEffectImage {
-            image: shift_interval(source_interval, NumericValue::new(delta)),
-            inverse: DeterministicNumericEffectInverse::Additive {
-                delta: NumericValue::new(delta),
-            },
+            image: shift_interval(source_interval, delta),
+            inverse: DeterministicNumericEffectInverse::Additive { delta },
         })
     } else {
         None
@@ -151,7 +148,7 @@ fn deterministic_affected_regular_numeric_vars(
     task: &dyn AbstractNumericTask,
     operator: &Operator,
 ) -> Vec<VariableIndex> {
-    let mut deltas = vec![0.0; task.numeric_variables().len()];
+    let mut deltas = vec![ZERO_VALUE; task.numeric_variables().len()];
     let mut assignments = Vec::new();
     for effect in operator.assignment_effects() {
         let affected_var_id = effect.affected_var_id();
@@ -183,20 +180,18 @@ fn deterministic_affected_regular_numeric_vars(
         else {
             continue;
         };
-        let rhs_value = float_tolerance::canonicalize_nv(rhs_value);
-        if !rhs_value.value().is_finite() {
+        let rhs_value = float_tolerance::canonicalize(rhs_value);
+        if !rhs_value.is_finite() {
             continue;
         }
         match effect.operation() {
             AssignmentOperation::Plus => {
-                deltas[affected_var_id.index()] = float_tolerance::canonicalize(
-                    deltas[affected_var_id.index()] + rhs_value.value(),
-                )
+                deltas[affected_var_id.index()] =
+                    float_tolerance::canonicalize(deltas[affected_var_id.index()] + rhs_value)
             }
             AssignmentOperation::Minus => {
-                deltas[affected_var_id.index()] = float_tolerance::canonicalize(
-                    deltas[affected_var_id.index()] - rhs_value.value(),
-                )
+                deltas[affected_var_id.index()] =
+                    float_tolerance::canonicalize(deltas[affected_var_id.index()] - rhs_value)
             }
             AssignmentOperation::Assign => assignments.push(affected_var_id),
             AssignmentOperation::Times | AssignmentOperation::Divide => unreachable!(),
@@ -206,7 +201,7 @@ fn deterministic_affected_regular_numeric_vars(
         .iter()
         .enumerate()
         .filter_map(|(var_id, &delta)| {
-            (delta.abs() > float_tolerance::DIJKSTRA_EPSILON)
+            (delta.abs().value() > float_tolerance::DIJKSTRA_EPSILON)
                 .then_some(VariableIndex::from_usize(var_id))
         })
         .collect();
@@ -218,8 +213,8 @@ fn deterministic_affected_regular_numeric_vars(
 
 fn shift_interval(interval: Interval, delta: NumericValue) -> Interval {
     Interval::new(
-        NumericValue::new(interval.lower.value() + delta.value()),
-        NumericValue::new(interval.upper.value() + delta.value()),
+        interval.lower + delta,
+        interval.upper + delta,
         interval.lower_closed,
         interval.upper_closed,
     )

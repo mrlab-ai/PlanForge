@@ -97,7 +97,7 @@ pub(crate) fn get_initial_state(
     set_initial_prop_values(task, state_packer, &mut buffer);
     let mut numeric_state: Vec<NumericValue> = task.get_initial_numeric_state_values().to_vec();
     for value in &mut numeric_state {
-        *value = float_tolerance::canonicalize_nv(*value);
+        *value = float_tolerance::canonicalize(*value);
     }
 
     axiom_evaluator

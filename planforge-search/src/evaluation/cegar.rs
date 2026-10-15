@@ -87,7 +87,7 @@ pub fn progress_concrete_state(
             numeric_state.len()
         );
         numeric_state[affected_var.index()] =
-            float_tolerance::canonicalize_nv(AssignmentOperation::apply(
+            float_tolerance::canonicalize(AssignmentOperation::apply(
                 numeric_state[affected_var.index()],
                 effect.operation(),
                 numeric_state[source_var.index()],

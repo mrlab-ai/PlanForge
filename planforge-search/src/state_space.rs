@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result as AnyResult, bail};
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{
+    ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef, ZERO_VALUE,
+};
 use planforge_sas::state_registry::{ExpansionContext, StateRegistry};
 
 use crate::evaluation::abstraction_collections::cost_partitioning::{
@@ -353,7 +355,7 @@ pub fn enumerate_state_space(
                         operator.name()
                     ))
                 })?;
-            if !cost.value().is_finite() || cost.value() < 0.0 {
+            if !cost.is_finite() || cost < ZERO_VALUE {
                 return Err(StateSpaceEnumerationError::Enumeration(format!(
                     "transition from state {state_id} via operator {operator_id} has invalid cost {cost}"
                 )));

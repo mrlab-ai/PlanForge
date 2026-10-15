@@ -1420,8 +1420,8 @@ impl NumericRequirement {
     fn from_interval(numeric_var_id: VariableIndex, interval: Interval) -> Self {
         Self {
             numeric_var_id,
-            lower: interval.lower.value().is_finite().then_some(interval.lower),
-            upper: interval.upper.value().is_finite().then_some(interval.upper),
+            lower: interval.lower.is_finite().then_some(interval.lower),
+            upper: interval.upper.is_finite().then_some(interval.upper),
         }
     }
 }
@@ -1544,17 +1544,13 @@ fn merge_numeric_requirements(requirements: &mut Vec<NumericRequirement>) {
             && last.numeric_var_id == requirement.numeric_var_id
         {
             last.lower = match (last.lower, requirement.lower) {
-                (Some(left), Some(right)) => {
-                    Some(NumericValue::new(left.value().max(right.value())))
-                }
+                (Some(left), Some(right)) => Some(left.max(right)),
                 (Some(left), None) => Some(left),
                 (None, Some(right)) => Some(right),
                 (None, None) => None,
             };
             last.upper = match (last.upper, requirement.upper) {
-                (Some(left), Some(right)) => {
-                    Some(NumericValue::new(left.value().min(right.value())))
-                }
+                (Some(left), Some(right)) => Some(left.min(right)),
                 (Some(left), None) => Some(left),
                 (None, Some(right)) => Some(right),
                 (None, None) => None,
@@ -1570,29 +1566,23 @@ fn approximate_distance_from_initial(
     requirements: &[NumericRequirement],
     initial_numeric: &[NumericValue],
 ) -> NumericValue {
-    NumericValue::new(
-        requirements
-            .iter()
-            .map(|requirement| {
-                let Some(&initial_value) = initial_numeric.get(requirement.numeric_var_id.index())
-                else {
-                    return f64::INFINITY;
-                };
-                if !initial_value.value().is_finite() {
-                    return f64::INFINITY;
-                }
-                match (requirement.lower, requirement.upper) {
-                    (Some(lower), _) if initial_value < lower => {
-                        lower.value() - initial_value.value()
-                    }
-                    (_, Some(upper)) if initial_value > upper => {
-                        initial_value.value() - upper.value()
-                    }
-                    _ => 0.0,
-                }
-            })
-            .sum(),
-    )
+    requirements
+        .iter()
+        .map(|requirement| {
+            let Some(&initial_value) = initial_numeric.get(requirement.numeric_var_id.index())
+            else {
+                return INF_VALUE;
+            };
+            if !initial_value.is_finite() {
+                return INF_VALUE;
+            }
+            match (requirement.lower, requirement.upper) {
+                (Some(lower), _) if initial_value < lower => lower - initial_value,
+                (_, Some(upper)) if initial_value > upper => initial_value - upper,
+                _ => ZERO_VALUE,
+            }
+        })
+        .sum()
 }
 
 fn compare_goals_for_collection(
@@ -1603,8 +1593,7 @@ fn compare_goals_for_collection(
     let left_distance = estimate_goal_distance_from_initial(task, left);
     let right_distance = estimate_goal_distance_from_initial(task, right);
     right_distance
-        .value()
-        .total_cmp(&left_distance.value())
+        .total_cmp(&left_distance)
         .then_with(|| left.var().cmp(&right.var()))
         .then_with(|| left.value().cmp(&right.value()))
 }
@@ -1614,15 +1603,14 @@ fn estimate_goal_distance_from_initial(
     goal: &ExplicitFact,
 ) -> NumericValue {
     let initial_numeric = initial_numeric_values_with_additive_views(task);
-    let mut best_direct = 0.0f64;
+    let mut best_direct = ZERO_VALUE;
     let direct_requirements =
         target_centered_requirements_for_comparison_fact(task, goal, &initial_numeric);
     if !direct_requirements.is_empty() {
-        best_direct =
-            approximate_distance_from_initial(&direct_requirements, &initial_numeric).value();
+        best_direct = approximate_distance_from_initial(&direct_requirements, &initial_numeric);
     }
 
-    let mut best_achiever = 0.0f64;
+    let mut best_achiever = ZERO_VALUE;
     for op in task
         .get_operators()
         .iter()
@@ -1637,16 +1625,18 @@ fn estimate_goal_distance_from_initial(
             ));
         }
         merge_numeric_requirements(&mut requirements);
-        best_achiever = best_achiever
-            .max(approximate_distance_from_initial(&requirements, &initial_numeric).value());
+        best_achiever = best_achiever.max(approximate_distance_from_initial(
+            &requirements,
+            &initial_numeric,
+        ));
     }
 
-    NumericValue::new(best_direct.max(best_achiever))
+    best_direct.max(best_achiever)
 }
 
 fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<InitialSeedSplit>) {
     if let Some(lower) = requirement.lower
-        && lower.value().is_finite()
+        && lower.is_finite()
     {
         seeds.push(InitialSeedSplit::Numeric {
             numeric_var_id: requirement.numeric_var_id,
@@ -1655,7 +1645,7 @@ fn add_requirement_bounds(requirement: &NumericRequirement, seeds: &mut Vec<Init
         });
     }
     if let Some(upper) = requirement.upper
-        && upper.value().is_finite()
+        && upper.is_finite()
     {
         seeds.push(InitialSeedSplit::Numeric {
             numeric_var_id: requirement.numeric_var_id,
@@ -1684,7 +1674,7 @@ fn add_shells_for_requirement(
             target.numeric_var_id,
             source_value,
             lower,
-            NumericValue::new(-step.value()),
+            -step,
             false,
             max_shells,
             seeds,
@@ -1698,7 +1688,7 @@ fn add_shells_for_requirement(
             target.numeric_var_id,
             source_value,
             upper,
-            NumericValue::new(-step.value()),
+            -step,
             true,
             max_shells,
             seeds,
@@ -1741,7 +1731,7 @@ fn add_monotone_shells(
 ) {
     let mut value = target_value;
     for _ in 0..max_shells {
-        if !value.value().is_finite() {
+        if !value.is_finite() {
             break;
         }
         if reverse_step < ZERO_VALUE && value <= source_value {
@@ -1755,7 +1745,7 @@ fn add_monotone_shells(
             value,
             include_in_lower,
         });
-        value = NumericValue::new(value.value() + reverse_step.value());
+        value += reverse_step;
     }
 }
 
@@ -1789,7 +1779,7 @@ fn seed_identity(seed: &InitialSeedSplit) -> SeedIdentity {
             include_in_lower,
         } => SeedIdentity::Numeric {
             numeric_var_id: *numeric_var_id,
-            value_bits: value.value().to_bits(),
+            value_bits: value.to_bits(),
             include_in_lower: *include_in_lower,
         },
     }
