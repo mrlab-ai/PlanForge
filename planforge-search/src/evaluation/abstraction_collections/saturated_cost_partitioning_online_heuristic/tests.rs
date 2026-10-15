@@ -222,6 +222,8 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
             max_collection_states: 128,
             total_max_time: None,
             progressive_goal_roots: false,
+            alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
         .generate(&task)
@@ -238,13 +240,13 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         .cloned()
         .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
         .collect::<Vec<_>>();
-    let order = |variant| {
-        cartesian_goal_cover_order(&base_order, &components, &standalone_h, true, variant).unwrap()
-    };
+    let order =
+        |variant| goal_cover_order(&base_order, &components, &standalone_h, true, variant).unwrap();
     let goal = |component_id: usize| {
         abstractions[component_id]
             .metadata
-            .collection_goal_id
+            .collection_member
+            .map(|member| member.goal_id)
             .unwrap()
     };
     let baseline = order(GoalCoverOrderVariant {
@@ -304,7 +306,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         .cloned()
         .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
         .collect::<Vec<_>>();
-    let prefixed = cartesian_goal_cover_order(
+    let prefixed = goal_cover_order(
         &mixed_order,
         &mixed_components,
         &mixed_h,
@@ -342,9 +344,15 @@ fn compact_goal_cover_schedule_supports_one_abstraction_per_goal() {
     assert_eq!(anchor_goals, (0..18).collect());
 }
 
-#[test]
-fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
-    let task = std::sync::Arc::new(independent_goals_task());
+/// Offline diversified SCP over a complementary Cartesian collection of `task`,
+/// with the goals its abstractions specialize in.
+fn specialist_scp<'task>(
+    task: &'task std::sync::Arc<NumericRootTask>,
+    max_orders: impl FnOnce(usize) -> usize,
+) -> (
+    SaturatedCostPartitioningOnlineHeuristic<'task>,
+    HashSet<usize>,
+) {
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             abstraction: CartesianAbstractionConfig {
@@ -361,13 +369,20 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
             max_collection_states: 128,
             total_max_time: None,
             progressive_goal_roots: true,
+            alternate_split_kinds: true,
+            single_goal_tasks: true,
         })
         .unwrap()
-        .generate(&*task)
+        .generate(&**task)
         .unwrap();
     let expected_goals = abstractions
         .iter()
-        .filter_map(|abstraction| abstraction.metadata.collection_goal_id)
+        .filter_map(|abstraction| {
+            abstraction
+                .metadata
+                .collection_member
+                .map(|member| member.goal_id)
+        })
         .collect::<HashSet<_>>();
     let components = abstractions
         .into_iter()
@@ -377,27 +392,22 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
     config.online = false;
     config.diversify = true;
     config.samples = 16;
-    // Standalone bounds live in one envelope outside the SCP order budget.
-    config.max_orders = 1 + 4 * expected_goals.len();
+    config.max_orders = max_orders(expected_goals.len());
     config.initial_order_generation_max_time = 10.0;
     let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
         None,
         components,
         config,
-        &*task,
+        &**task,
         task.clone(),
     )
     .unwrap();
+    (heuristic, expected_goals)
+}
 
-    evaluate_initial(&task, &heuristic).unwrap();
-    let retained_goals = heuristic
-        .state
-        .borrow()
-        .cp_heuristics
-        .iter()
-        .filter_map(|cp| cp.specialist_goal_id)
-        .collect::<HashSet<_>>();
-    assert_eq!(retained_goals, expected_goals);
+fn retained_specialists_per_goal(
+    heuristic: &SaturatedCostPartitioningOnlineHeuristic<'_>,
+) -> HashMap<usize, usize> {
     let mut retained_per_goal = HashMap::<usize, usize>::new();
     for goal_id in heuristic
         .state
@@ -408,12 +418,41 @@ fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
     {
         *retained_per_goal.entry(goal_id).or_default() += 1;
     }
+    retained_per_goal
+}
+
+#[test]
+fn offline_diversification_retains_available_specialists_per_cartesian_goal() {
+    // Standalone bounds live in one envelope outside the SCP order budget.
+    let task = std::sync::Arc::new(independent_goals_task());
+    let (heuristic, expected_goals) = specialist_scp(&task, |goals| 1 + 4 * goals);
+    evaluate_initial(&task, &heuristic).unwrap();
+    let retained_per_goal = retained_specialists_per_goal(&heuristic);
+    assert_eq!(
+        retained_per_goal.keys().copied().collect::<HashSet<_>>(),
+        expected_goals
+    );
     assert!(
         retained_per_goal
             .values()
             .all(|&count| (2..=4).contains(&count)),
         "retained specialists by goal: {retained_per_goal:?}"
     );
+}
+
+/// The global best and the goal specialists are part of the heuristic, so a
+/// max_orders below their number limits only the diversified orders.
+#[test]
+fn mandatory_orders_are_retained_beyond_max_orders() {
+    let task = std::sync::Arc::new(independent_goals_task());
+    let (heuristic, expected_goals) = specialist_scp(&task, |_| 1);
+    evaluate_initial(&task, &heuristic).unwrap();
+    let retained_per_goal = retained_specialists_per_goal(&heuristic);
+    assert_eq!(
+        retained_per_goal.keys().copied().collect::<HashSet<_>>(),
+        expected_goals
+    );
+    assert!(heuristic.state.borrow().cp_heuristics.len() > 1);
 }
 
 #[test]
@@ -834,7 +873,6 @@ mod handcrafted_sailing_tests {
         CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
         CartesianRefinementDirection,
     };
-    use crate::evaluation::domain_abstractions::cegar::InitialSeedSplit;
     use crate::evaluation::domain_abstractions::domain_abstraction::NumericPartitions;
     use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
     use crate::evaluation::domain_abstractions::domain_abstraction_generator::{
@@ -889,6 +927,8 @@ mod handcrafted_sailing_tests {
                 max_collection_states: 10_000,
                 total_max_time: Some(Duration::from_secs(15)),
                 progressive_goal_roots: false,
+                alternate_split_kinds: true,
+                single_goal_tasks: true,
             })
             .expect("valid oracle Cartesian collection config")
             .generate(&restricted_task)
@@ -905,7 +945,13 @@ mod handcrafted_sailing_tests {
         for goal_id in 0..2 {
             let mut modes = abstractions
                 .iter()
-                .filter(|abstraction| abstraction.metadata.collection_goal_id == Some(goal_id))
+                .filter(|abstraction| {
+                    abstraction
+                        .metadata
+                        .collection_member
+                        .map(|member| member.goal_id)
+                        == Some(goal_id)
+                })
                 .map(|abstraction| {
                     (
                         abstraction.metadata.refinement_direction,
@@ -950,7 +996,7 @@ mod handcrafted_sailing_tests {
             .cloned()
             .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
             .collect::<Vec<_>>();
-        let goal_cover_order = cartesian_goal_cover_order(
+        let goal_cover_order = goal_cover_order(
             &(0..abstractions.len()).collect::<Vec<_>>(),
             &components,
             &standalone_h,
@@ -1045,7 +1091,6 @@ mod handcrafted_sailing_tests {
                 collection_strategy: Some("handcrafted_full_task_sailing".to_string()),
                 flaw_kind: None,
                 full_goal_task: Some(false),
-                initial_seed_splits: spec.seed_splits.iter().map(seed_description).collect(),
                 max_abstraction_size: Some(10_000),
                 ..DomainAbstractionMetadata::default()
             };
@@ -1165,7 +1210,15 @@ mod handcrafted_sailing_tests {
         name: String,
         goal: ExplicitFact,
         view_ids: Vec<usize>,
-        seed_splits: Vec<InitialSeedSplit>,
+        seed_splits: Vec<NumericSeed>,
+    }
+
+    /// A numeric split the handcrafted abstractions start from.
+    #[derive(Debug, Clone, PartialEq)]
+    struct NumericSeed {
+        numeric_var_id: VariableIndex,
+        value: NumericValue,
+        include_in_lower: bool,
     }
 
     fn handcrafted_full_task_specs(task: &dyn AbstractNumericTask) -> Vec<HandcraftedSpec> {
@@ -1198,15 +1251,7 @@ mod handcrafted_sailing_tests {
     ) -> anyhow::Result<DomainAbstraction> {
         let mut partitions = NumericPartitions::trivial(transformed_task);
         for seed in &spec.seed_splits {
-            let InitialSeedSplit::Numeric {
-                numeric_var_id,
-                value,
-                include_in_lower,
-            } = seed
-            else {
-                continue;
-            };
-            partitions.split_at(*numeric_var_id, *value, *include_in_lower);
+            partitions.split_at(seed.numeric_var_id, seed.value, seed.include_in_lower);
         }
 
         let goal_vars = (0..transformed_task.get_num_goals())
@@ -1371,10 +1416,7 @@ mod handcrafted_sailing_tests {
         candidates[0]
     }
 
-    fn route_seed_splits(
-        task: &dyn AbstractNumericTask,
-        view_ids: &[usize],
-    ) -> Vec<InitialSeedSplit> {
+    fn route_seed_splits(task: &dyn AbstractNumericTask, view_ids: &[usize]) -> Vec<NumericSeed> {
         let initial = task.get_initial_numeric_state_values();
         let mut seeds = Vec::new();
         for &view_id in view_ids {
@@ -1410,7 +1452,7 @@ mod handcrafted_sailing_tests {
     }
 
     fn add_route_grid_values(
-        seeds: &mut Vec<InitialSeedSplit>,
+        seeds: &mut Vec<NumericSeed>,
         numeric_var_id: VariableIndex,
         start: NumericValue,
         end: NumericValue,
@@ -1426,12 +1468,12 @@ mod handcrafted_sailing_tests {
     }
 
     fn add_split(
-        seeds: &mut Vec<InitialSeedSplit>,
+        seeds: &mut Vec<NumericSeed>,
         numeric_var_id: VariableIndex,
         value: NumericValue,
         include_in_lower: bool,
     ) {
-        seeds.push(InitialSeedSplit::Numeric {
+        seeds.push(NumericSeed {
             numeric_var_id,
             value,
             include_in_lower,
@@ -1459,19 +1501,13 @@ mod handcrafted_sailing_tests {
             .join(" || ")
     }
 
-    fn seed_description(seed: &InitialSeedSplit) -> String {
-        match seed {
-            InitialSeedSplit::Propositional { var_id, value } => format!("p{var_id}={value}"),
-            InitialSeedSplit::Numeric {
-                numeric_var_id,
-                value,
-                include_in_lower,
-            } => format!(
-                "n{numeric_var_id}{}{}",
-                if *include_in_lower { "<=" } else { "<" },
-                value
-            ),
-        }
+    fn seed_description(seed: &NumericSeed) -> String {
+        format!(
+            "n{}{}{}",
+            seed.numeric_var_id,
+            if seed.include_in_lower { "<=" } else { "<" },
+            seed.value
+        )
     }
 
     fn translated_sailing_2_2_task() -> NumericRootTask {

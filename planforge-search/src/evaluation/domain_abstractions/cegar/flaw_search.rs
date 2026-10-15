@@ -26,7 +26,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, INF_VALUE, NEG_INF_VALUE, NumericValue, VariableIndex,
+    AbstractNumericTask, ExplicitFact, INF_VALUE, NEG_INF_VALUE, NumericValue, OperatorIndex,
+    VariableIndex,
 };
 #[cfg(test)]
 use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorCost};
@@ -84,6 +85,29 @@ impl Flaw {
         match self {
             Self::Propositional(prop) => prop.step,
             Self::Numeric(num) => num.step,
+        }
+    }
+}
+
+/// The flaws of one abstract plan, and the concrete plan the flaw search
+/// executed when it found none.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlawSearchOutcome {
+    pub flaws: Vec<Flaw>,
+    /// The concrete operator chosen at every abstract plan step. `Some`
+    /// exactly when `flaws` is empty and the flaw search executes the plan
+    /// concretely (progression, target-centered, execute-entire-plan, and
+    /// regression's progression fallback); the plan then reaches the goal from
+    /// the task initial state.
+    pub concrete_plan: Option<Vec<OperatorIndex>>,
+}
+
+impl FlawSearchOutcome {
+    /// Flaws found by a search that does not execute a concrete plan.
+    fn without_plan(flaws: Vec<Flaw>) -> Self {
+        Self {
+            flaws,
+            concrete_plan: None,
         }
     }
 }
@@ -150,7 +174,7 @@ impl FlawKind {
         partitions: &NumericPartitions,
         domain_mapping: &DomainMapping,
         wildcard_plan: &WildcardPlanResult,
-    ) -> Result<Vec<Flaw>> {
+    ) -> Result<FlawSearchOutcome> {
         self.get_flaws_with_direction(
             task,
             partitions,
@@ -167,23 +191,20 @@ impl FlawKind {
         domain_mapping: &DomainMapping,
         wildcard_plan: &WildcardPlanResult,
         direction: SplitDirection,
-    ) -> Result<Vec<Flaw>> {
+    ) -> Result<FlawSearchOutcome> {
         match self {
             Self::Progression | Self::TargetCentered => {
                 get_progression_flaws(task, partitions, wildcard_plan, direction)
             }
             Self::Regression => {
-                let mut flaws =
-                    get_regression_flaws(task, partitions, domain_mapping, wildcard_plan);
+                let flaws = get_regression_flaws(task, partitions, domain_mapping, wildcard_plan)?;
                 // Progression flaw fallback if no regression flaw is found
                 // (numeric deviation flaws not detected).
-                if let Ok(ref flaws_ok) = flaws
-                    && flaws_ok.is_empty()
-                {
-                    flaws = get_progression_flaws(task, partitions, wildcard_plan, direction);
+                if flaws.is_empty() {
+                    get_progression_flaws(task, partitions, wildcard_plan, direction)
+                } else {
+                    Ok(FlawSearchOutcome::without_plan(flaws))
                 }
-
-                flaws
             }
             Self::ExecuteEntirePlan => {
                 get_execute_entire_plan_flaws(task, partitions, wildcard_plan, direction)
@@ -194,7 +215,8 @@ impl FlawKind {
                 domain_mapping,
                 wildcard_plan,
                 SequenceDirection::Progression,
-            ),
+            )
+            .map(FlawSearchOutcome::without_plan),
             // Sequence progression flaw fallback already searched here.
             Self::SequenceRegression => get_sequence_flaws(
                 task,
@@ -202,14 +224,16 @@ impl FlawKind {
                 domain_mapping,
                 wildcard_plan,
                 SequenceDirection::Regression,
-            ),
+            )
+            .map(FlawSearchOutcome::without_plan),
             Self::SequenceBidirectional => get_sequence_flaws(
                 task,
                 partitions,
                 domain_mapping,
                 wildcard_plan,
                 SequenceDirection::Bidirectional,
-            ),
+            )
+            .map(FlawSearchOutcome::without_plan),
         }
     }
 }
@@ -227,7 +251,7 @@ pub fn get_flaws(
     domain_mapping: &DomainMapping,
     wildcard_plan: &WildcardPlanResult,
     flaw_kind: FlawKind,
-) -> Result<Vec<Flaw>> {
+) -> Result<FlawSearchOutcome> {
     flaw_kind.get_flaws(task, partitions, domain_mapping, wildcard_plan)
 }
 

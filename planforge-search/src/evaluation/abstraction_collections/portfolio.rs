@@ -13,10 +13,6 @@ impl CollectionStrategy {
     pub fn is_complementary(self) -> bool {
         matches!(self, Self::Complementary)
     }
-
-    pub(crate) fn uses_ranked_goals(self) -> bool {
-        self.is_complementary()
-    }
 }
 
 impl fmt::Display for CollectionStrategy {

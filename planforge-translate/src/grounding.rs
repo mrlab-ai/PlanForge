@@ -5,14 +5,18 @@ use std::time::{Duration, Instant};
 
 use tracing::info;
 
-/// Default maximum number of reachable ground actions.
-pub const DEFAULT_MAX_GROUND_ACTIONS: u64 = 10_000_000;
+// Grounding is unlimited by default: the run's time and memory limits bound
+// it, so a task that fits in them is never refused. Callers may still set an
+// explicit limit to stop early on purpose.
 
-/// Default maximum number of atoms derived by the grounding model.
-pub const DEFAULT_MAX_GROUND_ATOMS: u64 = 10_000_000;
+/// Default maximum number of reachable ground actions: none.
+pub const DEFAULT_MAX_GROUND_ACTIONS: u64 = u64::MAX;
 
-/// Default approximate memory budget for materialized grounding structures.
-pub const DEFAULT_MAX_GROUNDING_MEMORY: u64 = 4 * 1024 * 1024 * 1024;
+/// Default maximum number of atoms derived by the grounding model: none.
+pub const DEFAULT_MAX_GROUND_ATOMS: u64 = u64::MAX;
+
+/// Default memory budget for materialized grounding structures: none.
+pub const DEFAULT_MAX_GROUNDING_MEMORY: u64 = u64::MAX;
 
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
 const COUNT_CHECK_INTERVAL: u64 = 4096;

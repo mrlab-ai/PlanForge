@@ -309,6 +309,123 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
     );
 }
 
+/// Settlers: the metric is a sum of fluents, derived by an assignment
+/// axiom, rather than a `total-cost` variable the operators increase.
+fn task_with_derived_metric() -> NumericRootTask {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "cmp".into(),
+        vec!["true".into(), "false".into()],
+        Some(1),
+        ExplicitValueIndex::new(1),
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("fuel".into(), NumericType::Regular, None),
+        NumericVariable::new("capacity".into(), NumericType::Constant, None),
+        NumericVariable::new("capacity-minus-fuel".into(), NumericType::Derived, Some(0)),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("labour".into(), NumericType::Regular, None),
+        NumericVariable::new("pollution".into(), NumericType::Regular, None),
+        NumericVariable::new("metric".into(), NumericType::Derived, Some(0)),
+    ];
+    let operator = Operator::new(
+        "breakstone".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(
+                VariableIndex::from_usize(4),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(3),
+                false,
+                vec![],
+            ),
+            AssignmentEffect::new(
+                VariableIndex::from_usize(5),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(3),
+                false,
+                vec![],
+            ),
+        ],
+        OperatorCost::new(0),
+    );
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, Some(VariableIndex::from_usize(6))),
+        variables,
+        numeric_variables,
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(1)],
+        numeric_state: vec![
+            NumericValue::new(4.0),
+            NumericValue::new(6.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![operator],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(2),
+            VariableIndex::from_usize(3),
+            ComparisonOperator::GreaterThan,
+        )],
+        assignment_axioms: vec![
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(2),
+                CalOperator::Difference,
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(0),
+            ),
+            AssignmentAxiom::new(
+                VariableIndex::from_usize(6),
+                CalOperator::Sum,
+                VariableIndex::from_usize(4),
+                VariableIndex::from_usize(5),
+            ),
+        ],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
+    let metric_var_id = transformed.metric().var_id().unwrap();
+    assert_eq!(
+        transformed.numeric_variables()[metric_var_id.index()].get_type(),
+        &NumericType::Cost
+    );
+    assert_eq!(
+        metric_operator_cost_from_initial_values(transformed, &transformed.get_operators()[0]),
+        NumericValue::new(2.0)
+    );
+}
+
+#[test]
+fn restricted_task_preserves_derived_metric_cost() {
+    let task = task_with_derived_metric();
+    assert_eq!(
+        metric_operator_cost_from_initial_values(&task, &task.get_operators()[0]),
+        NumericValue::new(2.0)
+    );
+    let restricted = build_restricted_task(&task)
+        .unwrap()
+        .expect("task should be restricted");
+    assert_derived_metric_cost_preserved(restricted.task());
+}
+
+#[test]
+fn icaps26_restricted_task_preserves_derived_metric_cost() {
+    let restricted = build_icaps26_restricted_task(&task_with_derived_metric())
+        .unwrap()
+        .expect("task should be restricted");
+    assert_derived_metric_cost_preserved(restricted.task());
+}
+
 #[test]
 fn restricted_task_returns_none_when_domain_has_no_derived_roots() {
     let variables = vec![ExplicitVariable::new(

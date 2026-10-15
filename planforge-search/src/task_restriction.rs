@@ -250,10 +250,17 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
             )
         })
         .collect();
-    numeric_var_ids.extend(root_exprs.keys().copied());
     if let Some(metric_var_id) = task.metric().var_id() {
+        if let Some(expr) = derived_metric_expression(task, &mut linearizer, metric_var_id)? {
+            ensure!(
+                !root_exprs.contains_key(&metric_var_id),
+                "metric variable {metric_var_id} is also a numeric comparison operand"
+            );
+            root_exprs.insert(metric_var_id, expr);
+        }
         numeric_var_ids.push(metric_var_id);
     }
+    numeric_var_ids.extend(root_exprs.keys().copied());
     numeric_var_ids.sort_unstable();
     numeric_var_ids.dedup();
 
@@ -335,6 +342,21 @@ pub fn build_icaps26_restricted_task(
         }
         numeric_variables.push(variable);
         numeric_initial.push(value);
+    }
+    if let Some(metric_var_id) = task.metric().var_id()
+        && let Some(expr) = derived_metric_expression(task, &mut linearizer, metric_var_id)?
+    {
+        original_to_transformed[metric_var_id.index()] =
+            Some(VariableIndex::from_usize(numeric_variables.len()));
+        numeric_variables.push(NumericVariable::new(
+            task.numeric_variables()[metric_var_id.index()]
+                .name()
+                .to_string(),
+            NumericType::Cost,
+            None,
+        ));
+        numeric_initial.push(expr.evaluate(&initial_numeric)?);
+        transformed_to_expr.push(expr);
     }
 
     let mut normalized_comparisons = Vec::with_capacity(comparisons.len());
@@ -505,15 +527,23 @@ fn build_task(
         original_to_transformed[original_id.index()] =
             Some(VariableIndex::from_usize(transformed_id));
         let original_name = task.numeric_variables()[original_id.index()].name();
-        let name = if root_exprs.contains_key(&original_id) {
-            format!("{}|{}", restricted_shape_prefix(&expr), original_name)
+        let (name, numeric_type) = if task.metric().var_id() == Some(original_id) {
+            let numeric_type = if root_exprs.contains_key(&original_id) {
+                NumericType::Cost
+            } else {
+                *task.numeric_variables()[original_id.index()].get_type()
+            };
+            (original_name.to_string(), numeric_type)
+        } else if root_exprs.contains_key(&original_id) {
+            (
+                format!("{}|{}", restricted_shape_prefix(&expr), original_name),
+                NumericType::Regular,
+            )
         } else {
-            original_name.to_string()
-        };
-        let numeric_type = if root_exprs.contains_key(&original_id) {
-            NumericType::Regular
-        } else {
-            *task.numeric_variables()[original_id.index()].get_type()
+            (
+                original_name.to_string(),
+                *task.numeric_variables()[original_id.index()].get_type(),
+            )
         };
         numeric_variables.push(NumericVariable::new(name, numeric_type, None));
         numeric_initial.push(expr.evaluate(initial_numeric)?);
@@ -588,6 +618,30 @@ fn build_task(
     Ok(Some(RestrictedTask {
         task: transformed_task,
     }))
+}
+
+/// The affine expression of a metric that an assignment axiom derives, as in
+/// `(:metric minimize (+ (labour) (pollution)))`.
+///
+/// Restricted tasks carry no assignment axioms, so such a metric would never
+/// change and every operator would cost 0. The caller keeps it as a cost
+/// variable backed by this expression, whose effects are the metric's
+/// increments.
+fn derived_metric_expression(
+    task: &dyn AbstractNumericTask,
+    linearizer: &mut Linearizer<'_>,
+    metric_var_id: VariableIndex,
+) -> Result<Option<AffineExpression>> {
+    if !matches!(
+        task.numeric_variables()[metric_var_id.index()].get_type(),
+        NumericType::Derived
+    ) {
+        return Ok(None);
+    }
+    linearizer
+        .linearize(metric_var_id)
+        .with_context(|| format!("metric variable {metric_var_id} is not affine"))
+        .map(Some)
 }
 
 fn ensure_operator_costs_unchanged(
