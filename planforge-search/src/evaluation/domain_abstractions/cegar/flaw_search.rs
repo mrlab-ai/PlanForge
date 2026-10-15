@@ -25,11 +25,11 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 use std::fmt;
 
-#[allow(unused_imports)]
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue,
-    OperatorCost, VariableIndex,
+    AbstractNumericTask, ExplicitFact, INF_VALUE, NEG_INF_VALUE, NumericValue, VariableIndex,
 };
+#[cfg(test)]
+use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorCost};
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
@@ -423,7 +423,7 @@ fn single_var_interval_for_linear_zero_comparison(
     }
 
     let threshold = NumericValue::new(-expression.constant / *coefficient);
-    if !threshold.value().is_finite() {
+    if !threshold.is_finite() {
         return None;
     }
 
@@ -452,9 +452,7 @@ pub(crate) fn can_split_numeric_var(
     value: NumericValue,
     include_in_lower: bool,
 ) -> bool {
-    let value = NumericValue::new(f64::from_bits(float_tolerance::canonical_bits(
-        value.value(),
-    )));
+    let value = NumericValue::new(f64::from_bits(float_tolerance::canonical_bits(value)));
     let Some(parts) = partitions.partitions(numeric_var_id) else {
         return false;
     };

@@ -1,4 +1,4 @@
-use crate::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType};
+use crate::numeric_task::{AbstractNumericTask, NumericRootTask, NumericType, NumericValue};
 use crate::utils::float_tolerance;
 
 #[cfg(test)]
@@ -223,15 +223,15 @@ impl StatePacker {
         self.num_bins = full_width_count + narrow_bit_offset.div_ceil(BITS_PER_BIN as usize);
     }
 
-    pub fn pack_double(&self, plain_double: f64) -> u64 {
-        float_tolerance::canonical_bits(plain_double)
+    pub fn pack_double(&self, value: NumericValue) -> u64 {
+        float_tolerance::canonical_bits(value)
     }
 
-    pub fn unpack_double(&self, packed_double: u64) -> f64 {
-        f64::from_bits(packed_double)
+    pub fn unpack_double(&self, packed_double: u64) -> NumericValue {
+        NumericValue::new(f64::from_bits(packed_double))
     }
 
-    pub fn get_double(&self, buffer: &[u64], var: usize) -> f64 {
+    pub fn get_double(&self, buffer: &[u64], var: usize) -> NumericValue {
         let packed_double = self.var_infos[var].get(buffer);
         self.unpack_double(packed_double)
     }

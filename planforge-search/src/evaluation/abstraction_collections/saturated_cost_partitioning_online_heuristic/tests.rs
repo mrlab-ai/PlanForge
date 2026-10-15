@@ -1357,7 +1357,9 @@ mod handcrafted_sailing_tests {
             .filter(|operator| operator.name().ends_with(&suffix))
             .flat_map(|operator| operator.effects().iter())
             .filter(|effect| effect.conditions().is_empty())
-            .map(|effect| ExplicitFact::propositional_from_indexes(effect.var_id(), effect.value()))
+            .map(|effect| {
+                ExplicitFact::propositional(effect.var_id().index(), effect.value().index())
+            })
             .collect::<Vec<_>>();
         candidates.sort();
         candidates.dedup();
@@ -1414,9 +1416,7 @@ mod handcrafted_sailing_tests {
         end: NumericValue,
         step: f64,
     ) {
-        assert!(
-            start.value().is_finite() && end.value().is_finite() && step.is_finite() && step > 0.0
-        );
+        assert!(start.is_finite() && end.is_finite() && step.is_finite() && step > 0.0);
         let direction = if start <= end { 1.0 } else { -1.0 };
         let mut value = start;
         while (end.value() - value.value()) * direction > step {

@@ -384,8 +384,7 @@ pub fn get_progression_numeric_deviation_flaws(
                 let Some(expected_interval) = parts.get(abstract_value).copied() else {
                     continue;
                 };
-                let delta =
-                    NumericValue::new(concrete_next_value.value() - concrete_current_value.value());
+                let delta = concrete_next_value - concrete_current_value;
                 let Some((value, include_in_lower)) = preimage_split_for_expected_successor(
                     expected_interval,
                     concrete_next_value,

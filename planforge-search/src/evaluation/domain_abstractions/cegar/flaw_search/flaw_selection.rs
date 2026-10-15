@@ -92,7 +92,7 @@ fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
             1,
             nf.numeric_var_id.index(),
             0,
-            float_tolerance::canonical_bits(nf.value.value()),
+            float_tolerance::canonical_bits(nf.value),
             nf.include_in_lower,
         ),
     }

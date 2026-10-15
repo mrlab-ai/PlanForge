@@ -177,16 +177,15 @@ fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
 
     let flaws =
         get_regression_flaws(&task, factory.partitions(), factory.domain_mapping(), &plan).unwrap();
-    let _numeric_var_id = VariableIndex::from_usize(0);
     assert!(
         flaws.iter().any(|flaw| matches!(
         flaw,
         Flaw::Numeric(NumericFlaw {
-            numeric_var_id: _numeric_var_id,
+            numeric_var_id,
             value,
             include_in_lower: false,
             step: 0,
-        }) if *value == NumericValue::new(7.0)
+        }) if *numeric_var_id == VariableIndex::new(0) && *value == NumericValue::new(7.0)
         )),
         "expected split x >= 7 after regressing x >= 10 through x += 3, got {flaws:?}"
     );

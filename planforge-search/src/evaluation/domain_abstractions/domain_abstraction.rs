@@ -30,10 +30,10 @@ impl NumericPartitions {
             .enumerate()
             .map(|(i, v)| match v.get_type() {
                 NumericType::Constant => {
-                    let value = float_tolerance::canonicalize_nv(
+                    let value = float_tolerance::canonicalize(
                         *initial_numeric_values.get(i).unwrap_or(&NAN_VALUE),
                     );
-                    if value.value().is_finite() {
+                    if value.is_finite() {
                         vec![Interval::singleton(value)]
                     } else {
                         vec![Interval::unbounded()]
@@ -143,7 +143,7 @@ impl NumericPartitions {
         // Numeric states use the canonical ABS_EPSILON lattice. Storing an
         // uncanonicalized flaw/regression value as a partition boundary makes
         // forward image and inverse-image overlap tests disagree.
-        let value = float_tolerance::canonicalize_nv(value);
+        let value = float_tolerance::canonicalize(value);
         let Some(parts) = self
             .partitions_by_numeric_var
             .get_mut(numeric_var_id.index())

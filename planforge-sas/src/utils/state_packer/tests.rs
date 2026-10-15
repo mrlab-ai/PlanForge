@@ -28,7 +28,7 @@ fn pack_and_unpack_doubles() {
 
     let double_var_id = 5;
 
-    for double_value in [0.5, 1.0, 2.0, 4.0, std::f64::consts::PI] {
+    for double_value in [0.5, 1.0, 2.0, 4.0, std::f64::consts::PI].map(NumericValue::new) {
         let packed = packer.pack_double(double_value);
 
         packer.set(buffer, double_var_id, packed);
@@ -42,7 +42,10 @@ fn pack_and_unpack_doubles() {
 fn pack_double_canonicalizes_close_values() {
     let packer = setup();
 
-    assert_eq!(packer.pack_double(0.1 + 0.2), packer.pack_double(0.3));
+    assert_eq!(
+        packer.pack_double(NumericValue::new(0.1 + 0.2)),
+        packer.pack_double(NumericValue::new(0.3))
+    );
 }
 
 #[test]

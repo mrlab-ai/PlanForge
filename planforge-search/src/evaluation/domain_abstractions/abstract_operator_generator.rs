@@ -541,7 +541,7 @@ fn build_candidate_from_transition(
         return false;
     }
 
-    let cost_bits = float_tolerance::canonical_bits_nv(skeleton.cost);
+    let cost_bits = float_tolerance::canonical_bits(skeleton.cost);
     let signature_hash = compute_signature_hash(
         extended_prev_pairs,
         extended_pre_pairs,
@@ -624,7 +624,7 @@ pub struct AbstractOperatorGenerator {
     /// operator (in `DomainAbstractionFactory::new`) and shared via `Arc`
     /// across every per-iteration generator. Recomputing per call cost ~8%
     /// of total CPU on minecraft before this cache.
-    cached_operator_costs: Arc<[f64]>,
+    cached_operator_costs: Arc<[NumericValue]>,
 }
 
 impl AbstractOperatorGenerator {
@@ -695,10 +695,10 @@ impl AbstractOperatorGenerator {
         }
 
         let num_variables = task.get_num_variables();
-        let cached_operator_costs: Arc<[f64]> = task
+        let cached_operator_costs: Arc<[NumericValue]> = task
             .get_operators()
             .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
+            .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
         Ok(Self {
             domain_mapping,
@@ -726,7 +726,7 @@ impl AbstractOperatorGenerator {
         partitions: NumericPartitions,
         numeric_domain_sizes: Vec<usize>,
         combine_labels: bool,
-        cached_operator_costs: Arc<[f64]>,
+        cached_operator_costs: Arc<[NumericValue]>,
     ) -> Result<Self> {
         let mut generator = Self::new(
             task,
@@ -960,7 +960,7 @@ fn build_branch_for_operator(
         .cached_operator_costs
         .get(concrete_op_id.index())
         .copied()
-        .unwrap_or_else(|| abstract_operator_cost(task, op).value());
+        .unwrap_or_else(|| abstract_operator_cost(task, op));
     let num_variables = task.get_num_variables();
     // Reuse per-operator scratch buffers stored on the generator instead of
     // `vec![None; num_variables]` per call. We have to reset the slots
@@ -1016,10 +1016,10 @@ fn build_branch_for_operator(
                 touched_eff.push(var_id);
                 facts
                     .eff_pairs
-                    .push(ExplicitFact::propositional_from_indexes(var_id, abs_val));
+                    .push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
             }
         } else {
-            effects_without_pre.push(ExplicitFact::propositional_from_indexes(var_id, abs_val));
+            effects_without_pre.push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
         }
     }
 
@@ -1030,17 +1030,15 @@ fn build_branch_for_operator(
         }
         let abs_val = generator.abstract_value(var_id, pre.value_index());
         if generator.effect_on_var_scratch[var_id.index()].is_some() {
-            facts
-                .pre_pairs
-                .push(ExplicitFact::in_namespace_from_indexes(
-                    pre.namespace(),
-                    var_id,
-                    abs_val,
-                ));
+            facts.pre_pairs.push(ExplicitFact::in_namespace(
+                pre.namespace(),
+                var_id.index(),
+                abs_val.index(),
+            ));
         } else if !task.numeric_conditions().is_condition_var(var_id) {
             facts
                 .prev_pairs
-                .push(ExplicitFact::propositional_from_indexes(var_id, abs_val));
+                .push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
         }
     }
 
@@ -1065,10 +1063,10 @@ fn build_branch_for_operator(
         );
         facts
             .pre_pairs
-            .push(ExplicitFact::condition_from_indexes(var_id, source_abs));
+            .push(ExplicitFact::condition(var_id.index(), source_abs.index()));
         facts
             .eff_pairs
-            .push(ExplicitFact::condition_from_indexes(var_id, target_abs));
+            .push(ExplicitFact::condition(var_id.index(), target_abs.index()));
     }
 
     // Clear only the slots we touched, so subsequent calls start clean
@@ -1086,7 +1084,7 @@ fn build_branch_for_operator(
             ass_effects,
             op_preconditions: merged_preconditions,
             concrete_op_id,
-            cost: NumericValue::new(abstract_cost),
+            cost: abstract_cost,
         },
         0,
         &mut facts,
@@ -1672,7 +1670,7 @@ fn prepare_comparison_tree_inputs_for_combo_into(
 
     for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
         if numeric_var.get_type() == &NumericType::Constant {
-            out[var_id] = Interval::singleton(float_tolerance::canonicalize_nv(
+            out[var_id] = Interval::singleton(float_tolerance::canonicalize(
                 initial_numeric_values[var_id],
             ));
         } else if numeric_var.get_type() != &NumericType::Derived {

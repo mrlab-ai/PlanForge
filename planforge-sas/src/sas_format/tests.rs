@@ -73,17 +73,17 @@ fn every_operator_token_reads_back_as_what_it_was_written_from() {
 
 #[test]
 fn a_metric_without_a_variable_is_spelled_zero() {
-    let metric = Metric::from_sas('<', None).expect("`<` is a direction");
+    let metric = Metric::from_sas('<', 0).expect("`<` is a direction");
     assert!(metric.is_min());
     assert!(!metric.use_metric());
-    assert_eq!(metric.as_sas(), ('<', None));
+    assert_eq!(metric.as_sas(), ('<', 0));
 
-    let metric = Metric::from_sas('>', Some(VariableIndex::new(3))).expect("`>` is a direction");
+    let metric = Metric::from_sas('>', 3).expect("`>` is a direction");
     assert!(!metric.is_min());
     assert_eq!(metric.var_id(), Some(VariableIndex::new(3)));
-    assert_eq!(metric.as_sas(), ('>', Some(VariableIndex::new(3))));
+    assert_eq!(metric.as_sas(), ('>', 3));
 
-    assert!(Metric::from_sas('=', Some(VariableIndex::new(1))).is_none());
+    assert!(Metric::from_sas('=', 1).is_none());
 }
 
 #[test]

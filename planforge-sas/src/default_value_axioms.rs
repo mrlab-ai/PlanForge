@@ -354,10 +354,7 @@ fn refuting_bodies(
                     .expect("an axiom condition names a variable of the task");
                 for value in 0..domain_size {
                     if value != condition.value() {
-                        clause.insert(
-                            conditions
-                                .fact_from_indexes(var, ExplicitValueIndex::new(value as u32)),
-                        );
+                        clause.insert(conditions.fact(var.index(), value));
                     }
                 }
             }

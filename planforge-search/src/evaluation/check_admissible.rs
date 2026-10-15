@@ -19,7 +19,7 @@ use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
-    ExplicitValueIndex, NumericValue, Operator, OperatorIndex, TaskRef,
+    ExplicitValueIndex, INF_VALUE, NumericValue, Operator, OperatorIndex, TaskRef, ZERO_VALUE,
 };
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
@@ -351,21 +351,21 @@ fn open_entry(f_value: f64, g_value: f64, state_id: StateID) -> Result<OpenEntry
 /// Dijkstra is only correct for non-negative edge costs, so a task the oracle
 /// cannot measure exactly is rejected here rather than silently mismeasured.
 fn minimum_action_cost(operator_costs: &[NumericValue]) -> Result<NumericValue, String> {
-    let mut minimum = f64::INFINITY;
+    let mut minimum = INF_VALUE;
     for (operator_id, &cost) in operator_costs.iter().enumerate() {
-        if !cost.value().is_finite() || cost.value() < 0.0 {
+        if !cost.is_finite() || cost < ZERO_VALUE {
             return Err(format!(
                 "`check_admissible` cannot verify a task whose operator {operator_id} costs \
                  {cost}; it needs finite non-negative costs"
             ));
         }
-        minimum = minimum.min(cost.value());
+        minimum = minimum.min(cost);
     }
     // A task without operators has no transitions at all, so zero is the
     // tightest lower bound on the remaining cost.
     Ok(if operator_costs.is_empty() {
-        NumericValue::new(0.0)
+        ZERO_VALUE
     } else {
-        NumericValue::new(minimum)
+        minimum
     })
 }

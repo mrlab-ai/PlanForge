@@ -133,13 +133,11 @@ pub trait NumericTaskExt: AbstractNumericTask {
     fn min_abstract_operator_cost(&self) -> NumericValue {
         let min_operator_cost = (0..self.get_operators().len())
             .map(|operator_id| self.abstract_operator_cost(OperatorIndex::from_usize(operator_id)))
-            .fold(NumericValue::new(f64::INFINITY), |acc, x| {
-                NumericValue::new(f64::min(acc.value(), x.value()))
-            });
-        if min_operator_cost.value().is_finite() {
-            NumericValue::new(min_operator_cost.value().max(0.0))
+            .fold(INF_VALUE, NumericValue::min);
+        if min_operator_cost.is_finite() {
+            min_operator_cost.max(ZERO_VALUE)
         } else {
-            NumericValue::new(0.0)
+            ZERO_VALUE
         }
     }
 
@@ -317,16 +315,16 @@ pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>
     });
     let new_metric = evaluate_metric_from_values(task, &numeric_values);
     let delta = if task.metric().is_min() {
-        new_metric.value() - old_metric.value()
+        new_metric - old_metric
     } else {
-        old_metric.value() - new_metric.value()
+        old_metric - new_metric
     };
     assert!(
-        delta >= 0.0,
+        delta >= ZERO_VALUE,
         "operator {} has negative metric cost {delta}, which search does not support",
         operator.name()
     );
-    NumericValue::new(delta)
+    delta
 }
 
 fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(

@@ -305,7 +305,7 @@ pub(crate) fn validate_abstraction_operator(
             format!("missing initial value for constant numeric variable {rhs_var_id}")
         })?;
         ensure!(
-            rhs.value().is_finite(),
+            rhs.is_finite(),
             "operator {operator_id} ({}) numeric effect {effect_id} has non-finite constant RHS {rhs}",
             operator.name()
         );

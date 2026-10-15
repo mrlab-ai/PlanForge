@@ -327,7 +327,7 @@ impl PatternLookupProjection {
         bins.resize(1 + self.pattern_numeric_lookup.len(), 0);
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits_nv(
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(
                 Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?,
             );
         }
@@ -347,7 +347,7 @@ impl PatternLookupProjection {
         for (numeric_index, &original_numeric_var) in self.pattern_numeric_lookup.iter().enumerate()
         {
             let value = source_numeric_values[original_numeric_var.index()];
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(value.value());
+            bins[numeric_index + 1] = float_tolerance::canonical_bits(value);
         }
     }
 
@@ -392,10 +392,10 @@ impl PatternLookupProjection {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                packer.pack_double(
-                    Self::numeric_value_from_source(original_numeric_var, source_numeric_values)?
-                        .value(),
-                ),
+                packer.pack_double(Self::numeric_value_from_source(
+                    original_numeric_var,
+                    source_numeric_values,
+                )?),
             );
         }
 
@@ -592,7 +592,7 @@ impl<'task> ProjectedTask<'task> {
                 .map(|value| {
                     let original_fact = base
                         .numeric_conditions()
-                        .fact_from_indexes(original_var_id, ExplicitValueIndex::from_usize(value));
+                        .fact(original_var_id.index(), value);
                     let fact_name = base.get_fact_name(&original_fact);
                     if fact_name.is_empty() {
                         format!("{variable_name}={value}")
@@ -704,7 +704,7 @@ impl<'task> ProjectedTask<'task> {
                     .effects()
                     .iter()
                     .map(|effect| {
-                        ExplicitFact::propositional_from_indexes(effect.var_id(), effect.value())
+                        ExplicitFact::propositional(effect.var_id().index(), effect.value().index())
                     })
                     .collect()
             })
@@ -712,7 +712,7 @@ impl<'task> ProjectedTask<'task> {
         let axiom_effect_facts: Vec<ExplicitFact> = axioms
             .iter()
             .map(|axiom| {
-                ExplicitFact::propositional_from_indexes(axiom.var_id(), axiom.effect_value())
+                ExplicitFact::propositional(axiom.var_id().index(), axiom.effect_value().index())
             })
             .collect();
 
@@ -932,13 +932,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 prop_len + numeric_index,
-                packer.pack_double(
-                    self.projected_numeric_value_from_source_numeric(
-                        projected_numeric_id,
-                        source_numeric_values,
-                    )?
-                    .value(),
-                ),
+                packer.pack_double(self.projected_numeric_value_from_source_numeric(
+                    projected_numeric_id,
+                    source_numeric_values,
+                )?),
             );
         }
 
@@ -968,13 +965,10 @@ impl<'task> ProjectedTask<'task> {
             packer.set(
                 packed_values,
                 numeric_index + 1,
-                packer.pack_double(
-                    self.projected_numeric_value_from_source_numeric(
-                        projected_numeric_id,
-                        source_numeric_values,
-                    )?
-                    .value(),
-                ),
+                packer.pack_double(self.projected_numeric_value_from_source_numeric(
+                    projected_numeric_id,
+                    source_numeric_values,
+                )?),
             );
         }
 
@@ -999,13 +993,11 @@ impl<'task> ProjectedTask<'task> {
         for (numeric_index, &projected_numeric_id) in
             self.pattern_numeric_projected_ids.iter().enumerate()
         {
-            bins[numeric_index + 1] = float_tolerance::canonical_bits(
-                self.projected_numeric_value_from_source_numeric(
+            bins[numeric_index + 1] =
+                float_tolerance::canonical_bits(self.projected_numeric_value_from_source_numeric(
                     projected_numeric_id,
                     source_numeric_values,
-                )?
-                .value(),
-            );
+                )?);
         }
 
         Ok(())
@@ -1625,7 +1617,7 @@ fn restore_fact(
     projected_to_original: &[VariableIndex],
 ) -> Option<ExplicitFact> {
     projected_to_original.get(fact.var()).map(|&original| {
-        ExplicitFact::in_namespace_from_indexes(fact.namespace(), original, fact.value_index())
+        ExplicitFact::in_namespace(fact.namespace(), original.index(), fact.value())
     })
 }
 

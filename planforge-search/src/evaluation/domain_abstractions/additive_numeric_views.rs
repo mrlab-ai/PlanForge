@@ -299,7 +299,7 @@ pub(crate) fn numeric_effect_deltas(
         }
     }
     for values in deltas.values_mut() {
-        values.sort_by(|left, right| left.value().total_cmp(&right.value()));
+        values.sort_by(NumericValue::total_cmp);
         values.dedup_by(|left, right| (left.value() - right.value()).abs() < EPSILON);
     }
     deltas
@@ -387,12 +387,12 @@ fn constant_effect_delta(
     let rhs = *task
         .get_initial_numeric_state_values()
         .get(effect.var_id().index())?;
-    if !rhs.value().is_finite() {
+    if !rhs.is_finite() {
         return None;
     }
     match effect.operation() {
         AssignmentOperation::Plus => Some(rhs),
-        AssignmentOperation::Minus => Some(NumericValue::new(-rhs.value())),
+        AssignmentOperation::Minus => Some(-rhs),
         AssignmentOperation::Assign | AssignmentOperation::Times | AssignmentOperation::Divide => {
             None
         }

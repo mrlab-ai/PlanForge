@@ -77,20 +77,13 @@ fn parse_metric(input: &str) -> IResult<&str, Metric> {
     let (input, _) = line_ending(input)?;
     let (input, direction) = alt((char('<'), char('>'))).parse(input)?;
     let (input, _) = space1(input)?;
-    let (input, index) = usize(input)?;
+    let (input, index) = u32(input)?;
     let (input, _) = line_ending(input)?;
     let (input, _) = tag("end_metric")(input)?;
     let (input, _) = line_ending(input)?;
 
-    let metric = Metric::from_sas(
-        direction,
-        if index > 0 {
-            Some(VariableIndex::from_usize(index))
-        } else {
-            None
-        },
-    )
-    .expect("the direction was parsed as one of the two the format spells");
+    let metric = Metric::from_sas(direction, index as usize)
+        .expect("the direction was parsed as one of the two the format spells");
     Ok((input, metric))
 }
 
@@ -182,16 +175,11 @@ fn parse_mutexes(input: &str) -> IResult<&str, Vec<Vec<ExplicitFact>>> {
 fn parse_state(input: &str) -> IResult<&str, Vec<ExplicitValueIndex>> {
     delimited(
         pair(tag("begin_state"), line_ending),
-        many0(terminated(usize, line_ending)),
+        many0(terminated(u32, line_ending)),
         pair(tag("end_state"), line_ending),
     )
     .parse(input)
-    .map(|(i, v)| {
-        (
-            i,
-            v.into_iter().map(ExplicitValueIndex::from_usize).collect(),
-        )
-    })
+    .map(|(i, v)| (i, v.into_iter().map(ExplicitValueIndex::new).collect()))
 }
 
 fn parse_numeric_state(input: &str) -> IResult<&str, Vec<NumericValue>> {

@@ -15,7 +15,7 @@
 //! axiom" mapping.
 //!
 //! Evaluation is generic over the value domain via [`ConditionDomain`], so
-//! concrete states (`f64`) and abstract states ([`Interval`]) share one
+//! concrete states ([`NumericValue`]) and abstract states ([`Interval`]) share one
 //! implementation.
 
 #[cfg(test)]
@@ -23,7 +23,7 @@ mod tests;
 
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
-use crate::numeric_task::{AxiomIndex, ExplicitValueIndex, NumericValue, VariableIndex};
+use crate::numeric_task::{AxiomIndex, NumericValue, VariableIndex};
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The two values a propositional variable carrying a numeric condition's
@@ -112,21 +112,12 @@ pub enum ArithOp {
 
 impl ArithOp {
     #[inline]
-    pub fn apply(self, lhs: f64, rhs: f64) -> f64 {
+    pub fn apply(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
         match self {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => lhs - rhs,
             ArithOp::Mul => lhs * rhs,
             ArithOp::Div => lhs / rhs,
-        }
-    }
-
-    pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
-        match self {
-            ArithOp::Add => NumericValue::new(lhs.value() + rhs.value()),
-            ArithOp::Sub => NumericValue::new(lhs.value() - rhs.value()),
-            ArithOp::Mul => NumericValue::new(lhs.value() * rhs.value()),
-            ArithOp::Div => NumericValue::new(lhs.value() / rhs.value()),
         }
     }
 
@@ -167,18 +158,7 @@ pub enum CompOp {
 
 impl CompOp {
     #[inline]
-    pub fn apply(self, lhs: f64, rhs: f64) -> bool {
-        match self {
-            CompOp::Lt => lhs < rhs,
-            CompOp::Le => lhs <= rhs,
-            CompOp::Gt => lhs > rhs,
-            CompOp::Ge => lhs >= rhs,
-            CompOp::Eq => lhs == rhs,
-            CompOp::Ne => lhs != rhs,
-        }
-    }
-
-    pub fn apply_nv(self, lhs: NumericValue, rhs: NumericValue) -> bool {
+    pub fn apply(self, lhs: NumericValue, rhs: NumericValue) -> bool {
         match self {
             CompOp::Lt => lhs < rhs,
             CompOp::Le => lhs <= rhs,
@@ -310,7 +290,7 @@ impl ConditionNode {
 
 /// The value domain a condition can be evaluated over.
 ///
-/// Implemented for `f64` (concrete states) and [`Interval`] (abstract
+/// Implemented for [`NumericValue`] (concrete states) and [`Interval`] (abstract
 /// states); both evaluation orders are written once against this trait.
 pub trait ConditionDomain: Copy {
     /// What comparing two values of this domain yields: `bool` for points,
@@ -333,28 +313,6 @@ pub trait ConditionDomain: Copy {
     fn compare(op: CompOp, lhs: Self, rhs: Self) -> Self::Verdict;
 }
 
-impl ConditionDomain for f64 {
-    type Verdict = bool;
-
-    /// A concrete state pins every derived variable exactly, so there is
-    /// nothing in `inputs` that could sharpen the recomputed value.
-    #[inline]
-    fn combine(
-        op: ArithOp,
-        lhs: f64,
-        rhs: f64,
-        _result_numeric_var_id: VariableIndex,
-        _: &[f64],
-    ) -> f64 {
-        op.apply(lhs, rhs)
-    }
-
-    #[inline]
-    fn compare(op: CompOp, lhs: f64, rhs: f64) -> bool {
-        op.apply(lhs, rhs)
-    }
-}
-
 impl ConditionDomain for NumericValue {
     type Verdict = bool;
 
@@ -368,12 +326,12 @@ impl ConditionDomain for NumericValue {
         _result_numeric_var_id: VariableIndex,
         _: &[NumericValue],
     ) -> NumericValue {
-        op.apply_nv(lhs, rhs)
+        op.apply(lhs, rhs)
     }
 
     #[inline]
     fn compare(op: CompOp, lhs: NumericValue, rhs: NumericValue) -> bool {
-        op.apply_nv(lhs, rhs)
+        op.apply(lhs, rhs)
     }
 }
 
@@ -810,25 +768,9 @@ impl NumericConditions {
     #[inline]
     pub fn fact(&self, prop_var_id: usize, value: usize) -> ExplicitFact {
         ExplicitFact::in_namespace(
-            self.namespace_of(VariableIndex::new(prop_var_id as u32)),
+            self.namespace_of(VariableIndex::from_usize(prop_var_id)),
             prop_var_id,
             value,
-        )
-    }
-
-    /// Build a correctly tagged fact. This is the authoritative constructor
-    /// for callers that hold a variable id and cannot themselves know which
-    /// namespace it names.
-    #[inline]
-    pub fn fact_from_indexes(
-        &self,
-        prop_var_id: VariableIndex,
-        value: ExplicitValueIndex,
-    ) -> ExplicitFact {
-        ExplicitFact::in_namespace(
-            self.namespace_of(prop_var_id),
-            prop_var_id.index(),
-            value.index(),
         )
     }
 

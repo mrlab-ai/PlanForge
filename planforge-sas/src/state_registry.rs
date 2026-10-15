@@ -135,7 +135,7 @@ impl DenseCostInformation {
             self.values.resize(end, NumericValue::new(0.0));
         }
         for (target, &value) in self.values[start..end].iter_mut().zip(values) {
-            *target = float_tolerance::canonicalize_nv(value);
+            *target = float_tolerance::canonicalize(value);
         }
     }
 }
@@ -644,7 +644,7 @@ impl<'a> StateRegistry<'a> {
             match ty {
                 NumericType::Constant => {
                     numeric_template[numeric_var_id] =
-                        float_tolerance::canonicalize_nv(initial_numeric_values[numeric_var_id]);
+                        float_tolerance::canonicalize(initial_numeric_values[numeric_var_id]);
                 }
                 NumericType::Regular => {
                     regular_numeric_slots.push((numeric_var_id, next_regular_slot));
@@ -732,8 +732,8 @@ impl<'a> StateRegistry<'a> {
     }
 
     fn pack_regular_numeric(&self, value: NumericValue) -> u64 {
-        let canonical = float_tolerance::canonicalize_nv(value);
-        let bits = canonical.value().to_bits();
+        let canonical = float_tolerance::canonicalize(value);
+        let bits = canonical.to_bits();
         let mut interner = self.compact_numeric_values.borrow_mut();
         if let Some(&id) = interner.ids_by_bits.get(&bits) {
             return id as u64;
@@ -962,12 +962,12 @@ impl<'a> StateRegistry<'a> {
             match numeric_var.get_type() {
                 NumericType::Cost => {
                     self.numeric_indices[i] = Some(cost_variables.len());
-                    cost_variables.push(float_tolerance::canonicalize_nv(value));
+                    cost_variables.push(float_tolerance::canonicalize(value));
                 }
                 NumericType::Constant => {
                     self.numeric_indices[i] = Some(constant_index);
                     self.numeric_constants
-                        .push(float_tolerance::canonicalize_nv(value));
+                        .push(float_tolerance::canonicalize(value));
                     constant_index += 1;
                 }
                 NumericType::Derived => {
@@ -992,7 +992,7 @@ impl<'a> StateRegistry<'a> {
         buffer: &mut [u64],
         numeric_state: &mut [NumericValue],
     ) -> Result<(), StateInsertError> {
-        canonicalize_numeric_values_nv(numeric_state);
+        canonicalize_numeric_values(numeric_state);
         self.axiom_evaluator
             .evaluate(buffer, numeric_state)
             .map_err(|e| StateInsertError {
@@ -1136,7 +1136,7 @@ impl<'a> StateRegistry<'a> {
                     if self.numeric_indices[i].is_none() {
                         self.numeric_indices[i] = Some(cost_variables.len());
                     }
-                    cost_variables.push(float_tolerance::canonicalize_nv(value));
+                    cost_variables.push(float_tolerance::canonicalize(value));
                 }
                 NumericType::Regular => {
                     // Initialize the index if not set.
@@ -1166,7 +1166,7 @@ impl<'a> StateRegistry<'a> {
                             ),
                         }
                     })?;
-                    if !float_tolerance::equal_nv(registered, value) {
+                    if !float_tolerance::equal(registered, value) {
                         return Err(StateInsertError {
                             message: format!(
                                 "Constant numeric variable {i} is {registered} in this registry, but the state to register has {value}"
@@ -1335,7 +1335,7 @@ impl<'a> StateRegistry<'a> {
             NumericValue::new(0.0)
         };
         let op_cost = if self.metric_use_metric {
-            NumericValue::new(new_metric.value() - ctx.parent_metric.value())
+            new_metric - ctx.parent_metric
         } else {
             NumericValue::new(1.0)
         };
@@ -1386,9 +1386,9 @@ impl<'a> StateRegistry<'a> {
                         }
                     })?;
                     if self.metric_is_min {
-                        old_metric.value() < new_metric.value()
+                        old_metric < new_metric
                     } else {
-                        old_metric.value() > new_metric.value()
+                        old_metric > new_metric
                     }
                 };
 
@@ -1710,7 +1710,7 @@ impl<'a> StateRegistry<'a> {
                 RepeatedTarget::Additive => current_values[affected_var_id.index()],
             };
 
-            let result = float_tolerance::canonicalize_nv(AssignmentOperation::apply(
+            let result = float_tolerance::canonicalize(AssignmentOperation::apply(
                 left_value,
                 effect.operation(),
                 assignment_value,
@@ -1845,7 +1845,7 @@ impl<'a> StateRegistry<'a> {
                 message: format!("Failed to evaluate metric after applying operator: {e:?}"),
             })?;
 
-        Ok(NumericValue::new(new_metric.value() - old_metric.value()))
+        Ok(new_metric - old_metric)
     }
 
     fn metric_value_for_state(
@@ -1907,13 +1907,12 @@ impl<'a> StateRegistry<'a> {
         let old_metric_val = self.metric_value_for_state(existing_state)?;
         let new_metric_val = self
             .evaluate_metric(successor_numeric_vals)
-            .map_err(AxiomEvalError::InvalidIndex)?
-            .value();
+            .map_err(AxiomEvalError::InvalidIndex)?;
 
         Ok(if self.task.metric().is_min() {
-            old_metric_val.value() < new_metric_val
+            old_metric_val < new_metric_val
         } else {
-            old_metric_val.value() > new_metric_val
+            old_metric_val > new_metric_val
         })
     }
 
@@ -1934,8 +1933,8 @@ impl<'a> StateRegistry<'a> {
     }
 }
 
-fn canonicalize_numeric_values_nv(values: &mut [NumericValue]) {
+fn canonicalize_numeric_values(values: &mut [NumericValue]) {
     for value in values {
-        *value = float_tolerance::canonicalize_nv(*value);
+        *value = float_tolerance::canonicalize(*value);
     }
 }

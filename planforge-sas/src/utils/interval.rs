@@ -80,8 +80,8 @@ impl Interval {
     #[inline]
     pub fn canonicalized(self) -> Self {
         Self::new(
-            float_tolerance::canonicalize_nv(self.lower),
-            float_tolerance::canonicalize_nv(self.upper),
+            float_tolerance::canonicalize(self.lower),
+            float_tolerance::canonicalize(self.upper),
             self.lower_closed,
             self.upper_closed,
         )
@@ -89,7 +89,7 @@ impl Interval {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        if self.lower.value().is_nan() || self.upper.value().is_nan() {
+        if self.lower.is_nan() || self.upper.is_nan() {
             return true;
         }
         if self.lower > self.upper {
@@ -118,7 +118,7 @@ impl Interval {
 
     #[inline]
     pub fn contains(&self, value: NumericValue) -> bool {
-        if value.value().is_nan() || self.is_empty() {
+        if value.is_nan() || self.is_empty() {
             return false;
         }
 
@@ -230,7 +230,7 @@ impl Interval {
 
     #[inline]
     pub fn can_split_at(&self, value: NumericValue, include_in_lower: bool) -> bool {
-        if self.is_empty() || value.value().is_nan() || value.value().is_infinite() {
+        if self.is_empty() || value.is_nan() || value.is_infinite() {
             return false;
         }
         if !self.contains(value) {
@@ -247,10 +247,10 @@ impl Interval {
 
     #[inline]
     fn normalized(mut self) -> Self {
-        if self.lower.value().is_infinite() && self.lower.value().is_sign_negative() {
+        if self.lower == NEG_INF_VALUE {
             self.lower_closed = false;
         }
-        if self.upper.value().is_infinite() && self.upper.value().is_sign_positive() {
+        if self.upper == INF_VALUE {
             self.upper_closed = false;
         }
 
@@ -318,8 +318,8 @@ impl std::ops::Add for Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         Interval {
-            lower: NumericValue::new(self.lower.value() + rhs.lower.value()),
-            upper: NumericValue::new(self.upper.value() + rhs.upper.value()),
+            lower: self.lower + rhs.lower,
+            upper: self.upper + rhs.upper,
             lower_closed: self.lower_closed && rhs.lower_closed,
             upper_closed: self.upper_closed && rhs.upper_closed,
         }
@@ -335,8 +335,8 @@ impl std::ops::Sub for Interval {
         debug_assert!(!self.is_empty() && !rhs.is_empty());
 
         Interval {
-            lower: NumericValue::new(self.lower.value() - rhs.upper.value()),
-            upper: NumericValue::new(self.upper.value() - rhs.lower.value()),
+            lower: self.lower - rhs.upper,
+            upper: self.upper - rhs.lower,
             lower_closed: self.lower_closed && rhs.upper_closed,
             upper_closed: self.upper_closed && rhs.lower_closed,
         }
@@ -360,17 +360,17 @@ impl std::ops::Mul for Interval {
             (self.upper, self.upper_closed),
         ];
         let right = [(rhs.lower, rhs.lower_closed), (rhs.upper, rhs.upper_closed)];
-        let mut lower = f64::INFINITY;
-        let mut upper = f64::NEG_INFINITY;
+        let mut lower = INF_VALUE;
+        let mut upper = NEG_INF_VALUE;
         let mut lower_closed = false;
         let mut upper_closed = false;
 
         for (left_value, left_closed) in left {
             for (right_value, right_closed) in right {
-                let value = extended_product(left_value.value(), right_value.value());
-                let attained = if value == 0.0 {
-                    (left_value.value() == 0.0 && self.contains(ZERO_VALUE))
-                        || (right_value.value() == 0.0 && rhs.contains(ZERO_VALUE))
+                let value = extended_product(left_value, right_value);
+                let attained = if value == ZERO_VALUE {
+                    (left_value == ZERO_VALUE && self.contains(ZERO_VALUE))
+                        || (right_value == ZERO_VALUE && rhs.contains(ZERO_VALUE))
                 } else {
                     value.is_finite() && left_closed && right_closed
                 };
@@ -389,12 +389,7 @@ impl std::ops::Mul for Interval {
             }
         }
 
-        Interval::new(
-            NumericValue::new(lower),
-            NumericValue::new(upper),
-            lower_closed,
-            upper_closed,
-        )
+        Interval::new(lower, upper, lower_closed, upper_closed)
     }
 }
 
@@ -409,19 +404,19 @@ impl std::ops::Div for Interval {
         }
 
         let reciprocal = Interval::new(
-            NumericValue::new(1.0 / rhs.upper.value()),
-            NumericValue::new(1.0 / rhs.lower.value()),
-            rhs.upper_closed && rhs.upper.value().is_finite(),
-            rhs.lower_closed && rhs.lower.value().is_finite(),
+            ONE_VALUE / rhs.upper,
+            ONE_VALUE / rhs.lower,
+            rhs.upper_closed && rhs.upper.is_finite(),
+            rhs.lower_closed && rhs.lower.is_finite(),
         );
         self * reciprocal
     }
 }
 
 #[inline]
-fn extended_product(left: f64, right: f64) -> f64 {
-    if (left == 0.0 && right.is_infinite()) || (right == 0.0 && left.is_infinite()) {
-        0.0
+fn extended_product(left: NumericValue, right: NumericValue) -> NumericValue {
+    if (left == ZERO_VALUE && right.is_infinite()) || (right == ZERO_VALUE && left.is_infinite()) {
+        ZERO_VALUE
     } else {
         left * right
     }
