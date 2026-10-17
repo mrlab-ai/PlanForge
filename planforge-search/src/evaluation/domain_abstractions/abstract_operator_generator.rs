@@ -10,9 +10,8 @@ use anyhow::{Context, Result, anyhow, ensure};
 use planforge_sas::axioms::CalOperator;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex, NumericType,
-    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
-    metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
+    NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::float_tolerance;
 
@@ -695,10 +694,8 @@ impl AbstractOperatorGenerator {
         }
 
         let num_variables = task.get_num_variables();
-        let cached_operator_costs: Arc<[NumericValue]> = task
-            .get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
+        let cached_operator_costs: Arc<[NumericValue]> = (0..task.get_operators().len())
+            .map(|operator_id| task.abstract_operator_cost(OperatorIndex::from_usize(operator_id)))
             .collect();
         Ok(Self {
             domain_mapping,
@@ -835,7 +832,6 @@ impl AbstractOperatorGenerator {
         let ass_effects = op.assignment_effects().clone();
         build_branch_for_operator(
             task,
-            op,
             &unconditional_effects,
             &ass_effects,
             op.preconditions(),
@@ -949,18 +945,16 @@ fn normalize_preconditions(mut preconditions: Vec<ExplicitFact>) -> Option<Vec<E
 
 fn build_branch_for_operator(
     task: &dyn AbstractNumericTask,
-    op: &Operator,
     effects: &[&Effect],
     ass_effects: &[AssignmentEffect],
     merged_preconditions: &[ExplicitFact],
     concrete_op_id: OperatorIndex,
     generator: &mut AbstractOperatorGenerator,
 ) -> Result<Vec<AbstractOperatorSkeleton>> {
-    let abstract_cost = generator
+    let abstract_cost = *generator
         .cached_operator_costs
         .get(concrete_op_id.index())
-        .copied()
-        .unwrap_or_else(|| abstract_operator_cost(task, op));
+        .expect("the operator-cost cache covers every concrete operator");
     let num_variables = task.get_num_variables();
     // Reuse per-operator scratch buffers stored on the generator instead of
     // `vec![None; num_variables]` per call. We have to reset the slots
@@ -1090,10 +1084,6 @@ fn build_branch_for_operator(
         &mut facts,
         generator,
     )
-}
-
-fn abstract_operator_cost(task: &dyn AbstractNumericTask, op: &Operator) -> NumericValue {
-    metric_operator_cost_from_initial_values(task, op)
 }
 
 /// One concrete operator's propositional effects that have no matching

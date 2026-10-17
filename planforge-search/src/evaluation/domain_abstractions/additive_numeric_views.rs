@@ -324,19 +324,6 @@ pub(crate) fn numeric_dimension_delta_for_operator(
     }
 }
 
-pub(crate) fn is_operator_invariant_regular_dimension(
-    task: &dyn AbstractNumericTask,
-    numeric_var_id: VariableIndex,
-) -> bool {
-    task.numeric_variables()
-        .get(numeric_var_id.index())
-        .is_some_and(|variable| variable.get_type() == &NumericType::Regular)
-        && task.get_operators().iter().all(|operator| {
-            regular_additive_delta_for_operator(task, numeric_var_id, operator)
-                .is_some_and(|delta| delta.value().abs() < EPSILON)
-        })
-}
-
 fn additive_view_delta_for_operator(
     task: &dyn AbstractNumericTask,
     expression: &LinearExpression,
