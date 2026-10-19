@@ -25,147 +25,15 @@
 //! all members remain admissible components for collection heuristics.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
-use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
-};
-use planforge_sas::state_registry::ConcreteStateView;
-use planforge_sas::utils::state_packer::StatePacker;
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
 use super::portfolio::{CollectionStrategy, derive_variant_seed};
-use crate::evaluation::abstractions::cegar::progress_concrete_state;
-use crate::evaluation::abstractions::domain::utils::{get_initial_state, make_prop_state_packer};
-use crate::evaluation::abstractions::task::SingleGoalTask;
-
-/// A concrete state of a task, closed under its axioms. Propositional values are
-/// packed with the task's [`make_prop_state_packer`] layout.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ConcreteState {
-    pub(crate) propositions: Vec<u64>,
-    pub(crate) numeric: Vec<NumericValue>,
-}
-
-impl ConcreteState {
-    /// The task's initial state.
-    pub(crate) fn initial(task: &dyn AbstractNumericTask) -> Result<Self> {
-        let state_packer = Arc::new(make_prop_state_packer(task));
-        let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
-        let (propositions, numeric) = get_initial_state(task, &state_packer, &axiom_evaluator)?;
-        Ok(Self {
-            propositions,
-            numeric,
-        })
-    }
-
-    /// Whether `goal_id` of `task` holds in this state.
-    pub(crate) fn satisfies_goal(
-        &self,
-        task: &dyn AbstractNumericTask,
-        goal_id: usize,
-    ) -> Result<bool> {
-        let state_packer = self.checked_packer(task)?;
-        ensure!(
-            goal_id < task.get_num_goals(),
-            "goal id {goal_id} exceeds {} goals",
-            task.get_num_goals()
-        );
-        Ok(self.fact_holds(task, &state_packer, goal_id))
-    }
-
-    /// How many goals of `task` hold in this state.
-    pub(crate) fn satisfied_goal_count(&self, task: &dyn AbstractNumericTask) -> Result<usize> {
-        let state_packer = self.checked_packer(task)?;
-        Ok((0..task.get_num_goals())
-            .filter(|&goal_id| self.fact_holds(task, &state_packer, goal_id))
-            .count())
-    }
-
-    /// Apply `operator_ids` in sequence, failing on an inapplicable operator.
-    pub(crate) fn replay(
-        &self,
-        task: &dyn AbstractNumericTask,
-        operator_ids: &[OperatorIndex],
-    ) -> Result<Self> {
-        let state_packer = Arc::new(self.checked_packer(task)?);
-        let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
-        let mut next = self.clone();
-        for (step, &operator_id) in operator_ids.iter().enumerate() {
-            let operator = task
-                .get_operators()
-                .get(operator_id.index())
-                .with_context(|| {
-                    format!("progressive plan step {step} has invalid operator {operator_id}")
-                })?;
-            ensure!(
-                operator.preconditions().iter().all(|fact| fact.is_held(
-                    ConcreteStateView::from_decoded(&state_packer, &next.propositions, &[])
-                )),
-                "progressive plan operator {operator_id} ({}) is inapplicable at step {step}",
-                operator.name()
-            );
-            progress_concrete_state(
-                operator,
-                &axiom_evaluator,
-                &state_packer,
-                &mut next.propositions,
-                &mut next.numeric,
-            )?;
-        }
-        Ok(next)
-    }
-
-    /// Unpacked propositional values, one per task variable.
-    pub(crate) fn propositional_values(
-        &self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<Vec<ExplicitValueIndex>> {
-        let state_packer = self.checked_packer(task)?;
-        Ok((0..task.get_num_variables())
-            .map(|var_id| {
-                ExplicitValueIndex::from_usize(
-                    usize::try_from(state_packer.get(&self.propositions, var_id))
-                        .expect("packed propositional value fits usize"),
-                )
-            })
-            .collect())
-    }
-
-    fn checked_packer(&self, task: &dyn AbstractNumericTask) -> Result<StatePacker> {
-        let state_packer = make_prop_state_packer(task);
-        ensure!(
-            self.propositions.len() == state_packer.num_bins(),
-            "concrete state has {} proposition bins, expected {}",
-            self.propositions.len(),
-            state_packer.num_bins()
-        );
-        ensure!(
-            self.numeric.len() == task.numeric_variables().len(),
-            "concrete state has {} numeric values, expected {}",
-            self.numeric.len(),
-            task.numeric_variables().len()
-        );
-        Ok(state_packer)
-    }
-
-    fn fact_holds(
-        &self,
-        task: &dyn AbstractNumericTask,
-        state_packer: &StatePacker,
-        goal_id: usize,
-    ) -> bool {
-        task.get_goal_fact(goal_id)
-            .is_held(ConcreteStateView::from_decoded(
-                state_packer,
-                &self.propositions,
-                &[],
-            ))
-    }
-}
+use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
+use crate::evaluation::abstractions::common::task::SingleGoalTask;
 
 /// The concrete refinement root a member was asked to refine from maps to an
 /// abstract dead end of the member's abstraction.

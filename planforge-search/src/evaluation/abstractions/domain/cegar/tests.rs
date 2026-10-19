@@ -1,16 +1,23 @@
-use crate::evaluation::abstractions::domain::cegar::flaw_search::{
-    Flaw, NumericFlaw, PropFlaw, get_flaws,
-};
+use crate::evaluation::abstractions::domain::flaws::{Flaw, NumericFlaw, PropFlaw, get_flaws};
+
+use std::collections::HashSet;
+
+use planforge_sas::numeric_conditions::ConditionValue;
 
 use super::*;
+use crate::evaluation::abstractions::domain::flaws::SplitDirection;
+use crate::evaluation::abstractions::domain::initial_splits::compute_initial_split_mapping;
+use crate::evaluation::abstractions::domain::split_selection::{
+    FlawTreatmentVariants, InitSplitMethod,
+};
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
-    Operator, OperatorCost, OperatorIndex,
+    ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
 };
 
 fn one_dimensional_sailing_like_task() -> NumericRootTask {
@@ -330,21 +337,6 @@ fn cegar_default_config_matches_numeric_fd_defaults() {
         FlawTreatmentVariants::RandomSingleAtom
     );
     assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
-}
-
-#[test]
-fn seeded_shuffle_indices_is_not_identity() {
-    let mut indices = vec![0, 1, 2, 3, 4, 5];
-    let original = indices.clone();
-    let mut rng = SmallRng::seed_from_u64(7);
-
-    shuffle_indices_with_rng(&mut indices, &mut rng);
-
-    assert_eq!(indices.len(), original.len());
-    let mut sorted = indices.clone();
-    sorted.sort_unstable();
-    assert_eq!(sorted, original);
-    assert_ne!(indices, original);
 }
 
 #[test]

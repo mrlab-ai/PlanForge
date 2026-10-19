@@ -54,18 +54,19 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
 use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstractions::common::cegar::FlawKind;
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
-use planforge_search::evaluation::abstractions::domain::cegar::{CegarConfig, FlawKind};
-use planforge_search::evaluation::abstractions::domain::collection_generator::{
+use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
+use planforge_search::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, FlawTreatmentVariants,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
-use planforge_search::evaluation::abstractions::domain::generator::{
-    DomainAbstraction, DomainAbstractionGenerator,
-};
+use planforge_search::evaluation::abstractions::domain::config::CegarConfig;
+use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
+use planforge_search::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
@@ -328,15 +329,6 @@ fn scp_initial_h_with_config(
         .expect("scp domain abstractions should build");
     scp_initial_h_for_collection(&task, abstractions)
 }
-
-/// Greedy order optimization is the third budget that is spent in full instead
-/// of on convergence: at the 5s default, a single initial-state evaluation of
-/// `prob_1b1p_x` costs 5.54s, of which 5.38s is the optimizer and 0.16s is
-/// everything else. Initial h is unchanged at 1s and at 0s on every instance
-/// asserted here (`prob_1b1p_x` 11, `prob_1b2p_x` 17, `prob_2b1p` 11,
-/// `prob_2b2p_x` 12, `prob_2b2p_assign` 7), so 1s keeps the optimizer on the
-/// hook for a regression while paying a fifth of the price.
-const ORDER_OPTIMIZATION_MAX_TIME: f64 = 1.0;
 
 fn scp_initial_h_for_collection(
     task: &NumericRootTask,

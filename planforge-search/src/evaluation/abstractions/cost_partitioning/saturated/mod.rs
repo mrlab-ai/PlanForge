@@ -17,16 +17,17 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::successor_generator::SuccessorTree;
 
 use crate::evaluation::abstractions::collections::goal_focused::MemberDirection;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
-    AbstractOperatorSourceSets, CartesianSet, RemainingCosts, SourceSetCostAllocation,
-    build_explicit_label_cost_partitioning_table, build_explicit_regional_cost_partitioning_table,
+    RemainingCosts, SourceSetCostAllocation, build_explicit_label_cost_partitioning_table,
+    build_explicit_regional_cost_partitioning_table,
 };
-use crate::evaluation::abstractions::domain::abstract_operator_generator::AbstractOperator;
-use crate::evaluation::abstractions::domain::factory::{
-    AbstractDistanceTable, DistanceTableOptions,
-};
-use crate::evaluation::abstractions::domain::generator::DomainAbstraction;
+use crate::evaluation::abstractions::domain::abstract_operators::AbstractOperator;
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
+use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionLookupScratch;
 
 mod config;

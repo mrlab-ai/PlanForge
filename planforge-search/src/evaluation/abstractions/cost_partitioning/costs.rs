@@ -34,7 +34,13 @@ use planforge_sas::utils::interval::Interval;
 
 mod explicit;
 
-pub use crate::evaluation::abstractions::cartesian_set::*;
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, cartesian_set_intersection, cartesian_set_is_nonempty, subtract_cartesian_set,
+};
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractOperatorSourceSets, LabelSourceSet,
+};
+
 pub use explicit::*;
 
 #[derive(Debug)]

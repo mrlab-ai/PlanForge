@@ -1317,20 +1317,6 @@ impl<'task> PatternDatabase<'task> {
         self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num)
     }
 
-    pub(super) fn state_propositional_values<'state>(
-        &self,
-        state: &'state PdbState,
-    ) -> &'state [ExplicitValueIndex] {
-        &state.propositional
-    }
-
-    pub(super) fn state_numeric_values<'state>(
-        &self,
-        state: &'state PdbState,
-    ) -> &'state [NumericValue] {
-        &state.numeric
-    }
-
     fn rebuild_lookup_indexes(&mut self) {
         self.state_index.clear();
         self.pattern_index.clear();

@@ -7,20 +7,19 @@ use planforge_sas::state_registry::StateRegistry;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
+use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
-use crate::evaluation::abstractions::task::AbstractionUse;
 use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
-use crate::evaluation::abstractions::domain::factory::{
-    AbstractDistanceTable, DomainAbstractionFactory,
-};
-use crate::evaluation::abstractions::domain::generator::{
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::domain::abstraction::{
     DomainAbstraction, compute_hash_multipliers,
 };
-use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
+use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 
 fn simple_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(

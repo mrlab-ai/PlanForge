@@ -4,8 +4,9 @@ use anyhow::bail;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, Metric, NumericRootTask,
-    NumericRootTaskParts, NumericType, NumericVariable, Operator, OperatorCost, VariableIndex,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use super::*;

@@ -12,14 +12,15 @@ use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
 use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
 use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
-use crate::evaluation::abstractions::domain::cegar::{CegarConfig, FlawKind};
-use crate::evaluation::abstractions::domain::collection_generator::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, FlawTreatmentVariants,
-    InitSplitQuantity, VariableSubset,
+use crate::evaluation::abstractions::domain::collection::{
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity, VariableSubset,
 };
+use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
@@ -348,7 +349,7 @@ fn parses_forward_partition_deviation_split_direction() {
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(
         cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::cegar::SplitDirection::ForwardPartitionDeviation)
+        Some(crate::evaluation::abstractions::domain::flaws::SplitDirection::ForwardPartitionDeviation)
     );
 }
 
@@ -520,7 +521,7 @@ fn parses_goal_focused_domain_collection_options() {
     assert!(cfg.single_goal_tasks);
     assert_eq!(
         cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::cegar::SplitDirection::Backward)
+        Some(crate::evaluation::abstractions::domain::flaws::SplitDirection::Backward)
     );
 }
 

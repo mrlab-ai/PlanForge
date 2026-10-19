@@ -133,10 +133,10 @@ pub(super) fn finalize_abstraction(
         })
         .collect::<Vec<_>>();
     let mut generating_op_ids = vec![None; transition_system.backward.len()];
-    let distances = build_explicit_goal_distances(
+    let distances = backward_goal_distances(
         &transition_system,
         &transition_costs,
-        None,
+        || Ok(()),
         Some(&mut generating_op_ids),
     )?;
     let distance_table = AbstractDistanceTable {

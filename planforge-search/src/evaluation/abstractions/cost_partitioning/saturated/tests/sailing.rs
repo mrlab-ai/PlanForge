@@ -14,12 +14,12 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
     CartesianRefinementDirection,
 };
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
-use crate::evaluation::abstractions::domain::generator::{
+use crate::evaluation::abstractions::common::task::SingleGoalTask;
+use crate::evaluation::abstractions::domain::abstraction::{
     DomainAbstractionMetadata, compute_hash_multipliers,
 };
-use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
-use crate::evaluation::abstractions::task::SingleGoalTask;
+use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
 use planforge_sas::utils::interval::Interval;
 

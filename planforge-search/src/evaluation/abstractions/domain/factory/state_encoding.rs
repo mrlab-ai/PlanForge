@@ -628,7 +628,7 @@ impl DomainAbstractionFactory {
                 .partitions
                 .partitions(num_var_id)
                 .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
-            let part = utils::partition_for_value(parts, val).with_context(|| {
+            let part = partition_for_value(parts, val).with_context(|| {
                 format!(
                     "initial numeric value {val} not contained in any partition for numeric var {num_var_id}"
                 )
@@ -704,27 +704,6 @@ impl DomainAbstractionFactory {
                 .context("comparison reset hash overflow")?;
         }
         Ok(out)
-    }
-
-    #[allow(unused)]
-    pub(super) fn build_numeric_intervals(
-        &self,
-        state_hash: usize,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-        task: &dyn AbstractNumericTask,
-    ) -> Result<Vec<Interval>> {
-        prepare_comparison_tree_inputs_from_abstract_state(
-            task,
-            self.numeric_conditions.all(),
-            &self.partitions,
-            AbstractStateHash {
-                hash: state_hash,
-                num_props: self.domain_sizes.len(),
-                numeric_domain_sizes,
-                hash_multipliers,
-            },
-        )
     }
 
     pub(super) fn enumerate_states_with_evaluated_comparisons(

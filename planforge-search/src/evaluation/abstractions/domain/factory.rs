@@ -20,17 +20,15 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::abstract_operator_generator::{
-    AbstractOperator, AbstractOperatorGenerator, DomainMapping,
-};
+use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator, DomainMapping};
 use super::abstraction_numeric_var;
-use super::numeric_context::{
-    AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
-    prepare_comparison_tree_inputs_from_abstract_state_into,
+use super::comparison_inputs::{
+    AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state_into,
 };
-use super::numeric_partitions::NumericPartitions;
-use super::utils;
-use crate::evaluation::abstractions::coordinates::AdditiveNumericViews;
+use super::debug_dump::dump_distances;
+use super::partitions::NumericPartitions;
+use super::partitions::partition_for_value;
+use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 
 mod distances;
 mod plan_extraction;
@@ -39,10 +37,16 @@ mod source_sets;
 mod state_encoding;
 mod transition_system;
 
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, cartesian_set_intersection,
+};
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
+    AbstractTransitionSystem, LabelSourceSet,
+};
 use crate::evaluation::abstractions::cost_partitioning::costs::{
-    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionCostFunction,
-    AbstractTransitionSystem, CartesianSet, LabelSourceSet, RemainingCosts, SourceSetCost,
-    SourceSetCostAllocation, cartesian_set_intersection, saturation_need,
+    AbstractTransitionCostFunction, RemainingCosts, SourceSetCost, SourceSetCostAllocation,
+    saturation_need,
 };
 pub use distances::*;
 pub use plan_extraction::*;
@@ -132,8 +136,8 @@ impl DomainAbstractionFactory {
             ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");
             let actual = partitions
                 .partitions(VariableIndex::from_usize(n))
-                .map(|p| p.len())
-                .unwrap_or(0);
+                .with_context(|| format!("numeric variable {n} has no partitions"))?
+                .len();
             ensure!(
                 actual == parts,
                 "numeric_domain_sizes[{n}]={parts} does not match partitions len {actual}"
@@ -175,12 +179,8 @@ impl DomainAbstractionFactory {
         &self.numeric_domain_sizes
     }
 
-    /// The coordinated representation pieces changed by one CEGAR refinement.
-    ///
-    /// Keeping this crate-private and returning all four at once makes the
-    /// factory the only mutation boundary. Read-only consumers use the named
-    /// accessors above.
-    /// Refine the abstraction in place.
+    /// Refine the abstraction in place. This is the factory's only mutation
+    /// boundary; read-only consumers use the accessors above.
     ///
     /// Takes a closure rather than handing out the four `&mut` parts so that
     /// [`Self::state_constrained_props`] is always rederived afterwards. That

@@ -165,7 +165,6 @@ impl fmt::Display for ProjectedTaskBuildError {
 
 impl std::error::Error for ProjectedTaskBuildError {}
 
-#[allow(unused)]
 #[derive(Clone)]
 pub struct ProjectedTask<'task> {
     base: &'task dyn AbstractNumericTask,
@@ -188,8 +187,6 @@ pub struct ProjectedTask<'task> {
     numeric_state: Vec<NumericValue>,
     projected_var_to_original: Vec<VariableIndex>,
     projected_num_var_to_original: Vec<VariableIndex>,
-    original_var_to_projected: Vec<Option<usize>>,
-    original_num_var_to_projected: Vec<Option<usize>>,
     pattern_regular_projected_ids: Vec<usize>,
     pattern_numeric_projected_ids: Vec<usize>,
     variable_names: Vec<String>,
@@ -766,8 +763,6 @@ impl<'task> ProjectedTask<'task> {
             numeric_state: projected_numeric_values,
             projected_var_to_original,
             projected_num_var_to_original,
-            original_var_to_projected,
-            original_num_var_to_projected,
             pattern_regular_projected_ids,
             pattern_numeric_projected_ids,
             variable_names,
@@ -1220,11 +1215,6 @@ impl<'task> ProjectedTask<'task> {
 
         Ok(())
     }
-}
-
-#[allow(unused)]
-fn projected_propositional_packer(task: &dyn AbstractNumericTask) -> StatePacker {
-    projected_propositional_packer_from_variables(task.variables())
 }
 
 fn projected_propositional_packer_from_variables(variables: &[ExplicitVariable]) -> StatePacker {

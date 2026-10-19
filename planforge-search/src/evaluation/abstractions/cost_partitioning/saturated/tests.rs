@@ -20,7 +20,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 
-use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::config::CegarConfig;
 
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 

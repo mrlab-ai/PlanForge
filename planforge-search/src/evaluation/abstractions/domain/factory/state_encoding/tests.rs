@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{
     ZERO_VALUE,
 };
 
-use crate::evaluation::abstractions::domain::utils::identity_domain_mapping_and_sizes;
+use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
 
 /// `x < y` over two unbounded numeric variables: undecided in the only
 /// abstract numeric state, so enumeration branches on the comparison.
