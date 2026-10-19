@@ -35,9 +35,9 @@ use planforge_sas::utils::float_tolerance;
 use serde::{Deserialize, Serialize};
 
 use super::determine_include_in_lower;
-use crate::evaluation::abstractions::cegar::FlawKind;
-use crate::evaluation::abstractions::coordinates::comparison_refinement_dimensions;
-use crate::evaluation::abstractions::coordinates::numeric_requirement_for_comparison_fact;
+use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
+use crate::evaluation::abstractions::common::coordinates::numeric_requirement_for_comparison_fact;
 use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
 use crate::evaluation::abstractions::domain::cegar::determine_include_in_lower_for_flaw_search_state;
 use crate::evaluation::abstractions::domain::cegar::flaw_search::progression::{

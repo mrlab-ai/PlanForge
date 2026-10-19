@@ -14,14 +14,14 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, ConcreteState, FULL_TASK_PROGRESSIVE_ROOTS_ERROR,
-    GoalFocusedBackend, GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection,
-    build_goal_focused_collection,
+    BuiltReport, CollectionMembership, FULL_TASK_PROGRESSIVE_ROOTS_ERROR, GoalFocusedBackend,
+    GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
+use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
 use crate::evaluation::abstractions::domain::cegar::FlawKind;
-use crate::evaluation::abstractions::task::AbstractionUse;
 
 use super::cegar::CegarConfig;
 use super::cegar::SplitDirection;

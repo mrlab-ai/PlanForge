@@ -30,7 +30,7 @@ use super::numeric_context::{
 };
 use super::numeric_partitions::NumericPartitions;
 use super::utils;
-use crate::evaluation::abstractions::coordinates::AdditiveNumericViews;
+use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 
 mod distances;
 mod plan_extraction;

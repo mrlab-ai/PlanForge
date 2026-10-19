@@ -2925,7 +2925,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
 /// tasks where regression and progression differ, with both cut placements.
 #[test]
 fn regression_cegar_solves_the_regression_tasks_optimally() {
-    use crate::evaluation::abstractions::cegar::regression::test_tasks::{
+    use crate::evaluation::abstractions::common::cegar::regression::test_tasks::{
         diagonal_task, jump_task, linear_goal_task,
     };
     for (name, task, optimal_cost) in [

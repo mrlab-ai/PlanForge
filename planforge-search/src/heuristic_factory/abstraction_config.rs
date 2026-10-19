@@ -9,8 +9,8 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionGenerator, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
     CartesianSplitSelection,
 };
-use crate::evaluation::abstractions::cegar::FlawKind;
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection_generator::{
     DomainAbstractionCollectionGeneratorMultipleCegar,

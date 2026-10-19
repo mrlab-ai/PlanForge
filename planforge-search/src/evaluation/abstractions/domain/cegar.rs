@@ -30,17 +30,19 @@ pub use flaw_search::flaw_selection::{
     FlawTreatment, FlawTreatmentVariants, InitSplitMethod, TieBreak,
 };
 
-use crate::evaluation::abstractions::cegar::{
+use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
+use crate::evaluation::abstractions::common::cegar::{
     CegarDriver, CegarIterationResult, progress_concrete_state,
 };
-pub use crate::evaluation::abstractions::cegar::{CegarStopReason, FlawKind};
-use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
+pub use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
+use crate::evaluation::abstractions::common::concrete_state::{
+    get_initial_state, make_prop_state_packer,
+};
 use crate::evaluation::abstractions::domain::cegar::flaw_search::state::FlawSearchState;
-use crate::evaluation::abstractions::domain::utils::{get_initial_state, make_prop_state_packer};
 use crate::evaluation::validate_abstractable_goal;
 
 use super::abstract_operator_generator::DomainMapping;
-use crate::evaluation::abstractions::coordinates::{
+use crate::evaluation::abstractions::common::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
 };
@@ -315,9 +317,9 @@ impl Cegar {
         let config = &self.config;
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
         if config.flaw_kind == FlawKind::Regression {
-            crate::evaluation::abstractions::cegar::regression::ensure_regressable(
+            crate::evaluation::abstractions::common::cegar::regression::ensure_regressable(
                 task,
-                &crate::evaluation::abstractions::coordinates::Coordinates::new(task),
+                &crate::evaluation::abstractions::common::coordinates::Coordinates::new(task),
             )?;
         }
         ensure!(

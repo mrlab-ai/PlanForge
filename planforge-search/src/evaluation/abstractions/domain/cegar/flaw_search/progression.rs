@@ -19,11 +19,12 @@ use super::{
     Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
     dependent_numeric_flaws_for_comparison_prop_var, goal_facts,
 };
-use crate::evaluation::abstractions::coordinates::numeric_dimension_delta_for_operator;
+use crate::evaluation::abstractions::common::concrete_state::{
+    get_initial_state, make_prop_state_packer,
+};
+use crate::evaluation::abstractions::common::coordinates::numeric_dimension_delta_for_operator;
 use crate::evaluation::abstractions::domain::{
-    factory::WildcardPlanResult,
-    numeric_partitions::NumericPartitions,
-    utils::{get_initial_state, make_prop_state_packer, partition_for_value},
+    factory::WildcardPlanResult, numeric_partitions::NumericPartitions, utils::partition_for_value,
 };
 
 /// The task a flaw is measured against: the task itself, the numeric partitions
@@ -286,7 +287,7 @@ pub(crate) fn progress_and_get_deviation_flaws(
         .expect("CEGAR progression uses decoded numeric states");
     let mut next_prop_state = state.propositional().to_vec();
     let mut next_numeric_state = numeric.to_vec();
-    crate::evaluation::abstractions::cegar::progress_concrete_state(
+    crate::evaluation::abstractions::common::cegar::progress_concrete_state(
         op,
         axiom_evaluator,
         state.packer(),

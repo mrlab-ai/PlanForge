@@ -63,29 +63,33 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::validate_abstractable_goal;
 
-use super::cegar::regression::ensure_regressable;
-use super::cegar::{
+use super::common::cegar::regression::ensure_regressable;
+use super::common::cegar::{
     CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, progress_concrete_state,
 };
-use super::coordinates::Coordinates;
+use super::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, ConcreteState, FULL_TASK_PROGRESSIVE_ROOTS_ERROR,
-    GoalFocusedBackend, GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection,
-    RefinementRootDeadEnd, build_goal_focused_collection,
+    BuiltReport, CollectionMembership, FULL_TASK_PROGRESSIVE_ROOTS_ERROR, GoalFocusedBackend,
+    GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, RefinementRootDeadEnd,
+    build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::{
     CollectionStrategy, mix_seed, stable_text_seed,
 };
-use crate::evaluation::abstractions::coordinates::{
+use crate::evaluation::abstractions::common::concrete_state::{
+    ConcreteState, get_initial_state, make_prop_state_packer,
+};
+use crate::evaluation::abstractions::common::coordinates::{
     AdditiveNumericView, comparison_refinement_dimensions, numeric_dimension_delta_for_operator,
+};
+use crate::evaluation::abstractions::common::task::{
+    AbstractionUse, validate_abstraction_operator,
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, CartesianSet,
     LabelSourceSet, build_explicit_goal_distances, sorted_value_sets_overlap,
 };
 use crate::evaluation::abstractions::domain::factory::AbstractDistanceTable;
-use crate::evaluation::abstractions::domain::utils::{get_initial_state, make_prop_state_packer};
-use crate::evaluation::abstractions::task::{AbstractionUse, validate_abstraction_operator};
 use icaps26::*;
 use planforge_sas::utils::interval::Interval;
 

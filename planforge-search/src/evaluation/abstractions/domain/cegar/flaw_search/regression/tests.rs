@@ -1,6 +1,6 @@
 use super::*;
-use crate::evaluation::abstractions::cegar::FlawKind;
-use crate::evaluation::abstractions::cegar::regression::test_tasks::{
+use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::regression::test_tasks::{
     diagonal_task, jump_task, linear_goal_task,
 };
 use crate::evaluation::abstractions::domain::cegar::CegarConfig;

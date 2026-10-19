@@ -1,5 +1,5 @@
 //! Regression flaws for domain abstractions; see
-//! [`crate::evaluation::abstractions::cegar::regression`] for the definition.
+//! [`crate::evaluation::abstractions::common::cegar::regression`] for the definition.
 
 #[cfg(test)]
 mod tests;
@@ -13,16 +13,17 @@ use planforge_sas::numeric_task::{
 };
 
 use super::{Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw, SplitDirection};
-use crate::evaluation::abstractions::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::cegar::regression::{
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::cegar::regression::{
     Cut, InitialCut, InitialState, find_regression_flaw,
 };
-use crate::evaluation::abstractions::coordinates::Coordinates;
+use crate::evaluation::abstractions::common::concrete_state::{
+    get_initial_state, make_prop_state_packer,
+};
+use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::domain::{
-    abstract_operator_generator::DomainMapping,
-    factory::WildcardPlanResult,
+    abstract_operator_generator::DomainMapping, factory::WildcardPlanResult,
     numeric_partitions::NumericPartitions,
-    utils::{get_initial_state, make_prop_state_packer},
 };
 
 /// Regression flaw search on the wildcard plan, regressing through the first

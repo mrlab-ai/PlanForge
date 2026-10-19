@@ -1,6 +1,9 @@
 use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
 
 use super::*;
+use crate::evaluation::abstractions::common::concrete_state::{
+    make_prop_state_packer, set_initial_prop_values,
+};
 
 pub(crate) fn debug_print_abstraction_stats(
     iteration: usize,

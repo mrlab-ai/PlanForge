@@ -10,7 +10,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use crate::evaluation::abstractions::collections::goal_focused::ConcreteState;
+use super::concrete_state::ConcreteState;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AbstractionUse {

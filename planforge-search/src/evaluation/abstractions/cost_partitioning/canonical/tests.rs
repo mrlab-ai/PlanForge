@@ -7,10 +7,10 @@ use planforge_sas::state_registry::StateRegistry;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
+use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
-use crate::evaluation::abstractions::task::AbstractionUse;
 use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;

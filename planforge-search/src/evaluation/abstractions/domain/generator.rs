@@ -8,13 +8,12 @@ use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use super::abstract_operator_generator::AbstractOperator;
 use super::cegar::{Cegar, CegarConfig, CegarStopReason, SplitDirection};
 use super::factory::{AbstractDistanceTable, DistanceTableOptions, DomainAbstractionFactory};
-use crate::evaluation::abstractions::collections::goal_focused::{
-    CollectionMembership, ConcreteState,
-};
+use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
+use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
+use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     AbstractOperatorSourceSets, AbstractTransitionSystem,
 };
-use crate::evaluation::abstractions::task::{AbstractionUse, RootedTask};
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
 #[derive(Debug, Clone)]

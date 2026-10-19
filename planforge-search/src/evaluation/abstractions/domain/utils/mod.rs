@@ -7,14 +7,13 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericValue, VariableIndex,
 };
 use planforge_sas::state_registry::ConcreteStateView;
-use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use tracing::debug;
 
 use super::cegar::flaw_search::Flaw;
 use super::factory::{AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult};
 use super::numeric_partitions::NumericPartitions;
-use crate::evaluation::abstractions::cegar::progress_concrete_state;
+use crate::evaluation::abstractions::common::cegar::progress_concrete_state;
 use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
 use crate::evaluation::abstractions::domain::cegar::flaw_search::SplitDirection;
 use crate::evaluation::abstractions::domain::cegar::flaw_search::progression::{
@@ -65,42 +64,4 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     }
 
     Ok((domain_mapping, domain_sizes))
-}
-
-pub(crate) fn make_prop_state_packer(task: &dyn AbstractNumericTask) -> StatePacker {
-    let mut domain_sizes: Vec<u64> = Vec::with_capacity(task.variables().len());
-    for var in task.variables().iter() {
-        domain_sizes.push(var.domain_size() as u64);
-    }
-    StatePacker::new(&domain_sizes)
-}
-
-pub(crate) fn set_initial_prop_values(
-    task: &dyn AbstractNumericTask,
-    packer: &StatePacker,
-    buffer: &mut [u64],
-) {
-    let init = task.get_initial_propositional_state_values();
-    for (var_id, &val) in init.iter().enumerate() {
-        packer.set(buffer, var_id, val.index() as u64);
-    }
-}
-
-pub(crate) fn get_initial_state(
-    task: &dyn AbstractNumericTask,
-    state_packer: &StatePacker,
-    axiom_evaluator: &AxiomEvaluator,
-) -> Result<(Vec<u64>, Vec<NumericValue>)> {
-    let mut buffer = vec![0u64; state_packer.num_bins()];
-    set_initial_prop_values(task, state_packer, &mut buffer);
-    let mut numeric_state: Vec<NumericValue> = task.get_initial_numeric_state_values().to_vec();
-    for value in &mut numeric_state {
-        *value = float_tolerance::canonicalize(*value);
-    }
-
-    axiom_evaluator
-        .evaluate(&mut buffer, &mut numeric_state)
-        .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
-
-    Ok((buffer, numeric_state))
 }

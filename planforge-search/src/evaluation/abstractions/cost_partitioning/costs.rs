@@ -34,7 +34,7 @@ use planforge_sas::utils::interval::Interval;
 
 mod explicit;
 
-pub use crate::evaluation::abstractions::cartesian_set::*;
+pub use crate::evaluation::abstractions::common::cartesian_set::*;
 pub use explicit::*;
 
 #[derive(Debug)]

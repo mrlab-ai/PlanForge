@@ -226,7 +226,9 @@ fn union_constrained_props(left: &CartesianSet, right: &CartesianSet) -> Arc<[u3
     union.into()
 }
 
-pub(super) fn cartesian_set_is_nonempty(region: &CartesianSet) -> bool {
+pub(in crate::evaluation::abstractions) fn cartesian_set_is_nonempty(
+    region: &CartesianSet,
+) -> bool {
     region.propositions.iter().all(|values| !values.is_empty())
         && region.numeric.iter().all(|interval| !interval.is_empty())
 }
@@ -354,7 +356,7 @@ fn sorted_value_difference(
 
 /// Returns a disjoint cover of `region \\ removed`. `removed` must be a
 /// nonempty subset of `region`.
-pub(super) fn subtract_cartesian_set(
+pub(in crate::evaluation::abstractions) fn subtract_cartesian_set(
     region: &CartesianSet,
     removed: &CartesianSet,
 ) -> Vec<CartesianSet> {

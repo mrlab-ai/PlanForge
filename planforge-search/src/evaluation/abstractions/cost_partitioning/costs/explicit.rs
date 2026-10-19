@@ -9,7 +9,7 @@ use planforge_sas::numeric_task::{ExplicitFact, OperatorIndex};
 use planforge_sas::utils::float_tolerance;
 
 use super::RemainingCosts;
-use crate::evaluation::abstractions::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {

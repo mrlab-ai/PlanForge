@@ -1,9 +1,9 @@
 //! Regression flaws for Cartesian abstractions; see
-//! [`crate::evaluation::abstractions::cegar::regression`] for the definition.
+//! [`crate::evaluation::abstractions::common::cegar::regression`] for the definition.
 
 use super::super::*;
 use super::*;
-use crate::evaluation::abstractions::cegar::regression::{
+use crate::evaluation::abstractions::common::cegar::regression::{
     Cut, InitialCut, InitialState, find_regression_flaw as find_trace_flaw,
 };
 use planforge_sas::numeric_task::ONE_VALUE;

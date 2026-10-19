@@ -11,8 +11,9 @@ use planforge_sas::utils::interval::UNBOUNDED_INTERVAL;
 
 use super::target_centered::split_for_missing_numeric_requirement;
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_facts};
-use crate::evaluation::abstractions::coordinates::numeric_dimension_delta_for_operator;
-use crate::evaluation::abstractions::coordinates::numeric_requirement_for_comparison_fact;
+use crate::evaluation::abstractions::common::concrete_state::make_prop_state_packer;
+use crate::evaluation::abstractions::common::coordinates::numeric_dimension_delta_for_operator;
+use crate::evaluation::abstractions::common::coordinates::numeric_requirement_for_comparison_fact;
 use crate::evaluation::abstractions::domain::{
     abstract_operator_generator::DomainMapping,
     cegar::flaw_search::{
@@ -21,7 +22,7 @@ use crate::evaluation::abstractions::domain::{
     },
     factory::WildcardPlanResult,
     numeric_partitions::NumericPartitions,
-    utils::{make_prop_state_packer, partitions_for_interval},
+    utils::partitions_for_interval,
 };
 
 pub enum SequenceDirection {

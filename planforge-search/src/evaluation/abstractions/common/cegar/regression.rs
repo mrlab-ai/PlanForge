@@ -30,8 +30,8 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::interval::Interval;
 
-use crate::evaluation::abstractions::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::coordinates::Coordinates;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::coordinates::Coordinates;
 
 /// Where a case-3 split separates the initial state from `p_0`. Cases 1 and 2
 /// always cut at a bound of a regressed partial state.
