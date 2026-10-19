@@ -16,10 +16,6 @@ pub enum FlawKind {
     Progression,
     Regression,
     ExecuteEntirePlan,
-    SequenceProgression,
-    SequenceRegression,
-    SequenceBidirectional,
-    TargetCentered,
 }
 
 impl fmt::Display for FlawKind {
@@ -28,10 +24,6 @@ impl fmt::Display for FlawKind {
             Self::Progression => write!(f, "progression"),
             Self::Regression => write!(f, "regression"),
             Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
-            Self::SequenceProgression => write!(f, "sequence_progression"),
-            Self::SequenceRegression => write!(f, "sequence_regression"),
-            Self::SequenceBidirectional => write!(f, "sequence_bidirectional"),
-            Self::TargetCentered => write!(f, "target_centered"),
         }
     }
 }
@@ -42,11 +34,9 @@ impl crate::config::FromOptionValue for FlawKind {
             "progression" => Ok(Self::Progression),
             "regression" => Ok(Self::Regression),
             "execute_entire_plan" => Ok(Self::ExecuteEntirePlan),
-            "sequence_progression" => Ok(Self::SequenceProgression),
-            "sequence_regression" => Ok(Self::SequenceRegression),
-            "sequence_bidirectional" => Ok(Self::SequenceBidirectional),
-            "target_centered" => Ok(Self::TargetCentered),
-            other => Err(format!("invalid FlawKind `{other}`")),
+            other => Err(format!(
+                "invalid flaw_kind `{other}`; expected progression, regression or execute_entire_plan"
+            )),
         }
     }
 }

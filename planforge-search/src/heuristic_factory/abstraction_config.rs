@@ -711,11 +711,7 @@ fn apply_cartesian_source_options(
                 config.abstraction.random_seed = Some(u64::from_option_value(arg.value())?);
             }
             "flaw_kind" => {
-                let flaw_kind = FlawKind::from_option_value(arg.value())?;
-                crate::evaluation::abstractions::cartesian::validate_cartesian_flaw_kind(
-                    flaw_kind,
-                )?;
-                config.abstraction.flaw_kind = flaw_kind;
+                config.abstraction.flaw_kind = FlawKind::from_option_value(arg.value())?;
             }
             "refinement_direction" => {
                 let value = String::from_option_value(arg.value())?;

@@ -7,7 +7,6 @@ pub struct CartesianAbstractionGenerator {
 impl CartesianAbstractionGenerator {
     pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
-        validate_cartesian_flaw_kind(config.flaw_kind).map_err(anyhow::Error::msg)?;
         Ok(Self { config })
     }
 
@@ -90,9 +89,6 @@ impl CartesianAbstractionGenerator {
                         &axiom_evaluator,
                         &refinement_root,
                     )?,
-                    _ => unreachable!(
-                        "unsupported Cartesian flaw kind passed constructor validation"
-                    ),
                 };
                 match check {
                     PlanCheck::ConcretePlan(plan) => {

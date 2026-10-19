@@ -81,11 +81,10 @@ impl Default for CegarConfig {
 }
 
 impl CegarConfig {
-    /// The split direction refinement uses: the configured one, or the flaw
-    /// kind's default.
+    /// The split direction refinement uses: the configured one, or concrete
+    /// splits.
     pub fn effective_split_direction(&self) -> SplitDirection {
-        self.split_direction
-            .unwrap_or_else(|| self.flaw_kind.default_split_direction())
+        self.split_direction.unwrap_or(SplitDirection::Forward)
     }
 }
 

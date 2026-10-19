@@ -1,18 +1,5 @@
 use super::*;
 
-/// Rejects the flaw kinds Cartesian CEGAR does not implement.
-pub fn validate_cartesian_flaw_kind(flaw_kind: FlawKind) -> Result<(), String> {
-    match flaw_kind {
-        FlawKind::Progression | FlawKind::Regression | FlawKind::ExecuteEntirePlan => Ok(()),
-        FlawKind::SequenceProgression
-        | FlawKind::SequenceRegression
-        | FlawKind::SequenceBidirectional
-        | FlawKind::TargetCentered => Err(format!(
-            "Cartesian abstractions do not support flaw_kind={flaw_kind}; expected progression, regression or execute_entire_plan"
-        )),
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianRefinementDirection {
     Progression,

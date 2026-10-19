@@ -54,7 +54,7 @@ fn parses_astar_domain_abstraction_with_named_options() {
 #[test]
 fn parses_astar_canonical_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, random_seed=7))",
+        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, random_seed=7))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -65,7 +65,7 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
     assert_eq!(cfg.init_split_quantity, InitSplitQuantity::All);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::SequenceProgression);
+    assert_eq!(cfg.flaw_kind, FlawKind::Progression);
     assert_eq!(cfg.random_seed, Some(7));
 }
 
@@ -239,7 +239,7 @@ fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
 }
 
 #[test]
-fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
+fn cartesian_sources_reject_unknown_flaw_kinds() {
     let h =
         astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=sequence_regression)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
@@ -247,22 +247,17 @@ fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
     )
-    .expect_err("unsupported Cartesian flaw kind must fail during parsing");
-    assert!(error.contains("flaw_kind=sequence_regression"));
-}
-
-#[test]
-fn direct_cartesian_abstraction_rejects_unsupported_flaw_kind() {
-    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
-    let mut cegar = CegarConfig::default();
-    cegar.apply_options(&h.args).unwrap();
-
-    let result = crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator::new(
-        super::cartesian_config_from_cegar(&cegar),
-    );
+    .expect_err("an unknown flaw kind must fail during parsing");
     assert!(
-        result.is_err(),
-        "flaw_kind=sequence_regression must not silently become progression"
+        error.contains("invalid flaw_kind `sequence_regression`"),
+        "got `{error}`"
+    );
+
+    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
+    let error = CegarConfig::default().apply_options(&h.args).unwrap_err();
+    assert!(
+        error.contains("invalid flaw_kind `sequence_regression`"),
+        "got `{error}`"
     );
 }
 
@@ -455,7 +450,7 @@ fn parses_astar_lmcutnumeric_with_named_options() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_bidirectional, collection_strategy=complementary, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=execute_entire_plan, collection_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -465,7 +460,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert_eq!(cfg.init_split_quantity, InitSplitQuantity::All);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::SequenceBidirectional);
+    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
     assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
     assert_eq!(cfg.random_seed, Some(7));
     assert!(cfg.debug);

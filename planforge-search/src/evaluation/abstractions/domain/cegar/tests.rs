@@ -395,7 +395,6 @@ fn fix_flaws_respects_max_abstraction_size_limit() {
             blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
         },
         &mut rng,
-        0,
     )
     .unwrap();
 
@@ -467,7 +466,6 @@ fn blacklisted_propositional_vars_are_not_refined() {
             blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
         },
         &mut rng,
-        0,
     )
     .unwrap();
 
@@ -596,9 +594,9 @@ fn numeric_init_split_is_applied_for_encoded_init_split_var() {
 fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
     let task = one_dimensional_sailing_like_task();
     let config = CegarConfig {
-        flaw_kind: FlawKind::TargetCentered,
+        flaw_kind: FlawKind::Progression,
         split_direction: Some(SplitDirection::Backward),
-        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
         max_iterations: 64,
         random_seed: Some(7),
         ..Default::default()
@@ -622,7 +620,7 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
 }
 
 #[test]
-fn target_centered_builds_goal_side_partitions() {
+fn backward_splits_build_goal_side_partitions() {
     fn split_points(outcome: &CegarOutcome) -> Vec<NumericValue> {
         let mut points = outcome
             .final_state
@@ -641,9 +639,9 @@ fn target_centered_builds_goal_side_partitions() {
 
     let task = one_dimensional_sailing_like_task();
     let target_centered = Cegar::new(CegarConfig {
-        flaw_kind: FlawKind::TargetCentered,
+        flaw_kind: FlawKind::Progression,
         split_direction: Some(SplitDirection::Backward),
-        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
         max_iterations: 5,
         random_seed: Some(7),
         ..Default::default()
@@ -653,7 +651,7 @@ fn target_centered_builds_goal_side_partitions() {
     .expect("target-centered CEGAR should build goal-side partitions");
     let progression = Cegar::new(CegarConfig {
         flaw_kind: FlawKind::Progression,
-        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
         max_iterations: 5,
         random_seed: Some(7),
         ..Default::default()
@@ -684,92 +682,10 @@ fn target_centered_builds_goal_side_partitions() {
 }
 
 #[test]
-fn max_refined_single_atom_is_sticky() {
-    let variables = vec![ExplicitVariable::new(
-        1,
-        "p".into(),
-        vec!["p0".into()],
-        None,
-        ExplicitValueIndex::new(0),
-    )];
-    let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, None),
-        NumericVariable::new("y".into(), NumericType::Regular, None),
-    ];
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals: vec![],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
-        operators: vec![],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-    let config = CegarConfig {
-        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
-        random_seed: Some(7),
-        ..Default::default()
-    };
-    let mut rng = SmallRng::seed_from_u64(7);
-    let mut domain_mapping = vec![vec![ExplicitValueIndex::new(0)]];
-    let mut domain_sizes = vec![1];
-    let mut partitions = NumericPartitions::trivial(&task);
-    let mut numeric_domain_sizes = vec![1, 1];
-    let mut blacklisted_prop_var_ids = HashSet::new();
-    let mut blacklisted_numeric_var_ids = HashSet::new();
-
-    for step in 0..4 {
-        let value = (step + 1) as f64;
-        let flaws = vec![
-            Flaw::Numeric(NumericFlaw {
-                numeric_var_id: VariableIndex::new(0),
-                value: NumericValue::new(value),
-                include_in_lower: true,
-                step,
-            }),
-            Flaw::Numeric(NumericFlaw {
-                numeric_var_id: VariableIndex::new(1),
-                value: NumericValue::new(value),
-                include_in_lower: true,
-                step,
-            }),
-        ];
-        let refined = fix_flaws(
-            &config,
-            &task,
-            &flaws,
-            RefinementState {
-                domain_mapping: &mut domain_mapping,
-                domain_sizes: &mut domain_sizes,
-                partitions: &mut partitions,
-                numeric_domain_sizes: &mut numeric_domain_sizes,
-                blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
-            },
-            &mut rng,
-            1,
-        )
-        .unwrap();
-        assert_eq!(
-            refined.refined_numeric_vars,
-            HashSet::from([VariableIndex::from_usize(0)])
-        );
-    }
-
-    assert_eq!(numeric_domain_sizes, vec![5, 1]);
-}
-
-#[test]
 fn stale_numeric_flaw_at_existing_boundary_contributes_empty_summary() {
     let task = one_dimensional_sailing_like_task();
     let config = CegarConfig {
-        flaw_treatment: FlawTreatmentVariants::OneSplitPerAtom,
+        flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
         random_seed: Some(1),
         ..Default::default()
     };
@@ -800,7 +716,6 @@ fn stale_numeric_flaw_at_existing_boundary_contributes_empty_summary() {
             blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
         },
         &mut rng,
-        1,
     )
     .unwrap();
 

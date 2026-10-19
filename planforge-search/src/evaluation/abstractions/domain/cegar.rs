@@ -285,7 +285,6 @@ impl Cegar {
                                 blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
                             },
                             &mut rng,
-                            plan.wildcard_plan.len(),
                         )
                     },
                 )

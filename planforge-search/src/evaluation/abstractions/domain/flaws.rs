@@ -14,7 +14,6 @@
 
 pub mod progression;
 pub mod regression;
-pub mod sequence;
 pub mod state;
 pub mod target_centered;
 #[cfg(test)]
@@ -45,10 +44,6 @@ use crate::evaluation::abstractions::domain::flaws::progression::{
     get_execute_entire_plan_flaws, get_progression_flaws,
 };
 use crate::evaluation::abstractions::domain::flaws::regression::get_regression_flaws;
-use crate::evaluation::abstractions::domain::flaws::sequence::{
-    SequenceDirection, get_sequence_flaws,
-};
-use crate::evaluation::abstractions::domain::flaws::state::FlawSearchState;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::evaluation::abstractions::domain::partitions::partition_for_value;
 
@@ -151,34 +146,6 @@ impl crate::config::FromOptionValue for Option<SplitDirection> {
 }
 
 impl FlawKind {
-    /// Default split-value direction associated with this flaw-search variant.
-    ///
-    /// `TargetCentered` defaults to `Backward` (boundary splits); all other
-    /// variants default to `Forward` (concrete-value splits). Callers may
-    /// override via [`Self::get_flaws_with_direction`].
-    pub fn default_split_direction(self) -> SplitDirection {
-        match self {
-            Self::TargetCentered => SplitDirection::Backward,
-            _ => SplitDirection::Forward,
-        }
-    }
-
-    pub fn get_flaws(
-        &self,
-        task: &dyn AbstractNumericTask,
-        partitions: &NumericPartitions,
-        domain_mapping: &DomainMapping,
-        wildcard_plan: &WildcardPlanResult,
-    ) -> Result<FlawSearchOutcome> {
-        self.get_flaws_with_direction(
-            task,
-            partitions,
-            domain_mapping,
-            wildcard_plan,
-            self.default_split_direction(),
-        )
-    }
-
     pub fn get_flaws_with_direction(
         &self,
         task: &dyn AbstractNumericTask,
@@ -188,49 +155,15 @@ impl FlawKind {
         direction: SplitDirection,
     ) -> Result<FlawSearchOutcome> {
         match self {
-            Self::Progression | Self::TargetCentered => {
-                get_progression_flaws(task, partitions, wildcard_plan, direction)
-            }
+            Self::Progression => get_progression_flaws(task, partitions, wildcard_plan, direction),
             Self::Regression => {
                 get_regression_flaws(task, partitions, domain_mapping, wildcard_plan, direction)
             }
             Self::ExecuteEntirePlan => {
                 get_execute_entire_plan_flaws(task, partitions, wildcard_plan, direction)
             }
-            Self::SequenceProgression => get_sequence_flaws(
-                task,
-                partitions,
-                domain_mapping,
-                wildcard_plan,
-                SequenceDirection::Progression,
-            )
-            .map(FlawSearchOutcome::without_plan),
-            // Sequence progression flaw fallback already searched here.
-            Self::SequenceRegression => get_sequence_flaws(
-                task,
-                partitions,
-                domain_mapping,
-                wildcard_plan,
-                SequenceDirection::Regression,
-            )
-            .map(FlawSearchOutcome::without_plan),
-            Self::SequenceBidirectional => get_sequence_flaws(
-                task,
-                partitions,
-                domain_mapping,
-                wildcard_plan,
-                SequenceDirection::Bidirectional,
-            )
-            .map(FlawSearchOutcome::without_plan),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DependentNumericRefinement {
-    None,
-    One,
-    All,
 }
 
 pub fn get_flaws(
@@ -240,7 +173,13 @@ pub fn get_flaws(
     wildcard_plan: &WildcardPlanResult,
     flaw_kind: FlawKind,
 ) -> Result<FlawSearchOutcome> {
-    flaw_kind.get_flaws(task, partitions, domain_mapping, wildcard_plan)
+    flaw_kind.get_flaws_with_direction(
+        task,
+        partitions,
+        domain_mapping,
+        wildcard_plan,
+        SplitDirection::Forward,
+    )
 }
 
 /// The goal facts a flaw search has to reach, deduplicated.
@@ -289,50 +228,6 @@ fn dependent_numeric_flaws_for_comparison_prop_var(
             out.push(NumericFlaw {
                 numeric_var_id: dep_var_id,
                 value: concrete_value,
-                include_in_lower: !include_in_lower,
-                step,
-            });
-        }
-    }
-    out
-}
-
-fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
-    task: &dyn AbstractNumericTask,
-    partitions: &NumericPartitions,
-    prop_var_id: VariableIndex,
-    state: &FlawSearchState,
-    step: usize,
-) -> Vec<NumericFlaw> {
-    let Some(tree) = task.numeric_conditions().for_var(prop_var_id) else {
-        return vec![];
-    };
-
-    let mut out: Vec<NumericFlaw> = Vec::new();
-    for dep_var_id in comparison_refinement_dimensions(task, tree) {
-        let include_in_lower = determine_include_in_lower_for_flaw_search_state(tree, state);
-
-        if can_split_numeric_var(
-            partitions,
-            dep_var_id,
-            state.numeric[dep_var_id.index()].upper,
-            include_in_lower,
-        ) {
-            out.push(NumericFlaw {
-                numeric_var_id: dep_var_id,
-                value: state.numeric[dep_var_id.index()].upper,
-                include_in_lower,
-                step,
-            });
-        } else if can_split_numeric_var(
-            partitions,
-            dep_var_id,
-            state.numeric[dep_var_id.index()].lower,
-            !include_in_lower,
-        ) {
-            out.push(NumericFlaw {
-                numeric_var_id: dep_var_id,
-                value: state.numeric[dep_var_id.index()].lower,
                 include_in_lower: !include_in_lower,
                 step,
             });
@@ -457,27 +352,6 @@ fn determine_include_in_lower(
         // value belongs to [split_value, inf).
         upper_inputs[split_var_id.index()] = Interval::new(split_value, INF_VALUE, true, false);
     }
-
-    prefers_lower_half(
-        tree.evaluate_interval(&lower_inputs),
-        tree.evaluate_interval(&upper_inputs),
-    )
-}
-
-fn determine_include_in_lower_for_flaw_search_state(
-    tree: &NumericCondition,
-    state: &FlawSearchState,
-) -> bool {
-    let lower_inputs: Vec<Interval> = state
-        .numeric
-        .iter()
-        .map(|v| Interval::singleton(v.lower))
-        .collect();
-    let upper_inputs: Vec<Interval> = state
-        .numeric
-        .iter()
-        .map(|v| Interval::singleton(v.upper))
-        .collect();
 
     prefers_lower_half(
         tree.evaluate_interval(&lower_inputs),

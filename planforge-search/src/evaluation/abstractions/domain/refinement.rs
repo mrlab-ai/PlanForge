@@ -12,12 +12,9 @@ use tracing::debug;
 use super::abstract_operators::DomainMapping;
 use super::abstraction::compute_abstraction_size_u128;
 use super::config::CegarConfig;
-use super::flaws::{
-    DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var,
-};
+use super::flaws::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 use super::partitions::NumericPartitions;
-use super::split_selection::{ChosenFlaws, FlawTreatment, TieBreak};
-use crate::evaluation::abstractions::common::cegar::FlawKind;
+use super::split_selection::{ChosenFlaws, TieBreak};
 
 /// The only abstract domain a refined condition variable ever has: the value
 /// that establishes the condition in its own class, the value that does not in
@@ -77,12 +74,6 @@ impl RefinementSummary {
 
     fn mark_numeric(&mut self, var_id: VariableIndex) {
         self.refined_numeric_vars.insert(var_id);
-    }
-
-    fn merge(&mut self, other: Self) {
-        self.refined_propositional_vars
-            .extend(other.refined_propositional_vars);
-        self.refined_numeric_vars.extend(other.refined_numeric_vars);
     }
 }
 
@@ -305,7 +296,6 @@ pub fn fix_flaws(
     flaws: &[Flaw],
     mut state: RefinementState<'_>,
     rng: &mut SmallRng,
-    plan_length: usize,
 ) -> Result<RefinementSummary> {
     let eligible_flaws = filter_eligible_flaws(task, state.partitions, state.domain_sizes, flaws);
     if eligible_flaws.filtered_stale > 0 {
@@ -328,48 +318,19 @@ pub fn fix_flaws(
             Some(rank) => TieBreak::Rank(rank),
             None => TieBreak::Random(rng),
         },
-        plan_length,
     );
 
-    let mut refined_summary = RefinementSummary::default();
-    let mut last_refined = None;
-    for cand in chosen_flaws {
-        let dependent_numeric_refinement = if matches!(config.flaw_kind, FlawKind::TargetCentered) {
-            DependentNumericRefinement::All
-        } else {
-            DependentNumericRefinement::One
-        };
-        let mut chosen = flaws[cand.idx].clone();
-        if dependent_numeric_refinement != DependentNumericRefinement::All
-            && let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, cand.restricted_dep)
+    for candidate in chosen_flaws {
+        let mut chosen = flaws[candidate.idx].clone();
+        if let (Flaw::Propositional(pf), Some(restricted)) = (&mut chosen, candidate.restricted_dep)
         {
             pf.dependent_numeric_flaws = restricted;
         }
-
-        if refined_summary.is_empty()
-            || config
-                .flaw_treatment
-                .should_be_refined(&chosen, last_refined.unwrap())
-        {
-            let flaw_refined = try_refine_from_flaw(
-                task,
-                &chosen,
-                config,
-                state.reborrow(),
-                dependent_numeric_refinement,
-            )?;
-
-            if let Some(flaw_refined) = flaw_refined {
-                refined_summary.merge(flaw_refined);
-                if !config.flaw_treatment.refine_all() {
-                    return Ok(refined_summary);
-                }
-                last_refined = Some(&flaws[cand.idx]);
-            }
+        if let Some(refined) = try_refine_from_flaw(task, &chosen, config, state.reborrow())? {
+            return Ok(refined);
         }
     }
-
-    Ok(refined_summary)
+    Ok(RefinementSummary::default())
 }
 
 /// The partition count of a numeric variable that was just split.
@@ -385,7 +346,6 @@ fn try_refine_from_flaw(
     flaw: &Flaw,
     config: &CegarConfig,
     state: RefinementState<'_>,
-    dependent_numeric_refinement: DependentNumericRefinement,
 ) -> Result<Option<RefinementSummary>> {
     let RefinementState {
         domain_mapping,
@@ -496,27 +456,15 @@ fn try_refine_from_flaw(
                 prop_domain_size_changed = true;
             }
 
-            // Optional dependent numeric refinements (currently produced only for comparison vars).
-            if dependent_numeric_refinement != DependentNumericRefinement::None
-                && !pf.dependent_numeric_flaws.is_empty()
-            {
+            // Dependent numeric refinements, produced only for comparison
+            // variables: split the first operand that can still be split.
+            if !pf.dependent_numeric_flaws.is_empty() {
                 let mut any_numeric_changed = false;
                 let mut refined = RefinementSummary::default();
                 if prop_domain_size_changed {
                     refined.mark_propositional(var_id);
                 }
-                let iter: Box<dyn Iterator<Item = &NumericFlaw>> =
-                    match dependent_numeric_refinement {
-                        DependentNumericRefinement::None => Box::new(std::iter::empty()),
-                        DependentNumericRefinement::All => {
-                            Box::new(pf.dependent_numeric_flaws.iter())
-                        }
-                        DependentNumericRefinement::One => {
-                            Box::new(pf.dependent_numeric_flaws.iter())
-                        }
-                    };
-
-                for dep in iter {
+                for dep in &pf.dependent_numeric_flaws {
                     let num_id = dep.numeric_var_id;
 
                     if !can_refine_numeric_variable_with_blacklist(
@@ -534,9 +482,7 @@ fn try_refine_from_flaw(
                             split_partition_count(partitions, num_id);
                         any_numeric_changed = true;
                         refined.mark_numeric(num_id);
-                        if dependent_numeric_refinement == DependentNumericRefinement::One {
-                            break;
-                        }
+                        break;
                     }
                 }
                 return Ok((any_numeric_changed || changed).then_some(refined));
