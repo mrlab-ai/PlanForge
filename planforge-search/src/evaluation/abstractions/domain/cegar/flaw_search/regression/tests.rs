@@ -1,192 +1,40 @@
-use crate::evaluation::abstractions::domain::utils::identity_domain_mapping_and_sizes;
-use crate::evaluation::abstractions::domain::{
-    factory::DomainAbstractionFactory, numeric_partitions::NumericPartitions,
-};
-use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
-use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
-    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
-    OperatorCost, OperatorIndex,
-};
-use planforge_sas::utils::interval::Interval;
-
 use super::*;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::single_switch_task;
+use crate::evaluation::abstractions::cegar::FlawKind;
+use crate::evaluation::abstractions::cegar::regression::test_tasks::{
+    diagonal_task, jump_task, linear_goal_task,
+};
+use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 
+/// Domain-abstraction CEGAR with regression flaws alone reaches a concrete
+/// optimal plan on the tasks where regression and progression differ, in
+/// both split directions.
 #[test]
-fn regression_flaws_find_precondition_violation() {
-    let task = single_switch_task(
-        3,
-        ExplicitValueIndex::new(2),
-        vec![ExplicitValueIndex::new(0)],
-    );
-
-    let (mut domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    // Put 1 and 2 in the same mapping group.
-    domain_mapping[0] = vec![
-        ExplicitValueIndex::new(0),
-        ExplicitValueIndex::new(1),
-        ExplicitValueIndex::new(1),
-    ];
-    let partitions = NumericPartitions::trivial(&task);
-    let numeric_domain_sizes: Vec<usize> = vec![];
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
-    let plan = factory
-        .compute_wildcard_plan(&task, true, false)
-        .unwrap()
-        .expect("plan exists");
-
-    // The abstraction cannot tell `v=1` from `v=2`, so regressing the goal
-    // `v=2` through `set` leaves the unachievable precondition `v=1`.
-    let flaws =
-        get_regression_flaws(&task, factory.partitions(), factory.domain_mapping(), &plan).unwrap();
-    assert_eq!(flaws.len(), 1);
-    match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
-        _ => panic!("expected propositional flaw"),
+fn regression_cegar_solves_the_regression_tasks_optimally() {
+    for (name, task, optimal_cost) in [
+        ("jump", jump_task(), 4.0),
+        ("linear goal", linear_goal_task(), 2.0),
+        ("diagonal", diagonal_task(), 2.0),
+    ] {
+        for direction in [SplitDirection::Forward, SplitDirection::Backward] {
+            let abstraction = DomainAbstractionGenerator::new(CegarConfig {
+                max_abstraction_size: 10_000,
+                flaw_kind: FlawKind::Regression,
+                split_direction: Some(direction),
+                ..Default::default()
+            })
+            .unwrap()
+            .generate(&task)
+            .unwrap();
+            assert!(
+                abstraction.metadata.solved_by_self,
+                "{name}, {direction}: no concrete plan"
+            );
+            assert_eq!(
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+                optimal_cost,
+                "{name}, {direction}"
+            );
+        }
     }
-}
-
-#[test]
-fn regression_flaws_find_initial_state_violation() {
-    let task = single_switch_task(
-        3,
-        ExplicitValueIndex::new(1),
-        vec![ExplicitValueIndex::new(0)],
-    );
-
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let partitions = NumericPartitions::trivial(&task);
-    let numeric_domain_sizes: Vec<usize> = vec![];
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
-    let plan = factory
-        .compute_wildcard_plan(&task, true, false)
-        .unwrap()
-        .expect("plan exists");
-
-    // The same task started at `v=1` violates the plan's initial-state
-    // requirement `v=0`.
-    let flawed_task = single_switch_task(
-        3,
-        ExplicitValueIndex::new(1),
-        vec![ExplicitValueIndex::new(1)],
-    );
-    let flaws = get_regression_flaws(
-        &flawed_task,
-        factory.partitions(),
-        factory.domain_mapping(),
-        &plan,
-    )
-    .unwrap();
-    assert_eq!(flaws.len(), 1);
-    match &flaws[0] {
-        Flaw::Propositional(pf) => assert_eq!(pf.fact, ExplicitFact::propositional(0, 1)),
-        _ => panic!("expected propositional flaw"),
-    }
-}
-
-#[test]
-fn regression_flaws_regress_goal_comparison_through_additive_constant_effect() {
-    let variables = vec![ExplicitVariable::new(
-        ConditionValue::DOMAIN_SIZE,
-        "cmp".into(),
-        vec!["true".into(), "false".into()],
-        Some(0),
-        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
-    )];
-    let numeric_variables = vec![
-        NumericVariable::new("x".into(), NumericType::Regular, None),
-        NumericVariable::new("delta".into(), NumericType::Constant, None),
-        NumericVariable::new("threshold".into(), NumericType::Constant, None),
-    ];
-    let comparison_axioms = vec![ComparisonAxiom::new(
-        VariableIndex::from_usize(0),
-        VariableIndex::from_usize(0),
-        VariableIndex::from_usize(2),
-        ComparisonOperator::GreaterThanOrEqual,
-    )];
-    let op = Operator::new(
-        "inc".into(),
-        vec![],
-        vec![],
-        vec![AssignmentEffect::new(
-            VariableIndex::from_usize(0),
-            AssignmentOperation::Plus,
-            VariableIndex::from_usize(1),
-            false,
-            vec![],
-        )],
-        OperatorCost::new(1),
-    );
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals: vec![ExplicitFact::propositional(0, 0)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(1)],
-        numeric_state: vec![
-            NumericValue::new(0.0),
-            NumericValue::new(3.0),
-            NumericValue::new(10.0),
-        ],
-        operators: vec![op],
-        axioms: vec![],
-        comparison_axioms,
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let partitions = NumericPartitions::with_partitions(vec![
-        vec![Interval::unbounded()],
-        vec![Interval::singleton(NumericValue::new(3.0))],
-        vec![Interval::singleton(NumericValue::new(10.0))],
-    ]);
-    let numeric_domain_sizes: Vec<usize> = vec![1, 1, 1];
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
-    let plan = WildcardPlanResult {
-        wildcard_plan: vec![vec![OperatorIndex::new(0)]],
-        abstract_state_hashes: vec![],
-        abstract_prop_states: vec![],
-        abstract_numeric_states: vec![],
-    };
-
-    let flaws =
-        get_regression_flaws(&task, factory.partitions(), factory.domain_mapping(), &plan).unwrap();
-    assert!(
-        flaws.iter().any(|flaw| matches!(
-        flaw,
-        Flaw::Numeric(NumericFlaw {
-            numeric_var_id,
-            value,
-            include_in_lower: false,
-            step: 0,
-        }) if *numeric_var_id == VariableIndex::new(0) && *value == NumericValue::new(7.0)
-        )),
-        "expected split x >= 7 after regressing x >= 10 through x += 3, got {flaws:?}"
-    );
 }

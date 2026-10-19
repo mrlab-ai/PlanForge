@@ -1,174 +1,155 @@
+//! Regression flaws for domain abstractions; see
+//! [`crate::evaluation::abstractions::cegar::regression`] for the definition.
+
 #[cfg(test)]
 mod tests;
 
-use anyhow::Result;
-use planforge_sas::{
-    axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue, Operator, VariableIndex},
+use std::sync::Arc;
+
+use anyhow::{Context, Result, ensure};
+use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, OperatorIndex, VariableIndex,
 };
 
-use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
-
-use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
+use super::{Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw, SplitDirection};
+use crate::evaluation::abstractions::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::cegar::regression::{
+    Cut, InitialCut, InitialState, find_regression_flaw,
+};
+use crate::evaluation::abstractions::coordinates::Coordinates;
 use crate::evaluation::abstractions::domain::{
     abstract_operator_generator::DomainMapping,
-    cegar::flaw_search::{numeric_requirement_for_comparison_fact, state::FlawSearchState},
     factory::WildcardPlanResult,
     numeric_partitions::NumericPartitions,
-    utils::make_prop_state_packer,
+    utils::{get_initial_state, make_prop_state_packer},
 };
 
-#[allow(unused_assignments)]
+/// Regression flaw search on the wildcard plan, regressing through the first
+/// operator of every step. Without a flaw, those operators are a concrete
+/// plan. Concrete-value splits cut next to the initial value in case 3;
+/// wanted-value splits cut at the regressed bound.
 pub fn get_regression_flaws(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     domain_mapping: &DomainMapping,
     wildcard_plan: &WildcardPlanResult,
-) -> Result<Vec<Flaw>> {
-    let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
-    let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
+    direction: SplitDirection,
+) -> Result<FlawSearchOutcome> {
+    let operators = wildcard_plan
+        .wildcard_plan
+        .iter()
+        .enumerate()
+        .map(|(step, operators)| {
+            operators
+                .first()
+                .copied()
+                .with_context(|| format!("wildcard plan step {} has no operator", step + 1))
+        })
+        .collect::<Result<Vec<OperatorIndex>>>()?;
+    let states = (0..=operators.len())
+        .map(|index| abstract_state_set(task, partitions, domain_mapping, wildcard_plan, index))
+        .collect::<Result<Vec<_>>>()?;
 
-    let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
-    materialize_comparison_requirements(task, &mut state);
-
-    let mut collected_flaws: Vec<Flaw> = Vec::new();
-    let mut step: usize = wildcard_plan.wildcard_plan.len();
-
-    // Deviation flaws are not possible because numeric variables are always
-    // unbounded.
-    for equivalent_ops in wildcard_plan.wildcard_plan.iter().rev() {
-        for &op_id in equivalent_ops.iter() {
-            let Some(op) = task.get_operators().get(op_id.index()) else {
-                continue;
-            };
-            let operator_flaws = get_regression_precondition_flaws(op, &state, step);
-            if operator_flaws.is_empty() {
-                state.regress(op, &axiom_evaluator)?;
-                materialize_comparison_requirements(task, &mut state);
-                collected_flaws.clear();
-                break;
-            } else {
-                collected_flaws.extend(operator_flaws);
-            }
-        }
-
-        if !collected_flaws.is_empty() {
-            break;
-        }
-
-        step -= 1;
-    }
-
-    if !collected_flaws.is_empty() {
-        return Ok(collected_flaws);
-    }
-
-    state.revert_axioms(&axiom_evaluator)?;
-    let init_flaws = get_init_state_flaws(task, partitions, &state);
-
-    Ok(init_flaws)
+    let packer = Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), packer.clone());
+    let (packed, numeric) = get_initial_state(task, &packer, &axiom_evaluator)?;
+    let propositions = (0..task.get_num_variables())
+        .map(|var| ExplicitValueIndex::from_usize(packer.get(&packed, var) as usize))
+        .collect::<Vec<_>>();
+    let coordinates = Coordinates::new(task);
+    let initial_cut = match direction {
+        SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => InitialCut::Concrete,
+        SplitDirection::Backward => InitialCut::Wanted,
+    };
+    let Some(flaw) = find_regression_flaw(
+        task,
+        &coordinates,
+        &states,
+        &operators,
+        InitialState {
+            propositions: &propositions,
+            numeric: &numeric,
+        },
+        initial_cut,
+    )?
+    else {
+        return Ok(FlawSearchOutcome {
+            flaws: Vec::new(),
+            concrete_plan: Some(operators),
+        });
+    };
+    // Flaws in the abstract state before step `i` belong to step `i`, like
+    // the precondition flaws progression finds there.
+    let step = flaw.state + 1;
+    let flaw = match flaw.cut {
+        Cut::Numeric {
+            var,
+            boundary,
+            lower_includes_boundary,
+            ..
+        } => Flaw::Numeric(NumericFlaw {
+            numeric_var_id: var,
+            value: boundary,
+            include_in_lower: lower_includes_boundary,
+            step,
+        }),
+        Cut::Propositional { var, wanted } => Flaw::Propositional(PropFlaw {
+            fact: ExplicitFact::propositional(var.index(), wanted.index()),
+            dependent_numeric_flaws: Vec::new(),
+            step,
+        }),
+    };
+    Ok(FlawSearchOutcome {
+        flaws: vec![flaw],
+        concrete_plan: None,
+    })
 }
 
-pub fn get_regression_precondition_flaws(
-    op: &Operator,
-    state: &FlawSearchState,
-    step: usize,
-) -> Vec<Flaw> {
-    let mut out: Vec<Flaw> = Vec::new();
-    for eff in op.effects().iter() {
-        if !state.value_is_held_for_var(eff.var_id(), eff.value()) {
-            let eff_var_id = eff.var_id();
-            out.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::propositional(eff_var_id.index(), eff.value().index()),
-                dependent_numeric_flaws: vec![],
-                step,
-            }));
-        }
-    }
-    out
-}
-
-pub fn get_init_state_flaws(
+/// The concrete states of the `index`-th abstract state of the wildcard
+/// plan: per variable, the values its abstract value maps from, and per
+/// numeric variable, its partition.
+fn abstract_state_set(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
-    state: &FlawSearchState,
-) -> Vec<Flaw> {
-    let initial_prop_state = task.get_initial_propositional_state_values();
-    let initial_numeric_state = task.get_initial_numeric_state_values();
-    let mut flaws: Vec<Flaw> = Vec::new();
-    for (var, value) in initial_prop_state.iter().enumerate() {
-        if !state.value_is_held_for_var(VariableIndex::from_usize(var), *value) {
-            flaws.push(Flaw::Propositional(PropFlaw {
-                fact: ExplicitFact::propositional(var, value.index()),
-                dependent_numeric_flaws: vec![],
-                step: 0,
-            }));
-        }
-    }
-
-    for (numeric_var_id, requirement) in state.numeric.iter().enumerate() {
-        if *requirement == UNBOUNDED_INTERVAL || requirement.is_empty() {
-            continue;
-        }
-        let Some(&initial_value) = initial_numeric_state.get(numeric_var_id) else {
-            continue;
-        };
-        if requirement.contains(initial_value) {
-            continue;
-        }
-        let Some((value, include_in_lower)) =
-            split_for_missing_numeric_requirement(*requirement, initial_value)
-        else {
-            continue;
-        };
-        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
-        if can_split_numeric_var(partitions, numeric_var_id, value, include_in_lower) {
-            flaws.push(Flaw::Numeric(NumericFlaw {
-                numeric_var_id,
-                value,
-                include_in_lower,
-                step: 0,
-            }));
-        }
-    }
-
-    flaws
-}
-
-pub(crate) fn materialize_comparison_requirements(
-    task: &dyn AbstractNumericTask,
-    state: &mut FlawSearchState,
-) {
-    for var in 0..state.concrete_prop.len() {
-        let Some(value) = state.concrete_prop[var] else {
-            continue;
-        };
-        let fact = ExplicitFact::propositional(var, value.index());
-        let Some((numeric_var_id, required_interval)) =
-            numeric_requirement_for_comparison_fact(task, &fact)
-        else {
-            continue;
-        };
-        state.numeric[numeric_var_id] =
-            state.numeric[numeric_var_id].intersection(&required_interval);
-    }
-}
-
-fn split_for_missing_numeric_requirement(
-    requirement: Interval,
-    initial_value: NumericValue,
-) -> Option<(NumericValue, bool)> {
-    if (initial_value < requirement.lower
-        || (initial_value == requirement.lower && !requirement.lower_closed))
-        && requirement.lower.is_finite()
-    {
-        return Some((requirement.lower, !requirement.lower_closed));
-    }
-    if (initial_value > requirement.upper
-        || (initial_value == requirement.upper && !requirement.upper_closed))
-        && requirement.upper.is_finite()
-    {
-        return Some((requirement.upper, requirement.upper_closed));
-    }
-    None
+    domain_mapping: &DomainMapping,
+    wildcard_plan: &WildcardPlanResult,
+    index: usize,
+) -> Result<CartesianSet> {
+    let abstract_props = wildcard_plan
+        .abstract_prop_states
+        .get(index)
+        .with_context(|| format!("wildcard plan has no abstract propositional state {index}"))?;
+    let abstract_numeric = wildcard_plan
+        .abstract_numeric_states
+        .get(index)
+        .with_context(|| format!("wildcard plan has no abstract numeric state {index}"))?;
+    ensure!(
+        abstract_props.len() == task.get_num_variables()
+            && abstract_numeric.len() == task.numeric_variables().len(),
+        "abstract state {index} of the wildcard plan does not cover the task's variables"
+    );
+    let propositions = domain_mapping
+        .iter()
+        .zip(abstract_props)
+        .map(|(mapping, &abstract_value)| {
+            mapping
+                .iter()
+                .enumerate()
+                .filter(|&(_, mapped)| mapped.index() == abstract_value)
+                .map(|(value, _)| ExplicitValueIndex::from_usize(value))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let numeric = abstract_numeric
+        .iter()
+        .enumerate()
+        .map(|(var, &part)| {
+            partitions
+                .partition_interval(VariableIndex::from_usize(var), part)
+                .with_context(|| format!("numeric variable {var} has no partition {part}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let domain_sizes = domain_mapping.iter().map(Vec::len).collect::<Vec<_>>();
+    Ok(CartesianSet::new(propositions, numeric, &domain_sizes))
 }
