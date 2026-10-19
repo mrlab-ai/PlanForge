@@ -55,7 +55,6 @@ pub(super) fn log_abstraction_candidate_report(
     components: &[AbstractionComponent<'_>],
     order: &[usize],
     abstract_state_ids: &[Option<usize>],
-    scoring_function: ScoringFunction,
 ) {
     let inactive = order
         .iter()
@@ -100,7 +99,7 @@ pub(super) fn log_abstraction_candidate_report(
             );
             continue;
         };
-        let score = compute_score(h, stolen, scoring_function);
+        let score = compute_score(h, stolen);
         let stats = abstract_source_set_stats(&abstraction.abstract_source_sets);
         let metadata = &abstraction.metadata;
         info!(

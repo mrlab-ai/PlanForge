@@ -141,9 +141,7 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
 fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
     ScpConfig {
         max_time: 100.0,
-        max_size: 10_000_000,
         table_construction_max_time: 100.0,
-        order_optimization_max_time: 0.05,
         random_seed: Some(1),
         partitioning,
         ..Default::default()

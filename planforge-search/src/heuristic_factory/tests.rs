@@ -13,7 +13,7 @@ use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
 use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
-    CostPartitioningMethod, LegacyScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpConfig,
+    CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
 use crate::evaluation::abstractions::domain::cegar::{CegarConfig, FlawKind};
 use crate::evaluation::abstractions::domain::collection_generator::{
@@ -72,22 +72,20 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
 #[test]
 fn parses_hierarchical_scp_options_and_sources() {
     let h = astar_heuristic(
-        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), online=false, diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, residual_sweeps=2, partitioning=region))",
+        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, partitioning=region))",
     );
     assert_eq!(h.name, "scp");
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 3);
-    assert_eq!(options.len(), 9);
+    assert_eq!(options.len(), 7);
     abstraction_config::validate_scp_combinator_options(&options).unwrap();
     let mut config = ScpConfig::default();
     ApplyOptions::apply_options(&mut config, &options).unwrap();
-    assert!(!config.online);
     assert!(config.diversify);
     assert_eq!(config.samples, 123);
     assert_eq!(config.max_orders, 17);
     assert_eq!(config.order_generator, OrderGenerator::Diverse);
     assert_eq!(config.initial_order_generation_max_time, 9.0);
-    assert_eq!(config.residual_sweeps, 2);
 }
 
 #[test]
@@ -141,12 +139,12 @@ fn parses_hierarchical_cartesian_collection_source() {
 #[test]
 fn parses_strict_icaps26_cartesian_source() {
     let h = astar_heuristic(
-        "astar(scp(icaps26_cartesian(pick=min_unwanted,max_time=900,random_seed=7),online=false,partitioning=region))",
+        "astar(scp(icaps26_cartesian(pick=min_unwanted,max_time=900,random_seed=7),partitioning=region))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "icaps26_cartesian");
-    assert_eq!(options.len(), 2);
+    assert_eq!(options.len(), 1);
     let config = abstraction_config::apply_icaps26_cartesian_options(
         sources[0].args(),
         abstraction_config::ComponentUse::RegionalCostPartitioning,
@@ -215,13 +213,10 @@ fn parses_shared_construction_deadlines_for_canonical_and_scp() {
     assert_eq!(sources.len(), 1);
     assert!(deadline.is_some());
 
-    let scp = astar_heuristic(
-        "astar(scp(cartesian(max_states=100),online=false,construction_max_time=900))",
-    );
+    let scp = astar_heuristic("astar(scp(cartesian(max_states=100),construction_max_time=900))");
     let source_config = abstraction_config::scp_sources_options_and_deadline(&scp.args).unwrap();
     assert_eq!(source_config.sources.len(), 1);
-    assert_eq!(source_config.options.len(), 1);
-    assert_eq!(source_config.options[0].key(), Some("online"));
+    assert_eq!(source_config.options.len(), 0);
     assert!(source_config.construction_deadline.is_some());
 }
 
@@ -306,34 +301,6 @@ fn direct_cartesian_abstraction_rejects_cegar_only_options() {
 }
 
 #[test]
-fn legacy_cartesian_collection_conversion_preserves_flaw_kind() {
-    let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        flaw_kind: FlawKind::ExecuteEntirePlan,
-        ..Default::default()
-    };
-    let cartesian = super::cartesian_config_from_collection(&config, false).unwrap();
-    assert_eq!(cartesian.flaw_kind, FlawKind::ExecuteEntirePlan);
-
-    config.flaw_kind = FlawKind::Regression;
-    let error = super::cartesian_config_from_collection(&config, false).unwrap_err();
-    assert!(error.contains("flaw_kind=regression"), "got `{error}`");
-}
-
-#[test]
-fn legacy_cartesian_collection_rejects_domain_only_options() {
-    for option in [
-        "max_collection_size=100",
-        "use_wildcard_plans=true",
-        "flaw_treatment=first",
-        "init_split_method=identity",
-    ] {
-        let h = astar_heuristic(&format!("astar(scp_online_cartesian({option}))"));
-        let error = super::validate_legacy_cartesian_collection_options(&h.args).unwrap_err();
-        assert!(error.contains("not supported"), "got `{error}`");
-    }
-}
-
-#[test]
 fn rejects_boolean_cost_partitioning_mode() {
     let h = astar_heuristic("astar(scp(domain(), partitioning=label))");
     let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
@@ -405,48 +372,6 @@ fn parses_full_task_interleaved_domain_collection() {
 }
 
 #[test]
-fn parses_astar_scp_online_with_named_options() {
-    let h = astar_heuristic(
-        "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, partitioning=region, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, collection_strategy=complementary, random_seed=7, debug=true))",
-    );
-    let mut cfg = LegacyScpConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.max_time, 12.5);
-    assert_eq!(cfg.table_construction_max_time, 34.5);
-    assert_eq!(cfg.max_size, 2048);
-    assert_eq!(cfg.interval, 3);
-    assert_eq!(cfg.partitioning, CostPartitioningMethod::Region);
-    assert_eq!(cfg.saturator, Saturator::Perimstar);
-    assert_eq!(cfg.scoring_function, ScoringFunction::MaxHeuristic);
-    assert_eq!(cfg.order_generator, OrderGenerator::DynamicGreedy);
-    assert_eq!(cfg.order_optimization_max_time, 1.5);
-    assert!(cfg.combine_labels);
-    assert_eq!(cfg.collection_config.max_collection_size, 123);
-    assert_eq!(cfg.collection_config.total_max_time, 4.5);
-    assert_eq!(
-        cfg.collection_config.blacklist_option,
-        VariableSubset::NonGoals
-    );
-    assert_eq!(
-        cfg.collection_config.init_split_quantity,
-        InitSplitQuantity::All
-    );
-    assert!(!cfg.collection_config.use_wildcard_plans);
-    assert!(cfg.collection_config.combine_labels);
-    assert_eq!(
-        cfg.collection_config.flaw_kind,
-        FlawKind::SequenceProgression
-    );
-    assert_eq!(
-        cfg.collection_config.collection_strategy,
-        CollectionStrategy::Complementary
-    );
-    assert_eq!(cfg.collection_config.random_seed, Some(7));
-    assert_eq!(cfg.random_seed, Some(7));
-    assert!(cfg.collection_config.debug);
-}
-
-#[test]
 fn parses_astar_greedy_numeric_pdb_with_named_options() {
     let h = astar_heuristic(
         "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
@@ -508,29 +433,6 @@ fn too_many_positional_args_errors() {
     let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
         .unwrap_err();
     assert!(err.contains("too many positional"), "got `{err}`");
-}
-
-#[test]
-fn scp_online_accepts_nested_collection_call() {
-    let h = astar_heuristic(
-        "astar(scp_online(collection=multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
-    );
-    let mut cfg = LegacyScpConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.collection_config.max_collection_size, 99);
-    assert_eq!(cfg.collection_config.total_max_time, 2.5);
-    assert_eq!(cfg.saturator, Saturator::Perimstar);
-}
-
-#[test]
-fn nested_collection_ignores_inner_call_name() {
-    // The derived nested arm consumes the inner call's args without
-    // validating its name — `collection=anything(max_collection_size=1)` is
-    // equivalent. The wrapping name is treated as a free-form label.
-    let h = astar_heuristic("astar(scp_online(collection=bogus(max_collection_size=1)))");
-    let mut cfg = LegacyScpConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.collection_config.max_collection_size, 1);
 }
 
 #[test]
@@ -630,29 +532,6 @@ fn parses_astar_multi_domain_abstractions_with_trailing_comma() {
 }
 
 #[test]
-fn parses_explicit_offline_scp() {
-    let h = astar_heuristic("astar(scp_online(online=false))");
-    let mut config = LegacyScpConfig::default();
-    ApplyOptions::apply_options(&mut config, &h.args).unwrap();
-    assert!(!config.online);
-}
-
-#[test]
-fn rejects_unknown_options_inside_known_heuristics() {
-    let h = astar_heuristic("astar(scp_online(deviation_flaws=false))");
-    let err = ApplyOptions::apply_options(&mut LegacyScpConfig::default(), &h.args).unwrap_err();
-    assert!(err.contains("deviation_flaws"), "got `{err}`");
-
-    let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");
-    let err = ApplyOptions::apply_options(
-        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
-        &h.args,
-    )
-    .unwrap_err();
-    assert!(err.contains("deviation_flaws"), "got `{err}`");
-}
-
-#[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
     let h = astar_heuristic("astar(multi_domain_abstractions(exec_entire_plan=randomize))");
     let err = ApplyOptions::apply_options(
@@ -714,4 +593,20 @@ fn external_registration_rejects_duplicate_external_names() {
         register_external_heuristics(vec![test_external("duplicate"), test_external("duplicate")])
             .unwrap_err();
     assert!(error.contains("registered more than once"), "got `{error}`");
+}
+
+#[test]
+fn rejects_unknown_options_inside_known_heuristics() {
+    let h = astar_heuristic("astar(scp(domain(), deviation_flaws=false))");
+    let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
+    let err = abstraction_config::validate_scp_combinator_options(&options).unwrap_err();
+    assert!(err.contains("deviation_flaws"), "got `{err}`");
+
+    let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");
+    let err = ApplyOptions::apply_options(
+        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
+        &h.args,
+    )
+    .unwrap_err();
+    assert!(err.contains("deviation_flaws"), "got `{err}`");
 }

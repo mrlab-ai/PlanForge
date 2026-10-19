@@ -344,10 +344,7 @@ fn scp_online_initial_h_for_collection(
 ) -> f64 {
     let config = ScpConfig {
         max_time: 100.0,
-        max_size: 10_000_000,
-        interval: 100_000_000_000,
         table_construction_max_time: 100.0,
-        order_optimization_max_time: ORDER_OPTIMIZATION_MAX_TIME,
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
@@ -390,10 +387,7 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
         .expect("scp_online domain abstractions should build");
     let config = ScpConfig {
         max_time: 100.0,
-        max_size: 10_000_000,
-        interval: 100_000_000_000,
         table_construction_max_time: 100.0,
-        order_optimization_max_time: ORDER_OPTIMIZATION_MAX_TIME,
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };

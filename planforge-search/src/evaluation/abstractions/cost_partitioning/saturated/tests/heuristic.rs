@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
+fn scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
     let partition = |distances| CostPartitioningHeuristic {
         lookup_tables: vec![LookupTable {
             abstraction_id: 0,
@@ -11,65 +11,19 @@ fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
         goal_cover_goal_id: None,
     };
     let mut state = ScpState::new(Some(1));
-    let mut initial_h = 0.0;
+    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![5.0, 1.0]));
+    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![4.0, 4.0]));
+    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![4.0, 4.0]));
 
-    SaturatedCostPartitioningHeuristic::retain_cp(
-        &mut state,
-        partition(vec![5.0, 1.0]),
-        &[Some(0)],
-        &mut initial_h,
-        true,
-        usize::MAX,
+    assert_eq!(state.cp_heuristics.len(), 2, "duplicates are discarded");
+    assert_eq!(
+        SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(0)]),
+        5.0
     );
-    SaturatedCostPartitioningHeuristic::retain_cp(
-        &mut state,
-        partition(vec![4.0, 4.0]),
-        &[Some(0)],
-        &mut initial_h,
-        true,
-        usize::MAX,
-    );
-
-    assert_eq!(state.cp_heuristics.len(), 2);
-    assert_eq!(initial_h, 5.0);
     assert_eq!(
         SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(1)]),
         4.0
     );
-}
-
-#[test]
-fn online_scp_rejects_a_non_improving_state_specific_order() {
-    let partition = |distances| CostPartitioningHeuristic {
-        lookup_tables: vec![LookupTable {
-            abstraction_id: 0,
-            distances,
-            unknown_value: f64::INFINITY,
-        }],
-        goal_cover_goal_id: None,
-    };
-    let mut state = ScpState::new(Some(1));
-    let mut current_h = 0.0;
-
-    SaturatedCostPartitioningHeuristic::retain_cp(
-        &mut state,
-        partition(vec![5.0]),
-        &[Some(0)],
-        &mut current_h,
-        false,
-        usize::MAX,
-    );
-    SaturatedCostPartitioningHeuristic::retain_cp(
-        &mut state,
-        partition(vec![4.0]),
-        &[Some(0)],
-        &mut current_h,
-        false,
-        usize::MAX,
-    );
-
-    assert_eq!(state.cp_heuristics.len(), 1);
-    assert_eq!(current_h, 5.0);
 }
 
 #[test]
@@ -95,9 +49,7 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
 fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     let task = independent_goals_task();
     let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
-    let mut config = scp_config(Saturator::All, true);
-    config.online = false;
-    config.interval = 1;
+    let config = scp_config(Saturator::All, true);
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         vec![component],
@@ -124,7 +76,7 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
             .transitions
             .is_empty()
     );
-    assert!(heuristic.state.borrow().improvement_ended);
+    assert!(heuristic.state.borrow().built);
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
 }
 

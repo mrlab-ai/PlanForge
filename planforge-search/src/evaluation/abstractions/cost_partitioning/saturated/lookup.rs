@@ -192,10 +192,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         mask
     }
 
-    pub(super) fn retain_abstraction_lookup_tables(state: &mut ScpState, component_count: usize) {
+    /// Keeps the goal distance table of every abstraction with a positive
+    /// entry, for the maximum over the abstraction heuristics.
+    pub(super) fn retain_abstraction_lookup_tables(state: &mut ScpState) {
         assert!(
             state.abstraction_lookup_tables.is_empty(),
-            "standalone envelope must be retained exactly once"
+            "the abstraction lookup tables are retained exactly once"
         );
         state.abstraction_lookup_tables = std::mem::take(&mut state.goal_distances_by_abstraction)
             .into_iter()
@@ -213,16 +215,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                     })
             })
             .collect();
-        state.size_kb = state.size_kb.saturating_add(
-            state
-                .abstraction_lookup_tables
-                .iter()
-                .map(|table| table.distances.len())
-                .sum::<usize>()
-                .saturating_mul(std::mem::size_of::<f64>())
-                / 1024,
-        );
-        state.lookup_mask = Self::compute_lookup_mask(state, component_count);
     }
 }
 

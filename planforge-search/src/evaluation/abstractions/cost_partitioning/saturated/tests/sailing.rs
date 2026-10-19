@@ -147,7 +147,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
     )
     .expect("the complementary sailing collection must have a goal-cover order");
     assert_eq!(&goal_cover_order[..3], &[5, 0, 1]);
-    let regional_h = initial_cartesian_scp_value(&restricted_task, abstractions, true, 10.0);
+    let regional_h = initial_cartesian_scp_value(&restricted_task, abstractions, true);
 
     println!(
         "SAILING_PERFECT_COLLECTION standalone_max={standalone_max} regional_scp={regional_h}"
@@ -160,7 +160,6 @@ fn initial_cartesian_scp_value(
     task: &dyn AbstractNumericTask,
     abstractions: Vec<CartesianAbstraction>,
     partitioning: bool,
-    order_optimization_max_time: f64,
 ) -> f64 {
     let initial_prop = task.get_initial_propositional_state_values();
     let initial_numeric = task.get_initial_numeric_state_values();
@@ -176,13 +175,9 @@ fn initial_cartesian_scp_value(
         })
         .collect::<Vec<_>>();
     let config = ScpConfig {
-        online: true,
         table_construction_max_time: 30.0,
-        order_optimization_max_time,
-        max_size: 10_000_000,
         combine_labels: false,
         saturator: Saturator::All,
-        residual_sweeps: 0,
         random_seed: Some(1),
         partitioning: if partitioning {
             CostPartitioningMethod::Region
@@ -201,7 +196,7 @@ fn initial_cartesian_scp_value(
     .expect("failed to construct oracle SCP heuristic");
     let mut state = heuristic.state.borrow_mut();
     let mut partitions = heuristic
-        .maybe_build_cp(task, &mut state, &abstract_state_ids)
+        .build_cost_partitionings(task, &mut state, &abstract_state_ids)
         .expect("oracle SCP construction failed");
     assert_eq!(partitions.len(), 1);
     partitions
@@ -245,23 +240,17 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     }
 
     let config = ScpConfig {
-        online: true,
         max_time: 300.0,
         table_construction_max_time: 30.0,
-        max_size: 10_000_000,
         diversify: false,
         samples: 1_000,
         max_orders: usize::MAX,
-        interval: usize::MAX,
         combine_labels: false,
-        scoring_function: ScoringFunction::MaxHeuristic,
         order_generator: OrderGenerator::Greedy,
         initial_order_generation_max_time: 0.0,
-        order_optimization_max_time: 0.0,
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: CostPartitioningMethod::Region,
-        residual_sweeps: 1,
     };
 
     let heuristic = SaturatedCostPartitioningHeuristic::new(
@@ -275,21 +264,11 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
     {
         let mut state = heuristic.state.borrow_mut();
-        let mut max_h =
-            SaturatedCostPartitioningHeuristic::compute_max_h(&state, &abstract_state_ids);
         let mut partitions = heuristic
-            .maybe_build_cp(transformed_task, &mut state, &abstract_state_ids)
+            .build_cost_partitionings(transformed_task, &mut state, &abstract_state_ids)
             .expect("initial SCP construction failed");
         assert_eq!(partitions.len(), 1);
-        let cp = partitions.pop().unwrap();
-        SaturatedCostPartitioningHeuristic::retain_cp(
-            &mut state,
-            cp,
-            &abstract_state_ids,
-            &mut max_h,
-            true,
-            usize::MAX,
-        );
+        SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partitions.pop().unwrap());
     }
 
     let state = heuristic.state.borrow();

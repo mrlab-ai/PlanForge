@@ -6,21 +6,15 @@ pub(super) struct CandidateCostPartitions {
 }
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    /// The order SCP starts from at the evaluated state: the greedy order, or
+    /// for interval SCP over a goal-focused collection, its goal-cover order.
     pub(super) fn compute_order_for_state(
         &self,
-        task: &dyn AbstractNumericTask,
         state: &mut ScpState,
         abstract_state_ids: &[Option<usize>],
         components: &[AbstractionComponent<'_>],
-        deadline: Option<Instant>,
-    ) -> Result<Vec<usize>, EvaluationError> {
-        let order = self.compute_state_dependent_order(
-            task,
-            state,
-            abstract_state_ids,
-            components,
-            deadline,
-        )?;
+    ) -> Vec<usize> {
+        let order = Self::compute_greedy_order_for_state(state, abstract_state_ids);
         if self.config.partitioning.uses_regions()
             && let Some(goal_cover_order) = self.goal_cover_order(
                 &order,
@@ -29,86 +23,34 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 true,
             )
         {
-            if state.evaluated_states == 0 {
-                info!(
-                    "scp: using goal-cover regional-SCP order, first_components={:?}",
-                    goal_cover_order.iter().take(24).collect::<Vec<_>>()
-                );
-            }
-            return Ok(goal_cover_order);
+            info!(
+                "scp: using the goal-cover order, first abstractions {:?}",
+                goal_cover_order.iter().take(24).collect::<Vec<_>>()
+            );
+            return goal_cover_order;
         }
-        Ok(order)
+        order
     }
 
-    pub(super) fn compute_state_dependent_order(
-        &self,
-        task: &dyn AbstractNumericTask,
-        state: &mut ScpState,
-        abstract_state_ids: &[Option<usize>],
-        components: &[AbstractionComponent<'_>],
-        deadline: Option<Instant>,
-    ) -> Result<Vec<usize>, EvaluationError> {
-        match self.config.order_generator {
-            OrderGenerator::Greedy => Ok(Self::compute_greedy_order_for_state(
-                state,
-                abstract_state_ids,
-                self.config.scoring_function,
-            )),
-            OrderGenerator::Random => {
-                let total = state.goal_distances_by_abstraction.len();
-                let mut order: Vec<usize> = (0..total).collect();
-                order.shuffle(&mut state.rng);
-                Ok(order)
-            }
-            OrderGenerator::DynamicGreedy => self.compute_dynamic_greedy_order_for_state(
-                task,
-                state,
-                abstract_state_ids,
-                components,
-                deadline,
-            ),
-            OrderGenerator::Diverse => Ok(Self::compute_greedy_order_for_state(
-                state,
-                abstract_state_ids,
-                self.config.scoring_function,
-            )),
-        }
-    }
-
+    /// The orders tried at a sample: its greedy order, and for diverse orders
+    /// also a random permutation.
     pub(super) fn diverse_orders_for_sample(
         &self,
-        task: &dyn AbstractNumericTask,
         state: &mut ScpState,
         abstract_state_ids: &[Option<usize>],
-        components: &[AbstractionComponent<'_>],
-        deadline: Option<Instant>,
-    ) -> Result<Vec<Vec<usize>>, EvaluationError> {
+    ) -> Vec<Vec<usize>> {
+        let greedy = Self::compute_greedy_order_for_state(state, abstract_state_ids);
         if self.config.order_generator != OrderGenerator::Diverse {
-            return self
-                .compute_state_dependent_order(
-                    task,
-                    state,
-                    abstract_state_ids,
-                    components,
-                    deadline,
-                )
-                .map(|order| vec![order]);
+            return vec![greedy];
         }
-
-        let greedy = Self::compute_greedy_order_for_state(
-            state,
-            abstract_state_ids,
-            self.config.scoring_function,
-        );
         let mut random = (0..state.goal_distances_by_abstraction.len()).collect::<Vec<_>>();
         random.shuffle(&mut state.rng);
-        Ok(deduplicate_orders(vec![greedy, random]))
+        deduplicate_orders(vec![greedy, random])
     }
 
     pub(super) fn compute_greedy_order_for_state(
         state: &mut ScpState,
         abstract_state_ids: &[Option<usize>],
-        scoring_function: ScoringFunction,
     ) -> Vec<usize> {
         let total = state.goal_distances_by_abstraction.len();
         let mut order: Vec<usize> = (0..total).collect();
@@ -138,7 +80,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                     .get(abs_id)
                     .copied()
                     .unwrap_or(0.0);
-                compute_score(h, stolen, scoring_function)
+                compute_score(h, stolen)
             })
             .collect();
 
@@ -149,129 +91,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         });
 
         order
-    }
-
-    pub(super) fn compute_dynamic_greedy_order_for_state(
-        &self,
-        task: &dyn AbstractNumericTask,
-        state: &mut ScpState,
-        abstract_state_ids: &[Option<usize>],
-        components: &[AbstractionComponent<'_>],
-        deadline: Option<Instant>,
-    ) -> Result<Vec<usize>, EvaluationError> {
-        if self.config.partitioning.uses_regions() {
-            return Err(EvaluationError::ComputationFailed(
-                "dynamic_greedy_orders is only implemented for label SCP; regional SCP needs residual regional-cost scoring, not label-order scoring".to_string(),
-            ));
-        }
-
-        let total = state.goal_distances_by_abstraction.len();
-        let mut remaining_components: Vec<usize> = (0..total).collect();
-        let mut remaining_costs = self.original_operator_costs.clone();
-        let mut order = Vec::with_capacity(total);
-
-        'selection: while !remaining_components.is_empty() {
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                break;
-            }
-
-            remaining_components.shuffle(&mut state.rng);
-            let mut candidate_saturated_costs = Vec::with_capacity(remaining_components.len());
-            let mut candidate_h_values = Vec::with_capacity(remaining_components.len());
-
-            for &pos in &remaining_components {
-                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                    break;
-                }
-                let component = components.get(pos).ok_or_else(|| {
-                    EvaluationError::ComputationFailed(format!(
-                        "dynamic order requested missing component {pos}"
-                    ))
-                })?;
-                let result = match component {
-                    AbstractionComponent::Domain(heuristic) => {
-                        let abstraction = heuristic.abstraction();
-                        let abstraction_task = abstraction.task_for_factory(task);
-                        Self::saturate_domain(
-                            abstraction,
-                            abstraction_task,
-                            self.config.combine_labels,
-                            &remaining_costs,
-                            deadline,
-                        )
-                    }
-                    AbstractionComponent::Cartesian(heuristic) => {
-                        build_explicit_label_cost_partitioning_table(
-                            &heuristic.abstraction().transition_system,
-                            &remaining_costs,
-                            None,
-                            deadline,
-                        )
-                        .map_err(|error| {
-                            Self::construction_error(
-                                &format!(
-                                    "failed to compute Cartesian dynamic-order table for component {pos}"
-                                ),
-                                error,
-                            )
-                        })
-                    }
-                    AbstractionComponent::PatternDatabase(pdb) => pdb
-                        .build_cost_partitioned_distance_table(&remaining_costs)
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute PDB dynamic-order table {pos}: {error}"
-                            ))
-                        }),
-                };
-                let (distances, saturated) = match result {
-                    Ok(entry) => entry,
-                    Err(error) if Self::is_deadline_exceeded(&error) => {
-                        info!("scp: dynamic greedy order stopped at deadline");
-                        break 'selection;
-                    }
-                    Err(error) => return Err(error),
-                };
-                let h = current_h_for_distances(pos, &distances, abstract_state_ids);
-                candidate_h_values.push(h);
-                candidate_saturated_costs.push(saturated);
-            }
-
-            if candidate_saturated_costs.len() != remaining_components.len() {
-                break;
-            }
-
-            let surplus_costs =
-                compute_all_surplus_costs(&remaining_costs, &candidate_saturated_costs);
-            let mut best_index = None;
-            let mut best_score = f64::NEG_INFINITY;
-            for rem_index in 0..remaining_components.len() {
-                let stolen = compute_costs_stolen_by_heuristic(
-                    &candidate_saturated_costs[rem_index],
-                    &surplus_costs,
-                );
-                let score = compute_score(
-                    candidate_h_values[rem_index],
-                    stolen,
-                    self.config.scoring_function,
-                );
-                if best_index.is_none() || score > best_score {
-                    best_index = Some(rem_index);
-                    best_score = score;
-                }
-            }
-            let best_index = best_index.ok_or_else(|| {
-                EvaluationError::ComputationFailed(
-                    "dynamic order generator had no remaining candidate".to_string(),
-                )
-            })?;
-            order.push(remaining_components[best_index]);
-            reduce_costs(&mut remaining_costs, &candidate_saturated_costs[best_index])?;
-            remaining_components.swap_remove(best_index);
-        }
-
-        order.extend(remaining_components);
-        Ok(order)
     }
 
     /// The cost partitionings of the incumbent order and of the candidate
@@ -437,73 +256,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             base_order.to_vec(),
             max_heuristic_greedy_order(base_order, abstraction_h),
         ])
-    }
-
-    pub(super) fn optimize_order_with_hill_climbing(
-        &self,
-        collection: PartitionedCollection<'_, '_>,
-        incumbent_order: &mut [usize],
-        incumbent_cp: &mut CostPartitioningHeuristic,
-        optimization_deadline: Option<Instant>,
-    ) -> Result<(), EvaluationError> {
-        let abstract_state_ids = collection.abstract_state_ids;
-        let mut incumbent_h = incumbent_cp.compute_heuristic(abstract_state_ids);
-        if self.debug_diagnostics {
-            info!("scp: order optimization incumbent_h={incumbent_h}");
-        }
-
-        loop {
-            if optimization_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                break;
-            }
-            let mut improved = false;
-            for i in 0..incumbent_order.len() {
-                for j in (i + 1)..incumbent_order.len() {
-                    if optimization_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                        return Ok(());
-                    }
-
-                    incumbent_order.swap(i, j);
-                    let neighbor_result =
-                        self.build_cp(collection, incumbent_order, optimization_deadline);
-                    let neighbor_cp = match neighbor_result {
-                        Ok(cp) => cp,
-                        Err(error) if Self::is_deadline_exceeded(&error) => {
-                            incumbent_order.swap(i, j);
-                            info!(
-                                "scp: order optimization stopped while computing table (deadline)"
-                            );
-                            return Ok(());
-                        }
-                        Err(error) => {
-                            incumbent_order.swap(i, j);
-                            return Err(error);
-                        }
-                    };
-                    let neighbor_h = neighbor_cp.compute_heuristic(abstract_state_ids);
-                    if neighbor_h > incumbent_h {
-                        if self.debug_diagnostics {
-                            info!(
-                                "scp: order optimization swapped positions {i}/{j}, h {incumbent_h} -> {neighbor_h}"
-                            );
-                        }
-                        *incumbent_cp = neighbor_cp;
-                        incumbent_h = neighbor_h;
-                        improved = true;
-                        break;
-                    }
-
-                    incumbent_order.swap(i, j);
-                }
-                if improved {
-                    break;
-                }
-            }
-            if !improved {
-                break;
-            }
-        }
-        Ok(())
     }
 }
 

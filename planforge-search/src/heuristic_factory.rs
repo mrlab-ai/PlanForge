@@ -22,16 +22,12 @@ use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerat
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 #[cfg(feature = "cplex")]
 use crate::evaluation::abstractions::domain::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
-use crate::evaluation::abstractions::pdb::pattern_generator_systematic::{
-    SystematicPatternGeneratorConfig, generate_systematic_patterns,
-};
-use crate::evaluation::abstractions::pdb::pdb_collection::PdbCollection;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::info;
 
 mod abstraction_config;
@@ -158,20 +154,6 @@ fn component_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements,
     let restricted = spec.contains_call("pdb") || spec.contains_call("numeric_pdb");
     Ok(TaskRequirements {
         restricted,
-        abstractable_goal: true,
-    })
-}
-
-fn scp_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
-    let (sources, _) = split_component_sources(spec.name.as_str(), &spec.args)?;
-    if !sources.is_empty() {
-        return component_task_requirements(spec);
-    }
-    let mut config =
-        crate::evaluation::abstractions::cost_partitioning::saturated::LegacyScpConfig::default();
-    config.apply_options(&spec.args)?;
-    Ok(TaskRequirements {
-        restricted: config.use_numeric_pdbs,
         abstractable_goal: true,
     })
 }
@@ -324,7 +306,7 @@ pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> 
 use crate::evaluation::Heuristic;
 use abstraction_config::{
     ComponentUse, build_components, component_source_help, remaining_construction_time,
-    require_only_component_sources, split_component_sources, validate_scp_combinator_options,
+    require_only_component_sources, validate_scp_combinator_options,
 };
 
 #[derive(Debug)]
@@ -362,51 +344,6 @@ impl From<String> for HeuristicBuildError {
     fn from(message: String) -> Self {
         Self::Failure(message)
     }
-}
-
-fn cartesian_config_from_collection(
-    config: &crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    compute_source_sets: bool,
-) -> Result<CartesianAbstractionConfig, String> {
-    let max_time = if config.abstraction_generation_max_time.is_finite() {
-        Some(
-            Duration::try_from_secs_f64(config.abstraction_generation_max_time).map_err(
-                |error| {
-                    format!(
-                        "invalid Cartesian abstraction_generation_max_time {}: {error}",
-                        config.abstraction_generation_max_time
-                    )
-                },
-            )?,
-        )
-    } else {
-        None
-    };
-    if !matches!(
-        config.flaw_kind,
-        crate::evaluation::abstractions::cegar::FlawKind::Progression
-            | crate::evaluation::abstractions::cegar::FlawKind::ExecuteEntirePlan
-    ) {
-        return Err(format!(
-            "Cartesian abstractions do not support flaw_kind={}; expected progression or execute_entire_plan",
-            config.flaw_kind
-        ));
-    }
-    Ok(CartesianAbstractionConfig {
-        max_states: config.max_abstraction_size,
-        max_time,
-        combine_labels: config.combine_labels,
-        compute_source_sets,
-        retain_transition_system: true,
-        random_seed: config.random_seed,
-        flaw_kind: config.flaw_kind,
-        refinement_direction: CartesianRefinementDirection::Progression,
-        abstract_plan_selection: CartesianAbstractPlanSelection::BackwardShortestPath,
-        flaw_candidate_generation: CartesianFlawCandidateGeneration::General,
-        split_selection_rank: None,
-        split_selection: CartesianSplitSelection::MinTransitionGrowth,
-        debug: config.debug,
-    })
 }
 
 fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConfig {
@@ -450,36 +387,6 @@ fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
             "unknown option `{other}` for `cartesian_abstraction`"
         )),
     })
-}
-
-fn validate_legacy_cartesian_collection_options(args: &[ConfigArg]) -> Result<(), String> {
-    const DOMAIN_ONLY: &[&str] = &[
-        "max_collection_size",
-        "total_max_time",
-        "stagnation_limit",
-        "blacklist_trigger_percentage",
-        "enable_blacklist_on_stagnation",
-        "blacklist_option",
-        "init_split_candidates",
-        "init_split_quantity",
-        "use_wildcard_plans",
-        "flaw_treatment",
-        "init_split_method",
-        "numeric_split_strategy",
-        "collection_strategy",
-        "interleave_split_directions",
-        "split_direction",
-    ];
-    for arg in args {
-        if let Some(key) = arg.key()
-            && DOMAIN_ONLY.contains(&key)
-        {
-            return Err(format!(
-                "option `{key}` is not supported for a Cartesian abstraction collection"
-            ));
-        }
-    }
-    Ok(())
 }
 
 fn build_max_from_sources<'task>(
@@ -961,106 +868,6 @@ heuristic_registry! {
                     .to_string()
                     .into())
             }
-        }
-    }
-
-    ScpOnline {
-        names: ["scp_online", "scp_online_cartesian"],
-        backend: RequiredBackend::None,
-        requirements: scp_task_requirements,
-        nested: no_nested_heuristics,
-        build: {
-            let (component_sources, _) =
-                split_component_sources(spec.name.as_str(), &spec.args)?;
-            if !component_sources.is_empty() {
-                let source_config =
-                    abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
-                return build_scp_from_sources(
-                    task,
-                    sampling_task,
-                    &source_config.sources,
-                    &source_config.options,
-                    spec.name.as_str(),
-                    source_config.construction_deadline,
-                );
-            }
-            let use_cartesian = spec.name == "scp_online_cartesian";
-            if use_cartesian {
-                validate_legacy_cartesian_collection_options(&spec.args)?;
-            }
-            let mut cfg = crate::evaluation::abstractions::cost_partitioning::saturated::LegacyScpConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            let abstractions = if use_cartesian {
-                Vec::new()
-            } else {
-                let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-                    cfg.collection_config.clone(),
-                );
-                info!("Building scp_online domain abstractions (CEGAR)...");
-                generator
-                    .generate_collection(task)
-                    .map_err(|e| format!("failed to build scp_online domain abstractions: {e:#}"))?
-            };
-            let pdbs = if cfg.use_numeric_pdbs {
-                validate_restricted_task(task)?;
-                info!("Building scp_online systematic numeric PDBs...");
-                let patterns = generate_systematic_patterns(
-                    task,
-                    SystematicPatternGeneratorConfig {
-                        max_pdb_states: cfg.max_pdb_states,
-                        max_pattern_size: cfg.max_pattern_size,
-                        only_interesting_patterns: cfg.only_interesting_patterns,
-                    },
-                );
-                PdbCollection::with_heuristic_config(
-                    task,
-                    patterns,
-                    cfg.max_pdb_states,
-                    cfg.pdb_heuristic_config(),
-                )
-                .map_err(|e| format!("failed to build scp_online numeric PDBs: {e}"))?
-                .into_pdbs()
-            } else {
-                Vec::new()
-            };
-            let mut components: Vec<AbstractionComponent<'a>> = abstractions
-                .into_iter()
-                .enumerate()
-                .map(|(index, abstraction)| {
-                    AbstractionComponent::domain(
-                        Some(format!("scp_online_domain_{index}")),
-                        abstraction,
-                    )
-                })
-                .collect();
-            if use_cartesian {
-                info!("Building scp_online Cartesian abstraction (CEGAR)...");
-                let cartesian_config = cartesian_config_from_collection(
-                    &cfg.collection_config,
-                    cfg.partitioning.uses_regions(),
-                )?;
-                let abstraction = CartesianAbstractionGenerator::new(cartesian_config)
-                    .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?
-                    .generate(task)
-                    .map_err(|error| {
-                        format!("failed to build scp_online Cartesian abstraction: {error:#}")
-                    })?;
-                components.push(AbstractionComponent::cartesian(None, abstraction));
-            }
-            components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
-            let collection_config = cfg.scp_collection_config();
-            let h = SaturatedCostPartitioningHeuristic::new(
-                None,
-                components,
-                collection_config,
-                task,
-                ScpBuildOptions {
-                    sampling_task: Some(sampling_task),
-                    debug_diagnostics: cfg.collection_config.debug,
-                },
-            )
-            .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
     }
 
