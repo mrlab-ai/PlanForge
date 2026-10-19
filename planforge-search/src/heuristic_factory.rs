@@ -6,9 +6,8 @@
 //! CLI help are generated from that declaration.
 
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractPlanSelection, CartesianAbstractionConfig, CartesianAbstractionGenerator,
-    CartesianAbstractionHeuristic, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
-    CartesianSplitSelection,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+    CartesianRefinementDirection, CartesianSplitSelection,
 };
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
@@ -356,8 +355,6 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
         refinement_direction: CartesianRefinementDirection::Progression,
-        abstract_plan_selection: CartesianAbstractPlanSelection::BackwardShortestPath,
-        flaw_candidate_generation: CartesianFlawCandidateGeneration::General,
         split_selection_rank: None,
         split_selection: CartesianSplitSelection::MinTransitionGrowth,
         debug: config.debug,

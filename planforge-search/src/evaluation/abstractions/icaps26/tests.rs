@@ -1,8 +1,11 @@
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NEG_INF_VALUE,
-    NumericRootTask, NumericRootTaskParts, NumericValue, ONE_VALUE, Operator, OperatorCost,
-    OperatorIndex, VariableIndex,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType,
+    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
 };
+
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
 
 use super::*;
 
@@ -453,4 +456,183 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     let sequence = draw(&random_a);
     assert_eq!(sequence, draw(&random_b));
     assert!(sequence.contains(&1) && sequence.contains(&3));
+}
+
+#[test]
+fn desired_region_uses_additive_snp_coordinate() {
+    let variables = vec![comparison_variable("sum-at-four")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("sum".into(), NumericType::Derived, None),
+        NumericVariable::new("four".into(), NumericType::Constant, None),
+    ];
+    let increment = |name: &str, var_id| {
+        Operator::new(
+            name.into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                var_id,
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )
+    };
+    let task = numeric_goal_task(
+        variables,
+        numeric_variables,
+        // The stored value of the derived sum is intentionally stale. The
+        // Cartesian initial-state hash must use the axiom-evaluated value 3.
+        vec![
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(4.0),
+        ],
+        vec![
+            increment("increment-x", VariableIndex::from_usize(0)),
+            increment("increment-y", VariableIndex::from_usize(1)),
+        ],
+        vec![ComparisonAxiom::new(
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
+    );
+
+    let abstraction = Icaps26CartesianGenerator::new(Icaps26CartesianConfig {
+        max_states: 32,
+        random_seed: 1,
+        pick: Icaps26SplitSelection::Random,
+        ..Icaps26CartesianConfig::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+
+    assert_eq!(
+        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+        1.0
+    );
+    assert!(abstraction.metadata.solved_by_self);
+}
+
+#[test]
+fn desired_region_rejects_non_additive_snp_coordinate() {
+    let variables = vec![comparison_variable("product-at-nine")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("product".into(), NumericType::Derived, None),
+        NumericVariable::new("nine".into(), NumericType::Constant, None),
+    ];
+    let task = numeric_goal_task(
+        variables,
+        numeric_variables,
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(9.0),
+        ],
+        vec![Operator::new(
+            "increment-both".into(),
+            vec![],
+            vec![],
+            vec![
+                AssignmentEffect::new(
+                    VariableIndex::new(0),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(2),
+                    false,
+                    vec![],
+                ),
+                AssignmentEffect::new(
+                    VariableIndex::new(1),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(2),
+                    false,
+                    vec![],
+                ),
+            ],
+            OperatorCost::new(1),
+        )],
+        vec![ComparisonAxiom::new(
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Product,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
+    );
+    let error = Icaps26CartesianGenerator::new(Icaps26CartesianConfig {
+        max_states: 32,
+        random_seed: 1,
+        pick: Icaps26SplitSelection::Random,
+        ..Icaps26CartesianConfig::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap_err();
+
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("exact additive coordinate"),
+        "unexpected diagnostic: {diagnostic}"
+    );
+}
+
+fn comparison_variable(name: &str) -> ExplicitVariable {
+    ExplicitVariable::new(
+        ConditionValue::DOMAIN_SIZE,
+        name.into(),
+        vec!["true".into(), "false".into()],
+        Some(0),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+    )
+}
+
+fn numeric_goal_task(
+    variables: Vec<ExplicitVariable>,
+    numeric_variables: Vec<NumericVariable>,
+    initial_numeric: Vec<NumericValue>,
+    operators: Vec<Operator>,
+    comparison_axioms: Vec<ComparisonAxiom>,
+    assignment_axioms: Vec<AssignmentAxiom>,
+) -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(2)],
+        numeric_state: initial_numeric,
+        operators,
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms,
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }

@@ -17,7 +17,6 @@ pub(in super::super) fn find_regression_flaw(
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<StatePacker>,
     refinement_root: &ConcreteState,
-    selected_plan: Option<&[TransitionKey]>,
 ) -> Result<PlanCheck> {
     let mut prop_values = Vec::new();
     semantics.concrete_prop_values(
@@ -31,7 +30,7 @@ pub(in super::super) fn find_regression_flaw(
     if !shortest_paths.distance(initial_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd(initial_state));
     }
-    let plan = abstract_plan(working, shortest_paths, initial_state, selected_plan)?;
+    let plan = abstract_plan(working, shortest_paths, initial_state)?;
     let state_ids = std::iter::once(initial_state)
         .chain(plan.iter().map(|transition| transition.target))
         .collect::<Vec<_>>();
@@ -43,9 +42,9 @@ pub(in super::super) fn find_regression_flaw(
         .iter()
         .map(|transition| transition.concrete_op_id)
         .collect::<Vec<_>>();
-    let initial_cut = match semantics.flaw_candidate_generation() {
-        CartesianFlawCandidateGeneration::General => InitialCut::Concrete,
-        CartesianFlawCandidateGeneration::DesiredRegion => InitialCut::Wanted,
+    let initial_cut = match semantics.refinement_direction() {
+        CartesianRefinementDirection::Progression => InitialCut::Concrete,
+        CartesianRefinementDirection::Regression => InitialCut::Wanted,
     };
     let Some(flaw) = find_trace_flaw(
         semantics.task(),
@@ -93,7 +92,6 @@ pub(in super::super) fn find_regression_flaw(
                 boundary,
                 lower_includes_boundary,
                 witness_value: interior_value(if wanted_is_lower { upper } else { lower }),
-                desired_contains_witness: false,
                 integer_lattice,
                 description,
             }
@@ -117,16 +115,12 @@ pub(in super::super) fn find_regression_flaw(
 }
 
 /// The transitions of the optimal abstract plan from `initial_state`: the
-/// selected plan, or the generating transitions of the shortest paths.
+/// generating transitions of the shortest paths.
 fn abstract_plan(
     working: &WorkingAbstraction,
     shortest_paths: &ShortestPaths,
     initial_state: usize,
-    selected_plan: Option<&[TransitionKey]>,
 ) -> Result<Vec<TransitionKey>> {
-    if let Some(plan) = selected_plan {
-        return Ok(plan.to_vec());
-    }
     let mut plan = Vec::new();
     let mut state = initial_state;
     while !shortest_paths.is_goal(state) {

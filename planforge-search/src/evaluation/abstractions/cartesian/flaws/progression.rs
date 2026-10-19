@@ -52,12 +52,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &ConcreteState,
-    selected_plan: Option<&[TransitionKey]>,
 ) -> Result<PlanCheck> {
-    let use_desired_region_candidates = matches!(
-        semantics.flaw_candidate_generation(),
-        CartesianFlawCandidateGeneration::DesiredRegion
-    );
     let mut propositions = refinement_root.propositions.clone();
     let mut numeric = refinement_root.numeric.clone();
     let mut prop_values = Vec::new();
@@ -70,7 +65,6 @@ pub(in super::super) fn replay_optimal_abstract_trace(
     let abstract_plan_cost = shortest_paths.distance(initial_abstract_state);
     let mut operator_ids: Vec<OperatorIndex> = Vec::new();
     let mut concrete_cost = 0.0;
-    let mut selected_plan_pos = 0usize;
 
     loop {
         semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
@@ -82,10 +76,6 @@ pub(in super::super) fn replay_optimal_abstract_trace(
         );
 
         if shortest_paths.is_goal(abstract_state) {
-            ensure!(
-                selected_plan.is_none_or(|plan| selected_plan_pos == plan.len()),
-                "selected Cartesian plan reaches an abstract goal before its final transition"
-            );
             if concrete_is_goal(semantics, state_packer, &propositions) {
                 return Ok(PlanCheck::ConcretePlan(ConcretePlan {
                     operator_ids,
@@ -100,32 +90,20 @@ pub(in super::super) fn replay_optimal_abstract_trace(
                 !failed_goals.is_empty(),
                 "abstract goal contains a concrete non-goal without a failed goal fact"
             );
-            let candidates = if use_desired_region_candidates {
-                splits_for_desired_facts(
-                    working,
-                    semantics,
-                    abstract_state,
-                    &failed_goals,
-                    &prop_values,
-                    &numeric,
-                    "failed goal",
-                )?
-            } else {
-                failed_goals
-                    .iter()
-                    .map(|goal| {
-                        split_failed_fact(
-                            working,
-                            semantics,
-                            abstract_state,
-                            goal,
-                            &prop_values,
-                            &numeric,
-                            format!("goal {goal:?}"),
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?
-            };
+            let candidates = failed_goals
+                .iter()
+                .map(|goal| {
+                    split_failed_fact(
+                        working,
+                        semantics,
+                        abstract_state,
+                        goal,
+                        &prop_values,
+                        &numeric,
+                        format!("goal {goal:?}"),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
             return Ok(PlanCheck::Refine(select_refinement_split(
                 working,
                 semantics,
@@ -138,23 +116,11 @@ pub(in super::super) fn replay_optimal_abstract_trace(
             operator_ids.len() <= working.states().len(),
             "Cartesian generating transitions contain a cycle"
         );
-        let transition = if let Some(plan) = selected_plan {
-            let transition = *plan.get(selected_plan_pos).with_context(|| {
-                format!("selected Cartesian plan ends in non-goal abstract state {abstract_state}")
-            })?;
-            ensure!(
-                transition.source == abstract_state,
-                "selected Cartesian plan expects source {}, concrete trace maps to {abstract_state}",
-                transition.source
-            );
-            transition
-        } else {
-            shortest_paths
-                .generating_transition(abstract_state)
-                .context(
-                    "non-goal Cartesian state with finite distance has no generating transition",
-                )?
-        };
+        let transition = shortest_paths
+            .generating_transition(abstract_state)
+            .context(
+                "non-goal Cartesian state with finite distance has no generating transition",
+            )?;
         ensure!(
             working.contains_transition(transition),
             "Cartesian shortest path references missing transition {transition:?}"
@@ -167,35 +133,20 @@ pub(in super::super) fn replay_optimal_abstract_trace(
             .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
             .collect::<Vec<_>>();
         if !failed_preconditions.is_empty() {
-            let candidates = if use_desired_region_candidates {
-                splits_for_desired_facts(
-                    working,
-                    semantics,
-                    abstract_state,
-                    &failed_preconditions,
-                    &prop_values,
-                    &numeric,
-                    &format!(
-                        "operator {op_id} ({}) preconditions {failed_preconditions:?}",
-                        op.name()
-                    ),
-                )?
-            } else {
-                failed_preconditions
-                    .iter()
-                    .map(|failed| {
-                        split_failed_fact(
-                            working,
-                            semantics,
-                            abstract_state,
-                            failed,
-                            &prop_values,
-                            &numeric,
-                            format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?
-            };
+            let candidates = failed_preconditions
+                .iter()
+                .map(|failed| {
+                    split_failed_fact(
+                        working,
+                        semantics,
+                        abstract_state,
+                        failed,
+                        &prop_values,
+                        &numeric,
+                        format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
             return Ok(PlanCheck::Refine(select_refinement_split(
                 working,
                 semantics,
@@ -241,7 +192,6 @@ pub(in super::super) fn replay_optimal_abstract_trace(
         );
         concrete_cost += op_cost.value();
         operator_ids.push(op_id);
-        selected_plan_pos += usize::from(selected_plan.is_some());
     }
 }
 

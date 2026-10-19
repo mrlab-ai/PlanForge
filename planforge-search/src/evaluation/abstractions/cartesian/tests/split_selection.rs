@@ -54,7 +54,6 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
         boundary: NumericValue::new(2.0),
         lower_includes_boundary: true,
         witness_value: NumericValue::new(1.0),
-        desired_contains_witness: false,
         integer_lattice: false,
         description: "first witness".into(),
     };
@@ -133,7 +132,6 @@ fn min_growth_uses_projected_transition_count() {
         boundary: NumericValue::new(0.0),
         lower_includes_boundary: true,
         witness_value: NumericValue::new(0.0),
-        desired_contains_witness: false,
         integer_lattice: false,
         description: String::new(),
     };
@@ -148,103 +146,7 @@ fn min_growth_uses_projected_transition_count() {
 }
 
 #[test]
-fn max_additive_steps_prioritizes_the_longest_exact_numeric_distance() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
-        metric: Metric::new(true, None),
-        variables: vec![ExplicitVariable::new(
-            2,
-            "goal".into(),
-            vec!["true".into(), "false".into()],
-            None,
-            ExplicitValueIndex::new(1),
-        )],
-        numeric_variables: vec![
-            NumericVariable::new("long".into(), NumericType::Regular, None),
-            NumericVariable::new("short".into(), NumericType::Regular, None),
-            NumericVariable::new("half".into(), NumericType::Constant, None),
-            NumericVariable::new("one".into(), NumericType::Constant, None),
-        ],
-        goals: vec![ExplicitFact::propositional(0, 0)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![
-            NumericValue::new(-10.0),
-            NumericValue::new(-2.0),
-            NumericValue::new(0.5),
-            NumericValue::new(1.0),
-        ],
-        operators: vec![
-            Operator::new(
-                "increment-long".into(),
-                vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(0),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(2),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
-            ),
-            Operator::new(
-                "increment-short".into(),
-                vec![],
-                vec![],
-                vec![AssignmentEffect::new(
-                    VariableIndex::from_usize(1),
-                    AssignmentOperation::Plus,
-                    VariableIndex::from_usize(3),
-                    false,
-                    vec![],
-                )],
-                OperatorCost::new(1),
-            ),
-        ],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 1),
-    });
-    let config = CartesianAbstractionConfig {
-        split_selection: CartesianSplitSelection::MaxAdditiveSteps,
-        ..Default::default()
-    };
-    let semantics = CartesianSemantics::new(&task, &config).unwrap();
-    let mut working = WorkingAbstraction::new(semantics.trivial_region().unwrap(), 2);
-    for op_id in 0..2 {
-        working.add_transition(0, OperatorIndex::new(op_id), 0);
-    }
-    let split = |var_id, witness_value| Split::Numeric {
-        state_id: 0,
-        var_id,
-        boundary: NumericValue::new(0.0),
-        lower_includes_boundary: true,
-        witness_value,
-        desired_contains_witness: false,
-        integer_lattice: false,
-        description: String::new(),
-    };
-
-    let selected = select_refinement_split(
-        &working,
-        &semantics,
-        vec![
-            split(VariableIndex::new(0), NumericValue::new(-10.0)),
-            split(VariableIndex::from_usize(1), NumericValue::new(-2.0)),
-        ],
-        0,
-    )
-    .unwrap();
-    assert!(matches!(
-        selected,
-        Split::Numeric { var_id, .. } if var_id == VariableIndex::new(0)
-    ));
-}
-
-#[test]
-fn native_random_and_least_refined_selectors_are_independent() {
+fn native_random_selector_is_seeded() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 1,
         metric: Metric::new(true, None),
@@ -317,17 +219,4 @@ fn native_random_and_least_refined_selectors_are_independent() {
     assert_eq!(sequence, draw(&random_b));
     assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(0))));
     assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(1))));
-
-    let least_refined_config = CartesianAbstractionConfig {
-        split_selection: CartesianSplitSelection::LeastRefined,
-        ..CartesianAbstractionConfig::default()
-    };
-    let least_refined = CartesianSemantics::new(&task, &least_refined_config).unwrap();
-    let mut unbalanced = working;
-    unbalanced.propositional_refinement_counts[0] = 3;
-    let selected = select_refinement_split(&unbalanced, &least_refined, candidates, 0).unwrap();
-    assert_eq!(
-        selected.dimension(),
-        SplitDimension::Propositional(VariableIndex::from_usize(1))
-    );
 }

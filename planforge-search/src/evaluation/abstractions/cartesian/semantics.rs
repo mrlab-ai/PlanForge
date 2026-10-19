@@ -15,13 +15,10 @@ pub(super) struct CartesianSemantics<'task> {
     pub(super) prop_split_dependent_operators: Vec<OperatorBitSet>,
     pub(super) numeric_split_dependent_operators: Vec<OperatorBitSet>,
     pub(super) coordinates: Coordinates<'task>,
-    pub(super) additive_effect_deltas: Vec<Vec<NumericValue>>,
     pub(super) numeric_integer_lattice: Vec<bool>,
     pub(super) random_seed: Option<u64>,
     pub(super) random_split_rng: Option<RefCell<SmallRng>>,
-    pub(super) icaps_random: Option<RefCell<ArtifactMt19937>>,
     pub(super) refinement_direction: CartesianRefinementDirection,
-    pub(super) flaw_candidate_generation: CartesianFlawCandidateGeneration,
     pub(super) split_selection_rank: Option<usize>,
     pub(super) split_selection: CartesianSplitSelection,
     pub(super) target_split_boundaries: Vec<NumericValue>,
@@ -88,16 +85,8 @@ impl<'task> CartesianSemantics<'task> {
         &self.operator_costs
     }
 
-    pub(super) fn additive_numeric_views(&self) -> &[Option<AdditiveNumericView>] {
-        self.coordinates.views()
-    }
-
     pub(super) fn coordinates(&self) -> &Coordinates<'task> {
         &self.coordinates
-    }
-
-    pub(super) fn additive_effect_deltas(&self) -> &[Vec<NumericValue>] {
-        &self.additive_effect_deltas
     }
 
     pub(super) fn numeric_integer_lattice(&self) -> &[bool] {
@@ -106,10 +95,6 @@ impl<'task> CartesianSemantics<'task> {
 
     pub(super) fn refinement_direction(&self) -> CartesianRefinementDirection {
         self.refinement_direction
-    }
-
-    pub(super) fn flaw_candidate_generation(&self) -> CartesianFlawCandidateGeneration {
-        self.flaw_candidate_generation
     }
 
     pub(super) fn split_selection(&self) -> CartesianSplitSelection {
@@ -149,31 +134,6 @@ impl<'task> CartesianSemantics<'task> {
             .collect();
         let operator_count = task.get_operators().len();
         let additive_numeric_views = coordinates.views();
-        let mut additive_effect_deltas = Vec::with_capacity(task.numeric_variables().len());
-        for (numeric_var_id, variable) in task.numeric_variables().iter().enumerate() {
-            let mut deltas = match variable.get_type() {
-                NumericType::Regular => task
-                    .get_operators()
-                    .iter()
-                    .filter_map(|operator| {
-                        numeric_dimension_delta_for_operator(
-                            task,
-                            VariableIndex::from_usize(numeric_var_id),
-                            operator,
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-                NumericType::Derived => additive_numeric_views[numeric_var_id]
-                    .as_ref()
-                    .map(|view| view.operator_deltas().to_vec())
-                    .unwrap_or_default(),
-                NumericType::Constant | NumericType::Cost => Vec::new(),
-            };
-            deltas.retain(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON);
-            deltas.sort_by(NumericValue::total_cmp);
-            deltas.dedup_by(|left, right| approximately_equal(left.value(), right.value()));
-            additive_effect_deltas.push(deltas);
-        }
         let mut target_split_boundaries = task
             .numeric_variables()
             .iter()
@@ -248,19 +208,6 @@ impl<'task> CartesianSemantics<'task> {
                 }
             }
         }
-        let icaps_random = if matches!(
-            config.split_selection,
-            CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
-        ) {
-            let seed = config.random_seed.unwrap_or(2011);
-            ensure!(
-                u32::try_from(seed).is_ok(),
-                "ICAPS artifact random seed exceeds 32 bits: {seed}"
-            );
-            Some(RefCell::new(ArtifactMt19937::new(seed as u32)))
-        } else {
-            None
-        };
         let random_split_rng = matches!(config.split_selection, CartesianSplitSelection::Random)
             .then(|| RefCell::new(SmallRng::seed_from_u64(config.random_seed.unwrap_or(2011))));
         let initial_numeric = task.get_initial_numeric_state_values();
@@ -304,13 +251,10 @@ impl<'task> CartesianSemantics<'task> {
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
             coordinates,
-            additive_effect_deltas,
             numeric_integer_lattice,
             random_seed: config.random_seed,
             random_split_rng,
-            icaps_random,
             refinement_direction: config.refinement_direction,
-            flaw_candidate_generation: config.flaw_candidate_generation,
             split_selection_rank: config.split_selection_rank,
             split_selection: config.split_selection,
             target_split_boundaries,

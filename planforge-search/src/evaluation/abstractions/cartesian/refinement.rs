@@ -46,7 +46,6 @@ impl WorkingAbstraction {
                 wanted_region.narrow_prop(var_id, wanted_child_values);
                 let mut other_region = old_region.clone();
                 other_region.narrow_prop(var_id, other_child_values);
-                working.propositional_refinement_counts[var_id.index()] += 1;
                 working.hierarchy.split_propositional(
                     leaf_node_id,
                     old_state_id,
@@ -85,7 +84,6 @@ impl WorkingAbstraction {
                 Arc::make_mut(&mut lower_region.numeric)[var_id.index()] = lower;
                 let mut upper_region = old_region.clone();
                 Arc::make_mut(&mut upper_region.numeric)[var_id.index()] = upper;
-                working.numeric_refinement_counts[var_id.index()] += 1;
                 working.hierarchy.split_numeric(
                     leaf_node_id,
                     old_state_id,
@@ -109,30 +107,17 @@ impl WorkingAbstraction {
         working.states.push(new_child);
         working.outgoing.push(Vec::new());
         working.incoming.push(Vec::new());
-        let icaps_old_loop_order = working.icaps_self_loop_order.as_mut().map(|loop_order| {
-            let old = std::mem::take(&mut loop_order[old_state_id]);
-            loop_order.push(Vec::new());
-            old
-        });
-        let old_self_loops = if icaps_old_loop_order.is_some() {
-            working
-                .self_loop_operator_ids
-                .push(OperatorBitSet::empty(0));
-            None
-        } else {
-            let operator_count = semantics.task.get_operators().len();
-            let old_self_loops = std::mem::replace(
-                &mut working.self_loop_operator_ids[old_state_id],
-                OperatorBitSet::empty(operator_count),
-            );
-            let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
-            working.self_loop_operator_ids[old_state_id] =
-                old_self_loops.clone_without(split_dependent_operators);
-            working
-                .self_loop_operator_ids
-                .push(old_self_loops.clone_without(split_dependent_operators));
-            Some(old_self_loops)
-        };
+        let operator_count = semantics.task.get_operators().len();
+        let old_self_loops = std::mem::replace(
+            &mut working.self_loop_operator_ids[old_state_id],
+            OperatorBitSet::empty(operator_count),
+        );
+        let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
+        working.self_loop_operator_ids[old_state_id] =
+            old_self_loops.clone_without(split_dependent_operators);
+        working
+            .self_loop_operator_ids
+            .push(old_self_loops.clone_without(split_dependent_operators));
         let new_leaf_nodes = match &working.hierarchy.nodes[leaf_node_id] {
             RefinementNode::Propositional {
                 wanted_child,
@@ -160,20 +145,6 @@ impl WorkingAbstraction {
         working.leaf_node_ids[old_state_id] = old_leaf_node;
         working.leaf_node_ids.push(new_leaf_node);
 
-        if let Some(old_loop_order) = icaps_old_loop_order {
-            apply_icaps26_transition_split(
-                working,
-                semantics,
-                old_state_id,
-                new_state_id,
-                split_dimension,
-                old_loop_order,
-            )?;
-            return Ok(new_state_id);
-        }
-
-        let old_self_loops = old_self_loops.expect("native Cartesian split lost its self loops");
-        let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
         let old_transitions = working.remove_incident_transitions(old_state_id);
         for transition in old_transitions {
             debug_assert!(

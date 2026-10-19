@@ -350,10 +350,6 @@ fn comparison_refinement(
                     boundary,
                     lower_includes_boundary,
                     witness_value,
-                    desired_contains_witness: matches!(
-                        goal,
-                        ComparisonRefinementGoal::GuaranteeDesired(_)
-                    ),
                     integer_lattice,
                     description: description.clone(),
                 };
@@ -565,7 +561,6 @@ pub(in super::super) fn split_deviation_candidates(
             boundary,
             lower_includes_boundary,
             witness_value: source,
-            desired_contains_witness: false,
             integer_lattice,
             description: format!(
                 "operator {op_id} successor numeric var {var_id}={successor} outside target {target_interval:?}"

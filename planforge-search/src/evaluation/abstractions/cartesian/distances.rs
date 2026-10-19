@@ -52,122 +52,8 @@ impl ShortestPaths {
         self.is_goal[state_id]
     }
 
-    pub(super) fn goal_flags(&self) -> &[bool] {
-        &self.is_goal
-    }
-
     pub(super) fn generating_transition(&self, state_id: usize) -> Option<TransitionKey> {
         self.generating_transition[state_id]
-    }
-}
-
-pub(super) struct StableAbstractSearch {
-    h_values: Vec<f64>,
-    g_values: Vec<f64>,
-    predecessors: Vec<Option<TransitionKey>>,
-    open: BinaryHeap<(Reverse<NotNan<f64>>, usize, usize)>,
-}
-
-impl StableAbstractSearch {
-    pub(super) fn trivial() -> Self {
-        Self {
-            h_values: vec![0.0],
-            g_values: vec![f64::INFINITY],
-            predecessors: vec![None],
-            open: BinaryHeap::new(),
-        }
-    }
-
-    pub(super) fn inherit_split_state(&mut self, split_state_id: usize, new_state_id: usize) {
-        assert_eq!(new_state_id, self.h_values.len());
-        self.h_values.push(self.h_values[split_state_id]);
-        self.g_values.push(f64::INFINITY);
-        self.predecessors.push(None);
-    }
-
-    pub(super) fn find_plan(
-        &mut self,
-        working: &WorkingAbstraction,
-        semantics: &CartesianSemantics<'_>,
-        initial_state: usize,
-        is_goal: &[bool],
-    ) -> Result<Option<Vec<TransitionKey>>> {
-        ensure!(self.h_values.len() == working.states().len());
-        ensure!(is_goal.len() == working.states().len());
-        ensure!(self.g_values.len() == working.states().len());
-        ensure!(self.predecessors.len() == working.states().len());
-        self.g_values.fill(f64::INFINITY);
-        self.predecessors.fill(None);
-        self.open.clear();
-        self.g_values[initial_state] = 0.0;
-        let mut sequence = 0usize;
-        self.open.push((
-            Reverse(NotNan::new(self.h_values[initial_state]).unwrap()),
-            sequence,
-            initial_state,
-        ));
-
-        let mut abstract_goal = None;
-        while let Some((Reverse(old_f), _, state_id)) = self.open.pop() {
-            let current_f = self.g_values[state_id] + self.h_values[state_id];
-            if current_f + float_tolerance::SEARCH_EPSILON < old_f.into_inner() {
-                continue;
-            }
-            if is_goal[state_id] {
-                abstract_goal = Some(state_id);
-                break;
-            }
-            for &transition_id in &working.outgoing()[state_id] {
-                let transition = working.transition(transition_id);
-                let candidate = self.g_values[state_id]
-                    + semantics.operator_costs()[transition.concrete_op_id.index()].value();
-                if candidate < self.g_values[transition.target] {
-                    self.g_values[transition.target] = candidate;
-                    self.predecessors[transition.target] = Some(TransitionKey {
-                        source: transition.source,
-                        concrete_op_id: transition.concrete_op_id,
-                        target: transition.target,
-                    });
-                    sequence = sequence
-                        .checked_add(1)
-                        .context("ICAPS Cartesian abstract-search insertion counter overflow")?;
-                    let f = candidate + self.h_values[transition.target];
-                    self.open.push((
-                        Reverse(NotNan::new(f).context(
-                            "ICAPS Cartesian abstract search produced a non-finite key",
-                        )?),
-                        sequence,
-                        transition.target,
-                    ));
-                }
-            }
-        }
-
-        let Some(mut state_id) = abstract_goal else {
-            return Ok(None);
-        };
-        let mut plan = Vec::new();
-        while state_id != initial_state {
-            let transition = self.predecessors[state_id].with_context(|| {
-                format!(
-                    "ICAPS Cartesian abstract goal state {state_id} has no predecessor from initial state {initial_state}"
-                )
-            })?;
-            plan.push(transition);
-            state_id = transition.source;
-        }
-        plan.reverse();
-
-        for transition in plan.iter().rev() {
-            let path_h = self.h_values[transition.target]
-                + semantics.operator_costs()[transition.concrete_op_id.index()].value();
-            ensure!(
-                path_h + float_tolerance::SEARCH_EPSILON >= self.h_values[transition.source],
-                "ICAPS Cartesian inherited h-value decreased along selected abstract plan"
-            );
-            self.h_values[transition.source] = path_h;
-        }
-        Ok(Some(plan))
     }
 }
 
@@ -317,20 +203,11 @@ pub(super) fn update_shortest_paths_after_split(
     shortest_paths.generating_transition.push(None);
     shortest_paths.dependents.push(Vec::new());
     shortest_paths.dependent_positions.push(None);
-    if matches!(
-        semantics.split_selection(),
-        CartesianSplitSelection::Icaps26(_)
-    ) {
-        let parent_was_goal = shortest_paths.is_goal[split_state_id];
-        shortest_paths.is_goal[split_state_id] = false;
-        shortest_paths.is_goal.push(parent_was_goal);
-    } else {
-        shortest_paths.is_goal[split_state_id] =
-            semantics.region_is_goal(&working.states()[split_state_id])?;
-        shortest_paths
-            .is_goal
-            .push(semantics.region_is_goal(&working.states()[new_state_id])?);
-    }
+    shortest_paths.is_goal[split_state_id] =
+        semantics.region_is_goal(&working.states()[split_state_id])?;
+    shortest_paths
+        .is_goal
+        .push(semantics.region_is_goal(&working.states()[new_state_id])?);
     shortest_paths.invalid.push(false);
 
     invalidate(

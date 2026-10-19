@@ -22,22 +22,7 @@ pub enum CartesianRefinementDirection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartesianSplitSelection {
     MinTransitionGrowth,
-    MaxAdditiveSteps,
     Random,
-    LeastRefined,
-    Icaps26(Icaps26SplitSelection),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CartesianAbstractPlanSelection {
-    BackwardShortestPath,
-    StableAStar,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CartesianFlawCandidateGeneration {
-    General,
-    DesiredRegion,
 }
 
 #[derive(Debug, Clone)]
@@ -51,8 +36,6 @@ pub struct CartesianAbstractionConfig {
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
     pub refinement_direction: CartesianRefinementDirection,
-    pub abstract_plan_selection: CartesianAbstractPlanSelection,
-    pub flaw_candidate_generation: CartesianFlawCandidateGeneration,
     pub split_selection_rank: Option<usize>,
     pub split_selection: CartesianSplitSelection,
     pub debug: bool,
@@ -69,8 +52,6 @@ impl Default for CartesianAbstractionConfig {
             random_seed: None,
             flaw_kind: FlawKind::Progression,
             refinement_direction: CartesianRefinementDirection::Progression,
-            abstract_plan_selection: CartesianAbstractPlanSelection::BackwardShortestPath,
-            flaw_candidate_generation: CartesianFlawCandidateGeneration::General,
             split_selection_rank: None,
             split_selection: CartesianSplitSelection::MinTransitionGrowth,
             debug: false,

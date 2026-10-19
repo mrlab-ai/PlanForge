@@ -3,9 +3,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
-    CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianAbstractionGenerator, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
+    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSplitSelection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
@@ -736,38 +735,10 @@ fn apply_cartesian_source_options(
                     "min_transition_growth" | "min_growth" => {
                         CartesianSplitSelection::MinTransitionGrowth
                     }
-                    "max_additive_steps" => CartesianSplitSelection::MaxAdditiveSteps,
                     "random" => CartesianSplitSelection::Random,
-                    "least_refined" => CartesianSplitSelection::LeastRefined,
                     _ => {
                         return Err(format!(
-                            "invalid Cartesian split_selection `{value}`; expected min_transition_growth, max_additive_steps, random, or least_refined"
-                        ));
-                    }
-                };
-            }
-            "abstract_plan" => {
-                let value = String::from_option_value(arg.value())?;
-                config.abstraction.abstract_plan_selection = match value.as_str() {
-                    "backward_shortest_path" => {
-                        CartesianAbstractPlanSelection::BackwardShortestPath
-                    }
-                    "stable_astar" => CartesianAbstractPlanSelection::StableAStar,
-                    _ => {
-                        return Err(format!(
-                            "invalid Cartesian abstract_plan `{value}`; expected backward_shortest_path or stable_astar"
-                        ));
-                    }
-                };
-            }
-            "flaw_candidates" => {
-                let value = String::from_option_value(arg.value())?;
-                config.abstraction.flaw_candidate_generation = match value.as_str() {
-                    "general" => CartesianFlawCandidateGeneration::General,
-                    "desired_region" => CartesianFlawCandidateGeneration::DesiredRegion,
-                    _ => {
-                        return Err(format!(
-                            "invalid Cartesian flaw_candidates `{value}`; expected general or desired_region"
+                            "invalid Cartesian split_selection `{value}`; expected min_transition_growth or random"
                         ));
                     }
                 };
@@ -834,9 +805,7 @@ mod tests {
         ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
         remaining_construction_time, require_only_component_sources, split_component_sources,
     };
-    use crate::evaluation::abstractions::cartesian::{
-        CartesianAbstractPlanSelection, CartesianFlawCandidateGeneration, CartesianSplitSelection,
-    };
+    use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
 
     #[test]
     fn separates_component_sources_from_combinator_options() {
@@ -984,12 +953,7 @@ mod tests {
                 "min_transition_growth",
                 CartesianSplitSelection::MinTransitionGrowth,
             ),
-            (
-                "max_additive_steps",
-                CartesianSplitSelection::MaxAdditiveSteps,
-            ),
             ("random", CartesianSplitSelection::Random),
-            ("least_refined", CartesianSplitSelection::LeastRefined),
         ] {
             let args = vec![ConfigArg::new(
                 Some("split_selection".to_string()),
@@ -1008,41 +972,5 @@ mod tests {
         )];
         let error = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap_err();
         assert!(error.contains("invalid Cartesian split_selection"));
-    }
-
-    #[test]
-    fn parses_native_cartesian_abstract_plan_selection() {
-        for (name, expected) in [
-            (
-                "backward_shortest_path",
-                CartesianAbstractPlanSelection::BackwardShortestPath,
-            ),
-            ("stable_astar", CartesianAbstractPlanSelection::StableAStar),
-        ] {
-            let args = vec![ConfigArg::new(
-                Some("abstract_plan".to_string()),
-                ConfigValue::Atom(name.to_string()),
-            )];
-            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
-            assert_eq!(config.abstract_plan_selection, expected);
-        }
-    }
-
-    #[test]
-    fn parses_native_cartesian_flaw_candidate_generation() {
-        for (name, expected) in [
-            ("general", CartesianFlawCandidateGeneration::General),
-            (
-                "desired_region",
-                CartesianFlawCandidateGeneration::DesiredRegion,
-            ),
-        ] {
-            let args = vec![ConfigArg::new(
-                Some("flaw_candidates".to_string()),
-                ConfigValue::Atom(name.to_string()),
-            )];
-            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
-            assert_eq!(config.flaw_candidate_generation, expected);
-        }
     }
 }

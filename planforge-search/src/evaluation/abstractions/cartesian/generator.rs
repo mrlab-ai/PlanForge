@@ -8,11 +8,6 @@ impl CartesianAbstractionGenerator {
     pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
         validate_cartesian_flaw_kind(config.flaw_kind).map_err(anyhow::Error::msg)?;
-        ensure!(
-            config.flaw_kind != FlawKind::Regression
-                || !matches!(config.split_selection, CartesianSplitSelection::Icaps26(_)),
-            "Cartesian regression flaws are not defined for the ICAPS 2026 artifact transition semantics"
-        );
         Ok(Self { config })
     }
 
@@ -29,14 +24,7 @@ impl CartesianAbstractionGenerator {
         let semantics = CartesianSemantics::new(task, &self.config)?;
         let initial_region = semantics.trivial_region()?;
         let operator_count = semantics.task.get_operators().len();
-        let mut working = if matches!(
-            self.config.split_selection,
-            CartesianSplitSelection::Icaps26(_)
-        ) {
-            WorkingAbstraction::new_icaps26(initial_region, operator_count)
-        } else {
-            WorkingAbstraction::new(initial_region, operator_count)
-        };
+        let mut working = WorkingAbstraction::new(initial_region, operator_count);
         for op_id in 0..task.get_operators().len() {
             if semantics.may_transition(
                 &working.states[0],
@@ -72,61 +60,12 @@ impl CartesianAbstractionGenerator {
             },
         };
         let mut refinements: usize = 0;
-        let poll_memory_every_iteration = matches!(
-            self.config.split_selection,
-            CartesianSplitSelection::Icaps26(_)
-        );
-
-        let mut shortest_paths = if matches!(
-            self.config.split_selection,
-            CartesianSplitSelection::Icaps26(_)
-        ) {
-            compute_shortest_paths_with_goals(&working, &semantics, vec![true])?
-        } else {
-            compute_shortest_paths(&working, &semantics)?
-        };
-        let mut stable_abstract_search = matches!(
-            self.config.abstract_plan_selection,
-            CartesianAbstractPlanSelection::StableAStar
-        )
-        .then(StableAbstractSearch::trivial);
+        let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let mut pending_flaw = None;
         let mut solved_plan = None;
         let run = CegarDriver::new(usize::MAX, None).run_from_zero_based(
             start,
             |_iteration, _deadline| {
-                if poll_memory_every_iteration
-                    && !crate::resource_limits::poll_and_release_if_exceeded()
-                {
-                    return Ok(CegarIterationResult::Stop(CegarStopReason::MemoryLimit));
-                }
-                let selected_plan = if let Some(abstract_search) = &mut stable_abstract_search {
-                    let mut initial_prop_values = Vec::new();
-                    semantics.concrete_prop_values(
-                        &state_packer,
-                        &refinement_root.propositions,
-                        &mut initial_prop_values,
-                    );
-                    let initial_state = working
-                        .hierarchy
-                        .map_state(&initial_prop_values, &refinement_root.numeric)?;
-                    match abstract_search.find_plan(
-                        &working,
-                        &semantics,
-                        initial_state,
-                        shortest_paths.goal_flags(),
-                    )? {
-                        Some(plan) => Some(plan),
-                        None => {
-                            return Err(RefinementRootDeadEnd::new(format!(
-                                "Cartesian abstract state {initial_state}"
-                            ))
-                            .into());
-                        }
-                    }
-                } else {
-                    None
-                };
                 let check = match self.config.flaw_kind {
                     FlawKind::Progression => replay_optimal_abstract_trace(
                         &working,
@@ -135,7 +74,6 @@ impl CartesianAbstractionGenerator {
                         &state_packer,
                         &axiom_evaluator,
                         &refinement_root,
-                        selected_plan.as_deref(),
                     )?,
                     FlawKind::Regression => find_regression_flaw(
                         &working,
@@ -143,7 +81,6 @@ impl CartesianAbstractionGenerator {
                         &shortest_paths,
                         &state_packer,
                         &refinement_root,
-                        selected_plan.as_deref(),
                     )?,
                     FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
                         &working,
@@ -197,9 +134,6 @@ impl CartesianAbstractionGenerator {
                             old_state_id,
                             new_state_id,
                         )?;
-                        if let Some(abstract_search) = &mut stable_abstract_search {
-                            abstract_search.inherit_split_state(old_state_id, new_state_id);
-                        }
                         refinements += 1;
                         Ok(CegarIterationResult::Continue)
                     }
