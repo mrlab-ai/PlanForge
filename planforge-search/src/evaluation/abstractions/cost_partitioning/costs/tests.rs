@@ -75,13 +75,7 @@ fn full_cost_source_sets_use_overlap_cover_without_geometric_overlay() {
     let mut residuals = RemainingCosts::from_operator_costs(&[1.0]);
 
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &source_sets,
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![1.0, 1.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &source_sets, &[1.0, 1.0])
         .unwrap();
 
     let residual = &residuals.operator_residuals[0];
@@ -151,7 +145,14 @@ fn explicit_regional_cost_partitioning_uses_source_sets() {
     .unwrap();
 
     assert_eq!(distances, vec![5.0, 0.0]);
-    assert_eq!(saturated.operator_costs, vec![5.0]);
+    assert_eq!(
+        saturated
+            .entries()
+            .iter()
+            .map(|entry| entry.amount)
+            .collect::<Vec<_>>(),
+        vec![5.0]
+    );
 }
 
 fn cartesian_set(value: usize) -> CartesianSet {
@@ -212,13 +213,7 @@ fn source_set_reductions_apply_to_same_concrete_operator_only() {
     let mut residuals = RemainingCosts::from_operator_costs(&[10.0, 10.0]);
     let reduced = abstract_regions_for_interval(NumericValue::new(3.0), NumericValue::new(7.0));
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            std::slice::from_ref(&reduced),
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![3.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, std::slice::from_ref(&reduced), &[3.0])
         .unwrap();
 
     let query = source_set(NumericValue::new(5.0), NumericValue::new(8.0));
@@ -236,13 +231,7 @@ fn source_set_reduction_allows_full_cost() {
     let mut residuals = RemainingCosts::from_operator_costs(&[1.0]);
     let reduced = abstract_regions_for_interval(NumericValue::new(3.0), NumericValue::new(7.0));
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            std::slice::from_ref(&reduced),
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![1.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, std::slice::from_ref(&reduced), &[1.0])
         .unwrap();
 
     assert_eq!(residuals.cost_for_source_set(1, 0, &reduced.labels[0]), 0.0);
@@ -258,13 +247,7 @@ fn same_abstract_operator_alternative_source_sets_do_not_stack() {
         ],
     };
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &[reduced],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![0.4],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &[reduced], &[0.4])
         .unwrap();
 
     assert_eq!(
@@ -287,9 +270,7 @@ fn disjoint_source_set_sources_do_not_reduce_residual_cost() {
                 NumericValue::new(0.0),
                 NumericValue::new(2.0),
             )],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![4.0],
-            },
+            &[4.0],
         )
         .unwrap();
 
@@ -313,9 +294,7 @@ fn target_hull_overlap_is_ignored_for_abstract_source_sets() {
                 NumericValue::new(1.0),
                 NumericValue::new(10.0),
             )],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![4.0],
-            },
+            &[4.0],
         )
         .unwrap();
 
@@ -339,9 +318,7 @@ fn overlapping_source_set_sources_reduce_residual_cost() {
                 abstract_regions_for_interval(NumericValue::new(0.0), NumericValue::new(5.0)),
                 abstract_regions_for_interval(NumericValue::new(4.0), NumericValue::new(10.0)),
             ],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![3.0, 4.0],
-            },
+            &[3.0, 4.0],
         )
         .unwrap();
 
@@ -365,9 +342,7 @@ fn label_cp_steals_shared_operator_cost() {
                 NumericValue::new(0.0),
                 NumericValue::new(5.0),
             )],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![1.0],
-            },
+            &[1.0],
         )
         .unwrap();
 
@@ -386,9 +361,7 @@ fn region_cp_preserves_residual_for_complementary_abstraction() {
                 NumericValue::new(0.0),
                 NumericValue::new(5.0),
             )],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![1.0],
-            },
+            &[1.0],
         )
         .unwrap();
 
@@ -462,9 +435,7 @@ fn region_cp_overlapping_nested_targets_order_insensitive() {
             .reduce_by_abstract_source_sets(
                 abstraction_id,
                 source_sets,
-                &AbstractOperatorCostFunction {
-                    operator_costs: vec![1.0; source_sets.len()],
-                },
+                &vec![1.0; source_sets.len()],
             )
             .unwrap();
     }
@@ -517,13 +488,7 @@ fn cross_dimension_residual_shared() {
         )],
     };
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &[x_abstraction],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![1.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &[x_abstraction], &[1.0])
         .unwrap();
 
     let y_abstraction = source_set_2d(
@@ -539,13 +504,7 @@ fn infinite_tail_reduction_preserves_disjoint_tail_cost() {
     let mut residuals = RemainingCosts::from_operator_costs(&[10.0]);
     let tail = abstract_regions_for_interval(NEG_INF_VALUE, ZERO_VALUE);
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &[tail],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![4.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &[tail], &[4.0])
         .unwrap();
 
     assert_eq!(
@@ -572,13 +531,7 @@ fn open_infinite_tail_does_not_consume_boundary() {
         }],
     };
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &[open_tail],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![1.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &[open_tail], &[1.0])
         .unwrap();
 
     assert_eq!(
@@ -602,13 +555,7 @@ fn multidimensional_disjoint_regions_preserve_full_cost() {
         )],
     };
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &[lower_y],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![4.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &[lower_y], &[4.0])
         .unwrap();
 
     let upper_y = source_set_2d(
@@ -637,22 +584,10 @@ fn perpendicular_tail_allocations_preserve_untouched_corner() {
         )],
     };
     residuals
-        .reduce_by_abstract_source_sets(
-            0,
-            &[left],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![4.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(0, &[left], &[4.0])
         .unwrap();
     residuals
-        .reduce_by_abstract_source_sets(
-            1,
-            &[lower],
-            &AbstractOperatorCostFunction {
-                operator_costs: vec![3.0],
-            },
-        )
+        .reduce_by_abstract_source_sets(1, &[lower], &[3.0])
         .unwrap();
 
     let upper_right = source_set_2d(

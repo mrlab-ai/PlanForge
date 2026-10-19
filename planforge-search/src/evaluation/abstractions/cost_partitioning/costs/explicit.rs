@@ -50,11 +50,6 @@ pub struct AbstractTransitionCostFunction {
     pub transition_costs: Vec<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct AbstractOperatorCostFunction {
-    pub operator_costs: Vec<f64>,
-}
-
 #[derive(Debug, Clone)]
 pub struct SourceSetCostAllocation {
     entries: Vec<SourceSetCost>,
@@ -147,7 +142,7 @@ pub fn build_explicit_regional_cost_partitioning_table(
     abstraction_id: usize,
     cap_state_id: Option<usize>,
     deadline: Option<Instant>,
-) -> Result<(Vec<f64>, AbstractOperatorCostFunction)> {
+) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
     let operator_costs = abstract_operator_costs_from_source_sets(
         source_sets.len(),
         source_sets,
@@ -163,13 +158,10 @@ pub fn build_explicit_regional_cost_partitioning_table(
     let saturated =
         saturated_abstract_operator_costs(transition_system, &operator_costs, &saturation_table)?;
 
+    let allocation =
+        residual_costs.source_set_allocation(abstraction_id, source_sets, &saturated, deadline)?;
     if cap_state_id.is_none() {
-        return Ok((
-            distances,
-            AbstractOperatorCostFunction {
-                operator_costs: saturated,
-            },
-        ));
+        return Ok((distances, allocation));
     }
     let saturated_transition_costs =
         transition_costs_from_abstract_operator_costs(transition_system, &saturated)?;
@@ -179,12 +171,7 @@ pub fn build_explicit_regional_cost_partitioning_table(
         deadline,
         None,
     )?;
-    Ok((
-        global_distances,
-        AbstractOperatorCostFunction {
-            operator_costs: saturated,
-        },
-    ))
+    Ok((global_distances, allocation))
 }
 
 pub(super) fn ensure_scp_table_deadline(deadline: Option<Instant>) -> Result<()> {

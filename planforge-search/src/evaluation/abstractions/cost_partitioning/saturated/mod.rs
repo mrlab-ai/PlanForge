@@ -19,9 +19,8 @@ use crate::successor_generator::SuccessorTree;
 use crate::evaluation::abstractions::collections::goal_focused::MemberDirection;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
-    AbstractOperatorCostFunction, AbstractOperatorSourceSets, CartesianSet, RemainingCosts,
-    SourceSetCostAllocation, build_explicit_label_cost_partitioning_table,
-    build_explicit_regional_cost_partitioning_table,
+    AbstractOperatorSourceSets, CartesianSet, RemainingCosts, SourceSetCostAllocation,
+    build_explicit_label_cost_partitioning_table, build_explicit_regional_cost_partitioning_table,
 };
 use crate::evaluation::abstractions::domain::abstract_operator_generator::AbstractOperator;
 use crate::evaluation::abstractions::domain::factory::{
@@ -170,14 +169,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .map_err(EvaluationError::ComputationFailed)?;
         if config.partitioning.uses_regions() {
             for (component_id, component) in components.iter().enumerate() {
-                match component {
-                    AbstractionComponent::Cartesian(_) => info!(
-                        "Cartesian component {component_id}: partitioning=region requested, using abstract-operator cost partitioning (Cartesian abstractions do not yet support regional granularity)"
-                    ),
-                    AbstractionComponent::PatternDatabase(_) => info!(
-                        "PDB component {component_id}: partitioning=region requested, using label cost partitioning (PDBs do not yet support regional granularity)"
-                    ),
-                    AbstractionComponent::Domain(_) => {}
+                if matches!(component, AbstractionComponent::PatternDatabase(_)) {
+                    info!(
+                        "PDB component {component_id}: partitioning=region requested, using label cost partitioning (PDBs have no source sets)"
+                    );
                 }
             }
         }
