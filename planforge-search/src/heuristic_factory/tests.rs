@@ -9,8 +9,6 @@ use super::{
     register_external_heuristics,
 };
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
-use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
-use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
@@ -21,6 +19,7 @@ use crate::evaluation::abstractions::domain::collection::{
 };
 use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
+use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
@@ -151,24 +150,9 @@ fn parses_strict_icaps26_cartesian_source() {
         abstraction_config::ComponentUse::RegionalCostPartitioning,
     )
     .unwrap();
-    assert_eq!(
-        config.split_selection,
-        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted)
-    );
+    assert_eq!(config.pick, Icaps26SplitSelection::MinUnwanted);
     assert_eq!(config.max_time, Some(std::time::Duration::from_secs(900)));
-    assert_eq!(config.random_seed, Some(7));
-    assert_eq!(
-        config.refinement_direction,
-        crate::evaluation::abstractions::cartesian::CartesianRefinementDirection::Regression
-    );
-    assert_eq!(
-        config.abstract_plan_selection,
-        crate::evaluation::abstractions::cartesian::CartesianAbstractPlanSelection::StableAStar
-    );
-    assert_eq!(
-        config.flaw_candidate_generation,
-        crate::evaluation::abstractions::cartesian::CartesianFlawCandidateGeneration::DesiredRegion
-    );
+    assert_eq!(config.random_seed, 7);
     assert!(config.compute_source_sets);
     assert!(config.retain_transition_system);
 
@@ -177,7 +161,7 @@ fn parses_strict_icaps26_cartesian_source() {
         abstraction_config::ComponentUse::Standalone,
     )
     .unwrap();
-    assert_eq!(defaults.random_seed, Some(2011));
+    assert_eq!(defaults.random_seed, 2011);
 }
 
 #[test]
@@ -198,10 +182,7 @@ fn parses_matched_single_abstraction_icaps26_configuration() {
     .unwrap();
     assert_eq!(config.max_states, usize::MAX);
     assert_eq!(config.max_time, Some(std::time::Duration::from_secs(900)));
-    assert_eq!(
-        config.split_selection,
-        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
-    );
+    assert_eq!(config.pick, Icaps26SplitSelection::Random);
     assert!(!config.retain_transition_system);
 }
 

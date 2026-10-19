@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
-use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
@@ -16,6 +15,7 @@ use crate::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
+use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbHeuristicConfig;
@@ -499,7 +499,7 @@ pub(crate) fn build_components<'task>(
                 let mut config = apply_icaps26_cartesian_options(source.args(), component_use)?;
                 cap_duration(&mut config.max_time, remaining);
                 info!("Building ICAPS 2026 Cartesian abstraction source {source_index}...");
-                let abstraction = CartesianAbstractionGenerator::new(config)
+                let abstraction = Icaps26CartesianGenerator::new(config)
                     .map_err(|error| {
                         format!(
                             "failed to construct ICAPS 2026 Cartesian source {source_index}: {error:#}"
@@ -627,73 +627,13 @@ fn is_component_source_name(name: &str) -> bool {
 pub(crate) fn apply_icaps26_cartesian_options(
     args: &[ConfigArg],
     component_use: ComponentUse,
-) -> Result<CartesianAbstractionConfig, String> {
-    let mut config = CartesianAbstractionConfig {
-        max_states: usize::MAX,
-        max_time: Some(Duration::from_secs(900)),
-        combine_labels: false,
+) -> Result<Icaps26CartesianConfig, String> {
+    let mut config = Icaps26CartesianConfig {
         compute_source_sets: component_use.needs_source_sets(),
         retain_transition_system: component_use.needs_transition_system(),
-        random_seed: Some(2011),
-        flaw_kind: FlawKind::Progression,
-        refinement_direction: CartesianRefinementDirection::Regression,
-        abstract_plan_selection: CartesianAbstractPlanSelection::StableAStar,
-        flaw_candidate_generation: CartesianFlawCandidateGeneration::DesiredRegion,
-        split_selection_rank: None,
-        split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted),
-        debug: false,
+        ..Icaps26CartesianConfig::default()
     };
-
-    let mut seen = HashSet::new();
-    for arg in args {
-        let key = arg
-            .key()
-            .ok_or_else(|| "all options for `icaps26_cartesian` must be named".to_string())?;
-        if !seen.insert(key) {
-            return Err(format!("duplicate option `{key}` for `icaps26_cartesian`"));
-        }
-        match key {
-            "pick" => {
-                let value = String::from_option_value(arg.value())?;
-                let policy = match value.to_ascii_lowercase().as_str() {
-                    "random" => Icaps26SplitSelection::Random,
-                    "min_unwanted" => Icaps26SplitSelection::MinUnwanted,
-                    "max_unwanted" => Icaps26SplitSelection::MaxUnwanted,
-                    _ => {
-                        return Err(format!(
-                            "invalid ICAPS 2026 split selector `{value}`; expected random, min_unwanted, or max_unwanted"
-                        ));
-                    }
-                };
-                config.split_selection = CartesianSplitSelection::Icaps26(policy);
-            }
-            "max_states" => {
-                config.max_states = usize::from_option_value(arg.value())?;
-            }
-            "max_time" => {
-                let seconds = f64::from_option_value(arg.value())?;
-                config.max_time = if seconds.is_infinite() {
-                    None
-                } else {
-                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
-                        format!("invalid ICAPS 2026 max_time {seconds}: {error}")
-                    })?)
-                };
-            }
-            "random_seed" => {
-                config.random_seed = Some(u64::from_option_value(arg.value())?);
-            }
-            "combine_labels" => {
-                config.combine_labels = bool::from_option_value(arg.value())?;
-            }
-            "debug" => {
-                config.debug = bool::from_option_value(arg.value())?;
-            }
-            other => {
-                return Err(format!("unknown option `{other}` for `icaps26_cartesian`"));
-            }
-        }
-    }
+    config.apply_options(args)?;
     Ok(config)
 }
 

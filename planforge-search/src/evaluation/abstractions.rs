@@ -11,4 +11,5 @@ pub mod common;
 pub mod component;
 pub mod cost_partitioning;
 pub mod domain;
+pub mod icaps26;
 pub mod pdb;
