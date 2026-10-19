@@ -342,7 +342,7 @@ impl DomainAbstractionFactory {
     /// - all numeric variables with more than one partition,
     /// - all non-axiom propositional variables with abstract domain size > 1.
     pub fn dump_distances(&self, task: &dyn AbstractNumericTask, table: &AbstractDistanceTable) {
-        utils::dump_distances(self, task, table);
+        dump_distances(self, task, table);
     }
 
     pub(super) fn compute_distances_and_generating_ops(

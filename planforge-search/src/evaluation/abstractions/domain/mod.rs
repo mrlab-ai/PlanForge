@@ -6,6 +6,7 @@ pub mod cegar;
 pub mod collection;
 pub mod comparison_inputs;
 pub mod config;
+pub(crate) mod debug_dump;
 pub mod factory;
 pub mod flaws;
 pub mod generator;
@@ -14,7 +15,6 @@ pub mod initial_splits;
 pub mod partitions;
 pub mod refinement;
 pub mod split_selection;
-pub mod utils;
 
 /// The id a domain abstraction gives numeric variable `numeric_var_id`.
 ///

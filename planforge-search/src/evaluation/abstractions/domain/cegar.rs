@@ -15,7 +15,9 @@ use planforge_sas::utils::state_packer::StatePacker;
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
+use super::abstraction::compute_abstraction_size_u128;
 use super::config::CegarConfig;
+use super::debug_dump::debug_print_refinement_summary;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory, WildcardPlanResult};
 use super::flaws::{Flaw, FlawSearchOutcome};
 use super::initial_splits::{
@@ -23,7 +25,6 @@ use super::initial_splits::{
 };
 use super::partitions::NumericPartitions;
 use super::refinement::{RefinementState, filter_eligible_flaws, fix_flaws};
-use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
 use crate::evaluation::abstractions::common::cegar::{
     CegarDriver, CegarIterationResult, progress_concrete_state,
@@ -149,7 +150,7 @@ impl Cegar {
             start,
             |iteration, deadline| {
             if config.debug {
-                super::utils::debug_print_abstraction_stats(
+                super::debug_dump::debug_print_abstraction_stats(
                     iteration,
                     factory.domain_sizes(),
                     factory.numeric_domain_sizes(),
@@ -184,7 +185,7 @@ impl Cegar {
             let plan_time = plan_start.elapsed();
             if config.debug {
                 match wildcard_plan.as_ref() {
-                    Some(plan) => super::utils::debug_print_wildcard_plan(
+                    Some(plan) => super::debug_dump::debug_print_wildcard_plan(
                         task,
                         plan,
                         factory.domain_sizes(),
@@ -226,7 +227,7 @@ impl Cegar {
                 .with_context(|| format!("failed to collect flaws (iteration {iteration})"))?;
             let flaw_time = flaw_start.elapsed();
             if config.debug {
-                super::utils::debug_print_flaws(&flaws);
+                super::debug_dump::debug_print_flaws(&flaws);
             }
             if flaws.is_empty() {
                 solved_by_self = true;

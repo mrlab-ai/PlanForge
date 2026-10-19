@@ -189,3 +189,27 @@ pub fn compute_hash_multipliers(
 
     Ok(multipliers)
 }
+
+/// The number of abstract states of an abstraction with these domain
+/// sizes, or `None` if it does not fit `u128`.
+pub(crate) fn compute_abstraction_size_u128(
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+) -> Option<u128> {
+    let mut size: u128 = 1;
+    for &d in domain_sizes.iter() {
+        let du = u128::try_from(d).ok()?;
+        if du == 0 {
+            return Some(0);
+        }
+        size = size.checked_mul(du)?;
+    }
+    for &p in numeric_domain_sizes.iter() {
+        let pu = u128::try_from(p).ok()?;
+        if pu == 0 {
+            return Some(0);
+        }
+        size = size.checked_mul(pu)?;
+    }
+    Some(size)
+}

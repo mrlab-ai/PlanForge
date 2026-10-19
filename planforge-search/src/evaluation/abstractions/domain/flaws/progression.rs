@@ -24,7 +24,7 @@ use crate::evaluation::abstractions::common::concrete_state::{
 };
 use crate::evaluation::abstractions::common::coordinates::numeric_dimension_delta_for_operator;
 use crate::evaluation::abstractions::domain::{
-    factory::WildcardPlanResult, partitions::NumericPartitions, utils::partition_for_value,
+    factory::WildcardPlanResult, partitions::NumericPartitions, partitions::partition_for_value,
 };
 
 /// The task a flaw is measured against: the task itself, the numeric partitions

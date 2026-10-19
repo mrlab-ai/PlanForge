@@ -25,8 +25,9 @@ use super::abstraction_numeric_var;
 use super::comparison_inputs::{
     AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state_into,
 };
+use super::debug_dump::dump_distances;
 use super::partitions::NumericPartitions;
-use super::utils;
+use super::partitions::partition_for_value;
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 
 mod distances;

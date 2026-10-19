@@ -1,8 +1,30 @@
-use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+//! Debug output of domain-abstraction CEGAR, written at `debug` level.
 
-use super::*;
+use std::collections::{BTreeSet, HashMap};
+use std::fmt::Write as _;
+
+use anyhow::{Result, anyhow};
+use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue};
+use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+use planforge_sas::state_registry::ConcreteStateView;
+use planforge_sas::utils::interval::Interval;
+use planforge_sas::utils::state_packer::StatePacker;
+use tracing::debug;
+
+use super::abstraction::compute_abstraction_size_u128;
+use super::factory::{DomainAbstractionFactory, WildcardPlanResult};
+use super::flaws::Flaw;
+use super::partitions::{NumericPartitions, partition_for_value};
+use crate::evaluation::abstractions::common::cegar::progress_concrete_state;
 use crate::evaluation::abstractions::common::concrete_state::{
     make_prop_state_packer, set_initial_prop_values,
+};
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::domain::flaws::SplitDirection;
+use crate::evaluation::abstractions::domain::flaws::progression::{
+    NumericTransitionStates, PartitionedTask, get_progression_numeric_deviation_flaws,
+    get_progression_precondition_flaws,
 };
 
 pub(crate) fn debug_print_abstraction_stats(
@@ -647,4 +669,37 @@ pub(crate) fn dump_distances(
             }
         }
     }
+}
+
+pub(crate) fn fmt_interval(iv: Interval) -> String {
+    let l = if iv.lower_closed { '[' } else { '(' };
+    let r = if iv.upper_closed { ']' } else { ')' };
+    let lo = fmt_f64_compact(iv.lower.value());
+    let hi = fmt_f64_compact(iv.upper.value());
+    format!("{l}{lo}, {hi}{r}")
+}
+
+pub(crate) fn fmt_f64_compact(v: f64) -> String {
+    if v.is_nan() {
+        return "NaN".to_string();
+    }
+    if v.is_infinite() {
+        return if v.is_sign_negative() {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        };
+    }
+    let mut s = format!("{v}");
+    let is_scientific = s.contains('e') || s.contains('E');
+    if !is_scientific && let Some(dot) = s.find('.') {
+        let (head, tail) = s.split_at(dot + 1);
+        let trimmed_tail = tail.trim_end_matches('0');
+        s = if trimmed_tail.is_empty() {
+            head.trim_end_matches('.').to_string()
+        } else {
+            format!("{head}{trimmed_tail}")
+        };
+    }
+    if s == "-0" { "0".to_string() } else { s }
 }

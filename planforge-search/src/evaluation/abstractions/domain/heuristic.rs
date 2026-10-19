@@ -11,7 +11,7 @@ use planforge_sas::state_registry::ConcreteState;
 
 use super::abstraction::DomainAbstraction;
 use super::abstraction_numeric_var;
-use super::utils;
+use super::partitions::partition_for_value;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
 
 #[derive(Debug, Clone)]
@@ -99,7 +99,7 @@ impl DomainAbstractionHeuristic {
                 "missing partitions for numeric var {num_var_id}"
             ))
         })?;
-        utils::partition_for_value(parts, value).ok_or_else(|| {
+        partition_for_value(parts, value).ok_or_else(|| {
             EvaluationError::InvalidState(format!(
                 "numeric value {value} not contained in any partition for var {num_var_id}"
             ))

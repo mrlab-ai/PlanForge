@@ -628,7 +628,7 @@ impl DomainAbstractionFactory {
                 .partitions
                 .partitions(num_var_id)
                 .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
-            let part = utils::partition_for_value(parts, val).with_context(|| {
+            let part = partition_for_value(parts, val).with_context(|| {
                 format!(
                     "initial numeric value {val} not contained in any partition for numeric var {num_var_id}"
                 )

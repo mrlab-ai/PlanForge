@@ -10,13 +10,13 @@ use rand::rngs::SmallRng;
 use tracing::debug;
 
 use super::abstract_operators::DomainMapping;
+use super::abstraction::compute_abstraction_size_u128;
 use super::config::CegarConfig;
 use super::flaws::{
     DependentNumericRefinement, Flaw, NumericFlaw, PropFlaw, can_split_numeric_var,
 };
 use super::partitions::NumericPartitions;
 use super::split_selection::{ChosenFlaws, FlawTreatment, TieBreak};
-use super::utils::compute_abstraction_size_u128;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 
 /// The only abstract domain a refined condition variable ever has: the value

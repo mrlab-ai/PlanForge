@@ -50,7 +50,7 @@ use crate::evaluation::abstractions::domain::flaws::sequence::{
 };
 use crate::evaluation::abstractions::domain::flaws::state::FlawSearchState;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
-use crate::evaluation::abstractions::domain::utils::partition_for_value;
+use crate::evaluation::abstractions::domain::partitions::partition_for_value;
 
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]

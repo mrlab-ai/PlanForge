@@ -22,7 +22,7 @@ use crate::evaluation::abstractions::domain::{
         state::{FlawSearchState, get_initial_flaw_search_state},
     },
     partitions::NumericPartitions,
-    utils::partitions_for_interval,
+    partitions::partitions_for_interval,
 };
 
 pub enum SequenceDirection {

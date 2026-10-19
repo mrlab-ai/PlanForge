@@ -23,12 +23,12 @@ use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
 
+use super::abstraction::compute_abstraction_size_u128;
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
 use super::config::CegarConfig;
 use super::flaws::SplitDirection;
 use super::generator::DomainAbstractionGenerator;
 use super::split_selection::{FlawTreatmentVariants, InitSplitMethod};
-use super::utils::compute_abstraction_size_u128;
 use crate::resource_limits;
 use planforge_sas::utils::interval::Interval;
 
