@@ -1,0 +1,892 @@
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
+use planforge_sas::numeric_task::{
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, OperatorIndex, VariableIndex,
+};
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+
+use crate::evaluation::abstractions::pdb::pattern_database::{
+    PatternDatabase, PdbHeuristicConfig, PdbInternalHeuristic,
+};
+use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
+
+fn build_pdb_from_projected_task(
+    task: ProjectedTask<'_>,
+    max_states: usize,
+) -> PatternDatabase<'_> {
+    PatternDatabase::new(task, max_states).unwrap()
+}
+
+fn build_pdb_with_heuristics(
+    task: ProjectedTask<'_>,
+    max_states: usize,
+    heuristic_config: PdbHeuristicConfig,
+) -> PatternDatabase<'_> {
+    PatternDatabase::with_heuristic_config(task, max_states, heuristic_config).unwrap()
+}
+
+fn lookup_concrete(
+    pdb: &PatternDatabase<'_>,
+    state: &ConcreteState,
+    registry: &StateRegistry<'_>,
+) -> f64 {
+    let prop = state.get_state(registry);
+    let numeric = registry.get_numeric_vars(state).unwrap();
+    pdb.lookup_projected_or_fallback_from_source_state_values(&prop, &numeric)
+        .unwrap()
+}
+
+fn simple_var(name: &str, axiom_layer: Option<usize>) -> ExplicitVariable {
+    ExplicitVariable::new(
+        2,
+        name.to_string(),
+        vec![format!("{name}=0"), format!("{name}=1")],
+        axiom_layer,
+        ExplicitValueIndex::new(1),
+    )
+}
+
+/// A variable carrying a numeric condition, with the three values the
+/// translator gives one: true, false and "not derived yet".
+fn condition_var(name: &str, axiom_layer: usize) -> ExplicitVariable {
+    ExplicitVariable::new(
+        ConditionValue::DOMAIN_SIZE,
+        name.to_string(),
+        vec![
+            format!("{name}=0"),
+            format!("{name}=1"),
+            format!("{name}=2"),
+        ],
+        Some(axiom_layer),
+        ExplicitValueIndex::new(1),
+    )
+}
+
+fn propositional_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![NumericVariable::new(
+            "x".to_string(),
+            NumericType::Regular,
+            None,
+        )],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0)],
+        operators: vec![Operator::new(
+            "set-goal".to_string(),
+            vec![ExplicitFact::propositional(0, 0)],
+            vec![planforge_sas::numeric_task::Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
+            vec![],
+            OperatorCost::new(3),
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(0),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(0),
+        )],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn comparison_guarded_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![condition_var("cmp", 0), simple_var("goal", None)],
+        numeric_variables: vec![
+            NumericVariable::new("threshold".to_string(), NumericType::Constant, None),
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+        ],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
+        operators: vec![Operator::new(
+            "advance".to_string(),
+            vec![ExplicitFact::propositional(0, 0)],
+            vec![planforge_sas::numeric_task::Effect::new(
+                vec![],
+                VariableIndex::new(1),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
+            vec![],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            VariableIndex::new(0),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn truncated_chain_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
+            3,
+            "p".to_string(),
+            vec!["p=0".to_string(), "p=1".to_string(), "p=2".to_string()],
+            None,
+            ExplicitValueIndex::new(2),
+        )],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 2)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![
+            Operator::new(
+                "step-1".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(5),
+            ),
+            Operator::new(
+                "step-2".to_string(),
+                vec![ExplicitFact::propositional(0, 1)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(1)),
+                    ExplicitValueIndex::new(2),
+                )],
+                vec![],
+                OperatorCost::new(5),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn relevance_precision_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![
+            Operator::new(
+                "set-goal".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "goal-self-loop".to_string(),
+                vec![ExplicitFact::propositional(0, 1)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(1)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+#[test]
+fn relevant_operators_are_exact_when_complete_and_sound_when_truncated() {
+    let task = relevance_precision_task();
+    let pattern = Pattern::new(vec![VariableIndex::from_usize(0)], vec![]);
+    let complete = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 32).unwrap();
+    let truncated = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 1).unwrap();
+
+    assert_eq!(
+        complete.relevant_operator_ids(),
+        vec![OperatorIndex::new(0)]
+    );
+    assert_eq!(
+        truncated.relevant_operator_ids(),
+        vec![OperatorIndex::new(0), OperatorIndex::new(1)]
+    );
+}
+
+fn truncation_gap_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
+            4,
+            "p".to_string(),
+            vec![
+                "p=0".to_string(),
+                "p=1".to_string(),
+                "p=2".to_string(),
+                "p=3".to_string(),
+            ],
+            None,
+            ExplicitValueIndex::new(3),
+        )],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 3)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![
+            Operator::new(
+                "to-1".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "to-2".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(2),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "to-3".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(3),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn cost_only_hidden_numeric_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
+            NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
+            NumericVariable::new("c1".to_string(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(1.0)],
+        operators: vec![
+            Operator::new(
+                "wait".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![],
+                vec![AssignmentEffect::new(
+                    VariableIndex::new(0),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(1),
+                    false,
+                    vec![],
+                )],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "finish".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![AssignmentEffect::new(
+                    VariableIndex::new(0),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(1),
+                    false,
+                    vec![],
+                )],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn zero_metric_cost_hidden_numeric_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, Some(VariableIndex::from_usize(0))),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
+            NumericVariable::new("total-cost".to_string(), NumericType::Cost, None),
+            NumericVariable::new("zero".to_string(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
+        operators: vec![Operator::new(
+            "finish".to_string(),
+            vec![ExplicitFact::propositional(0, 0)],
+            vec![planforge_sas::numeric_task::Effect::new(
+                vec![],
+                VariableIndex::new(0),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(1),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn numeric_pair_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![simple_var("p", None)],
+        numeric_variables: vec![
+            NumericVariable::new("x".to_string(), NumericType::Regular, None),
+            NumericVariable::new("y".to_string(), NumericType::Regular, None),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(3.0), NumericValue::new(7.0)],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+fn failed_lookup_chain_task() -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
+            5,
+            "p".to_string(),
+            vec![
+                "p=0".to_string(),
+                "p=1".to_string(),
+                "p=2".to_string(),
+                "p=3".to_string(),
+                "p=4".to_string(),
+            ],
+            None,
+            ExplicitValueIndex::new(4),
+        )],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 4)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![
+            Operator::new(
+                "to-1".to_string(),
+                vec![ExplicitFact::propositional(0, 0)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(0)),
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "to-2".to_string(),
+                vec![ExplicitFact::propositional(0, 1)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(1)),
+                    ExplicitValueIndex::new(2),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "to-3".to_string(),
+                vec![ExplicitFact::propositional(0, 2)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(2)),
+                    ExplicitValueIndex::new(3),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "to-4".to_string(),
+                vec![ExplicitFact::propositional(0, 3)],
+                vec![planforge_sas::numeric_task::Effect::new(
+                    vec![],
+                    VariableIndex::new(0),
+                    Some(ExplicitValueIndex::new(3)),
+                    ExplicitValueIndex::new(4),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+#[test]
+fn lookup_returns_distance_for_reached_state() {
+    let task = propositional_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(0)],
+        },
+    )
+    .unwrap();
+    let pdb = PatternDatabase::new(projected_task, 32).unwrap();
+
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(0)], &[NumericValue::new(0.0)]),
+        Some(3.0)
+    );
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(1)], &[NumericValue::new(0.0)]),
+        Some(0.0)
+    );
+}
+
+#[test]
+fn pattern_database_accepts_numeric_abstract_task_boundary() {
+    let task = propositional_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(0)],
+        },
+    )
+    .unwrap();
+
+    let pdb = build_pdb_from_projected_task(projected_task, 32);
+
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(0)], &[NumericValue::new(0.0)]),
+        Some(3.0)
+    );
+}
+
+#[test]
+fn lookup_miss_returns_zero_for_goal_state() {
+    let task = propositional_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(0)],
+        },
+    )
+    .unwrap();
+    let pdb = PatternDatabase::new(projected_task, 0).unwrap();
+
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(1)], &[NumericValue::new(0.0)]),
+        None
+    );
+    assert_eq!(
+        pdb.lookup_or_fallback(&[ExplicitValueIndex::new(1)], &[NumericValue::new(0.0)]),
+        0.0
+    );
+}
+
+#[test]
+fn lookup_miss_returns_min_operator_cost_for_non_goal_state() {
+    let task = propositional_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(0)],
+        },
+    )
+    .unwrap();
+    let pdb = PatternDatabase::new(projected_task, 1).unwrap();
+
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(0)], &[NumericValue::new(42.0)]),
+        None
+    );
+    assert_eq!(
+        pdb.lookup_or_fallback(&[ExplicitValueIndex::new(0)], &[NumericValue::new(42.0)]),
+        3.0
+    );
+}
+
+#[test]
+fn direct_concrete_lookup_matches_projected_lookup_for_propositional_task() {
+    let task = propositional_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![VariableIndex::from_usize(0)],
+        },
+    )
+    .unwrap();
+    let pdb = PatternDatabase::new(projected_task, 32).unwrap();
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+    let initial_state = state_registry.get_initial_state();
+
+    assert_eq!(
+        lookup_concrete(&pdb, &initial_state, &state_registry),
+        pdb.lookup_or_fallback(&[ExplicitValueIndex::new(0)], &[NumericValue::new(0.0)]),
+    );
+}
+
+#[test]
+fn pdb_build_expands_from_axiom_closed_initial_state() {
+    let task = comparison_guarded_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(1)],
+            numeric: vec![VariableIndex::from_usize(1)],
+        },
+    )
+    .unwrap();
+
+    let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
+    assert_eq!(initial_prop, vec![ExplicitValueIndex::new(0)]);
+
+    let pdb = PatternDatabase::new(projected_task, 16).unwrap();
+
+    assert!(pdb.states.len() > 1);
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(0)], &[NumericValue::new(0.0)]),
+        Some(1.0)
+    );
+    assert_eq!(pdb.lookup(&initial_prop, &initial_num), Some(1.0));
+    assert!(pdb.distances.contains(&0.0));
+}
+
+#[test]
+fn direct_concrete_lookup_matches_projected_lookup_for_comparison_guarded_task() {
+    let task = comparison_guarded_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(1)],
+            numeric: vec![VariableIndex::from_usize(1)],
+        },
+    )
+    .unwrap();
+    let (initial_prop, initial_num) = projected_task.evaluated_initial_state_values().unwrap();
+    let pdb = PatternDatabase::new(projected_task, 16).unwrap();
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+    let initial_state = state_registry.get_initial_state();
+
+    assert_eq!(
+        lookup_concrete(&pdb, &initial_state, &state_registry),
+        pdb.lookup_or_fallback(&initial_prop, &initial_num),
+    );
+}
+
+#[test]
+fn truncated_pdb_propagates_frontier_seed_costs() {
+    let task = truncated_chain_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let pdb = PatternDatabase::new(projected_task, 2).unwrap();
+
+    assert!(pdb.truncated);
+    assert_eq!(pdb.reached_goal_states, 0);
+    assert_eq!(pdb.frontier_states, vec![2]);
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(1)], &[]), Some(5.0));
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(0)], &[]), Some(10.0));
+    assert_eq!(
+        pdb.lookup_or_fallback(&[ExplicitValueIndex::new(0)], &[]),
+        10.0
+    );
+}
+
+#[test]
+fn truncated_pdb_handles_multiple_new_successors_after_hitting_limit() {
+    let task = truncation_gap_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let pdb = PatternDatabase::new(projected_task, 2).unwrap();
+
+    assert!(pdb.truncated);
+    assert_eq!(pdb.frontier_states, vec![1, 2, 3]);
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(0)], &[]), Some(1.0));
+}
+
+#[test]
+fn pdb_collapses_hidden_cost_dimensions_outside_pattern() {
+    let task = cost_only_hidden_numeric_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let pdb = PatternDatabase::new(projected_task, 64).unwrap();
+
+    assert_eq!(pdb.states.len(), 2);
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(0)], &[]), Some(1.0));
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(1)], &[]), Some(0.0));
+}
+
+#[test]
+fn direct_concrete_lookup_uses_compact_prop_table_for_pure_propositional_patterns() {
+    let task = cost_only_hidden_numeric_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let pdb = PatternDatabase::new(projected_task, 64).unwrap();
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+    let initial_state = state_registry.get_initial_state();
+
+    assert_eq!(lookup_concrete(&pdb, &initial_state, &state_registry), 1.0,);
+}
+
+#[test]
+fn direct_concrete_numeric_lookup_keeps_slot_zero_for_prop_hash() {
+    let task = numeric_pair_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![],
+            numeric: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+        },
+    )
+    .unwrap();
+
+    let mut pdb = PatternDatabase::new(projected_task, 0).unwrap();
+    pdb.states = vec![super::PdbState {
+        propositional: vec![],
+        numeric: vec![NumericValue::new(3.0), NumericValue::new(7.0)],
+    }];
+    pdb.distances = vec![11.0];
+    pdb.rebuild_lookup_indexes();
+
+    let mut state_registry = StateRegistry::for_task(std::sync::Arc::new(&task));
+    let initial_state = state_registry.get_initial_state();
+
+    assert_eq!(lookup_concrete(&pdb, &initial_state, &state_registry), 11.0,);
+}
+
+#[test]
+fn lookup_uses_min_distance_across_pattern_aliases() {
+    let task = comparison_guarded_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(1)],
+            numeric: vec![VariableIndex::from_usize(1)],
+        },
+    )
+    .unwrap();
+
+    let mut pdb = PatternDatabase::new(projected_task, 16).unwrap();
+    pdb.states = vec![
+        super::PdbState {
+            propositional: vec![ExplicitValueIndex::new(0)],
+            numeric: vec![NumericValue::new(0.0)],
+        },
+        super::PdbState {
+            propositional: vec![ExplicitValueIndex::new(0)],
+            numeric: vec![NumericValue::new(0.0)],
+        },
+    ];
+    pdb.distances = vec![5.0, 1.0];
+    pdb.rebuild_lookup_indexes();
+
+    assert_eq!(
+        pdb.lookup(&[ExplicitValueIndex::new(0)], &[NumericValue::new(0.0)]),
+        Some(1.0)
+    );
+}
+
+#[test]
+fn projected_runtime_lookup_uses_pattern_min_across_full_projected_aliases() {
+    let task = comparison_guarded_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let mut pdb = PatternDatabase::new(projected_task, 16).unwrap();
+    pdb.states = vec![
+        super::PdbState {
+            propositional: vec![ExplicitValueIndex::new(0)],
+            numeric: vec![NumericValue::new(1.0), NumericValue::new(0.0)],
+        },
+        super::PdbState {
+            propositional: vec![ExplicitValueIndex::new(0)],
+            numeric: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
+        },
+    ];
+    pdb.distances = vec![5.0, 1.0];
+    pdb.rebuild_lookup_indexes();
+
+    assert_eq!(
+        pdb.lookup_pattern_or_fallback_in_projected_values(
+            &[ExplicitValueIndex::new(0)],
+            &[NumericValue::new(0.0), NumericValue::new(0.0)]
+        ),
+        1.0
+    );
+}
+
+#[test]
+fn pdb_uses_metric_delta_costs_even_when_metric_var_is_hidden() {
+    let task = zero_metric_cost_hidden_numeric_task();
+    let projected_task = ProjectedTask::new(
+        &task,
+        &Pattern {
+            regular: vec![VariableIndex::from_usize(0)],
+            numeric: vec![],
+        },
+    )
+    .unwrap();
+
+    let pdb = PatternDatabase::new(projected_task, 64).unwrap();
+
+    assert_eq!(pdb.min_operator_cost(), 0.0);
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(0)], &[]), Some(0.0));
+    assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(1)], &[]), Some(0.0));
+}
+
+#[test]
+fn failed_lookup_lmcut_is_more_informed_than_blind() {
+    let task = failed_lookup_chain_task();
+    let pattern = Pattern {
+        regular: vec![VariableIndex::from_usize(0)],
+        numeric: vec![],
+    };
+    let blind_projected_task = ProjectedTask::new(&task, &pattern).unwrap();
+    let blind_pdb = build_pdb_with_heuristics(
+        blind_projected_task,
+        1,
+        PdbHeuristicConfig {
+            failed_lookup_heuristic: PdbInternalHeuristic::Blind,
+            ..PdbHeuristicConfig::default()
+        },
+    );
+
+    let lmcut_projected_task = ProjectedTask::new(&task, &pattern).unwrap();
+    let lmcut_pdb = build_pdb_with_heuristics(
+        lmcut_projected_task,
+        1,
+        PdbHeuristicConfig {
+            failed_lookup_heuristic: PdbInternalHeuristic::Lmcut,
+            ..PdbHeuristicConfig::default()
+        },
+    );
+
+    let blind_value = blind_pdb.lookup_or_fallback(&[ExplicitValueIndex::new(2)], &[]);
+    let lmcut_value = lmcut_pdb.lookup_or_fallback(&[ExplicitValueIndex::new(2)], &[]);
+
+    assert_eq!(blind_value, 1.0);
+    assert!(lmcut_value > blind_value);
+}

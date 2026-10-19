@@ -11,12 +11,8 @@
 /// available by asking for a seed, not by omitting one.
 pub const DEFAULT_RANDOM_SEED: u64 = 0;
 
-pub mod abstraction_collections;
-pub(crate) mod abstraction_task;
-pub mod cartesian_abstractions;
-pub mod cegar;
+pub mod abstractions;
 pub mod check_admissible;
-pub mod domain_abstractions;
 pub mod evaluator;
 pub mod ff_heuristic;
 pub mod heuristic;
@@ -24,7 +20,6 @@ pub(crate) mod maximal_cliques;
 pub mod numeric_landmarks;
 #[cfg(feature = "cplex")]
 pub mod numeric_potentials;
-pub mod pattern_databases;
 pub(crate) mod state_value_cache;
 pub use evaluator::{EvaluationError, EvaluationState};
 pub use heuristic::Heuristic;

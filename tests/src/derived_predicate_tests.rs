@@ -23,17 +23,17 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::evaluation::cartesian_abstractions::{
+use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use planforge_search::evaluation::abstractions::domain::collection_generator::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
+use planforge_search::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+use planforge_search::evaluation::abstractions::pdb::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planforge_search::evaluation::ff_heuristic::FfHeuristic;
 use planforge_search::evaluation::heuristic::Heuristic;
-use planforge_search::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
-use planforge_search::evaluation::pattern_databases::pdb_heuristic::GreedyNumericPdbHeuristic;
 use planforge_search::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::{
     LandmarkCutNumericHeuristic, LmCutNumericConfig,
 };

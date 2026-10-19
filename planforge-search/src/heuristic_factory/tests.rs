@@ -9,23 +9,22 @@ use super::{
     register_external_heuristics,
 };
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
-use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use crate::evaluation::abstraction_collections::saturated_cost_partitioning::{
-    CostPartitioningMethod, LegacyScpConfig, OrderGenerator, Saturator,
-    ScoringFunction, ScpConfig,
+use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
+use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
+use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::cost_partitioning::saturated::{
+    CostPartitioningMethod, LegacyScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpConfig,
 };
-use crate::evaluation::cartesian_abstractions::CartesianSplitSelection;
-use crate::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
-use crate::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
-use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use crate::evaluation::abstractions::domain::cegar::{CegarConfig, FlawKind};
+use crate::evaluation::abstractions::domain::collection_generator::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, FlawTreatmentVariants,
     InitSplitQuantity, VariableSubset,
 };
+use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
+use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
+use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
-use crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
-use crate::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic;
-use crate::evaluation::pattern_databases::pattern_generator_greedy::GreedyPatternGeneratorConfig;
-use crate::evaluation::pattern_databases::variable_order_finder::GreedyVariableOrderType;
 /// The heuristic inside an `astar(...)` spec. Written as the full search spec
 /// because that is what a user types, and `astar(` / `)` is all the engine
 /// grammar these tests need.
@@ -161,15 +160,15 @@ fn parses_strict_icaps26_cartesian_source() {
     assert_eq!(config.random_seed, Some(7));
     assert_eq!(
         config.refinement_direction,
-        crate::evaluation::cartesian_abstractions::CartesianRefinementDirection::Regression
+        crate::evaluation::abstractions::cartesian::CartesianRefinementDirection::Regression
     );
     assert_eq!(
         config.abstract_plan_selection,
-        crate::evaluation::cartesian_abstractions::CartesianAbstractPlanSelection::StableAStar
+        crate::evaluation::abstractions::cartesian::CartesianAbstractPlanSelection::StableAStar
     );
     assert_eq!(
         config.flaw_candidate_generation,
-        crate::evaluation::cartesian_abstractions::CartesianFlawCandidateGeneration::DesiredRegion
+        crate::evaluation::abstractions::cartesian::CartesianFlawCandidateGeneration::DesiredRegion
     );
     assert!(config.compute_source_sets);
     assert!(config.retain_transition_system);
@@ -280,7 +279,7 @@ fn direct_cartesian_abstraction_rejects_unsupported_flaw_kind() {
     let mut cegar = CegarConfig::default();
     cegar.apply_options(&h.args).unwrap();
 
-    let result = crate::evaluation::cartesian_abstractions::CartesianAbstractionGenerator::new(
+    let result = crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator::new(
         super::cartesian_config_from_cegar(&cegar),
     );
     assert!(
@@ -381,7 +380,7 @@ fn parses_forward_partition_deviation_split_direction() {
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(
         cfg.split_direction,
-        Some(crate::evaluation::domain_abstractions::cegar::SplitDirection::ForwardPartitionDeviation)
+        Some(crate::evaluation::abstractions::domain::cegar::SplitDirection::ForwardPartitionDeviation)
     );
 }
 
@@ -618,7 +617,7 @@ fn parses_goal_focused_domain_collection_options() {
     assert!(cfg.single_goal_tasks);
     assert_eq!(
         cfg.split_direction,
-        Some(crate::evaluation::domain_abstractions::cegar::SplitDirection::Backward)
+        Some(crate::evaluation::abstractions::domain::cegar::SplitDirection::Backward)
     );
 }
 

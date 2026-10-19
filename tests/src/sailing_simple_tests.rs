@@ -50,23 +50,22 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
-use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning::{
-    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
-};
-use planforge_search::evaluation::cartesian_abstractions::{
+use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
-use planforge_search::evaluation::domain_abstractions::cegar::{CegarConfig, FlawKind};
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    FlawTreatmentVariants,
+use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::{
+use planforge_search::evaluation::abstractions::domain::cegar::{CegarConfig, FlawKind};
+use planforge_search::evaluation::abstractions::domain::collection_generator::{
+    DomainAbstractionCollectionGeneratorMultipleCegar,
+    DomainAbstractionCollectionGeneratorMultipleCegarConfig, FlawTreatmentVariants,
+};
+use planforge_search::evaluation::abstractions::domain::generator::{
     DomainAbstraction, DomainAbstractionGenerator,
 };
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
