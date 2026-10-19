@@ -40,7 +40,7 @@ use crate::evaluation::abstractions::domain::utils::{get_initial_state, make_pro
 use crate::evaluation::validate_abstractable_goal;
 
 use super::abstract_operator_generator::DomainMapping;
-use super::additive_numeric_views::{
+use crate::evaluation::abstractions::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
 };

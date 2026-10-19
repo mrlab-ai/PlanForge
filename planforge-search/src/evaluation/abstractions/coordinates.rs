@@ -5,12 +5,14 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail, ensure};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, NumericType, NumericValue,
-    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, INF_VALUE,
+    NEG_INF_VALUE, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
+use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::interval::Interval;
 use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
-use planforge_sas::numeric_conditions::{ConditionNode, NumericCondition};
+use planforge_sas::numeric_conditions::{CompOp, ConditionNode, NumericCondition};
 
 const EPSILON: f64 = 1e-12;
 
@@ -384,4 +386,211 @@ fn constant_effect_delta(
             None
         }
     }
+}
+
+/// The coordinates of a task: its regular numeric variables, and the derived
+/// numeric variables whose value every operator changes by a constant.
+/// Abstractions split coordinates, and a condition over one coordinate is an
+/// interval of it, so regression over coordinates is exact.
+pub(crate) struct Coordinates<'task> {
+    task: &'task dyn AbstractNumericTask,
+    views: Vec<Option<AdditiveNumericView>>,
+}
+
+/// The values a condition allows for the one coordinate it constrains.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CoordinateRequirement {
+    pub(crate) coordinate: VariableIndex,
+    pub(crate) values: Interval,
+}
+
+impl<'task> Coordinates<'task> {
+    pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Self {
+        let views = (0..task.numeric_variables().len())
+            .map(|var_id| analyze_additive_numeric_view(task, VariableIndex::from_usize(var_id)))
+            .collect();
+        Self { task, views }
+    }
+
+    /// The additive view of every numeric variable that has one.
+    pub(crate) fn views(&self) -> &[Option<AdditiveNumericView>] {
+        &self.views
+    }
+
+    /// The requirement of the comparison fact `fact` on its coordinate, or
+    /// `None` if `fact` is not a comparison over exactly one coordinate.
+    pub(crate) fn requirement(&self, fact: &ExplicitFact) -> Option<CoordinateRequirement> {
+        let (coordinate, values) = numeric_requirement_for_comparison_fact(self.task, fact)?;
+        Some(CoordinateRequirement {
+            coordinate: VariableIndex::from_usize(coordinate),
+            values,
+        })
+    }
+
+    /// The values of `coordinate` before `op_id` whose image lies in
+    /// `target`, or `None` when no value's does because `op_id` assigns the
+    /// coordinate a value outside `target`.
+    pub(crate) fn preimage(
+        &self,
+        target: Interval,
+        op_id: OperatorIndex,
+        coordinate: VariableIndex,
+    ) -> Result<Option<Interval>> {
+        let mut preimage = target;
+        if let Some(view) = &self.views[coordinate.index()] {
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+            preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
+            return Ok(Some(preimage));
+        }
+        let initial = self.task.get_initial_numeric_state_values();
+        for effect in self.task.get_operators()[op_id.index()]
+            .assignment_effects()
+            .iter()
+            .filter(|effect| effect.affected_var_id() == coordinate)
+        {
+            let rhs = float_tolerance::canonicalize(initial[effect.var_id().index()]);
+            match effect.operation() {
+                AssignmentOperation::Assign => {
+                    if !preimage.contains(rhs) {
+                        return Ok(None);
+                    }
+                    preimage = Interval::unbounded();
+                }
+                AssignmentOperation::Plus | AssignmentOperation::Minus => {
+                    preimage.apply_reverse_op(effect.operation(), &Interval::singleton(rhs));
+                }
+                operation @ (AssignmentOperation::Times | AssignmentOperation::Divide) => bail!(
+                    "operator {op_id} has the non-additive effect {operation:?} on coordinate {coordinate}"
+                ),
+            }
+            preimage = preimage.canonicalized();
+        }
+        Ok(Some(preimage))
+    }
+
+    /// The image of the interval `source` of `coordinate` under `op_id`.
+    pub(crate) fn image(
+        &self,
+        source: Interval,
+        op_id: OperatorIndex,
+        coordinate: VariableIndex,
+    ) -> Result<Interval> {
+        let mut image = source;
+        if let Some(view) = &self.views[coordinate.index()] {
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+            image.apply_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
+            return Ok(image.canonicalized());
+        }
+        let initial = self.task.get_initial_numeric_state_values();
+        for effect in self.task.get_operators()[op_id.index()]
+            .assignment_effects()
+            .iter()
+            .filter(|effect| effect.affected_var_id() == coordinate)
+        {
+            let rhs = Interval::singleton(float_tolerance::canonicalize(
+                initial[effect.var_id().index()],
+            ));
+            match effect.operation() {
+                operation @ (AssignmentOperation::Assign
+                | AssignmentOperation::Plus
+                | AssignmentOperation::Minus) => image.apply_op(operation, &rhs),
+                operation @ (AssignmentOperation::Times | AssignmentOperation::Divide) => bail!(
+                    "operator {op_id} has the non-additive effect {operation:?} on coordinate {coordinate}"
+                ),
+            }
+            image = image.canonicalized();
+        }
+        Ok(image)
+    }
+}
+
+pub(crate) fn numeric_requirement_for_comparison_fact(
+    task: &dyn AbstractNumericTask,
+    fact: &ExplicitFact,
+) -> Option<(usize, Interval)> {
+    let tree = task.numeric_conditions().for_var(fact.var_index())?;
+    let required_op = required_comparison_op(tree.op(), fact.value())?;
+    let left = linearize_numeric_var(task, tree.left_numeric_var_id()).ok()?;
+    let right = linearize_numeric_var(task, tree.right_numeric_var_id()).ok()?;
+    let num_numeric_vars = task.numeric_variables().len();
+    if is_refinable_numeric_dimension(task, tree.left_numeric_var_id()) && right.is_constant() {
+        let expression =
+            LinearExpression::variable(num_numeric_vars, tree.left_numeric_var_id()).subtract(
+                &LinearExpression::constant(num_numeric_vars, right.constant),
+            );
+        if let Some(requirement) =
+            single_var_interval_for_linear_zero_comparison(&expression, required_op)
+        {
+            return Some(requirement);
+        }
+    }
+    if is_refinable_numeric_dimension(task, tree.right_numeric_var_id()) && left.is_constant() {
+        let expression = LinearExpression::constant(num_numeric_vars, left.constant).subtract(
+            &LinearExpression::variable(num_numeric_vars, tree.right_numeric_var_id()),
+        );
+        if let Some(requirement) =
+            single_var_interval_for_linear_zero_comparison(&expression, required_op)
+        {
+            return Some(requirement);
+        }
+    }
+    let expression = left.subtract(&right);
+    single_var_interval_for_linear_zero_comparison(&expression, required_op)
+}
+
+fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {
+    match prop_value {
+        0 => Some(op),
+        1 => Some(match op {
+            CompOp::Lt => CompOp::Ge,
+            CompOp::Le => CompOp::Gt,
+            CompOp::Gt => CompOp::Le,
+            CompOp::Ge => CompOp::Lt,
+            CompOp::Eq => CompOp::Ne,
+            CompOp::Ne => CompOp::Eq,
+        }),
+        _ => None,
+    }
+}
+
+fn single_var_interval_for_linear_zero_comparison(
+    expression: &LinearExpression,
+    op: CompOp,
+) -> Option<(usize, Interval)> {
+    if op == CompOp::Ne {
+        return None;
+    }
+
+    let mut non_zero_coefficients = expression
+        .coefficients
+        .iter()
+        .enumerate()
+        .filter(|(_, coefficient)| coefficient.abs() >= 1e-12);
+    let (numeric_var_id, coefficient) = non_zero_coefficients.next()?;
+    if non_zero_coefficients.next().is_some() {
+        return None;
+    }
+
+    let threshold = NumericValue::new(-expression.constant / *coefficient);
+    if !threshold.is_finite() {
+        return None;
+    }
+
+    let interval = match (op, coefficient.is_sign_positive()) {
+        (CompOp::Lt, true) | (CompOp::Gt, false) => {
+            Interval::new(NEG_INF_VALUE, threshold, false, false)
+        }
+        (CompOp::Le, true) | (CompOp::Ge, false) => {
+            Interval::new(NEG_INF_VALUE, threshold, false, true)
+        }
+        (CompOp::Gt, true) | (CompOp::Lt, false) => {
+            Interval::new(threshold, INF_VALUE, false, false)
+        }
+        (CompOp::Ge, true) | (CompOp::Le, false) => {
+            Interval::new(threshold, INF_VALUE, true, false)
+        }
+        (CompOp::Eq, _) => Interval::singleton(threshold),
+        (CompOp::Ne, _) => return None,
+    };
+    Some((numeric_var_id, interval))
 }

@@ -11,6 +11,7 @@ mod finalize;
 mod flaw_splits;
 pub mod icaps26;
 mod plan_replay;
+mod regression;
 mod shortest_paths;
 mod split_generation;
 mod split_selector;
@@ -20,6 +21,7 @@ mod tests;
 use finalize::*;
 use flaw_splits::*;
 use plan_replay::*;
+use regression::*;
 use shortest_paths::*;
 use split_generation::*;
 use split_selector::*;
@@ -48,9 +50,11 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::validate_abstractable_goal;
 
+use super::cegar::regression::ensure_regressable;
 use super::cegar::{
     CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, progress_concrete_state,
 };
+use super::coordinates::Coordinates;
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, ConcreteState, FULL_TASK_PROGRESSIVE_ROOTS_ERROR,
     GoalFocusedBackend, GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection,
@@ -59,13 +63,12 @@ use crate::evaluation::abstractions::collections::goal_focused::{
 use crate::evaluation::abstractions::collections::portfolio::{
     CollectionStrategy, mix_seed, stable_text_seed,
 };
+use crate::evaluation::abstractions::coordinates::{
+    AdditiveNumericView, comparison_refinement_dimensions, numeric_dimension_delta_for_operator,
+};
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, CartesianSet,
     LabelSourceSet, build_explicit_goal_distances, sorted_value_sets_overlap,
-};
-use crate::evaluation::abstractions::domain::additive_numeric_views::{
-    AdditiveNumericView, analyze_additive_numeric_view, comparison_refinement_dimensions,
-    numeric_dimension_delta_for_operator,
 };
 use crate::evaluation::abstractions::domain::factory::AbstractDistanceTable;
 use crate::evaluation::abstractions::domain::utils::{get_initial_state, make_prop_state_packer};
@@ -102,6 +105,19 @@ pub struct CartesianAbstractionMetadata {
     pub concrete_plan_operator_ids: Option<Vec<OperatorIndex>>,
     /// Number of non-loop transitions built before optional standalone compaction.
     pub transition_count: usize,
+}
+
+/// Rejects the flaw kinds Cartesian CEGAR does not implement.
+pub fn validate_cartesian_flaw_kind(flaw_kind: FlawKind) -> Result<(), String> {
+    match flaw_kind {
+        FlawKind::Progression | FlawKind::Regression | FlawKind::ExecuteEntirePlan => Ok(()),
+        FlawKind::SequenceProgression
+        | FlawKind::SequenceRegression
+        | FlawKind::SequenceBidirectional
+        | FlawKind::TargetCentered => Err(format!(
+            "Cartesian abstractions do not support flaw_kind={flaw_kind}; expected progression, regression or execute_entire_plan"
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -869,7 +885,7 @@ struct CartesianSemantics<'task> {
     operator_costs: Vec<NumericValue>,
     prop_split_dependent_operators: Vec<OperatorBitSet>,
     numeric_split_dependent_operators: Vec<OperatorBitSet>,
-    additive_numeric_views: Vec<Option<AdditiveNumericView>>,
+    coordinates: Coordinates<'task>,
     additive_effect_deltas: Vec<Vec<NumericValue>>,
     numeric_integer_lattice: Vec<bool>,
     random_seed: Option<u64>,
@@ -944,7 +960,11 @@ impl<'task> CartesianSemantics<'task> {
     }
 
     fn additive_numeric_views(&self) -> &[Option<AdditiveNumericView>] {
-        &self.additive_numeric_views
+        self.coordinates.views()
+    }
+
+    fn coordinates(&self) -> &Coordinates<'task> {
+        &self.coordinates
     }
 
     fn additive_effect_deltas(&self) -> &[Vec<NumericValue>] {
@@ -976,6 +996,10 @@ impl<'task> CartesianSemantics<'task> {
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
+        let coordinates = Coordinates::new(task);
+        if config.flaw_kind == FlawKind::Regression {
+            ensure_regressable(task, &coordinates)?;
+        }
         for (op_id, op) in task.get_operators().iter().enumerate() {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
@@ -995,11 +1019,7 @@ impl<'task> CartesianSemantics<'task> {
             .map(|op| metric_operator_cost_from_initial_values(task, op))
             .collect();
         let operator_count = task.get_operators().len();
-        let additive_numeric_views = (0..task.numeric_variables().len())
-            .map(|numeric_var_id| {
-                analyze_additive_numeric_view(task, VariableIndex::from_usize(numeric_var_id))
-            })
-            .collect::<Vec<_>>();
+        let additive_numeric_views = coordinates.views();
         let mut additive_effect_deltas = Vec::with_capacity(task.numeric_variables().len());
         for (numeric_var_id, variable) in task.numeric_variables().iter().enumerate() {
             let mut deltas = match variable.get_type() {
@@ -1154,7 +1174,7 @@ impl<'task> CartesianSemantics<'task> {
             operator_costs,
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
-            additive_numeric_views,
+            coordinates,
             additive_effect_deltas,
             numeric_integer_lattice,
             random_seed: config.random_seed,
@@ -1672,7 +1692,7 @@ impl<'task> CartesianSemantics<'task> {
                     }
                 }
                 NumericType::Derived => {
-                    if self.additive_numeric_views[numeric_var_id].is_some()
+                    if self.coordinates.views()[numeric_var_id].is_some()
                         && !self.numeric_dimension_may_transition(
                             source.numeric[numeric_var_id],
                             op_id,
@@ -1696,7 +1716,7 @@ impl<'task> CartesianSemantics<'task> {
         numeric_var_id: VariableIndex,
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
-        if let Some(view) = self.additive_numeric_views[numeric_var_id.index()].as_ref() {
+        if let Some(view) = self.coordinates.views()[numeric_var_id.index()].as_ref() {
             let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
@@ -1786,7 +1806,7 @@ impl<'task> CartesianSemantics<'task> {
                     }
                 }
                 NumericType::Derived => {
-                    if self.additive_numeric_views[numeric_var_id].is_none() {
+                    if self.coordinates.views()[numeric_var_id].is_none() {
                         continue;
                     }
                     let preimage = self
@@ -1840,13 +1860,11 @@ pub struct CartesianAbstractionGenerator {
 impl CartesianAbstractionGenerator {
     pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
+        validate_cartesian_flaw_kind(config.flaw_kind).map_err(anyhow::Error::msg)?;
         ensure!(
-            matches!(
-                config.flaw_kind,
-                FlawKind::Progression | FlawKind::ExecuteEntirePlan
-            ),
-            "Cartesian abstractions support flaw_kind=progression and flaw_kind=execute_entire_plan, not flaw_kind={}",
-            config.flaw_kind
+            config.flaw_kind != FlawKind::Regression
+                || !matches!(config.split_selection, CartesianSplitSelection::Icaps26(_)),
+            "Cartesian regression flaws are not defined for the ICAPS 2026 artifact transition semantics"
         );
         Ok(Self { config })
     }
@@ -1969,6 +1987,14 @@ impl CartesianAbstractionGenerator {
                         &shortest_paths,
                         &state_packer,
                         &axiom_evaluator,
+                        &refinement_root,
+                        selected_plan.as_deref(),
+                    )?,
+                    FlawKind::Regression => find_regression_flaw(
+                        &working,
+                        &semantics,
+                        &shortest_paths,
+                        &state_packer,
                         &refinement_root,
                         selected_plan.as_deref(),
                     )?,

@@ -18,7 +18,7 @@ use planforge_sas::{
 };
 
 use super::{NumericFlaw, can_split_numeric_var, numeric_requirement_for_comparison_fact};
-pub(super) use crate::evaluation::abstractions::domain::additive_numeric_views::numeric_effect_deltas;
+pub(super) use crate::evaluation::abstractions::coordinates::numeric_effect_deltas;
 use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
 
 fn epsilon() -> NumericValue {

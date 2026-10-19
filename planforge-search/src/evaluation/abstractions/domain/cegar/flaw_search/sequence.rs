@@ -8,9 +8,9 @@ use planforge_sas::{
 };
 
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_facts};
+use crate::evaluation::abstractions::coordinates::numeric_dimension_delta_for_operator;
 use crate::evaluation::abstractions::domain::{
     abstract_operator_generator::DomainMapping,
-    additive_numeric_views::numeric_dimension_delta_for_operator,
     cegar::flaw_search::{
         dependent_numeric_flaws_in_interval_for_comparison_prop_var,
         regression::{get_init_state_flaws, get_regression_precondition_flaws},

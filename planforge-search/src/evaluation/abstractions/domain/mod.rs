@@ -1,7 +1,6 @@
 use planforge_sas::numeric_task::VariableIndex;
 
 pub mod abstract_operator_generator;
-pub(crate) mod additive_numeric_views;
 pub mod collection_generator;
 pub mod numeric_context;
 pub mod numeric_partitions;

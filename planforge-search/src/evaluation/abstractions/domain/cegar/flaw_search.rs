@@ -26,22 +26,19 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, INF_VALUE, NEG_INF_VALUE, NumericValue, OperatorIndex,
-    VariableIndex,
+    AbstractNumericTask, ExplicitFact, NumericValue, OperatorIndex, VariableIndex,
 };
 #[cfg(test)]
 use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorCost};
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
 
 use serde::{Deserialize, Serialize};
 
 use super::determine_include_in_lower;
 use crate::evaluation::abstractions::cegar::FlawKind;
+use crate::evaluation::abstractions::coordinates::comparison_refinement_dimensions;
+use crate::evaluation::abstractions::coordinates::numeric_requirement_for_comparison_fact;
 use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
-use crate::evaluation::abstractions::domain::additive_numeric_views::{
-    comparison_refinement_dimensions, is_refinable_numeric_dimension,
-};
 use crate::evaluation::abstractions::domain::cegar::determine_include_in_lower_for_flaw_search_state;
 use crate::evaluation::abstractions::domain::cegar::flaw_search::progression::{
     get_execute_entire_plan_flaws, get_progression_flaws,
@@ -54,8 +51,6 @@ use crate::evaluation::abstractions::domain::cegar::flaw_search::state::FlawSear
 use crate::evaluation::abstractions::domain::factory::WildcardPlanResult;
 use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
 use crate::evaluation::abstractions::domain::utils::partition_for_value;
-use planforge_sas::numeric_conditions::CompOp;
-use planforge_sas::utils::interval::Interval;
 
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
 #[derive(Debug, Clone, PartialEq)]
@@ -377,97 +372,6 @@ fn dependent_numeric_flaws_in_interval_for_comparison_prop_var(
         }
     }
     out
-}
-
-pub(crate) fn numeric_requirement_for_comparison_fact(
-    task: &dyn AbstractNumericTask,
-    fact: &ExplicitFact,
-) -> Option<(usize, Interval)> {
-    let tree = task.numeric_conditions().for_var(fact.var_index())?;
-    let required_op = required_comparison_op(tree.op(), fact.value())?;
-    let left = linearize_numeric_var(task, tree.left_numeric_var_id()).ok()?;
-    let right = linearize_numeric_var(task, tree.right_numeric_var_id()).ok()?;
-    let num_numeric_vars = task.numeric_variables().len();
-    if is_refinable_numeric_dimension(task, tree.left_numeric_var_id()) && right.is_constant() {
-        let expression =
-            LinearExpression::variable(num_numeric_vars, tree.left_numeric_var_id()).subtract(
-                &LinearExpression::constant(num_numeric_vars, right.constant),
-            );
-        if let Some(requirement) =
-            single_var_interval_for_linear_zero_comparison(&expression, required_op)
-        {
-            return Some(requirement);
-        }
-    }
-    if is_refinable_numeric_dimension(task, tree.right_numeric_var_id()) && left.is_constant() {
-        let expression = LinearExpression::constant(num_numeric_vars, left.constant).subtract(
-            &LinearExpression::variable(num_numeric_vars, tree.right_numeric_var_id()),
-        );
-        if let Some(requirement) =
-            single_var_interval_for_linear_zero_comparison(&expression, required_op)
-        {
-            return Some(requirement);
-        }
-    }
-    let expression = left.subtract(&right);
-    single_var_interval_for_linear_zero_comparison(&expression, required_op)
-}
-
-fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {
-    match prop_value {
-        0 => Some(op),
-        1 => Some(match op {
-            CompOp::Lt => CompOp::Ge,
-            CompOp::Le => CompOp::Gt,
-            CompOp::Gt => CompOp::Le,
-            CompOp::Ge => CompOp::Lt,
-            CompOp::Eq => CompOp::Ne,
-            CompOp::Ne => CompOp::Eq,
-        }),
-        _ => None,
-    }
-}
-
-fn single_var_interval_for_linear_zero_comparison(
-    expression: &LinearExpression,
-    op: CompOp,
-) -> Option<(usize, Interval)> {
-    if op == CompOp::Ne {
-        return None;
-    }
-
-    let mut non_zero_coefficients = expression
-        .coefficients
-        .iter()
-        .enumerate()
-        .filter(|(_, coefficient)| coefficient.abs() >= 1e-12);
-    let (numeric_var_id, coefficient) = non_zero_coefficients.next()?;
-    if non_zero_coefficients.next().is_some() {
-        return None;
-    }
-
-    let threshold = NumericValue::new(-expression.constant / *coefficient);
-    if !threshold.is_finite() {
-        return None;
-    }
-
-    let interval = match (op, coefficient.is_sign_positive()) {
-        (CompOp::Lt, true) | (CompOp::Gt, false) => {
-            Interval::new(NEG_INF_VALUE, threshold, false, false)
-        }
-        (CompOp::Le, true) | (CompOp::Ge, false) => {
-            Interval::new(NEG_INF_VALUE, threshold, false, true)
-        }
-        (CompOp::Gt, true) | (CompOp::Lt, false) => {
-            Interval::new(threshold, INF_VALUE, false, false)
-        }
-        (CompOp::Ge, true) | (CompOp::Le, false) => {
-            Interval::new(threshold, INF_VALUE, true, false)
-        }
-        (CompOp::Eq, _) => Interval::singleton(threshold),
-        (CompOp::Ne, _) => return None,
-    };
-    Some((numeric_var_id, interval))
 }
 
 pub(crate) fn can_split_numeric_var(
