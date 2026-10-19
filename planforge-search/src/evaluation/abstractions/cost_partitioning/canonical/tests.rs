@@ -14,9 +14,8 @@ use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTas
 use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
-use crate::evaluation::abstractions::domain::factory::{
-    AbstractDistanceTable, DomainAbstractionFactory,
-};
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::generator::{
     DomainAbstraction, compute_hash_multipliers,
 };

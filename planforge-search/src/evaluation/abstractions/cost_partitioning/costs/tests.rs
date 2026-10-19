@@ -3,6 +3,9 @@ use planforge_sas::numeric_task::{
 };
 
 use super::*;
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractTransition, AbstractTransitionSystem,
+};
 
 #[test]
 fn expired_scp_table_deadline_uses_shared_typed_error() {

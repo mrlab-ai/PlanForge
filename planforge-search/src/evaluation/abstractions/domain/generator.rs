@@ -7,11 +7,12 @@ use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use super::abstract_operator_generator::AbstractOperator;
 use super::cegar::{Cegar, CegarConfig, CegarStopReason, SplitDirection};
-use super::factory::{AbstractDistanceTable, DistanceTableOptions, DomainAbstractionFactory};
+use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
-use crate::evaluation::abstractions::cost_partitioning::costs::{
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransitionSystem,
 };
 

@@ -11,9 +11,10 @@ use planforge_sas::utils::state_packer::StatePacker;
 use tracing::debug;
 
 use super::cegar::flaw_search::Flaw;
-use super::factory::{AbstractDistanceTable, DomainAbstractionFactory, WildcardPlanResult};
+use super::factory::{DomainAbstractionFactory, WildcardPlanResult};
 use super::numeric_partitions::NumericPartitions;
 use crate::evaluation::abstractions::common::cegar::progress_concrete_state;
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
 use crate::evaluation::abstractions::domain::cegar::flaw_search::SplitDirection;
 use crate::evaluation::abstractions::domain::cegar::flaw_search::progression::{

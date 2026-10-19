@@ -92,17 +92,6 @@ impl<'a> DistanceTableOptions<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AbstractDistanceTable {
-    pub distances: Vec<f64>,
-    // Per-state operator leading to a goal along a shortest path.
-    pub generating_op_ids: Vec<Option<usize>>,
-    pub initial_state_hash: usize,
-    pub goal_facts: Vec<ExplicitFact>,
-    pub hash_multipliers: Vec<usize>,
-    pub numeric_domain_sizes: Vec<usize>,
-}
-
 pub(super) fn compute_num_states(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],

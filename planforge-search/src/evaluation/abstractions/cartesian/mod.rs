@@ -76,6 +76,9 @@ use crate::evaluation::abstractions::collections::goal_focused::{
 use crate::evaluation::abstractions::collections::portfolio::{
     CollectionStrategy, mix_seed, stable_text_seed,
 };
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, sorted_value_sets_overlap,
+};
 use crate::evaluation::abstractions::common::concrete_state::{
     ConcreteState, get_initial_state, make_prop_state_packer,
 };
@@ -85,11 +88,10 @@ use crate::evaluation::abstractions::common::coordinates::{
 use crate::evaluation::abstractions::common::task::{
     AbstractionUse, validate_abstraction_operator,
 };
-use crate::evaluation::abstractions::cost_partitioning::costs::{
-    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, CartesianSet,
-    LabelSourceSet, build_explicit_goal_distances, sorted_value_sets_overlap,
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
+    AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
 };
-use crate::evaluation::abstractions::domain::factory::AbstractDistanceTable;
 use icaps26::*;
 use planforge_sas::utils::interval::Interval;
 

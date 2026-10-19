@@ -39,10 +39,16 @@ mod source_sets;
 mod state_encoding;
 mod transition_system;
 
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, cartesian_set_intersection,
+};
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
+    AbstractTransitionSystem, LabelSourceSet,
+};
 use crate::evaluation::abstractions::cost_partitioning::costs::{
-    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionCostFunction,
-    AbstractTransitionSystem, CartesianSet, LabelSourceSet, RemainingCosts, SourceSetCost,
-    SourceSetCostAllocation, cartesian_set_intersection, saturation_need,
+    AbstractTransitionCostFunction, RemainingCosts, SourceSetCost, SourceSetCostAllocation,
+    saturation_need,
 };
 pub use distances::*;
 pub use plan_extraction::*;
