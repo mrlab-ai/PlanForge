@@ -1,6 +1,6 @@
-use super::*;
+use super::super::*;
 
-pub(super) fn split_failed_fact(
+pub(in super::super) fn split_failed_fact(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
@@ -388,7 +388,7 @@ fn comparison_refinement(
     )
 }
 
-pub(super) fn comparison_truth(prop_value: ExplicitValueIndex) -> Result<bool> {
+pub(in super::super) fn comparison_truth(prop_value: ExplicitValueIndex) -> Result<bool> {
     match prop_value.index() {
         0 => Ok(true),
         1 => Ok(false),
@@ -425,7 +425,7 @@ fn all_conditions_admitted(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct DeviationWitness<'a> {
+pub(in super::super) struct DeviationWitness<'a> {
     source_state_id: usize,
     target_state_id: usize,
     op_id: OperatorIndex,
@@ -435,7 +435,7 @@ pub(super) struct DeviationWitness<'a> {
 }
 
 impl<'a> DeviationWitness<'a> {
-    pub(super) fn new(
+    pub(in super::super) fn new(
         source_state_id: usize,
         target_state_id: usize,
         op_id: OperatorIndex,
@@ -454,7 +454,7 @@ impl<'a> DeviationWitness<'a> {
     }
 }
 
-pub(super) fn split_deviation(
+pub(in super::super) fn split_deviation(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     witness: DeviationWitness<'_>,
@@ -463,7 +463,7 @@ pub(super) fn split_deviation(
     select_refinement_split(working, semantics, candidates, 0x4445_5649)
 }
 
-pub(super) fn split_deviation_candidates(
+pub(in super::super) fn split_deviation_candidates(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     witness: DeviationWitness<'_>,

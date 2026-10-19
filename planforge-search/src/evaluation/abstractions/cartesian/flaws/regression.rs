@@ -1,6 +1,7 @@
 //! Regression flaws for Cartesian abstractions; see
 //! [`crate::evaluation::abstractions::cegar::regression`] for the definition.
 
+use super::super::*;
 use super::*;
 use crate::evaluation::abstractions::cegar::regression::{
     Cut, InitialCut, InitialState, find_regression_flaw as find_trace_flaw,
@@ -10,7 +11,7 @@ use planforge_sas::numeric_task::ONE_VALUE;
 /// Regression flaw search on the optimal abstract plan from the abstract
 /// state of `refinement_root`. Without a flaw, the plan's operators are a
 /// concrete plan.
-pub(super) fn find_regression_flaw(
+pub(in super::super) fn find_regression_flaw(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,

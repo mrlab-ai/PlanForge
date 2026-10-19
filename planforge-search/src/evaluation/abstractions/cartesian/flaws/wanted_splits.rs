@@ -1,8 +1,9 @@
 use planforge_sas::numeric_task::{INF_VALUE, NEG_INF_VALUE};
 
+use super::super::*;
 use super::*;
 
-pub(super) fn splits_for_desired_facts(
+pub(in super::super) fn splits_for_desired_facts(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
@@ -85,7 +86,7 @@ fn constrain_desired_region(
     Ok(())
 }
 
-pub(super) fn desired_comparison_interval(
+pub(in super::super) fn desired_comparison_interval(
     semantics: &CartesianSemantics<'_>,
     comparison_axiom_id: usize,
     desired_prop_value: ExplicitValueIndex,

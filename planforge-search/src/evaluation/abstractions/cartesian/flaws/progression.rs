@@ -1,32 +1,33 @@
+use super::super::*;
 use super::*;
 
 #[derive(Debug)]
-pub(super) struct ConcretePlan {
+pub(in super::super) struct ConcretePlan {
     operator_ids: Vec<OperatorIndex>,
     cost: f64,
 }
 
 impl ConcretePlan {
-    pub(super) fn new(operator_ids: Vec<OperatorIndex>, cost: f64) -> Self {
+    pub(in super::super) fn new(operator_ids: Vec<OperatorIndex>, cost: f64) -> Self {
         Self { operator_ids, cost }
     }
 
-    pub(super) fn cost(&self) -> f64 {
+    pub(in super::super) fn cost(&self) -> f64 {
         self.cost
     }
 
-    pub(super) fn into_operator_ids(self) -> Vec<OperatorIndex> {
+    pub(in super::super) fn into_operator_ids(self) -> Vec<OperatorIndex> {
         self.operator_ids
     }
 }
 
-pub(super) enum PlanCheck {
+pub(in super::super) enum PlanCheck {
     ConcretePlan(ConcretePlan),
     AbstractDeadEnd(usize),
     Refine(Split),
 }
 
-pub(super) fn approximately_equal(left: f64, right: f64) -> bool {
+pub(in super::super) fn approximately_equal(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-7 * left.abs().max(right.abs()).max(1.0)
 }
 
@@ -44,7 +45,7 @@ fn concrete_is_goal(
     })
 }
 
-pub(super) fn replay_optimal_abstract_trace(
+pub(in super::super) fn replay_optimal_abstract_trace(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
@@ -248,7 +249,7 @@ pub(super) fn replay_optimal_abstract_trace(
 /// and ranks every witnessed flaw together. After a deviation, replay resumes
 /// from the abstract state containing the real concrete successor. This keeps
 /// every split tied to a concrete witness and avoids inventing projected states.
-pub(super) fn replay_entire_optimal_abstract_trace(
+pub(in super::super) fn replay_entire_optimal_abstract_trace(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
@@ -389,7 +390,7 @@ pub(super) fn replay_entire_optimal_abstract_trace(
     }
 }
 
-pub(super) fn validate_concrete_plan(
+pub(in super::super) fn validate_concrete_plan(
     semantics: &CartesianSemantics<'_>,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
