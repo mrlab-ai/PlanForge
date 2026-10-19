@@ -9,6 +9,9 @@
 //! support a value, and their default value holds where no supporting axiom
 //! is guaranteed to fire.
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail, ensure};
@@ -183,7 +186,8 @@ impl<'task> RegionSemantics<'task> {
     }
 
     /// Whether applying `op_id` in `source` may lead to `target` on the
-    /// operator variable `var_id`.
+    /// operator variable `var_id`: the successor has the effect's value, or
+    /// a prevail condition's value, or keeps a value of `source`.
     pub(crate) fn propositional_may_transition(
         &self,
         source: &CartesianSet,
@@ -203,6 +207,15 @@ impl<'task> RegionSemantics<'task> {
             );
             return target.propositions()[var_id.index()]
                 .binary_search(&(effect.value() as ExplicitValueIndex))
+                .is_ok();
+        }
+        if let Some(prevail) = op
+            .preconditions()
+            .iter()
+            .find(|precondition| precondition.var_index() == var_id)
+        {
+            return target.propositions()[var_id.index()]
+                .binary_search(&prevail.value_index())
                 .is_ok();
         }
         sorted_value_sets_overlap(

@@ -382,7 +382,8 @@ pub(super) fn update_shortest_paths_after_split(
 
     #[cfg(debug_assertions)]
     if working.states().len() <= 512 {
-        let reference = compute_shortest_paths(working, semantics)?;
+        let reference =
+            compute_shortest_paths_with_goals(working, semantics, shortest_paths.is_goal.clone())?;
         for state_id in 0..working.states().len() {
             let actual = shortest_paths.distances[state_id];
             let expected = reference.distances[state_id];
