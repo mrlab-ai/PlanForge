@@ -261,3 +261,41 @@ pub(super) fn abstraction_state_count(abstraction: &DomainAbstraction) -> u128 {
         .chain(abstraction.factory.numeric_domain_sizes().iter())
         .fold(1_u128, |acc, &size| acc.saturating_mul(size as u128))
 }
+
+impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    pub(super) fn log_abstract_operator_label_diagnostic(
+        &self,
+        abstraction: &DomainAbstraction,
+        abstraction_task: &dyn AbstractNumericTask,
+        abstraction_id: usize,
+        abstract_state_ids: &[Option<usize>],
+        remaining_costs: &TransitionResidualCosts,
+    ) -> Result<(), EvaluationError> {
+        if !self.debug_diagnostics || !enabled!(Level::INFO) {
+            return Ok(());
+        }
+        let label_remaining_costs = remaining_costs.operator_costs_for_label_cp();
+        let (label_distances, label_saturated) = Self::saturate_domain(
+            abstraction,
+            abstraction_task,
+            self.config.combine_labels,
+            &label_remaining_costs,
+            None,
+        )?;
+        let label_h = current_h_for_distances(abstraction_id, &label_distances, abstract_state_ids);
+        let (positive_labels, total_label_saturated) = positive_cost_stats(&label_saturated);
+        let stats = abstract_operator_region_stats(&abstraction.abstract_operator_regions);
+        info!(
+            "scp: abstract-operator label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, operator_region_labels={}, bounded_operator_region_labels={}",
+            stats.total_labels(),
+            stats.bounded_labels(),
+        );
+        log_positive_label_operator_region_diagnostics(
+            abstraction_id,
+            abstraction_task,
+            &abstraction.abstract_operator_regions,
+            &label_saturated,
+        );
+        Ok(())
+    }
+}

@@ -11,7 +11,7 @@ use super::{
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstraction_collections::saturated_cost_partitioning::{
-    CostPartitioningMethod, FillScpConfig, LegacyScpConfig, OrderGenerator, Saturator,
+    CostPartitioningMethod, LegacyScpConfig, OrderGenerator, Saturator,
     ScoringFunction, ScpConfig,
 };
 use crate::evaluation::cartesian_abstractions::CartesianSplitSelection;
@@ -406,50 +406,6 @@ fn parses_full_task_interleaved_domain_collection() {
 }
 
 #[test]
-fn parses_astar_fill_scp_with_named_options() {
-    // LMcut params are now nested via `lmcut=lmcutnumeric(...)` rather than
-    // flat at the fillSCP level.
-    let h = astar_heuristic(
-        "astar(fillSCP(table_construction_max_time=34.5, partitioning=region, saturator=perimstar, scoring_function=max_heuristic, orders=random_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, split_direction=backward, random_seed=7, debug=true, lmcut=lmcutnumeric(precision=0.5, epsilon=0.25)))",
-    );
-    assert_eq!(h.name, "fillscp");
-
-    let mut cfg = FillScpConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.table_construction_max_time, 34.5);
-    assert_eq!(cfg.partitioning, CostPartitioningMethod::Region);
-    assert_eq!(cfg.saturator, Saturator::Perimstar);
-    assert_eq!(cfg.scoring_function, ScoringFunction::MaxHeuristic);
-    assert_eq!(cfg.order_generator, OrderGenerator::Random);
-    assert_eq!(cfg.order_optimization_max_time, 1.5);
-    assert!(cfg.combine_labels);
-    assert_eq!(cfg.collection_config.max_collection_size, 123);
-    assert_eq!(cfg.collection_config.total_max_time, 4.5);
-    assert_eq!(
-        cfg.collection_config.blacklist_option,
-        VariableSubset::NonGoals
-    );
-    assert_eq!(
-        cfg.collection_config.init_split_quantity,
-        InitSplitQuantity::All
-    );
-    assert!(!cfg.collection_config.use_wildcard_plans);
-    assert_eq!(
-        cfg.collection_config.flaw_kind,
-        FlawKind::SequenceProgression
-    );
-    assert_eq!(
-        cfg.collection_config.split_direction,
-        Some(crate::evaluation::domain_abstractions::cegar::SplitDirection::Backward)
-    );
-    assert_eq!(cfg.collection_config.random_seed, Some(7));
-    assert_eq!(cfg.random_seed, Some(7));
-    assert!(cfg.collection_config.debug);
-    assert_eq!(cfg.lmcut_config.precision, 0.5);
-    assert_eq!(cfg.lmcut_config.epsilon, 0.25);
-}
-
-#[test]
 fn parses_astar_scp_online_with_named_options() {
     let h = astar_heuristic(
         "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, partitioning=region, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, collection_strategy=complementary, random_seed=7, debug=true))",
@@ -565,17 +521,6 @@ fn scp_online_accepts_nested_collection_call() {
     assert_eq!(cfg.collection_config.max_collection_size, 99);
     assert_eq!(cfg.collection_config.total_max_time, 2.5);
     assert_eq!(cfg.saturator, Saturator::Perimstar);
-}
-
-#[test]
-fn fill_scp_accepts_nested_collection_and_lmcut_calls() {
-    let h = astar_heuristic(
-        "astar(fillSCP(collection=canonical_domain_abstractions(max_collection_size=7), lmcut=lmcutnumeric(precision=0.5)))",
-    );
-    let mut cfg = FillScpConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.collection_config.max_collection_size, 7);
-    assert_eq!(cfg.lmcut_config.precision, 0.5);
 }
 
 #[test]

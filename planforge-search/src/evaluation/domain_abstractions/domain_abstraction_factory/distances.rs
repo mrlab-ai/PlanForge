@@ -23,17 +23,6 @@ pub(super) struct AbstractGoalDistanceSpace<'a> {
     pub(super) num_states: usize,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum GoalDistanceStop {
-    Exhaust,
-    FirstReaching(usize),
-}
-
-pub(super) enum GoalDistanceResult {
-    Exhausted(Vec<f64>),
-    Reached(f64),
-}
-
 /// Everything about one distance-table build that is not the abstraction
 /// itself. All three default to "plain build, no logging, no budget".
 #[derive(Clone, Copy)]
@@ -192,73 +181,6 @@ impl DomainAbstractionFactory {
             operators,
             dump_distances,
             &goal_facts,
-        )
-    }
-
-    pub(super) fn zero_distance_table_for_generator(
-        &self,
-        task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-    ) -> Result<AbstractDistanceTable> {
-        let hash_multipliers = generator.hash_multipliers();
-        let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let comparison_var_ids = self.comparison_var_ids();
-        let init_hash = self.compute_initial_state_hash_determined(
-            task,
-            numeric_domain_sizes,
-            hash_multipliers,
-            &comparison_var_ids,
-        )?;
-        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        Ok(AbstractDistanceTable {
-            distances: vec![0.0; num_states],
-            generating_op_ids: vec![None; num_states],
-            initial_state_hash: init_hash,
-            goal_facts: self.compute_abstract_goals(task),
-            hash_multipliers: hash_multipliers.to_vec(),
-            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
-        })
-    }
-
-    pub(super) fn compute_distance_to_goal_state_with_operators(
-        &self,
-        task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
-        target_state_hash: usize,
-        deadline: Option<Instant>,
-    ) -> Result<f64> {
-        let goal_facts = self.compute_abstract_goals(task);
-        let hash_multipliers = generator.hash_multipliers();
-        let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        ensure!(
-            target_state_hash < num_states,
-            "target abstract state {target_state_hash} is out of bounds for {num_states} states"
-        );
-        let comparison_var_ids = self.comparison_var_ids();
-        let match_tree = MatchTree::build(
-            &self.domain_sizes,
-            numeric_domain_sizes,
-            hash_multipliers,
-            operators,
-            &comparison_var_ids,
-        );
-        self.compute_distance_to_goal_state(
-            AbstractGoalDistanceSpace {
-                task,
-                operators,
-                match_tree: &match_tree,
-                goal_facts: &goal_facts,
-                layout: ComparisonBranchingLayout {
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                    comparison_var_ids: &comparison_var_ids,
-                },
-                num_states,
-            },
-            target_state_hash,
-            deadline,
         )
     }
 
@@ -440,26 +362,17 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
         let mut generating_op_ids = vec![None; space.num_states];
-        match self.compute_goal_distances(
-            space,
-            GoalDistanceStop::Exhaust,
-            Some(&mut generating_op_ids),
-            deadline,
-        )? {
-            GoalDistanceResult::Exhausted(distances) => Ok((distances, generating_op_ids)),
-            GoalDistanceResult::Reached(_) => {
-                unreachable!("exhaustive goal-distance search returned an early distance")
-            }
-        }
+        let distances =
+            self.compute_goal_distances(space, Some(&mut generating_op_ids), deadline)?;
+        Ok((distances, generating_op_ids))
     }
 
     pub(super) fn compute_goal_distances(
         &self,
         space: AbstractGoalDistanceSpace<'_>,
-        stop: GoalDistanceStop,
         mut generating_op_ids: Option<&mut [Option<usize>]>,
         deadline: Option<Instant>,
-    ) -> Result<GoalDistanceResult> {
+    ) -> Result<Vec<f64>> {
         let AbstractGoalDistanceSpace {
             task,
             operators,
@@ -527,9 +440,6 @@ impl DomainAbstractionFactory {
             if d > distances[state_hash] + float_tolerance::DIJKSTRA_EPSILON {
                 continue;
             }
-            if matches!(stop, GoalDistanceStop::FirstReaching(target) if state_hash == target) {
-                return Ok(GoalDistanceResult::Reached(d));
-            }
 
             let base_state = if comparison_branching {
                 self.clear_comparison_vars_except(
@@ -594,33 +504,6 @@ impl DomainAbstractionFactory {
             }
         }
 
-        match stop {
-            GoalDistanceStop::Exhaust => Ok(GoalDistanceResult::Exhausted(distances)),
-            GoalDistanceStop::FirstReaching(_) => Ok(GoalDistanceResult::Reached(f64::INFINITY)),
-        }
-    }
-
-    pub(super) fn compute_distance_to_goal_state(
-        &self,
-        space: AbstractGoalDistanceSpace<'_>,
-        target_state_hash: usize,
-        deadline: Option<Instant>,
-    ) -> Result<f64> {
-        ensure!(
-            target_state_hash < space.num_states,
-            "target abstract state {target_state_hash} is out of bounds for {} states",
-            space.num_states
-        );
-        match self.compute_goal_distances(
-            space,
-            GoalDistanceStop::FirstReaching(target_state_hash),
-            None,
-            deadline,
-        )? {
-            GoalDistanceResult::Reached(distance) => Ok(distance),
-            GoalDistanceResult::Exhausted(_) => {
-                unreachable!("early goal-distance search exhausted in exhaustive mode")
-            }
-        }
+        Ok(distances)
     }
 }

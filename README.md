@@ -84,8 +84,8 @@ independent. For example:
       'astar(canonical([icaps26_cartesian(pick=min_unwanted,max_time=900)]))' \
       domain.pddl problem.pddl
 
-The `[...]` source-list form is canonical for `max`, `canonical`, `scp`, and
-`fillscp`; the older flat positional source form remains accepted. PDB sources
+The `[...]` source-list form is canonical for `max`, `canonical` and `scp`; the
+older flat positional source form remains accepted. PDB sources
 select their generator explicitly with `patterns=systematic(...)` or
 `patterns=greedy(...)`.
 
@@ -108,7 +108,6 @@ Common options:
   - `astar(blind())`
   - `astar(lmcutnumeric())`
   - `astar(canonical_domain_abstractions(...))`
-  - `astar(fillSCP(...))`
   - `astar(numeric_potential(opt=initial_state,max_potential=1e8))`
   - `astar(numeric_potential(opt=diverse_samples,num_heuristics=4,num_samples=100,max_potential=1e8,cache_estimates=true,invalidate_online_cache_on_growth=true),mpd=true)`
   - `astar(posthoc_optimization(...))` — LP-based dominator of canonical; `pho(...)` is accepted as an alias

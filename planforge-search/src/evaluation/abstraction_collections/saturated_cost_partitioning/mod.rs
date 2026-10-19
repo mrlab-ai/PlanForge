@@ -8,51 +8,43 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
-use tracing::{Level, debug, enabled, info};
+use tracing::{debug, info};
 
-use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstraction, CartesianAbstractionHeuristic,
-};
+use crate::evaluation::cartesian_abstractions::CartesianAbstraction;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
-use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
 use crate::evaluation::pattern_databases::pattern_database::PatternDatabase;
 use crate::successor_generator::SuccessorTree;
 
 use super::component::AbstractionComponent;
 use super::cost_partitioning::{
-    AbstractOperatorCostFunction, AbstractOperatorRegions, LmCutResidualOperatorCostPartition,
-    RegionalCostAllocation, StateRegion, TransitionResidualCosts,
-    build_explicit_label_cost_partitioning_table, build_explicit_regional_cost_partitioning_table,
+    AbstractOperatorCostFunction, AbstractOperatorRegions, RegionalCostAllocation, StateRegion,
+    TransitionResidualCosts, build_explicit_label_cost_partitioning_table,
+    build_explicit_regional_cost_partitioning_table,
 };
 use super::goal_focused::MemberDirection;
 use crate::evaluation::domain_abstractions::abstract_operator_generator::AbstractOperator;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::{
-    AbstractDistanceTable, DistanceTableOptions, SaturationStep,
+    AbstractDistanceTable, DistanceTableOptions,
 };
 use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
-use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::{
-    DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
-    compute_collection_abstract_state_ids,
-};
+use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionLookupScratch;
 
 mod config;
 mod deadline;
 mod diagnostics;
 mod diverse_orders;
-mod fill_scp;
+mod goal_cover_orders;
 mod lookup;
 mod orders;
 mod sampling;
 mod saturation;
 mod scoring;
 pub(crate) use config::LegacyScpConfig;
-pub use config::{
-    CostPartitioningMethod, FillScpConfig, OrderGenerator, Saturator, ScoringFunction, ScpConfig,
-};
+pub use config::{CostPartitioningMethod, OrderGenerator, Saturator, ScoringFunction, ScpConfig};
 use deadline::*;
 use diagnostics::*;
-pub use fill_scp::FillScpHeuristic;
+use goal_cover_orders::*;
 use lookup::*;
 use saturation::*;
 use scoring::*;
@@ -201,81 +193,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut debug_initial_h_values = Vec::new();
 
         for (component_id, component) in components.iter().enumerate() {
-            let (distances, saturated, initial_state_id) = match component {
-                AbstractionComponent::Domain(heuristic) => {
-                    let abstraction = heuristic.abstraction();
-                    let abstraction_task = abstraction.task_for_factory(task);
-                    let goal_facts = &abstraction.distance_table.goal_facts;
-                    let table = abstraction
-                        .factory
-                        .build_goal_distances_for_goals(
-                            abstraction_task,
-                            config.combine_labels,
-                            &original_costs,
-                            goal_facts,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute goal distances for order generator: {error:#}"
-                            ))
-                        })?;
-                    let (_, saturated) = abstraction
-                        .factory
-                        .build_cost_partitioned_distance_table(
-                            abstraction_task,
-                            config.combine_labels,
-                            &original_costs,
-                            DistanceTableOptions::default().with_goal_facts(goal_facts),
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute saturated costs for order generator: {error:#}"
-                            ))
-                        })?;
-                    if debug_diagnostics {
-                        info!(
-                            "scp debug: collection abstraction {component_id}: states={}, goal_facts={}",
-                            abstraction_state_count(abstraction),
-                            goal_facts.len()
-                        );
-                    }
-                    (table.distances, saturated, table.initial_state_hash)
-                }
-                AbstractionComponent::Cartesian(heuristic) => {
-                    let abstraction = heuristic.abstraction();
-                    let (distances, saturated) = build_explicit_label_cost_partitioning_table(
-                        &abstraction.transition_system,
-                        &original_costs,
-                        None,
-                        None,
-                    )
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute Cartesian order-generator table {component_id}: {error:#}"
-                        ))
-                    })?;
-                    (
-                        distances,
-                        saturated,
-                        abstraction.transition_system.initial_state_hash,
-                    )
-                }
-                AbstractionComponent::PatternDatabase(pdb) => {
-                    let distances = pdb.build_goal_distances(&original_costs).map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB goal distances for order generator: {error}"
-                        ))
-                    })?;
-                    let (_, saturated) = pdb
-                        .build_cost_partitioned_distance_table(&original_costs)
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute PDB saturated costs for order generator: {error}"
-                            ))
-                        })?;
-                    (distances, saturated, 0)
-                }
-            };
+            let (distances, saturated, initial_state_id) = saturate_original_costs(
+                component,
+                component_id,
+                task,
+                config.combine_labels,
+                &original_costs,
+                debug_diagnostics,
+            )?;
             if debug_diagnostics {
                 let initial_h = distances.get(initial_state_id).copied().ok_or_else(|| {
                     EvaluationError::InvalidState(format!(

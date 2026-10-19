@@ -358,46 +358,6 @@ pub(crate) fn scp_sources_options_and_deadline(
     })
 }
 
-pub(crate) fn fill_scp_sources_options_and_deadline(
-    args: &[ConfigArg],
-) -> Result<ScpSourceConfig, String> {
-    const ALLOWED: &[&str] = &[
-        "table_construction_max_time",
-        "combine_labels",
-        "scoring_function",
-        "orders",
-        "order_optimization_max_time",
-        "saturator",
-        "random_seed",
-        "partitioning",
-        "lmcut",
-    ];
-
-    let (sources, options) = split_component_sources("fillscp", args)?;
-    let (options, construction_deadline) = take_construction_deadline(options)?;
-    let mut seen = HashSet::new();
-    for arg in &options {
-        let key = arg.key().ok_or_else(|| {
-            "options in hierarchical `fillscp(...)` must be named; abstraction sources are the only positional arguments"
-                .to_string()
-        })?;
-        if !ALLOWED.contains(&key) {
-            return Err(format!(
-                "unknown `fillscp` combinator option `{key}`; abstraction-generation options belong inside one of: {}",
-                component_source_help(),
-            ));
-        }
-        if !seen.insert(key) {
-            return Err(format!("duplicate option `{key}` for `fillscp`"));
-        }
-    }
-    Ok(ScpSourceConfig {
-        sources,
-        options,
-        construction_deadline,
-    })
-}
-
 pub(crate) fn require_only_component_sources(
     combinator: &str,
     args: &[ConfigArg],
@@ -1022,7 +982,7 @@ mod tests {
 
     #[test]
     fn all_collection_combinators_accept_a_leading_source_list() {
-        for combinator in ["max", "canonical", "scp", "fillscp"] {
+        for combinator in ["max", "canonical", "scp"] {
             let spec = crate::config::parse_heuristic_spec(&format!(
                 "{combinator}([domain(),cartesian()])"
             ))

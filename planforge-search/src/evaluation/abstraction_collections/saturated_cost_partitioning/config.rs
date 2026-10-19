@@ -3,12 +3,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::evaluation::pattern_databases::pattern_database::{
     PdbHeuristicConfig, PdbInternalHeuristic,
 };
-
-use super::super::portfolio::CollectionStrategy;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -226,90 +223,6 @@ pub(crate) struct LegacyScpConfig {
     #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
     pub partitioning: CostPartitioningMethod,
-}
-
-#[derive(
-    Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
-)]
-pub struct FillScpConfig {
-    pub table_construction_max_time: f64,
-    #[option(also_sets = "collection_config.combine_labels")]
-    pub combine_labels: bool,
-    #[option(flatten, nested = "collection")]
-    pub collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    pub scoring_function: ScoringFunction,
-    #[option(rename = "orders")]
-    pub order_generator: OrderGenerator,
-    pub order_optimization_max_time: f64,
-    pub saturator: Saturator,
-    #[option(also_sets = "collection_config.random_seed")]
-    pub random_seed: Option<u64>,
-    pub partitioning: CostPartitioningMethod,
-    /// Configuration of the LM-cut heuristic that fills in the remaining costs,
-    /// set through `lmcut=lmcutnumeric(...)`.
-    #[option(nested = "lmcut")]
-    pub lmcut_config: LmCutNumericConfig,
-}
-
-impl Default for FillScpConfig {
-    fn default() -> Self {
-        let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            combine_labels: false,
-            collection_strategy: CollectionStrategy::Standard,
-            ..Default::default()
-        };
-        let random_seed = collection_config.random_seed;
-        Self {
-            table_construction_max_time: 30.0,
-            combine_labels: false,
-            collection_config,
-            scoring_function: ScoringFunction::MaxHeuristicPerStolenCosts,
-            order_generator: OrderGenerator::Greedy,
-            order_optimization_max_time: 5.0,
-            saturator: Saturator::All,
-            random_seed,
-            partitioning: CostPartitioningMethod::Label,
-            lmcut_config: LmCutNumericConfig::default(),
-        }
-    }
-}
-
-impl FillScpConfig {
-    pub fn force_full_goal_tasks(&mut self) {
-        self.collection_config.collection_strategy = CollectionStrategy::Standard;
-        self.collection_config.combine_labels = self.combine_labels;
-        self.random_seed = self.collection_config.random_seed;
-        // Label-mode fillSCP only consumes per-abstraction distance tables — it never
-        // touches `OperatorRegion`. Building those operator regions during CEGAR
-        // is pure memory bloat (the same per-concrete-op `StateRegion` cost that
-        // canonical/max already skip via 468f06a). Disable it unconditionally for
-        // the label-CP path.
-        if !self.partitioning.uses_regions() {
-            self.collection_config.set_compute_operator_regions(false);
-        }
-    }
-
-    pub(super) fn as_scp_collection_config(&self) -> ScpConfig {
-        ScpConfig {
-            online: false,
-            max_time: 0.0,
-            table_construction_max_time: self.table_construction_max_time,
-            max_size: usize::MAX,
-            diversify: false,
-            samples: 1_000,
-            max_orders: usize::MAX,
-            interval: usize::MAX,
-            combine_labels: self.combine_labels,
-            scoring_function: self.scoring_function,
-            order_generator: self.order_generator,
-            initial_order_generation_max_time: 10.0,
-            order_optimization_max_time: self.order_optimization_max_time,
-            saturator: self.saturator,
-            residual_sweeps: 0,
-            random_seed: self.random_seed,
-            partitioning: self.partitioning,
-        }
-    }
 }
 
 impl Default for ScpConfig {

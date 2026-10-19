@@ -20,7 +20,6 @@ pub(crate) struct DomainAbstractionLookupScratch {
     pub(crate) numeric: Vec<NumericValue>,
     pub(crate) comparisons: Vec<Option<ExplicitValueIndex>>,
     pub(crate) required_domain_ids: Vec<usize>,
-    pub(crate) abstract_state_ids: Vec<Option<usize>>,
 }
 
 impl DomainAbstractionLookupScratch {
@@ -30,90 +29,8 @@ impl DomainAbstractionLookupScratch {
             numeric: Vec::new(),
             comparisons: Vec::new(),
             required_domain_ids: Vec::new(),
-            abstract_state_ids: Vec::new(),
         }
     }
-}
-
-pub(crate) fn compute_collection_abstract_state_ids(
-    heuristics: &[DomainAbstractionHeuristic],
-    eval_state: &EvaluationState<'_, '_>,
-    required_ids: Option<&[usize]>,
-    scratch: &mut DomainAbstractionLookupScratch,
-) -> Result<(), EvaluationError> {
-    let state = eval_state.state();
-    let registry = eval_state.state_registry();
-    state.fill_state(registry, &mut scratch.prop);
-    registry
-        .fill_numeric_vars(state, &mut scratch.numeric)
-        .map_err(|err| {
-            EvaluationError::ComputationFailed(format!("failed to read numeric state: {err:?}"))
-        })?;
-
-    let num_domain = heuristics.len();
-    let needs_all = required_ids.is_none();
-    scratch.required_domain_ids.clear();
-    if needs_all {
-        scratch.required_domain_ids.extend(0..num_domain);
-    } else {
-        scratch.required_domain_ids.extend(
-            required_ids
-                .unwrap_or(&[])
-                .iter()
-                .copied()
-                .filter(|&id| id < num_domain),
-        );
-    }
-
-    scratch.comparisons.clear();
-    if scratch.required_domain_ids.len() > 1
-        && let Some(&first_id) = scratch.required_domain_ids.first()
-    {
-        heuristics[first_id].fill_comparison_values_from_projected_state_values(
-            &scratch.numeric,
-            &mut scratch.comparisons,
-        )?;
-    }
-
-    scratch.abstract_state_ids.clear();
-    scratch.abstract_state_ids.resize(num_domain, None);
-    if needs_all {
-        for (id, heuristic) in heuristics.iter().enumerate() {
-            scratch.abstract_state_ids[id] = Some(hash_with_shared_values(
-                heuristic,
-                &scratch.prop,
-                &scratch.numeric,
-                &scratch.comparisons,
-            )?);
-        }
-    } else if let Some(required_ids) = required_ids {
-        for &id in required_ids {
-            let Some(heuristic) = heuristics.get(id) else {
-                continue;
-            };
-            scratch.abstract_state_ids[id] = Some(hash_with_shared_values(
-                heuristic,
-                &scratch.prop,
-                &scratch.numeric,
-                &scratch.comparisons,
-            )?);
-        }
-    }
-
-    Ok(())
-}
-
-fn hash_with_shared_values(
-    heuristic: &DomainAbstractionHeuristic,
-    prop_values: &[ExplicitValueIndex],
-    numeric_values: &[NumericValue],
-    comparison_values: &[Option<ExplicitValueIndex>],
-) -> Result<usize, EvaluationError> {
-    heuristic.compute_abstract_hash_from_projected_state_values_inner(
-        prop_values,
-        numeric_values,
-        Some(comparison_values),
-    )
 }
 
 /// Heuristic that evaluates a concrete state by mapping it to an abstract state

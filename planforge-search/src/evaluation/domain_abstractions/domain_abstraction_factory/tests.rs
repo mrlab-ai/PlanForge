@@ -226,21 +226,6 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         .unwrap();
     let mut generator = factory.make_operator_generator(&task, false).unwrap();
     let abstract_operators = generator.build_abstract_operators(&task).unwrap();
-    for target_state_hash in 0..implicit.distances.len() {
-        let early_distance = factory
-            .compute_distance_to_goal_state_with_operators(
-                &task,
-                &generator,
-                &abstract_operators,
-                target_state_hash,
-                None,
-            )
-            .unwrap();
-        assert_eq!(
-            early_distance, implicit.distances[target_state_hash],
-            "early-out and exhaustive Dijkstra disagree at abstract state {target_state_hash}"
-        );
-    }
     let transition_system = factory
         .build_abstract_transition_system_from_operators(
             &task,
@@ -359,12 +344,8 @@ fn early_goal_distance_matches_exhaustive_walk_when_comparisons_are_cleared() {
     let (distances, _) = factory
         .compute_distances_and_generating_ops(space, None)
         .unwrap();
-    let early_distance = factory
-        .compute_distance_to_goal_state(space, source_hash, None)
-        .unwrap();
 
     assert_eq!(distances[source_hash], 1.0);
-    assert_eq!(early_distance, distances[source_hash]);
 }
 
 #[test]
@@ -1718,12 +1699,6 @@ fn abstract_operator_region_allows_one_finite_changed_source() {
         concrete.source.numeric[1],
         Interval::new(NEG_INF_VALUE, NumericValue::new(-1.0), false, true)
     );
-
-    let residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
-    let operator_costs =
-        abstract_operator_costs_from_operator_regions(1, &operator_regions, &residuals, 0, None)
-            .unwrap();
-    assert_eq!(operator_costs, vec![1.0]);
 }
 
 #[test]

@@ -33,8 +33,6 @@ pub(super) enum SaturatedCosts {
 pub(super) enum SaturationCostSpace {
     /// One remaining cost per operator.
     Label,
-    /// Remaining costs per abstract operator source set.
-    AbstractOperator,
     /// Remaining costs per Cartesian set of states (interval SCP).
     Interval,
 }
@@ -44,7 +42,6 @@ pub(super) struct ComponentSaturation<'a, 'task> {
     pub(super) task: &'a dyn AbstractNumericTask,
     pub(super) combine_labels: bool,
     pub(super) cost_space: SaturationCostSpace,
-    pub(super) current_state_id: Option<usize>,
 }
 
 pub(super) struct SaturationStepContext<'a> {
@@ -117,32 +114,6 @@ impl ComponentSaturation<'_, '_> {
                 };
                 Ok((distances, SaturatedCosts::Label(saturated)))
             }
-            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::AbstractOperator) => {
-                let abstraction = heuristic.abstraction();
-                let abstraction_task = abstraction.task_for_factory(self.task);
-                let (table, saturated) = abstraction
-                    .factory
-                    .build_abstract_operator_cost_partitioned_distance_table_with_operators_and_operator_regions(
-                        abstraction_task,
-                        abstraction.combine_labels,
-                        &abstraction.abstract_operators,
-                        &abstraction.abstract_operator_regions,
-                        SaturationStep {
-                            residual_costs: residual,
-                            abstraction_id: component_id,
-                            current_state_id: self.current_state_id,
-                            cap_state_id,
-                        },
-                        DistanceTableOptions::default().with_deadline(deadline),
-                    )
-                    .map_err(|error| {
-                        SaturatedCostPartitioningHeuristic::construction_error(
-                            "failed to compute domain abstract-operator saturation",
-                            error,
-                        )
-                    })?;
-                Ok((table.distances, SaturatedCosts::AbstractOperator(saturated)))
-            }
             (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Interval) => {
                 let abstraction = heuristic.abstraction();
                 let abstraction_task = abstraction.task_for_factory(self.task);
@@ -190,10 +161,7 @@ impl ComponentSaturation<'_, '_> {
                 })?;
                 Ok((distances, SaturatedCosts::Label(saturated)))
             }
-            (
-                AbstractionComponent::Cartesian(heuristic),
-                SaturationCostSpace::AbstractOperator | SaturationCostSpace::Interval,
-            ) => {
+            (AbstractionComponent::Cartesian(heuristic), SaturationCostSpace::Interval) => {
                 // Phase 5 should give Cartesian components native regional allocations;
                 // the Regional arm currently degrades to abstract-operator granularity.
                 let abstraction = heuristic.abstraction();
@@ -317,7 +285,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             task,
             combine_labels: self.config.combine_labels,
             cost_space: SaturationCostSpace::Label,
-            current_state_id,
         };
         self.add_saturation_steps(
             cp,
@@ -377,7 +344,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             task,
             combine_labels: self.config.combine_labels,
             cost_space,
-            current_state_id,
         };
         let operator_regions = match component {
             AbstractionComponent::Domain(heuristic) => {
@@ -616,42 +582,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         Ok(cp)
     }
 
-    pub(super) fn log_abstract_operator_label_diagnostic(
-        &self,
-        abstraction: &DomainAbstraction,
-        abstraction_task: &dyn AbstractNumericTask,
-        abstraction_id: usize,
-        abstract_state_ids: &[Option<usize>],
-        remaining_costs: &TransitionResidualCosts,
-    ) -> Result<(), EvaluationError> {
-        if !self.debug_diagnostics || !enabled!(Level::INFO) {
-            return Ok(());
-        }
-        let label_remaining_costs = remaining_costs.operator_costs_for_label_cp();
-        let (label_distances, label_saturated) = Self::saturate_domain(
-            abstraction,
-            abstraction_task,
-            self.config.combine_labels,
-            &label_remaining_costs,
-            None,
-        )?;
-        let label_h = current_h_for_distances(abstraction_id, &label_distances, abstract_state_ids);
-        let (positive_labels, total_label_saturated) = positive_cost_stats(&label_saturated);
-        let stats = abstract_operator_region_stats(&abstraction.abstract_operator_regions);
-        info!(
-            "scp: abstract-operator label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, operator_region_labels={}, bounded_operator_region_labels={}",
-            stats.total_labels(),
-            stats.bounded_labels(),
-        );
-        log_positive_label_operator_region_diagnostics(
-            abstraction_id,
-            abstraction_task,
-            &abstraction.abstract_operator_regions,
-            &label_saturated,
-        );
-        Ok(())
-    }
-
     pub(super) fn build_label_cp(
         &self,
         collection: PartitionedCollection<'_, '_>,
@@ -704,124 +634,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         }
 
         Ok(cp)
-    }
-
-    pub(super) fn build_label_fill_scp(
-        &self,
-        collection: PartitionedCollection<'_, '_>,
-        order: &[usize],
-        deadline: Option<Instant>,
-    ) -> Result<(CostPartitioningHeuristic, Vec<f64>), EvaluationError> {
-        let PartitionedCollection {
-            task,
-            components,
-            abstract_state_ids,
-            original_costs,
-            ..
-        } = collection;
-        let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs = original_costs.to_vec();
-
-        for &component_id in order {
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                break;
-            }
-            let component = components.get(component_id).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "fillSCP order references missing component {component_id}"
-                ))
-            })?;
-            if matches!(component, AbstractionComponent::PatternDatabase(_)) {
-                return Err(EvaluationError::InvalidState(format!(
-                    "fillSCP order references unsupported PDB component {component_id}"
-                )));
-            }
-            let completed = self.add_label_saturation_step(
-                &mut cp,
-                &mut remaining_costs,
-                ComponentStepContext {
-                    component_id,
-                    component,
-                    task,
-                    abstract_state_ids,
-                    deadline,
-                    cost_space: SaturationCostSpace::Label,
-                    saturator: self.config.saturator,
-                    step_prefix: "fillSCP label",
-                },
-            )?;
-            assert!(completed, "label residual reduction has no deadline");
-        }
-
-        Ok((cp, remaining_costs))
-    }
-
-    pub(super) fn build_abstract_operator_fill_scp(
-        &self,
-        collection: PartitionedCollection<'_, '_>,
-        order: &[usize],
-        deadline: Option<Instant>,
-        saturator: Saturator,
-    ) -> Result<
-        (
-            CostPartitioningHeuristic,
-            Vec<f64>,
-            Vec<LmCutResidualOperatorCostPartition>,
-        ),
-        EvaluationError,
-    > {
-        let PartitionedCollection {
-            task,
-            components,
-            abstract_state_ids,
-            original_costs,
-            ..
-        } = collection;
-        let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
-
-        for &component_id in order {
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                break;
-            }
-            let component = components.get(component_id).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "fillSCP abstract-operator order references missing component {component_id}"
-                ))
-            })?;
-            if matches!(component, AbstractionComponent::PatternDatabase(_)) {
-                return Err(EvaluationError::InvalidState(format!(
-                    "fillSCP abstract-operator order references unsupported PDB component {component_id}"
-                )));
-            }
-            if !self.add_saturation_step(
-                &mut cp,
-                &mut remaining_costs,
-                ComponentStepContext {
-                    component_id,
-                    component,
-                    task,
-                    abstract_state_ids,
-                    deadline,
-                    cost_space: SaturationCostSpace::AbstractOperator,
-                    saturator,
-                    step_prefix: "fillSCP abstract-operator",
-                },
-            )? {
-                info!(
-                    "fillSCP: abstract-operator component {component_id} stopped while reducing residual costs (deadline)"
-                );
-                break;
-            }
-            log_transition_residual_summary(&remaining_costs);
-        }
-
-        let residual_partitions = remaining_costs.operator_cost_partitions_for_lmcut(4, 4);
-        Ok((
-            cp,
-            remaining_costs.operator_costs_for_label_cp(),
-            residual_partitions,
-        ))
     }
 
     pub(super) fn saturate_domain(
@@ -1038,4 +850,92 @@ pub(super) fn reduce_costs(
         *r = new_remaining.max(0.0);
     }
     Ok(())
+}
+
+/// The goal distances of `component` under the original operator costs, the
+/// costs it saturates there, and its initial abstract state. Order generation
+/// scores abstractions by these distances and the costs they steal.
+pub(super) fn saturate_original_costs(
+    component: &AbstractionComponent<'_>,
+    component_id: usize,
+    task: &dyn AbstractNumericTask,
+    combine_labels: bool,
+    original_costs: &[f64],
+    debug_diagnostics: bool,
+) -> Result<(Vec<f64>, Vec<f64>, usize), EvaluationError> {
+    Ok(match component {
+        AbstractionComponent::Domain(heuristic) => {
+            let abstraction = heuristic.abstraction();
+            let abstraction_task = abstraction.task_for_factory(task);
+            let goal_facts = &abstraction.distance_table.goal_facts;
+            let table = abstraction
+                .factory
+                .build_goal_distances_for_goals(
+                    abstraction_task,
+                    combine_labels,
+                    original_costs,
+                    goal_facts,
+                )
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to compute goal distances for order generator: {error:#}"
+                    ))
+                })?;
+            let (_, saturated) = abstraction
+                .factory
+                .build_cost_partitioned_distance_table(
+                    abstraction_task,
+                    combine_labels,
+                    original_costs,
+                    DistanceTableOptions::default().with_goal_facts(goal_facts),
+                )
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to compute saturated costs for order generator: {error:#}"
+                    ))
+                })?;
+            if debug_diagnostics {
+                info!(
+                    "scp debug: collection abstraction {component_id}: states={}, goal_facts={}",
+                    abstraction_state_count(abstraction),
+                    goal_facts.len()
+                );
+            }
+            (table.distances, saturated, table.initial_state_hash)
+        }
+        AbstractionComponent::Cartesian(heuristic) => {
+            let abstraction = heuristic.abstraction();
+            let (distances, saturated) = build_explicit_label_cost_partitioning_table(
+                &abstraction.transition_system,
+                original_costs,
+                None,
+                None,
+            )
+            .map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to compute Cartesian order-generator table {component_id}: {error:#}"
+                ))
+            })?;
+            (
+                distances,
+                saturated,
+                abstraction.transition_system.initial_state_hash,
+            )
+        }
+        AbstractionComponent::PatternDatabase(pdb) => {
+            let distances = pdb.build_goal_distances(original_costs).map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to compute PDB goal distances for order generator: {error}"
+                ))
+            })?;
+            let (_, saturated) = pdb
+                .build_cost_partitioned_distance_table(original_costs)
+                .map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to compute PDB saturated costs for order generator: {error}"
+                    ))
+                })?;
+            (distances, saturated, 0)
+        }
+    })
 }
