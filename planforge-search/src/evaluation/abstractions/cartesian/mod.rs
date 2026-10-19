@@ -18,12 +18,12 @@ mod heuristic;
 mod hierarchy;
 mod refinement;
 mod semantics;
-mod split;
 mod split_selection;
 #[cfg(test)]
 mod tests;
 mod working;
 
+use super::common::cegar::split::*;
 pub use abstraction::*;
 pub use collection::*;
 pub use config::*;
@@ -34,7 +34,6 @@ pub use generator::*;
 pub use heuristic::*;
 pub use hierarchy::*;
 use semantics::*;
-use split::*;
 use split_selection::*;
 use working::*;
 

@@ -1,4 +1,5 @@
 pub(crate) mod regression;
+pub(crate) mod split;
 
 use std::fmt;
 use std::time::{Duration, Instant};

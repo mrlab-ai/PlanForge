@@ -27,10 +27,6 @@ pub(in super::super) enum PlanCheck {
     Refine(Split),
 }
 
-pub(in super::super) fn approximately_equal(left: f64, right: f64) -> bool {
-    (left - right).abs() <= 1e-7 * left.abs().max(right.abs()).max(1.0)
-}
-
 fn concrete_is_goal(
     semantics: &CartesianSemantics<'_>,
     state_packer: &StatePacker,
