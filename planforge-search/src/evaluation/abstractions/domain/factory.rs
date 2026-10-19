@@ -24,13 +24,13 @@ use super::abstract_operator_generator::{
     AbstractOperator, AbstractOperatorGenerator, DomainMapping,
 };
 use super::abstraction_numeric_var;
-use super::additive_numeric_views::AdditiveNumericViews;
 use super::numeric_context::{
     AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
     prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::numeric_partitions::NumericPartitions;
 use super::utils;
+use crate::evaluation::abstractions::coordinates::AdditiveNumericViews;
 
 mod distances;
 mod plan_extraction;

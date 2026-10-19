@@ -7,6 +7,10 @@ pub(super) struct ConcretePlan {
 }
 
 impl ConcretePlan {
+    pub(super) fn new(operator_ids: Vec<OperatorIndex>, cost: f64) -> Self {
+        Self { operator_ids, cost }
+    }
+
     pub(super) fn cost(&self) -> f64 {
         self.cost
     }

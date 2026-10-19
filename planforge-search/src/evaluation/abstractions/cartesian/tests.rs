@@ -925,12 +925,12 @@ fn native_random_and_least_refined_selectors_are_independent() {
 #[test]
 fn unsupported_cartesian_flaw_kinds_are_rejected() {
     let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        flaw_kind: FlawKind::Regression,
+        flaw_kind: FlawKind::SequenceRegression,
         ..Default::default()
     })
     .err()
     .expect("unsupported flaw kind must fail");
-    assert!(error.to_string().contains("flaw_kind=regression"));
+    assert!(error.to_string().contains("flaw_kind=sequence_regression"));
 }
 
 #[test]
@@ -2918,5 +2918,44 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             abstraction.abstract_source_sets.len(),
             abstraction.transition_system.transitions.len()
         );
+    }
+}
+
+/// CEGAR with regression flaws alone reaches a concrete optimal plan on the
+/// tasks where regression and progression differ, with both cut placements.
+#[test]
+fn regression_cegar_solves_the_regression_tasks_optimally() {
+    use crate::evaluation::abstractions::cegar::regression::test_tasks::{
+        diagonal_task, jump_task, linear_goal_task,
+    };
+    for (name, task, optimal_cost) in [
+        ("jump", jump_task(), 4.0),
+        ("linear goal", linear_goal_task(), 2.0),
+        ("diagonal", diagonal_task(), 2.0),
+    ] {
+        for flaw_candidate_generation in [
+            super::CartesianFlawCandidateGeneration::General,
+            super::CartesianFlawCandidateGeneration::DesiredRegion,
+        ] {
+            let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+                max_states: 1_000,
+                flaw_kind: FlawKind::Regression,
+                flaw_candidate_generation,
+                ..Default::default()
+            })
+            .unwrap()
+            .generate(&task)
+            .unwrap();
+            assert_eq!(
+                abstraction.metadata.stop_reason,
+                CartesianStopReason::ConcretePlan,
+                "{name}, {flaw_candidate_generation:?}"
+            );
+            assert_eq!(
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+                optimal_cost,
+                "{name}, {flaw_candidate_generation:?}"
+            );
+        }
     }
 }

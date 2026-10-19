@@ -19,8 +19,8 @@ use super::{
     Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw, SplitDirection, can_split_numeric_var,
     dependent_numeric_flaws_for_comparison_prop_var, goal_facts,
 };
+use crate::evaluation::abstractions::coordinates::numeric_dimension_delta_for_operator;
 use crate::evaluation::abstractions::domain::{
-    additive_numeric_views::numeric_dimension_delta_for_operator,
     factory::WildcardPlanResult,
     numeric_partitions::NumericPartitions,
     utils::{get_initial_state, make_prop_state_packer, partition_for_value},

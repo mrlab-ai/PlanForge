@@ -1,3 +1,5 @@
+pub(crate) mod regression;
+
 use std::fmt;
 use std::time::{Duration, Instant};
 

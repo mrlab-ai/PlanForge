@@ -258,19 +258,20 @@ fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
 
 #[test]
 fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
-    let h = astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=regression)))");
+    let h =
+        astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=sequence_regression)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let error = abstraction_config::apply_cartesian_collection_options(
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
     )
     .expect_err("unsupported Cartesian flaw kind must fail during parsing");
-    assert!(error.contains("flaw_kind=regression"));
+    assert!(error.contains("flaw_kind=sequence_regression"));
 }
 
 #[test]
 fn direct_cartesian_abstraction_rejects_unsupported_flaw_kind() {
-    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=regression))");
+    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
     let mut cegar = CegarConfig::default();
     cegar.apply_options(&h.args).unwrap();
 
@@ -279,7 +280,7 @@ fn direct_cartesian_abstraction_rejects_unsupported_flaw_kind() {
     );
     assert!(
         result.is_err(),
-        "flaw_kind=regression must not silently become progression"
+        "flaw_kind=sequence_regression must not silently become progression"
     );
 }
 

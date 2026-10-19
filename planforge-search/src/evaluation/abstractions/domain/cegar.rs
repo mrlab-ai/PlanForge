@@ -40,7 +40,7 @@ use crate::evaluation::abstractions::domain::utils::{get_initial_state, make_pro
 use crate::evaluation::validate_abstractable_goal;
 
 use super::abstract_operator_generator::DomainMapping;
-use super::additive_numeric_views::{
+use crate::evaluation::abstractions::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
 };
@@ -163,6 +163,7 @@ impl crate::config::ApplyOptions for CegarConfig {
             "flaw_treatment",
             "flaw_kind",
             "init_split_method",
+            "split_direction",
         ];
         for_each_option(args, ORDER, |key, value| {
             match key {
@@ -184,6 +185,7 @@ impl crate::config::ApplyOptions for CegarConfig {
                 "flaw_treatment" => self.flaw_treatment = parse(value)?,
                 "flaw_kind" => self.flaw_kind = parse(value)?,
                 "init_split_method" => self.init_split_method = parse(value)?,
+                "split_direction" => self.split_direction = parse(value)?,
                 other => {
                     return Err(format!("unknown option `{other}` for `domain_abstraction`"));
                 }
@@ -312,6 +314,12 @@ impl Cegar {
     fn run_cegar(&self, task: &dyn AbstractNumericTask) -> Result<CegarOutcome> {
         let config = &self.config;
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
+        if config.flaw_kind == FlawKind::Regression {
+            crate::evaluation::abstractions::cegar::regression::ensure_regressable(
+                task,
+                &crate::evaluation::abstractions::coordinates::Coordinates::new(task),
+            )?;
+        }
         ensure!(
             config.max_abstraction_size > 0,
             "max_abstraction_size must be > 0"

@@ -4,16 +4,19 @@ mod tests;
 use anyhow::{Result, ensure};
 use planforge_sas::{
     axioms::AxiomEvaluator,
-    numeric_task::{AbstractNumericTask, Operator, VariableIndex},
+    numeric_task::{AbstractNumericTask, ExplicitFact, Operator, VariableIndex},
 };
 
+use planforge_sas::utils::interval::UNBOUNDED_INTERVAL;
+
+use super::target_centered::split_for_missing_numeric_requirement;
 use super::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var, goal_facts};
+use crate::evaluation::abstractions::coordinates::numeric_dimension_delta_for_operator;
+use crate::evaluation::abstractions::coordinates::numeric_requirement_for_comparison_fact;
 use crate::evaluation::abstractions::domain::{
     abstract_operator_generator::DomainMapping,
-    additive_numeric_views::numeric_dimension_delta_for_operator,
     cegar::flaw_search::{
         dependent_numeric_flaws_in_interval_for_comparison_prop_var,
-        regression::{get_init_state_flaws, get_regression_precondition_flaws},
         state::{FlawSearchState, get_initial_flaw_search_state},
     },
     factory::WildcardPlanResult,
@@ -197,7 +200,7 @@ fn get_sequence_regression_flaws(
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
     let mut state = FlawSearchState::goals_partial_state(task, domain_mapping);
-    super::regression::materialize_comparison_requirements(task, &mut state);
+    materialize_comparison_requirements(task, &mut state);
 
     let mut step: usize = wildcard_plan.wildcard_plan.len();
 
@@ -219,7 +222,7 @@ fn get_sequence_regression_flaws(
                 chosen_op = Some(op);
                 step_flaws.clear();
                 state.regress(op, &axiom_evaluator)?;
-                super::regression::materialize_comparison_requirements(task, &mut state);
+                materialize_comparison_requirements(task, &mut state);
                 break;
             } else {
                 step_flaws.extend(operator_flaws);
@@ -232,7 +235,7 @@ fn get_sequence_regression_flaws(
             && chosen_op.is_none()
         {
             state.regress(op, &axiom_evaluator)?;
-            super::regression::materialize_comparison_requirements(task, &mut state);
+            materialize_comparison_requirements(task, &mut state);
         }
 
         collected_flaws.extend(step_flaws);
@@ -426,4 +429,89 @@ pub fn get_goal_sequence_flaws(
         }));
     }
     out
+}
+
+fn get_regression_precondition_flaws(
+    op: &Operator,
+    state: &FlawSearchState,
+    step: usize,
+) -> Vec<Flaw> {
+    let mut out: Vec<Flaw> = Vec::new();
+    for eff in op.effects().iter() {
+        if !state.value_is_held_for_var(eff.var_id(), eff.value()) {
+            let eff_var_id = eff.var_id();
+            out.push(Flaw::Propositional(PropFlaw {
+                fact: ExplicitFact::propositional(eff_var_id.index(), eff.value().index()),
+                dependent_numeric_flaws: vec![],
+                step,
+            }));
+        }
+    }
+    out
+}
+
+fn get_init_state_flaws(
+    task: &dyn AbstractNumericTask,
+    partitions: &NumericPartitions,
+    state: &FlawSearchState,
+) -> Vec<Flaw> {
+    let initial_prop_state = task.get_initial_propositional_state_values();
+    let initial_numeric_state = task.get_initial_numeric_state_values();
+    let mut flaws: Vec<Flaw> = Vec::new();
+    for (var, value) in initial_prop_state.iter().enumerate() {
+        if !state.value_is_held_for_var(VariableIndex::from_usize(var), *value) {
+            flaws.push(Flaw::Propositional(PropFlaw {
+                fact: ExplicitFact::propositional(var, value.index()),
+                dependent_numeric_flaws: vec![],
+                step: 0,
+            }));
+        }
+    }
+
+    for (numeric_var_id, requirement) in state.numeric.iter().enumerate() {
+        if *requirement == UNBOUNDED_INTERVAL || requirement.is_empty() {
+            continue;
+        }
+        let Some(&initial_value) = initial_numeric_state.get(numeric_var_id) else {
+            continue;
+        };
+        if requirement.contains(initial_value) {
+            continue;
+        }
+        let Some((value, include_in_lower)) =
+            split_for_missing_numeric_requirement(*requirement, initial_value)
+        else {
+            continue;
+        };
+        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
+        if can_split_numeric_var(partitions, numeric_var_id, value, include_in_lower) {
+            flaws.push(Flaw::Numeric(NumericFlaw {
+                numeric_var_id,
+                value,
+                include_in_lower,
+                step: 0,
+            }));
+        }
+    }
+
+    flaws
+}
+
+fn materialize_comparison_requirements(
+    task: &dyn AbstractNumericTask,
+    state: &mut FlawSearchState,
+) {
+    for var in 0..state.concrete_prop.len() {
+        let Some(value) = state.concrete_prop[var] else {
+            continue;
+        };
+        let fact = ExplicitFact::propositional(var, value.index());
+        let Some((numeric_var_id, required_interval)) =
+            numeric_requirement_for_comparison_fact(task, &fact)
+        else {
+            continue;
+        };
+        state.numeric[numeric_var_id] =
+            state.numeric[numeric_var_id].intersection(&required_interval);
+    }
 }

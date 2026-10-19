@@ -9,6 +9,7 @@ pub mod cartesian_set;
 pub mod cegar;
 pub mod collections;
 pub mod component;
+pub(crate) mod coordinates;
 pub mod cost_partitioning;
 pub mod domain;
 pub mod pdb;
