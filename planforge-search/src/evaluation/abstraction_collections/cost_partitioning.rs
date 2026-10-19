@@ -45,18 +45,6 @@ pub struct TransitionResidualCosts {
     operator_residuals: Vec<OperatorResidual>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LmCutResidualOperatorCostPartition {
-    pub fallback_cost: f64,
-    pub variants: Vec<LmCutResidualCostVariant>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LmCutResidualCostVariant {
-    pub cost: f64,
-    pub source_region: StateRegion,
-}
-
 #[derive(Debug)]
 struct OperatorResidual {
     base_cost: f64,
@@ -513,26 +501,6 @@ impl TransitionResidualCosts {
                 let cost = (residual.base_cost - reduction).max(0.0);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
-            })
-            .collect()
-    }
-
-    pub fn operator_cost_partitions_for_lmcut(
-        &self,
-        _max_variants_per_operator: usize,
-        _max_guard_conditions_per_variant: usize,
-    ) -> Vec<LmCutResidualOperatorCostPartition> {
-        // Transition reductions were never populated in production, so
-        // fillscp(partitioning=region) gives LM-cut uniform residuals only and
-        // the region-conditional variant machinery remains dormant. Activating
-        // it requires re-deriving variants from the RegionalUsage cells.
-        let uniform_costs = self.operator_costs_for_label_cp();
-        self.operator_residuals
-            .iter()
-            .enumerate()
-            .map(|(op_id, _residual)| LmCutResidualOperatorCostPartition {
-                fallback_cost: uniform_costs[op_id],
-                variants: Vec::new(),
             })
             .collect()
     }
