@@ -67,6 +67,7 @@ use super::common::cegar::{
     CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, progress_concrete_state,
 };
 use super::common::coordinates::Coordinates;
+use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, FULL_TASK_PROGRESSIVE_ROOTS_ERROR, GoalFocusedBackend,
     GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, RefinementRootDeadEnd,

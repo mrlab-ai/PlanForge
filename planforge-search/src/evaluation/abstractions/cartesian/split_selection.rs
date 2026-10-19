@@ -210,7 +210,7 @@ fn projected_transition_count(
                 let may_transition = if semantics
                     .operator_depends_on_split(transition.concrete_op_id, split_dimension)
                 {
-                    semantics.may_transition(
+                    semantics.regions().may_transition(
                         source_region,
                         transition.concrete_op_id,
                         target_region,

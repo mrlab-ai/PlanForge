@@ -100,7 +100,7 @@ pub(super) fn compute_shortest_paths(
 ) -> Result<ShortestPaths> {
     let mut is_goal = vec![false; working.states().len()];
     for (state_id, region) in working.states().iter().enumerate() {
-        if semantics.region_is_goal(region)? {
+        if semantics.regions().is_goal(region)? {
             is_goal[state_id] = true;
         }
     }
@@ -203,11 +203,14 @@ pub(super) fn update_shortest_paths_after_split(
     shortest_paths.generating_transition.push(None);
     shortest_paths.dependents.push(Vec::new());
     shortest_paths.dependent_positions.push(None);
-    shortest_paths.is_goal[split_state_id] =
-        semantics.region_is_goal(&working.states()[split_state_id])?;
-    shortest_paths
-        .is_goal
-        .push(semantics.region_is_goal(&working.states()[new_state_id])?);
+    shortest_paths.is_goal[split_state_id] = semantics
+        .regions()
+        .is_goal(&working.states()[split_state_id])?;
+    shortest_paths.is_goal.push(
+        semantics
+            .regions()
+            .is_goal(&working.states()[new_state_id])?,
+    );
     shortest_paths.invalid.push(false);
 
     invalidate(

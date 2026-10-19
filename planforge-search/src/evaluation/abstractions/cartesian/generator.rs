@@ -21,11 +21,11 @@ impl CartesianAbstractionGenerator {
     ) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
-        let initial_region = semantics.trivial_region()?;
+        let initial_region = semantics.regions().trivial_region()?;
         let operator_count = semantics.task.get_operators().len();
         let mut working = WorkingAbstraction::new(initial_region, operator_count);
         for op_id in 0..task.get_operators().len() {
-            if semantics.may_transition(
+            if semantics.regions().may_transition(
                 &working.states[0],
                 OperatorIndex::from_usize(op_id),
                 &working.states[0],

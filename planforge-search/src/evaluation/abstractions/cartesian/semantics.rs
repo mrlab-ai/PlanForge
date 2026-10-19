@@ -10,11 +10,10 @@ mod transitions;
 
 pub(super) struct CartesianSemantics<'task> {
     pub(super) task: &'task dyn AbstractNumericTask,
-    pub(super) propositional_axioms_by_prop_var: Vec<Vec<usize>>,
     pub(super) operator_costs: Vec<NumericValue>,
     pub(super) prop_split_dependent_operators: Vec<OperatorBitSet>,
     pub(super) numeric_split_dependent_operators: Vec<OperatorBitSet>,
-    pub(super) coordinates: Coordinates<'task>,
+    pub(super) regions: RegionSemantics<'task>,
     pub(super) numeric_integer_lattice: Vec<bool>,
     pub(super) random_seed: Option<u64>,
     pub(super) random_split_rng: Option<RefCell<SmallRng>>,
@@ -27,7 +26,7 @@ pub(super) struct CartesianSemantics<'task> {
 pub(super) fn mark_fact_split_dependencies(
     task: &dyn AbstractNumericTask,
     fact: &ExplicitFact,
-    propositional_axioms_by_prop_var: &[Vec<usize>],
+    regions: &RegionSemantics<'_>,
     visiting: &mut [bool],
     prop_dependencies: &mut [bool],
     numeric_dependencies: &mut [bool],
@@ -43,7 +42,7 @@ pub(super) fn mark_fact_split_dependencies(
         }
         return Ok(());
     }
-    if propositional_axioms_by_prop_var[var_id.index()].is_empty() {
+    if regions.axioms_for(var_id).is_empty() {
         prop_dependencies[var_id.index()] = true;
         return Ok(());
     }
@@ -52,7 +51,7 @@ pub(super) fn mark_fact_split_dependencies(
         "cyclic propositional axiom dependency through variable {var_id}"
     );
     visiting[var_id.index()] = true;
-    for &axiom_id in &propositional_axioms_by_prop_var[var_id.index()] {
+    for &axiom_id in regions.axioms_for(var_id) {
         let axiom = task
             .axioms()
             .get(axiom_id)
@@ -61,7 +60,7 @@ pub(super) fn mark_fact_split_dependencies(
             mark_fact_split_dependencies(
                 task,
                 condition,
-                propositional_axioms_by_prop_var,
+                regions,
                 visiting,
                 prop_dependencies,
                 numeric_dependencies,
@@ -77,8 +76,8 @@ impl<'task> CartesianSemantics<'task> {
         self.task
     }
 
-    pub(super) fn propositional_axioms_by_prop_var(&self) -> &[Vec<usize>] {
-        &self.propositional_axioms_by_prop_var
+    pub(super) fn regions(&self) -> &RegionSemantics<'task> {
+        &self.regions
     }
 
     pub(super) fn operator_costs(&self) -> &[NumericValue] {
@@ -86,7 +85,7 @@ impl<'task> CartesianSemantics<'task> {
     }
 
     pub(super) fn coordinates(&self) -> &Coordinates<'task> {
-        &self.coordinates
+        self.regions.coordinates()
     }
 
     pub(super) fn numeric_integer_lattice(&self) -> &[bool] {
@@ -110,23 +109,15 @@ impl<'task> CartesianSemantics<'task> {
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
-        let coordinates = Coordinates::new(task);
+        let regions = RegionSemantics::new(task)?;
+        let coordinates = regions.coordinates();
         if config.flaw_kind == FlawKind::Regression {
-            ensure_regressable(task, &coordinates)?;
+            ensure_regressable(task, coordinates)?;
         }
         for (op_id, op) in task.get_operators().iter().enumerate() {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
 
-        let mut propositional_axioms_by_prop_var = vec![Vec::new(); task.get_num_variables()];
-        for (axiom_id, axiom) in task.axioms().iter().enumerate() {
-            let var_id = axiom.var_id();
-            ensure!(
-                var_id.index() < propositional_axioms_by_prop_var.len(),
-                "propositional axiom {axiom_id} affects missing prop var {var_id}"
-            );
-            propositional_axioms_by_prop_var[var_id.index()].push(axiom_id);
-        }
         let operator_costs = task
             .get_operators()
             .iter()
@@ -163,7 +154,7 @@ impl<'task> CartesianSemantics<'task> {
                 mark_fact_split_dependencies(
                     task,
                     precondition,
-                    &propositional_axioms_by_prop_var,
+                    &regions,
                     &mut visiting,
                     &mut prop_dependencies,
                     &mut numeric_dependencies,
@@ -172,7 +163,7 @@ impl<'task> CartesianSemantics<'task> {
             for effect in op.effects() {
                 let var_id = effect.var_id();
                 if !task.numeric_conditions().is_condition_var(var_id)
-                    && propositional_axioms_by_prop_var[var_id.index()].is_empty()
+                    && regions.axioms_for(var_id).is_empty()
                 {
                     prop_dependencies[var_id.index()] = true;
                 }
@@ -246,11 +237,10 @@ impl<'task> CartesianSemantics<'task> {
         }
         Ok(Self {
             task,
-            propositional_axioms_by_prop_var,
             operator_costs,
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
-            coordinates,
+            regions,
             numeric_integer_lattice,
             random_seed: config.random_seed,
             random_split_rng,

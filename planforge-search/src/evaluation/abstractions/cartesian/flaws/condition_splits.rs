@@ -24,8 +24,8 @@ pub(in super::super) fn split_failed_fact(
             description,
         );
     }
-    if !semantics.propositional_axioms_by_prop_var()[fact.var()].is_empty() {
-        let default_value = semantics.propositional_axiom_default(fact.var())?;
+    if !semantics.regions().axioms_for(fact.var_index()).is_empty() {
+        let default_value = semantics.regions().axiom_default(fact.var_index())?;
         if fact.value_index() == default_value {
             let concrete_value = *prop_values
                 .get(fact.var())
@@ -35,7 +35,7 @@ pub(in super::super) fn split_failed_fact(
                 "failed default-valued derived fact unexpectedly holds for variable {}",
                 fact.var()
             );
-            for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
+            for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
                 let axiom = &semantics.task().axioms()[axiom_id];
                 if axiom.effect_value() != concrete_value
                     || !conditions_hold_concretely(axiom.conditions(), prop_values)?
@@ -43,7 +43,10 @@ pub(in super::super) fn split_failed_fact(
                     continue;
                 }
                 for condition in axiom.conditions() {
-                    if !semantics.region_guarantees_fact(&working.states()[state_id], condition)? {
+                    if !semantics
+                        .regions()
+                        .guarantees(&working.states()[state_id], condition)?
+                    {
                         return split_to_guarantee_fact(
                             working,
                             semantics,
@@ -66,7 +69,7 @@ pub(in super::super) fn split_failed_fact(
                 fact.var()
             );
         }
-        for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
+        for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
             let axiom = &semantics.task().axioms()[axiom_id];
             if axiom.effect_value() != fact.value_index()
                 || !all_conditions_admitted(
@@ -146,10 +149,10 @@ fn split_to_guarantee_fact(
             description,
         );
     }
-    if !semantics.propositional_axioms_by_prop_var()[fact.var()].is_empty() {
-        let default_value = semantics.propositional_axiom_default(fact.var())?;
+    if !semantics.regions().axioms_for(fact.var_index()).is_empty() {
+        let default_value = semantics.regions().axiom_default(fact.var_index())?;
         if fact.value_index() == default_value {
-            for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
+            for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
                 let axiom = &semantics.task().axioms()[axiom_id];
                 if !all_conditions_admitted(
                     semantics,
@@ -190,7 +193,7 @@ fn split_to_guarantee_fact(
             );
         }
 
-        for &axiom_id in &semantics.propositional_axioms_by_prop_var()[fact.var()] {
+        for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
             let axiom = &semantics.task().axioms()[axiom_id];
             if axiom.effect_value() != fact.value_index()
                 || !conditions_hold_concretely(axiom.conditions(), prop_values)?
@@ -198,7 +201,10 @@ fn split_to_guarantee_fact(
                 continue;
             }
             for condition in axiom.conditions() {
-                if !semantics.region_guarantees_fact(&working.states()[state_id], condition)? {
+                if !semantics
+                    .regions()
+                    .guarantees(&working.states()[state_id], condition)?
+                {
                     return split_to_guarantee_fact(
                         working,
                         semantics,
@@ -413,7 +419,7 @@ fn all_conditions_admitted(
     conditions: &[ExplicitFact],
 ) -> Result<bool> {
     for condition in conditions {
-        if !semantics.region_admits_fact(region, condition)? {
+        if !semantics.regions().admits(region, condition)? {
             return Ok(false);
         }
     }
@@ -481,7 +487,7 @@ pub(in super::super) fn split_deviation_candidates(
             .task()
             .numeric_conditions()
             .is_condition_var(var_id)
-            || !semantics.propositional_axioms_by_prop_var()[var_id.index()].is_empty()
+            || !semantics.regions().axioms_for(var_id).is_empty()
         {
             continue;
         }
@@ -512,7 +518,8 @@ pub(in super::super) fn split_deviation_candidates(
             continue;
         }
         let preimage = semantics
-            .numeric_effect_preimage(target_interval, op_id, var_id)?
+            .coordinates()
+            .preimage(target_interval, op_id, var_id)?
             .with_context(|| {
                 format!(
                     "Cartesian transition for operator {op_id} has no numeric preimage for var {var_id} and target {target_interval:?}"

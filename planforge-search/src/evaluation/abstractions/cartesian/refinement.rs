@@ -166,7 +166,7 @@ impl WorkingAbstraction {
                     let may_transition = if semantics
                         .operator_depends_on_split(transition.concrete_op_id, split_dimension)
                     {
-                        semantics.may_transition(
+                        semantics.regions().may_transition(
                             &working.states[source],
                             transition.concrete_op_id,
                             &working.states[target],
