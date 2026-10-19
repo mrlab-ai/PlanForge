@@ -18,8 +18,8 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigValue};
-use crate::evaluation::domain_abstractions::cegar::CegarConfig;
-use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
+use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::{EvaluationState, Heuristic};
 
 use super::rays::RayGenerator;

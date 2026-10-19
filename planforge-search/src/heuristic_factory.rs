@@ -5,36 +5,34 @@
 //! once. Dispatch, backend preflight, task-shape validation, legal names and
 //! CLI help are generated from that declaration.
 
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
-use std::sync::OnceLock;
-use tracing::info;
-use crate::evaluation::domain_abstractions::cegar::CegarConfig;
-use crate::evaluation::abstraction_collections::canonical_heuristic::CanonicalAbstractionHeuristic;
-use crate::evaluation::abstraction_collections::component::AbstractionComponent;
-use crate::evaluation::abstraction_collections::max_heuristic::MaxAbstractionHeuristic;
-use crate::evaluation::abstraction_collections::saturated_cost_partitioning::{
+use crate::evaluation::abstractions::cartesian::{
+    CartesianAbstractPlanSelection, CartesianAbstractionConfig, CartesianAbstractionGenerator,
+    CartesianAbstractionHeuristic, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
+    CartesianSplitSelection,
+};
+use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
+use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
+use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
-use crate::evaluation::cartesian_abstractions::{
-    CartesianAbstractPlanSelection, CartesianAbstractionConfig, CartesianAbstractionGenerator,
-    CartesianAbstractionHeuristic, CartesianFlawCandidateGeneration,
-    CartesianRefinementDirection, CartesianSplitSelection,
-};
-use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
-use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-};
-use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
-use crate::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegar;
+use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
+use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 #[cfg(feature = "cplex")]
-use crate::evaluation::domain_abstractions::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
-use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
-use crate::evaluation::pattern_databases::pattern_generator_systematic::{
+use crate::evaluation::abstractions::domain::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
+use crate::evaluation::abstractions::pdb::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
-use crate::evaluation::pattern_databases::pdb_collection::PdbCollection;
-use crate::evaluation::pattern_databases::validate_restricted_task;
+use crate::evaluation::abstractions::pdb::pdb_collection::PdbCollection;
+use crate::evaluation::abstractions::pdb::validate_restricted_task;
+use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
+use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
+use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use tracing::info;
 
 mod abstraction_config;
 #[cfg(test)]
@@ -169,7 +167,8 @@ fn scp_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, Strin
     if !sources.is_empty() {
         return component_task_requirements(spec);
     }
-    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning::LegacyScpConfig::default();
+    let mut config =
+        crate::evaluation::abstractions::cost_partitioning::saturated::LegacyScpConfig::default();
     config.apply_options(&spec.args)?;
     Ok(TaskRequirements {
         restricted: config.use_numeric_pdbs,
@@ -366,7 +365,7 @@ impl From<String> for HeuristicBuildError {
 }
 
 fn cartesian_config_from_collection(
-    config: &crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    config: &crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     compute_source_sets: bool,
 ) -> Result<CartesianAbstractionConfig, String> {
     let max_time = if config.abstraction_generation_max_time.is_finite() {
@@ -385,8 +384,8 @@ fn cartesian_config_from_collection(
     };
     if !matches!(
         config.flaw_kind,
-        crate::evaluation::cegar::FlawKind::Progression
-            | crate::evaluation::cegar::FlawKind::ExecuteEntirePlan
+        crate::evaluation::abstractions::cegar::FlawKind::Progression
+            | crate::evaluation::abstractions::cegar::FlawKind::ExecuteEntirePlan
     ) {
         return Err(format!(
             "Cartesian abstractions do not support flaw_kind={}; expected progression or execute_entire_plan",
@@ -530,8 +529,7 @@ fn build_scp_from_sources<'task>(
     }
     validate_scp_combinator_options(options)?;
     let mut config =
-        crate::evaluation::abstraction_collections::saturated_cost_partitioning::ScpConfig::default(
-        );
+        crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig::default();
     ApplyOptions::apply_options(&mut config, options)?;
     let component_use = if config.partitioning.uses_regions() {
         ComponentUse::RegionalCostPartitioning
@@ -732,7 +730,7 @@ heuristic_registry! {
         requirements: abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             // Canonical never consumes operator regions — skip ~12 GB of
@@ -769,7 +767,7 @@ heuristic_registry! {
         requirements: abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             cfg.set_compute_source_sets(false);
@@ -805,7 +803,7 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-                use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+                use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
                 let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 ApplyOptions::apply_options(&mut cfg, &spec.args)?;
                 cfg.set_compute_source_sets(false);
@@ -990,7 +988,7 @@ heuristic_registry! {
             if use_cartesian {
                 validate_legacy_cartesian_collection_options(&spec.args)?;
             }
-            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning::LegacyScpConfig::default();
+            let mut cfg = crate::evaluation::abstractions::cost_partitioning::saturated::LegacyScpConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let abstractions = if use_cartesian {
                 Vec::new()

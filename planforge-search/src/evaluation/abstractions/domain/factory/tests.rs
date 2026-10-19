@@ -1,0 +1,2076 @@
+use super::*;
+
+use std::collections::BTreeSet;
+
+use rand::{SeedableRng, rngs::SmallRng};
+
+use crate::evaluation::abstractions::cost_partitioning::costs::{
+    AbstractOperatorSourceSets, CartesianSet, LabelSourceSet, RemainingCosts,
+    build_explicit_label_cost_partitioning_table,
+};
+use crate::evaluation::abstractions::domain::utils::identity_domain_mapping_and_sizes;
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
+use planforge_sas::numeric_task::{
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
+};
+
+/// The propositional variable a comparison axiom writes, on axiom layer 0.
+fn condition_variable(name: &str) -> ExplicitVariable {
+    ExplicitVariable::new(
+        ConditionValue::DOMAIN_SIZE,
+        name.into(),
+        vec!["true".into(), "false".into()],
+        Some(0),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+    )
+}
+
+/// Initial values of the constant numeric variables `condition` reads.
+///
+/// Every leaf id is a valid numeric variable: `NumericConditions::build`
+/// rejects out-of-range references before a task is ever constructed.
+fn constant_leaf_values(
+    condition: &NumericCondition,
+    task: &dyn AbstractNumericTask,
+    initial_numeric_values: &[NumericValue],
+) -> Vec<f64> {
+    let numeric_variables = task.numeric_variables();
+    let mut out: HashSet<u64> = HashSet::new();
+    for node in condition.nodes() {
+        let ConditionNode::Leaf { numeric_var_id } = node else {
+            continue;
+        };
+        if numeric_variables[numeric_var_id.index()].get_type() != &NumericType::Constant {
+            continue;
+        }
+        let value = initial_numeric_values[numeric_var_id.index()];
+        if value.is_nan() {
+            continue;
+        }
+        out.insert(value.to_bits());
+    }
+    out.into_iter().map(f64::from_bits).collect()
+}
+
+fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
+    let mut cuts: Vec<NumericValue> = cutpoints
+        .iter()
+        .copied()
+        .filter(|v| v.is_finite() && !v.is_nan())
+        .collect();
+    cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    cuts.dedup_by(|a, b| a.to_bits() == b.to_bits());
+
+    let mut out: Vec<Interval> = Vec::new();
+    let mut prev = NEG_INF_VALUE;
+    for &c in &cuts {
+        out.push(Interval::new(prev, c, false, false));
+        out.push(Interval::singleton(c));
+        prev = c;
+    }
+    out.push(Interval::new(prev, INF_VALUE, false, false));
+    out
+}
+
+fn cutpoint_partitions_for_task(
+    task: &dyn AbstractNumericTask,
+) -> Result<(NumericPartitions, Vec<usize>)> {
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let num_numeric_vars = task.numeric_variables().len();
+
+    let mut cutpoints_by_var: Vec<BTreeSet<NotNan<f64>>> = vec![BTreeSet::new(); num_numeric_vars];
+    for condition in task.numeric_conditions().iter() {
+        let constant_values = constant_leaf_values(condition, task, initial_numeric_values);
+        if constant_values.is_empty() {
+            continue;
+        }
+
+        for &dep in condition.regular_numeric_var_dependencies() {
+            ensure!(
+                dep.index() < cutpoints_by_var.len(),
+                "numeric condition depends on numeric var {dep}, but only {} numeric vars exist",
+                cutpoints_by_var.len()
+            );
+            for &value in &constant_values {
+                let value = NotNan::new(value).map_err(|_| anyhow!("NaN cutpoint encountered"))?;
+                if value.is_finite() {
+                    cutpoints_by_var[dep.index()].insert(value);
+                }
+            }
+        }
+    }
+
+    let mut partitions_by_numeric_var: Vec<Vec<Interval>> = Vec::with_capacity(num_numeric_vars);
+    let mut numeric_domain_sizes: Vec<usize> = Vec::with_capacity(num_numeric_vars);
+    for (var_id, var) in task.numeric_variables().iter().enumerate() {
+        let parts = match var.get_type() {
+            NumericType::Constant => vec![Interval::singleton(initial_numeric_values[var_id])],
+            NumericType::Regular => {
+                let cuts: Vec<NumericValue> = cutpoints_by_var[var_id]
+                    .iter()
+                    .map(|v| NumericValue::new(v.into_inner()))
+                    .collect();
+                if cuts.is_empty() {
+                    vec![Interval::unbounded()]
+                } else {
+                    partitions_from_cutpoints(&cuts)
+                }
+            }
+            NumericType::Derived | NumericType::Cost => vec![Interval::unbounded()],
+        };
+        numeric_domain_sizes.push(parts.len());
+        partitions_by_numeric_var.push(parts);
+    }
+
+    Ok((
+        NumericPartitions::with_partitions(partitions_by_numeric_var),
+        numeric_domain_sizes,
+    ))
+}
+
+fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFactory> {
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task)?;
+    let (partitions, numeric_domain_sizes) = cutpoint_partitions_for_task(task)?;
+    DomainAbstractionFactory::new(
+        task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+}
+
+#[test]
+fn explicit_transition_system_matches_implicit_distances_across_comparison_cascades() {
+    let variables = vec![
+        condition_variable("x-lt-ten"),
+        ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("ten".into(), NumericType::Constant, None),
+        NumericVariable::new("twenty".into(), NumericType::Constant, None),
+    ];
+    let operators = vec![
+        Operator::new(
+            "increase-x".into(),
+            vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::True.as_usize(),
+            )],
+            vec![],
+            vec![AssignmentEffect::new(
+                VariableIndex::from_usize(0),
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        ),
+        Operator::new(
+            "finish".into(),
+            vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::False.as_usize(),
+            )],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::from_usize(1),
+                Some(ExplicitValueIndex::new(0)),
+                ExplicitValueIndex::new(1),
+            )],
+            vec![],
+            OperatorCost::new(1),
+        ),
+    ];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+            ExplicitValueIndex::new(0),
+        ],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(10.0),
+            NumericValue::new(20.0),
+        ],
+        operators,
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::LessThan,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
+    });
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let implicit = factory
+        .build_abstract_distance_table(&task, false, false)
+        .unwrap();
+    let mut generator = factory.make_operator_generator(&task, false).unwrap();
+    let abstract_operators = generator.build_abstract_operators(&task).unwrap();
+    let transition_system = factory
+        .build_abstract_transition_system_from_operators(
+            &task,
+            false,
+            &abstract_operators,
+            DistanceTableOptions::default().without_cartesian_sets(),
+        )
+        .unwrap();
+    let (explicit, _) =
+        build_explicit_label_cost_partitioning_table(&transition_system, &[1.0, 1.0], None, None)
+            .unwrap();
+
+    assert_eq!(explicit, implicit.distances);
+    assert_eq!(explicit[implicit.initial_state_hash], 2.0);
+}
+
+#[test]
+fn early_goal_distance_matches_exhaustive_walk_when_comparisons_are_cleared() {
+    let variables = vec![
+        condition_variable("x-lt-ten"),
+        ExplicitVariable::new(
+            2,
+            "goal".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
+    ];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("ten".into(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![
+            ExplicitValueIndex::from_usize(ConditionValue::True.as_usize()),
+            ExplicitValueIndex::new(0),
+        ],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(10.0)],
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::LessThan,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+    });
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, false).unwrap();
+    let hash_multipliers = generator.hash_multipliers();
+    let x_abs_var = task.variables().len();
+    let source_hash = 0;
+    let operators = vec![
+        super::super::abstract_operator_generator::AbstractOperator {
+            concrete_op_ids: vec![],
+            cost: NumericValue::new(1.0),
+            hash_effect: -((hash_multipliers[0] + hash_multipliers[1]) as i32),
+            regression_preconditions: vec![
+                ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
+                ExplicitFact::propositional(1, 1),
+                ExplicitFact::numeric_variable(x_abs_var, 0),
+            ],
+            preconditions: vec![
+                ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+                ExplicitFact::propositional(1, 0),
+                ExplicitFact::numeric_variable(x_abs_var, 0),
+            ],
+            changed_numeric_vars: vec![],
+        },
+    ];
+    let goal_facts = factory.compute_abstract_goals(&task);
+    let comparison_var_ids = factory.comparison_var_ids();
+    let numeric_domain_sizes = generator.numeric_domain_sizes();
+    let num_states = compute_num_states(factory.domain_sizes(), numeric_domain_sizes).unwrap();
+    let match_tree = MatchTree::build(
+        factory.domain_sizes(),
+        numeric_domain_sizes,
+        hash_multipliers,
+        &operators,
+        &comparison_var_ids,
+    );
+    let target_hash = ConditionValue::True.as_usize() * hash_multipliers[0] + hash_multipliers[1];
+    assert!(factory.is_goal_state(
+        target_hash,
+        &goal_facts,
+        numeric_domain_sizes,
+        hash_multipliers
+    ));
+    let target_base = factory
+        .clear_comparison_vars_except(target_hash, hash_multipliers, &comparison_var_ids, &[])
+        .unwrap();
+    let mut applicable = Vec::new();
+    match_tree.get_applicable_operator_ids(target_base, &mut applicable);
+    assert_eq!(applicable, [0]);
+    assert_eq!(target_base as i64 + operators[0].hash_effect as i64, 0);
+    let space = AbstractGoalDistanceSpace {
+        task: &task,
+        operators: &operators,
+        match_tree: &match_tree,
+        goal_facts: &goal_facts,
+        layout: ComparisonBranchingLayout {
+            numeric_domain_sizes,
+            hash_multipliers,
+            comparison_var_ids: &comparison_var_ids,
+        },
+        num_states,
+    };
+
+    let (distances, _) = factory
+        .compute_distances_and_generating_ops(space, None)
+        .unwrap();
+
+    assert_eq!(distances[source_hash], 1.0);
+}
+
+#[test]
+fn precise_regional_table_charges_only_the_transition_source_partition() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "p".into(),
+        vec!["p0".into(), "p1".into()],
+        None,
+        ExplicitValueIndex::new(0),
+    )];
+    let op = Operator::new(
+        "move".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            None,
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    });
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let mut operator_generator = factory.make_operator_generator(&task, false).unwrap();
+    let abstract_operators = operator_generator.build_abstract_operators(&task).unwrap();
+    assert_eq!(abstract_operators.len(), 1);
+    let transition_system = factory
+        .build_abstract_transition_system_from_operators(
+            &task,
+            false,
+            &abstract_operators,
+            DistanceTableOptions::default().without_cartesian_sets(),
+        )
+        .unwrap();
+    let source_sets = vec![AbstractOperatorSourceSets {
+        labels: vec![LabelSourceSet {
+            concrete_op_id: OperatorIndex::new(0),
+            source: CartesianSet::with_all_props_constrained(
+                vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
+                Vec::new(),
+            )
+            .into(),
+        }],
+    }];
+    let mut residuals = RemainingCosts::from_operator_costs(&[1.0]);
+
+    let (table, allocation) = factory
+        .build_interval_cost_partitioned_distance_table(
+            &transition_system,
+            &source_sets,
+            &residuals,
+            0,
+            DistanceTableOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(table.distances[table.initial_state_hash], 1.0);
+    assert_eq!(allocation.entries().len(), 1);
+    assert_eq!(
+        allocation.entries()[0].source_set.source.propositions()[0],
+        vec![ExplicitValueIndex::new(0)]
+    );
+    residuals
+        .reduce_by_source_set_allocation_with_deadline(&allocation, None)
+        .unwrap();
+
+    let disjoint_source = LabelSourceSet {
+        concrete_op_id: OperatorIndex::new(0),
+        source: CartesianSet::with_all_props_constrained(
+            vec![vec![ExplicitValueIndex::new(1)]],
+            Vec::new(),
+        )
+        .into(),
+    };
+    assert_eq!(residuals.cost_for_source_set(1, 0, &disjoint_source), 1.0);
+}
+
+#[test]
+fn factory_splits_regular_var_at_constants_in_comparison_trees() {
+    let variables = vec![condition_variable("cmp")];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x0".into(), NumericType::Regular, None),
+        NumericVariable::new("c10".into(), NumericType::Constant, None),
+    ];
+
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+        ComparisonOperator::LessThan,
+    )];
+
+    let op = Operator::new(
+        "op".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![],
+        vec![],
+        OperatorCost::new(1),
+    );
+
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(10.0)],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    assert_eq!(factory.numeric_domain_sizes(), &[3, 1]);
+
+    let x0_parts = factory
+        .partitions()
+        .partitions(VariableIndex::from_usize(0))
+        .unwrap();
+    assert_eq!(x0_parts.len(), 3);
+    assert_eq!(
+        x0_parts[0],
+        Interval::new(NEG_INF_VALUE, NumericValue::new(10.0), false, false)
+    );
+    assert_eq!(x0_parts[1], Interval::singleton(NumericValue::new(10.0)));
+    assert_eq!(
+        x0_parts[2],
+        Interval::new(NumericValue::new(10.0), INF_VALUE, false, false)
+    );
+
+    let c10_parts = factory
+        .partitions()
+        .partitions(VariableIndex::from_usize(1))
+        .unwrap();
+    assert_eq!(c10_parts, &[Interval::singleton(NumericValue::new(10.0))]);
+
+    // Smoke-test that generator can be created.
+    let _gen = factory.make_operator_generator(&task, false).unwrap();
+}
+
+#[test]
+fn enumerate_states_branches_on_undecidable_comparison() {
+    let variables = vec![condition_variable("cmp")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+        ComparisonOperator::LessThan,
+    )];
+    let op = Operator::new("noop".into(), vec![], vec![], vec![], OperatorCost::new(1));
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::from_usize(
+            ConditionValue::False.as_usize(),
+        )],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let init_hash = factory
+        .compute_initial_state_hash_determined(
+            &task,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &[VariableIndex::from_usize(0)],
+        )
+        .unwrap();
+
+    // For enumeration we want the same numeric-partition assignment, but the
+    // comparison digits cleared so `enumerate_states_with_evaluated_comparisons`
+    // can branch.
+    let base = factory
+        .clear_comparison_vars_except(
+            init_hash,
+            &hash_multipliers,
+            &[VariableIndex::from_usize(0)],
+            &[],
+        )
+        .unwrap();
+    let states = factory
+        .enumerate_states_with_evaluated_comparisons(
+            base,
+            &task,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &[VariableIndex::from_usize(0)],
+            &[],
+        )
+        .unwrap();
+    assert_eq!(states.len(), 2);
+}
+
+#[test]
+fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
+    let variables = vec![condition_variable("cmp")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("d".into(), NumericType::Derived, None),
+    ];
+    let assignment_axioms = vec![AssignmentAxiom::new(
+        VariableIndex::from_usize(2),
+        CalOperator::Sum,
+        VariableIndex::from_usize(0),
+        VariableIndex::from_usize(1),
+    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(2),
+        VariableIndex::new(1),
+        ComparisonOperator::GreaterThan,
+    )];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::from_usize(
+            ConditionValue::False.as_usize(),
+        )],
+        numeric_state: vec![
+            NumericValue::new(1.0),
+            NumericValue::new(2.0),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![Operator::new(
+            "noop".into(),
+            vec![],
+            vec![],
+            vec![],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms,
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let init_hash = factory
+        .compute_initial_state_hash_determined(
+            &task,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &[VariableIndex::from_usize(0)],
+        )
+        .unwrap();
+
+    let comparison_abs_value = init_hash / hash_multipliers[0];
+    assert_eq!(comparison_abs_value, ConditionValue::True.as_usize());
+}
+
+/// Every comparison precondition of an abstract operator pins its variable for
+/// the enumeration; preconditions on ordinary variables do not.
+#[test]
+fn comparison_preconditions_are_the_ones_on_comparison_variables() {
+    let comparison_precondition = ExplicitFact::propositional(0, ConditionValue::True.as_usize());
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![comparison_precondition],
+        preconditions: vec![comparison_precondition, ExplicitFact::propositional(1, 7)],
+        changed_numeric_vars: vec![],
+    };
+
+    assert_eq!(
+        get_comparison_preconditions(&op, &[VariableIndex::from_usize(0)]),
+        vec![comparison_precondition]
+    );
+    assert!(get_comparison_preconditions(&op, &[VariableIndex::from_usize(2)]).is_empty());
+}
+
+#[test]
+fn wildcard_plan_collects_all_equivalent_concrete_ops() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        Some(0),
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals,
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let result = factory
+        .compute_wildcard_plan(&task, true, false)
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    let mut step = result.wildcard_plan[0].clone();
+    step.sort_unstable();
+    assert_eq!(step, vec![OperatorIndex::new(0), OperatorIndex::new(1)]);
+}
+
+#[test]
+fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        Some(0),
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals,
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let result = factory
+        .compute_wildcard_plan(&task, false, false)
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    assert_eq!(result.wildcard_plan[0], vec![OperatorIndex::new(0)]);
+}
+
+#[test]
+fn singleton_plan_is_produced_when_wildcards_are_disabled() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        Some(0),
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals,
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let result = factory
+        .compute_plan(&task, true, false, false)
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    assert!(
+        result.wildcard_plan[0].as_slice() == [OperatorIndex::new(0)]
+            || result.wildcard_plan[0].as_slice() == [OperatorIndex::new(1)]
+    );
+}
+
+#[test]
+fn singleton_plan_selection_uses_seeded_rng() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "v".into(),
+        vec!["v0".into(), "v1".into()],
+        Some(0),
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables: Vec<NumericVariable> = vec![];
+    let goals = vec![ExplicitFact::propositional(0, 1)];
+    let op0 = Operator::new(
+        "set0".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let op1 = Operator::new(
+        "set1".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::new(0),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals,
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![op0, op1],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let mut rng = SmallRng::seed_from_u64(7);
+    let result = factory
+        .compute_plan_with_rng(
+            &task,
+            true,
+            false,
+            Some(&mut rng),
+            DistanceTableOptions::default(),
+        )
+        .unwrap()
+        .expect("plan exists");
+    assert_eq!(result.wildcard_plan.len(), 1);
+    assert!(
+        result.wildcard_plan[0].as_slice() == [OperatorIndex::new(0)]
+            || result.wildcard_plan[0].as_slice() == [OperatorIndex::new(1)]
+    );
+}
+
+#[test]
+fn match_tree_indexes_comparison_variables() {
+    let operators = vec![
+        super::super::abstract_operator_generator::AbstractOperator {
+            concrete_op_ids: vec![OperatorIndex::new(0)],
+            cost: NumericValue::new(1.0),
+            hash_effect: 0,
+            regression_preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::True.as_usize(),
+            )],
+            preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::True.as_usize(),
+            )],
+            changed_numeric_vars: vec![],
+        },
+        super::super::abstract_operator_generator::AbstractOperator {
+            concrete_op_ids: vec![OperatorIndex::new(1)],
+            cost: NumericValue::new(1.0),
+            hash_effect: 0,
+            regression_preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::False.as_usize(),
+            )],
+            preconditions: vec![ExplicitFact::propositional(
+                0,
+                ConditionValue::False.as_usize(),
+            )],
+            changed_numeric_vars: vec![],
+        },
+    ];
+
+    let tree = MatchTree::build(&[3], &[], &[1], &operators, &[VariableIndex::from_usize(0)]);
+    let mut out = Vec::new();
+
+    tree.get_applicable_operator_ids(ConditionValue::True.as_usize(), &mut out);
+    assert_eq!(out, vec![0]);
+
+    tree.get_applicable_operator_ids(ConditionValue::False.as_usize(), &mut out);
+    assert_eq!(out, vec![1]);
+}
+
+#[test]
+fn initial_state_is_unique_and_comparisons_are_determined() {
+    // One comparison-axiom propositional variable.
+    let variables = vec![condition_variable("cmp")];
+    // Two regular numeric vars with no constants -> partitions are unbounded.
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+    ];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+        ComparisonOperator::LessThan,
+    )];
+    let op = Operator::new("noop".into(), vec![], vec![], vec![], OperatorCost::new(1));
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        // The concrete initial state used by numeric-fd has comparisons evaluated.
+        state: vec![ExplicitValueIndex::from_usize(
+            ConditionValue::False.as_usize(),
+        )],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(0.0)],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let table = factory
+        .build_abstract_distance_table(&task, true, false)
+        .unwrap();
+
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let domain_sizes = generator.domain_sizes().to_vec();
+    let numeric_domain_sizes = generator.numeric_domain_sizes().to_vec();
+    let init_hash = table.initial_state_hash;
+
+    let mut props: Vec<Vec<usize>> = Vec::new();
+    let mut nums: Vec<Vec<usize>> = Vec::new();
+    decode_state_to_vectors(
+        init_hash,
+        domain_sizes.len(),
+        &domain_sizes,
+        &numeric_domain_sizes,
+        &hash_multipliers,
+        &mut props,
+        &mut nums,
+    );
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0][0], ConditionValue::False.as_usize());
+}
+
+/// A goal on a variable the abstraction collapsed to one value is dropped.
+///
+/// Such a variable carries no information: every abstract state agrees on it, so
+/// testing it would either accept everything or nothing. Dropping it is the
+/// relaxation, and the goals that remain are the ones the abstraction can tell
+/// apart.
+#[test]
+fn abstract_goals_drop_collapsed_variables() {
+    let variables = vec![
+        ExplicitVariable::new(
+            1,
+            "trivial".into(),
+            vec!["only".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
+        ExplicitVariable::new(
+            2,
+            "target".into(),
+            vec!["off".into(), "on".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
+    ];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables: vec![],
+        goals: vec![
+            ExplicitFact::propositional(0, 0),
+            ExplicitFact::propositional(1, 1),
+        ],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![Operator::new(
+            "noop".into(),
+            vec![],
+            vec![],
+            vec![],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    assert_eq!(
+        factory.compute_abstract_goals(&task),
+        vec![ExplicitFact::propositional(1, 1)],
+        "the goal on the one-valued variable is the one that has to go"
+    );
+}
+
+#[test]
+fn comparison_enumeration_is_unsorted_and_goal_membership_still_works() {
+    let variables = vec![condition_variable("cmp0"), condition_variable("cmp1")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("z".into(), NumericType::Regular, None),
+    ];
+    let comparison_axioms = vec![
+        ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+            ComparisonOperator::LessThan,
+        ),
+        ComparisonAxiom::new(
+            VariableIndex::new(1),
+            VariableIndex::new(0),
+            VariableIndex::new(2),
+            ComparisonOperator::LessThan,
+        ),
+    ];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![
+            ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+            ExplicitFact::propositional(1, ConditionValue::False.as_usize()),
+        ],
+        mutexes: vec![],
+        state: vec![
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+        ],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![Operator::new(
+            "noop".into(),
+            vec![],
+            vec![],
+            vec![],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let factory = factory_identity_cutpoints(&task).unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let comparison_var_ids = vec![
+        VariableIndex::from_usize(0usize),
+        VariableIndex::from_usize(1usize),
+    ];
+
+    let unsorted_goal_hash = ConditionValue::True.as_usize()
+        + ConditionValue::DOMAIN_SIZE * ConditionValue::False.as_usize();
+    let states = factory
+        .enumerate_states_with_evaluated_comparisons(
+            unsorted_goal_hash,
+            &task,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &comparison_var_ids,
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(states, vec![0, 2, 1, 3]);
+    assert!(states.contains(&unsorted_goal_hash));
+    assert!(
+        !states.is_sorted(),
+        "goal membership has to be a linear scan: the enumeration branches \
+         per comparison and does not come out in hash order"
+    );
+
+    let table = factory
+        .build_abstract_distance_table(&task, true, false)
+        .unwrap();
+    assert_eq!(table.distances[unsorted_goal_hash], 0.0);
+}
+
+#[test]
+fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
+    let variables = vec![condition_variable("cmp")];
+
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("c2".into(), NumericType::Constant, None),
+        NumericVariable::new("d".into(), NumericType::Derived, None),
+    ];
+    let assignment_axioms = vec![AssignmentAxiom::new(
+        VariableIndex::from_usize(2),
+        CalOperator::Sum,
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+    )];
+    let comparison_axioms = vec![ComparisonAxiom::new(
+        VariableIndex::new(0),
+        VariableIndex::new(2),
+        VariableIndex::new(1),
+        ComparisonOperator::GreaterThan,
+    )];
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![Operator::new(
+            "noop".into(),
+            vec![],
+            vec![],
+            vec![],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms,
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::singleton(NumericValue::new(0.0)),
+            Interval::singleton(NumericValue::new(1.0)),
+        ],
+        vec![Interval::singleton(NumericValue::new(2.0))],
+        vec![
+            Interval::singleton(NumericValue::new(2.0)),
+            Interval::singleton(NumericValue::new(100.0)),
+        ],
+    ]);
+    let numeric_domain_sizes = vec![2, 1, 2];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+    let generator = factory.make_operator_generator(&task, true).unwrap();
+    let hash_multipliers = generator.hash_multipliers().to_vec();
+
+    let x_partition = 0;
+    let c2_partition = 0;
+    let derived_partition = 0;
+    let state_hash = x_partition * hash_multipliers[1]
+        + c2_partition * hash_multipliers[2]
+        + derived_partition * hash_multipliers[3];
+
+    let numeric_intervals = factory
+        .build_numeric_intervals(
+            state_hash,
+            generator.numeric_domain_sizes(),
+            &hash_multipliers,
+            &task,
+        )
+        .unwrap();
+
+    assert_eq!(
+        numeric_intervals[0],
+        Interval::singleton(NumericValue::new(0.0))
+    );
+    assert_eq!(
+        numeric_intervals[1],
+        Interval::singleton(NumericValue::new(2.0))
+    );
+    assert_eq!(
+        numeric_intervals[2],
+        Interval::singleton(NumericValue::new(2.0))
+    );
+}
+
+fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFactory) {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            VariableIndex::new(0),
+            AssignmentOperation::Plus,
+            VariableIndex::new(1),
+            false,
+            vec![],
+        )],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(9.0), NumericValue::new(1.0)],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(NumericValue::new(9.0), NumericValue::new(10.0), true, true),
+            Interval::new(NumericValue::new(10.0), INF_VALUE, true, false),
+        ],
+        vec![Interval::singleton(NumericValue::new(1.0))],
+    ]);
+    let numeric_domain_sizes = vec![2, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+
+    (task, factory)
+}
+
+fn additive_numeric_source_set_task_with_partitions(
+    x_partitions: Vec<Interval>,
+) -> (NumericRootTask, DomainAbstractionFactory) {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc".into(),
+        vec![],
+        vec![],
+        vec![AssignmentEffect::new(
+            VariableIndex::new(0),
+            AssignmentOperation::Plus,
+            VariableIndex::new(1),
+            false,
+            vec![],
+        )],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(1.0)],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+    let numeric_domain_sizes = vec![x_partitions.len(), 1];
+    let partitions = NumericPartitions::with_partitions(vec![
+        x_partitions,
+        vec![Interval::singleton(NumericValue::new(1.0))],
+    ]);
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+
+    (task, factory)
+}
+
+#[test]
+fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
+    let (task, factory) = additive_numeric_source_set_task();
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::new(NumericValue::new(9.0), NumericValue::new(10.0), true, true)
+    );
+    assert_eq!(
+        concrete.source.numeric[1],
+        Interval::new(NEG_INF_VALUE, INF_VALUE, false, false)
+    );
+}
+
+#[test]
+fn abstract_source_set_tightens_source_by_inverse_target_image() {
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+        Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
+        Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
+    );
+}
+
+#[test]
+fn source_set_active_preimage_allows_boundary_charge() {
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+        Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
+        Interval::new(NumericValue::new(5.0), NumericValue::new(6.0), false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
+    );
+}
+
+#[test]
+fn abstract_source_set_rejects_empty_inverse_target_image() {
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+        Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
+        Interval::new(NumericValue::new(7.0), NumericValue::new(10.0), false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let error = factory
+        .build_abstract_source_sets(&task, &[op])
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("empty regressed source operator region")
+    );
+}
+
+#[test]
+fn abstract_source_set_allocates_unbounded_changed_tail() {
+    let (task, factory) = additive_numeric_source_set_task();
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::new(NumericValue::new(10.0), INF_VALUE, true, false)
+    );
+}
+
+#[test]
+fn abstract_source_set_allocates_operator_without_numeric_effects() {
+    let variables = vec![ExplicitVariable::new(
+        2,
+        "saved".into(),
+        vec!["false".into(), "true".into()],
+        None,
+        ExplicitValueIndex::new(0),
+    )];
+    let op = Operator::new(
+        "save".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::from_usize(0),
+            None,
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        NumericPartitions::with_partitions(vec![]),
+        vec![],
+    )
+    .unwrap();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::propositional(0, 1)],
+        preconditions: vec![ExplicitFact::propositional(0, 0)],
+        changed_numeric_vars: vec![],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(
+        concrete.source.propositions()[0],
+        vec![ExplicitValueIndex::new(0)]
+    );
+}
+
+#[test]
+fn abstract_source_set_allows_one_finite_changed_source() {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc_both".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(
+                VariableIndex::new(0),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
+            AssignmentEffect::new(
+                VariableIndex::new(1),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
+        ],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+        ],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), true, true),
+            Interval::new(NumericValue::new(1.0), NumericValue::new(2.0), false, true),
+        ],
+        vec![
+            Interval::new(NEG_INF_VALUE, NumericValue::new(0.0), false, true),
+            Interval::new(NumericValue::new(0.0), INF_VALUE, false, false),
+        ],
+        vec![Interval::singleton(NumericValue::new(1.0))],
+    ]);
+    let numeric_domain_sizes = vec![2, 2, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+    let x_abs_var = task.variables().len();
+    let y_abs_var = x_abs_var + 1;
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![
+            ExplicitFact::numeric_variable(x_abs_var, 1),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
+        ],
+        preconditions: vec![
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
+        ],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), false, true)
+    );
+    assert_eq!(
+        concrete.source.numeric[1],
+        Interval::new(NEG_INF_VALUE, NumericValue::new(-1.0), false, true)
+    );
+}
+
+#[test]
+fn source_set_one_finite_dim_suffices() {
+    let variables = vec![
+        condition_variable("x_gt_zero"),
+        ExplicitVariable::new(
+            2,
+            "saved".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        ),
+    ];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("half".into(), NumericType::Constant, None),
+        NumericVariable::new("zero".into(), NumericType::Constant, None),
+    ];
+    let diagonal = Operator::new(
+        "diagonal".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(
+                VariableIndex::new(0),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
+            AssignmentEffect::new(
+                VariableIndex::new(1),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
+        ],
+        OperatorCost::new(1),
+    );
+    let save = Operator::new(
+        "save".into(),
+        vec![ExplicitFact::propositional(0, 0)],
+        vec![Effect::new(
+            vec![],
+            VariableIndex::new(1),
+            Some(ExplicitValueIndex::new(0)),
+            ExplicitValueIndex::new(1),
+        )],
+        vec![],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![ExplicitFact::propositional(1, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(2), ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.5),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![diagonal, save],
+        axioms: vec![],
+        comparison_axioms: vec![ComparisonAxiom::new(
+            VariableIndex::new(0),
+            VariableIndex::new(0),
+            VariableIndex::new(3),
+            ComparisonOperator::GreaterThan,
+        )],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::singleton(NumericValue::new(0.0)),
+            Interval::new(NumericValue::new(0.0), INF_VALUE, false, false),
+        ],
+        vec![Interval::unbounded()],
+        vec![Interval::singleton(NumericValue::new(0.5))],
+        vec![Interval::singleton(NumericValue::new(0.0))],
+    ]);
+    let numeric_domain_sizes = vec![2, 1, 1, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+
+    let x_abs_var = task.variables().len();
+    let y_abs_var = x_abs_var + 1;
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![
+            ExplicitFact::numeric_variable(x_abs_var, 1),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
+        ],
+        preconditions: vec![
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
+        ],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+    };
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::singleton(NumericValue::new(0.0))
+    );
+    assert_eq!(concrete.source.numeric[1], Interval::unbounded());
+
+    let table = factory
+        .build_abstract_distance_table(&task, false, false)
+        .unwrap();
+    assert_eq!(table.distances[table.initial_state_hash], 2.0);
+}
+
+#[test]
+fn abstract_source_set_ignores_zero_additive_effect_dimension() {
+    let variables = vec![ExplicitVariable::new(
+        1,
+        "p".into(),
+        vec!["p0".into()],
+        None,
+        ExplicitValueIndex::new(0),
+    )];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("zero".into(), NumericType::Constant, None),
+    ];
+    let op = Operator::new(
+        "inc_x_keep_y".into(),
+        vec![],
+        vec![],
+        vec![
+            AssignmentEffect::new(
+                VariableIndex::new(0),
+                AssignmentOperation::Plus,
+                VariableIndex::new(2),
+                false,
+                vec![],
+            ),
+            AssignmentEffect::new(
+                VariableIndex::new(1),
+                AssignmentOperation::Plus,
+                VariableIndex::new(3),
+                false,
+                vec![],
+            ),
+        ],
+        OperatorCost::new(1),
+    );
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+        ],
+        operators: vec![op],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+    let partitions = NumericPartitions::with_partitions(vec![
+        vec![
+            Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), true, true),
+            Interval::new(NumericValue::new(1.0), NumericValue::new(2.0), false, true),
+        ],
+        vec![
+            Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), true, true),
+            Interval::new(NumericValue::new(1.0), NumericValue::new(2.0), false, true),
+        ],
+        vec![Interval::singleton(NumericValue::new(1.0))],
+        vec![Interval::singleton(NumericValue::new(0.0))],
+    ]);
+    let numeric_domain_sizes = vec![2, 2, 1, 1];
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .unwrap();
+    let x_abs_var = task.variables().len();
+    let y_abs_var = x_abs_var + 1;
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![
+            ExplicitFact::numeric_variable(x_abs_var, 1),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
+        ],
+        preconditions: vec![
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+            ExplicitFact::numeric_variable(y_abs_var, 0),
+        ],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), false, true)
+    );
+    // y has a zero-delta additive effect, so it is not in the affected-var loop
+    // that intersects with the inverse target. But y *is* pinned by the
+    // operator's `y_abs_var = 0` precondition, so the operator region reflects that
+    // partition's interval instead of going unbounded — which is the tightest
+    // admissible operator region and the source of the cost-partitioning precision
+    // benefit on operators whose preconditions reference unaffected variables.
+    assert_eq!(
+        concrete.source.numeric[1],
+        Interval::new(NumericValue::new(0.0), NumericValue::new(1.0), true, true)
+    );
+}
+
+#[test]
+fn source_set_width_does_not_change_valid_preimage() {
+    // Same fixture as `abstract_source_set_tightens_source_by_inverse_target_image`:
+    // the preimage source for the operator is `(4.0, 5.0]`, width 1.0.
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+        Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
+        Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    assert_eq!(
+        source_sets[0].labels[0].source.numeric[0],
+        Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
+    );
+}
+
+#[test]
+fn singleton_preimage_is_preserved_exactly() {
+    // Partition `x` so that the operator `x += 1` maps singleton `{4.0}` to
+    // singleton `{5.0}`. The preimage `{4.0} ∩ shift({5.0}, -1) = {4.0}` is a
+    // singleton of width 0.
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+        Interval::singleton(NumericValue::new(4.0)),
+        Interval::singleton(NumericValue::new(5.0)),
+    ]);
+    let x_abs_var = task.variables().len();
+    let op = super::super::abstract_operator_generator::AbstractOperator {
+        concrete_op_ids: vec![OperatorIndex::new(0)],
+        cost: NumericValue::new(1.0),
+        hash_effect: 0,
+        regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
+        preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
+        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
+    };
+
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
+    assert_eq!(
+        concrete.source.numeric[0],
+        Interval::singleton(NumericValue::new(4.0))
+    );
+}
+
+/// A refinement changes which propositional variables an abstract state can
+/// constrain, so the factory's cached list has to move with it.
+///
+/// Regression test: the list used to be derived once in the constructor, which
+/// runs before the CEGAR loop, while refinement mutated `domain_sizes` through
+/// it afterwards. State regions were then stamped with a list naming only the
+/// seed-split variables, so the sparse propositional overlap skipped a
+/// dimension that had genuinely been narrowed, reported two disjoint regions as
+/// overlapping, and let one operator's cost be claimed twice.
+#[test]
+fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, None),
+        variables: vec![ExplicitVariable::new(
+            2,
+            "p".into(),
+            vec!["p0".into(), "p1".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        )],
+        numeric_variables: vec![],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(0)],
+        numeric_state: vec![],
+        operators: vec![Operator::new(
+            "move".into(),
+            vec![ExplicitFact::propositional(0, 0)],
+            vec![Effect::new(
+                vec![],
+                VariableIndex::from_usize(0),
+                None,
+                ExplicitValueIndex::new(1),
+            )],
+            vec![],
+            OperatorCost::new(1),
+        )],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    });
+
+    // Start coarse: both concrete values share one abstract class, so the single
+    // class covers the variable's whole domain and constrains nothing.
+    let mut factory = DomainAbstractionFactory::new(
+        &task,
+        vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)]],
+        vec![1],
+        NumericPartitions::with_partitions(vec![]),
+        vec![],
+    )
+    .unwrap();
+
+    let coarse = factory.cartesian_set_from_hash(0, &[], &[1]).unwrap();
+    assert!(
+        coarse.constrained_props().is_empty(),
+        "a one-class variable constrains nothing, got {:?}",
+        coarse.constrained_props()
+    );
+    assert_eq!(
+        coarse.propositions()[0],
+        vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]
+    );
+
+    // Refine: split value 1 into its own class, exactly as fix_flaws does.
+    factory.refine(|domain_mapping, domain_sizes, _, _| {
+        domain_mapping[0][1] = ExplicitValueIndex::new(1);
+        domain_sizes[0] = 2;
+    });
+
+    for (state_hash, expected_values) in [
+        (0usize, vec![ExplicitValueIndex::new(0u32)]),
+        (1usize, vec![ExplicitValueIndex::new(1u32)]),
+    ] {
+        let refined = factory
+            .cartesian_set_from_hash(state_hash, &[], &[1])
+            .unwrap();
+        assert_eq!(
+            refined.propositions()[0],
+            expected_values,
+            "state {state_hash} should hold only its own class after refinement"
+        );
+        assert_eq!(
+            refined.constrained_props(),
+            &[0],
+            "variable 0 is split, so a state region constrains it"
+        );
+    }
+
+    // The two classes are disjoint, so the regions must not overlap. This is the
+    // comparison the stale list got wrong.
+    let zero = factory.cartesian_set_from_hash(0, &[], &[1]).unwrap();
+    let one = factory.cartesian_set_from_hash(1, &[], &[1]).unwrap();
+    assert!(!zero.overlaps(&one));
+}

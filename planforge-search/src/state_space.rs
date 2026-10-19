@@ -14,7 +14,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::state_registry::{ExpansionContext, StateRegistry};
 
-use crate::evaluation::abstraction_collections::cost_partitioning::{
+use crate::evaluation::abstractions::cost_partitioning::costs::{
     BackwardDijkstraGraph, backward_goal_distances,
 };
 use crate::successor_generator::SuccessorTree;

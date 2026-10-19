@@ -12,22 +12,22 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning::{
-    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
-};
-use planforge_search::evaluation::cartesian_abstractions::{
+use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
     CartesianAbstractionHeuristic,
 };
-use planforge_search::evaluation::domain_abstractions::cegar::FlawKind;
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
+};
+use planforge_search::evaluation::abstractions::domain::cegar::FlawKind;
+use planforge_search::evaluation::abstractions::domain::collection_generator::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstraction;
-use planforge_search::evaluation::domain_abstractions::domain_abstraction_heuristic::DomainAbstractionHeuristic;
+use planforge_search::evaluation::abstractions::domain::generator::DomainAbstraction;
+use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};

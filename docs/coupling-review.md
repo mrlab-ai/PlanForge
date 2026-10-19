@@ -23,7 +23,7 @@ Modules imported by more than ten others:
 
 - `planforge-sas::numeric_task`: 13.
 - `planforge-translate::pddl::conditions`: 13; `pddl::pddl_types`: 11.
-- `planforge-search::evaluation::domain_abstractions::domain_abstraction_factory`: 17; `evaluation::heuristic`: 13; `evaluation::evaluator`: 13; `evaluation::domain_abstractions::utils`: 13; `evaluation`: 11.
+- `planforge-search::evaluation::abstractions::domain::factory`: 17; `evaluation::heuristic`: 13; `evaluation::evaluator`: 13; `evaluation::abstractions::domain::utils`: 13; `evaluation`: 11.
 - No module in the other crates exceeds ten incoming imports.
 
 The SCCs are:
@@ -64,11 +64,11 @@ For the option structs, public fields are partly their intended declarative surf
 
 Three production files define the representation and must agree:
 
-1. `planforge-search/src/evaluation/domain_abstractions/domain_abstraction_generator.rs` computes/stores mixed-radix multipliers.
-2. `planforge-search/src/evaluation/domain_abstractions/domain_abstraction_factory/state_encoding.rs` encodes, decodes, and enumerates hash IDs.
-3. `planforge-search/src/evaluation/domain_abstractions/domain_abstraction_heuristic.rs` hashes concrete/projected states on the lookup path.
+1. `planforge-search/src/evaluation/abstractions::domain/domain_abstraction_generator.rs` computes/stores mixed-radix multipliers.
+2. `planforge-search/src/evaluation/abstractions::domain/factory/state_encoding.rs` encodes, decodes, and enumerates hash IDs.
+3. `planforge-search/src/evaluation/abstractions::domain/domain_abstraction_heuristic.rs` hashes concrete/projected states on the lookup path.
 
-The focused tests are in `domain_abstraction_factory/tests.rs`, `domain_abstraction_heuristic/tests.rs`, and `abstraction_collections/canonical_heuristic/tests.rs`: six files total for a representation change. Consumers such as SCP use abstract IDs through component methods and do not need edits. This is adequately localized.
+The focused tests are in `domain_abstraction_factory/tests.rs`, `domain_abstraction_heuristic/tests.rs`, and `abstractions::cost_partitioning/canonical_heuristic/tests.rs`: six files total for a representation change. Consumers such as SCP use abstract IDs through component methods and do not need edits. This is adequately localized.
 
 ### Add a new saturator
 
@@ -83,7 +83,7 @@ The core discipline spans `search/open_list.rs` (entry ordering and queues), `se
 This is the least localized scenario. Twenty-three production files match on `AssignmentOperation` or parse its syntax:
 
 - Syntax/data/concrete semantics: `planforge-translate/src/preprocess/sas_parts.rs`; `planforge-sas/src/numeric_parser.rs`; `numeric_task/value_types.rs`; `numeric_task/task_api.rs`; `sas_format.rs`; `state_registry.rs`; `utils/interval.rs`; `utils/linear_effects.rs`.
-- Search abstractions and analyses: `causal_graph.rs`; `task_restriction.rs`; `evaluation/abstraction_task.rs`; `evaluation/cegar.rs`; `evaluation/ff_heuristic.rs`; `evaluation/cartesian_abstractions/mod.rs`; `evaluation/domain_abstractions/domain_abstraction.rs`; `evaluation/domain_abstractions/additive_numeric_views.rs`; `evaluation/domain_abstractions/abstract_operator_generator.rs`; `evaluation/domain_abstractions/domain_abstraction_factory/footprints.rs`; `evaluation/numeric_landmarks/numeric_bound.rs`; `evaluation/numeric_landmarks/numeric_helper.rs`; `evaluation/numeric_potentials/task.rs`; `evaluation/pattern_databases/numeric_size_estimator.rs`; and `evaluation/pattern_databases/max_additive_subsets.rs`.
+- Search abstractions and analyses: `causal_graph.rs`; `task_restriction.rs`; `evaluation/abstractions::task.rs`; `evaluation/cegar.rs`; `evaluation/ff_heuristic.rs`; `evaluation/abstractions::cartesian/mod.rs`; `evaluation/abstractions::domain/domain_abstraction.rs`; `evaluation/abstractions::domain/additive_numeric_views.rs`; `evaluation/abstractions::domain/abstract_operator_generator.rs`; `evaluation/abstractions::domain/factory/footprints.rs`; `evaluation/numeric_landmarks/numeric_bound.rs`; `evaluation/numeric_landmarks/numeric_helper.rs`; `evaluation/numeric_potentials/task.rs`; `evaluation/abstractions::pdb/numeric_size_estimator.rs`; and `evaluation/abstractions::pdb/max_additive_subsets.rs`.
 
 Not every semantic change requires all 23 edits, but a new operation does because Rust's exhaustive matches force each concrete, interval, relaxation, projection, relevance, and admissibility interpretation to decide what it means. That is real semantic coupling rather than merely misplaced code. Centralizing the concrete arithmetic in `AssignmentOperation::apply` and interval arithmetic in `Interval` is already useful; forcing every abstraction through one generic or dynamic interpreter would either lose precision or add a per-node call. Also, 16 `PARITY(numeric-fd)` markers currently exist, 15 under `numeric_landmarks/` (one more there than the contextual estimate), so scattering or hiding that algorithm is not warranted.
 
@@ -225,56 +225,56 @@ option was judged churn without a reduction in algorithmic coupling.
 | `config` | 5 | 0 |
 | `config::parser` | 0 | 1 |
 | `evaluation` | 11 | 0 |
-| `evaluation::abstraction_collections` | 3 | 0 |
-| `evaluation::abstraction_collections::canonical_heuristic` | 1 | 5 |
-| `evaluation::abstraction_collections::component` | 5 | 7 |
-| `evaluation::abstraction_collections::cost_partitioning` | 7 | 1 |
-| `evaluation::abstraction_collections::explicit_scp` | 0 | 2 |
-| `evaluation::abstraction_collections::max_heuristic` | 1 | 3 |
-| `evaluation::abstraction_collections::portfolio` | 4 | 1 |
-| `evaluation::abstraction_collections::region` | 1 | 0 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning` | 3 | 12 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning::config` | 0 | 4 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning::diagnostics` | 0 | 1 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning::fill_scp` | 0 | 1 |
-| `evaluation::abstraction_task` | 4 | 0 |
-| `evaluation::cartesian_abstractions` | 10 | 10 |
-| `evaluation::cartesian_abstractions::finalize` | 0 | 1 |
-| `evaluation::cartesian_abstractions::flaw_splits` | 0 | 1 |
-| `evaluation::cartesian_abstractions::icaps26` | 1 | 0 |
-| `evaluation::cartesian_abstractions::plan_replay` | 0 | 1 |
-| `evaluation::cartesian_abstractions::shortest_paths` | 0 | 1 |
-| `evaluation::cartesian_abstractions::split_generation` | 0 | 1 |
-| `evaluation::cartesian_abstractions::split_selector` | 0 | 1 |
+| `evaluation::abstractions::cost_partitioning` | 3 | 0 |
+| `evaluation::abstractions::cost_partitioning::canonical` | 1 | 5 |
+| `evaluation::abstractions::component` | 5 | 7 |
+| `evaluation::abstractions::cost_partitioning::costs` | 7 | 1 |
+| `evaluation::abstractions::cost_partitioning::explicit_scp` | 0 | 2 |
+| `evaluation::abstractions::cost_partitioning::max` | 1 | 3 |
+| `evaluation::abstractions::collections::portfolio` | 4 | 1 |
+| `evaluation::abstractions::cost_partitioning::region` | 1 | 0 |
+| `evaluation::abstractions::cost_partitioning::saturated` | 3 | 12 |
+| `evaluation::abstractions::cost_partitioning::saturated::config` | 0 | 4 |
+| `evaluation::abstractions::cost_partitioning::saturated::diagnostics` | 0 | 1 |
+| `evaluation::abstractions::cost_partitioning::saturated::fill_scp` | 0 | 1 |
+| `evaluation::abstractions::task` | 4 | 0 |
+| `evaluation::abstractions::cartesian` | 10 | 10 |
+| `evaluation::abstractions::cartesian::finalize` | 0 | 1 |
+| `evaluation::abstractions::cartesian::flaw_splits` | 0 | 1 |
+| `evaluation::abstractions::cartesian::icaps26` | 1 | 0 |
+| `evaluation::abstractions::cartesian::plan_replay` | 0 | 1 |
+| `evaluation::abstractions::cartesian::shortest_paths` | 0 | 1 |
+| `evaluation::abstractions::cartesian::split_generation` | 0 | 1 |
+| `evaluation::abstractions::cartesian::split_selector` | 0 | 1 |
 | `evaluation::cegar` | 5 | 1 |
 | `evaluation::check_admissible` | 1 | 4 |
-| `evaluation::domain_abstractions` | 5 | 0 |
-| `evaluation::domain_abstractions::abstract_operator_generator` | 9 | 6 |
-| `evaluation::domain_abstractions::additive_numeric_views` | 9 | 1 |
-| `evaluation::domain_abstractions::cegar` | 5 | 9 |
-| `evaluation::domain_abstractions::cegar::flaw_search` | 8 | 11 |
-| `evaluation::domain_abstractions::cegar::flaw_search::flaw_selection` | 1 | 2 |
-| `evaluation::domain_abstractions::cegar::flaw_search::progression` | 2 | 6 |
-| `evaluation::domain_abstractions::cegar::flaw_search::regression` | 2 | 6 |
-| `evaluation::domain_abstractions::cegar::flaw_search::sequence` | 1 | 8 |
-| `evaluation::domain_abstractions::cegar::flaw_search::state` | 4 | 3 |
-| `evaluation::domain_abstractions::cegar::flaw_search::target_centered` | 1 | 3 |
-| `evaluation::domain_abstractions::domain_abstraction` | 10 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar` | 3 | 9 |
-| `evaluation::domain_abstractions::domain_abstraction_factory` | 17 | 7 |
-| `evaluation::domain_abstractions::domain_abstraction_factory::distances` | 0 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_factory::footprints` | 0 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_factory::plan_extraction` | 0 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_factory::saturation` | 0 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_factory::state_encoding` | 0 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_factory::transition_system` | 0 | 1 |
-| `evaluation::domain_abstractions::domain_abstraction_generator` | 7 | 5 |
-| `evaluation::domain_abstractions::domain_abstraction_heuristic` | 5 | 5 |
-| `evaluation::domain_abstractions::numeric_context` | 2 | 2 |
-| `evaluation::domain_abstractions::posthoc_optimization_heuristic` | 1 | 5 |
-| `evaluation::domain_abstractions::utils` | 13 | 6 |
-| `evaluation::domain_abstractions::utils::debug_dump` | 0 | 1 |
-| `evaluation::domain_abstractions::utils::partitioning` | 0 | 0 |
+| `evaluation::abstractions::domain` | 5 | 0 |
+| `evaluation::abstractions::domain::abstract_operator_generator` | 9 | 6 |
+| `evaluation::abstractions::domain::additive_numeric_views` | 9 | 1 |
+| `evaluation::abstractions::domain::cegar` | 5 | 9 |
+| `evaluation::abstractions::domain::cegar::flaw_search` | 8 | 11 |
+| `evaluation::abstractions::domain::cegar::flaw_search::flaw_selection` | 1 | 2 |
+| `evaluation::abstractions::domain::cegar::flaw_search::progression` | 2 | 6 |
+| `evaluation::abstractions::domain::cegar::flaw_search::regression` | 2 | 6 |
+| `evaluation::abstractions::domain::cegar::flaw_search::sequence` | 1 | 8 |
+| `evaluation::abstractions::domain::cegar::flaw_search::state` | 4 | 3 |
+| `evaluation::abstractions::domain::cegar::flaw_search::target_centered` | 1 | 3 |
+| `evaluation::abstractions::domain::domain_abstraction` | 10 | 1 |
+| `evaluation::abstractions::domain::collection_generator` | 3 | 9 |
+| `evaluation::abstractions::domain::factory` | 17 | 7 |
+| `evaluation::abstractions::domain::factory::distances` | 0 | 1 |
+| `evaluation::abstractions::domain::factory::footprints` | 0 | 1 |
+| `evaluation::abstractions::domain::factory::plan_extraction` | 0 | 1 |
+| `evaluation::abstractions::domain::factory::saturation` | 0 | 1 |
+| `evaluation::abstractions::domain::factory::state_encoding` | 0 | 1 |
+| `evaluation::abstractions::domain::factory::transition_system` | 0 | 1 |
+| `evaluation::abstractions::domain::generator` | 7 | 5 |
+| `evaluation::abstractions::domain::heuristic` | 5 | 5 |
+| `evaluation::abstractions::domain::numeric_context` | 2 | 2 |
+| `evaluation::abstractions::domain::posthoc_optimization_heuristic` | 1 | 5 |
+| `evaluation::abstractions::domain::utils` | 13 | 6 |
+| `evaluation::abstractions::domain::utils::debug_dump` | 0 | 1 |
+| `evaluation::abstractions::domain::utils::partitioning` | 0 | 0 |
 | `evaluation::evaluator` | 13 | 0 |
 | `evaluation::ff_heuristic` | 0 | 2 |
 | `evaluation::heuristic` | 13 | 1 |
@@ -293,20 +293,20 @@ option was judged churn without a reduction in algorithmic coupling.
 | `evaluation::numeric_potentials::rays` | 1 | 2 |
 | `evaluation::numeric_potentials::sampling` | 1 | 2 |
 | `evaluation::numeric_potentials::task` | 0 | 3 |
-| `evaluation::pattern_databases` | 3 | 1 |
-| `evaluation::pattern_databases::canonical_pdb_heuristic` | 1 | 8 |
-| `evaluation::pattern_databases::max_additive_subsets` | 2 | 3 |
-| `evaluation::pattern_databases::numeric_size_estimator` | 1 | 1 |
-| `evaluation::pattern_databases::pattern_collection` | 5 | 1 |
-| `evaluation::pattern_databases::pattern_collection_information` | 0 | 3 |
-| `evaluation::pattern_databases::pattern_database` | 8 | 4 |
-| `evaluation::pattern_databases::pattern_generator_greedy` | 1 | 4 |
-| `evaluation::pattern_databases::pattern_generator_systematic` | 3 | 3 |
-| `evaluation::pattern_databases::pdb_collection` | 4 | 5 |
-| `evaluation::pattern_databases::pdb_heuristic` | 1 | 8 |
-| `evaluation::pattern_databases::projected_task` | 8 | 2 |
-| `evaluation::pattern_databases::utils` | 2 | 2 |
-| `evaluation::pattern_databases::variable_order_finder` | 1 | 1 |
+| `evaluation::abstractions::pdb` | 3 | 1 |
+| `evaluation::abstractions::pdb::canonical_pdb_heuristic` | 1 | 8 |
+| `evaluation::abstractions::pdb::max_additive_subsets` | 2 | 3 |
+| `evaluation::abstractions::pdb::numeric_size_estimator` | 1 | 1 |
+| `evaluation::abstractions::pdb::pattern_collection` | 5 | 1 |
+| `evaluation::abstractions::pdb::pattern_collection_information` | 0 | 3 |
+| `evaluation::abstractions::pdb::pattern_database` | 8 | 4 |
+| `evaluation::abstractions::pdb::pattern_generator_greedy` | 1 | 4 |
+| `evaluation::abstractions::pdb::pattern_generator_systematic` | 3 | 3 |
+| `evaluation::abstractions::pdb::pdb_collection` | 4 | 5 |
+| `evaluation::abstractions::pdb::pdb_heuristic` | 1 | 8 |
+| `evaluation::abstractions::pdb::projected_task` | 8 | 2 |
+| `evaluation::abstractions::pdb::utils` | 2 | 2 |
+| `evaluation::abstractions::pdb::variable_order_finder` | 1 | 1 |
 | `evaluation::state_value_cache` | 5 | 0 |
 | `heuristic_factory` | 1 | 19 |
 | `heuristic_factory::abstraction_config` | 0 | 12 |

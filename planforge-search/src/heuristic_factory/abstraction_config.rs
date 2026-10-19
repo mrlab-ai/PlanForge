@@ -1,34 +1,32 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use crate::config::{
-    ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue,
-};
-use crate::evaluation::abstraction_collections::component::AbstractionComponent;
-use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use crate::evaluation::cartesian_abstractions::{
+use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
+use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
+use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianAbstractionGenerator, CartesianFlawCandidateGeneration,
-    CartesianRefinementDirection, CartesianSplitSelection,
+    CartesianAbstractionGenerator, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
+    CartesianSplitSelection,
 };
-use crate::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
-use crate::evaluation::cegar::FlawKind;
-use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::{
+use crate::evaluation::abstractions::cegar::FlawKind;
+use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::abstractions::domain::collection_generator::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
-use crate::evaluation::pattern_databases::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
-use crate::evaluation::pattern_databases::pattern_collection::PatternCollection;
-use crate::evaluation::pattern_databases::pattern_database::PdbHeuristicConfig;
-use crate::evaluation::pattern_databases::pattern_generator_greedy::{
+use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
+use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
+use crate::evaluation::abstractions::pdb::pattern_database::PdbHeuristicConfig;
+use crate::evaluation::abstractions::pdb::pattern_generator_greedy::{
     GreedyPatternGeneratorConfig, generate_greedy_pattern,
 };
-use crate::evaluation::pattern_databases::pattern_generator_systematic::{
+use crate::evaluation::abstractions::pdb::pattern_generator_systematic::{
     SystematicPatternGeneratorConfig, generate_systematic_patterns,
 };
-use crate::evaluation::pattern_databases::pdb_collection::PdbCollection;
-use crate::evaluation::pattern_databases::validate_restricted_task;
+use crate::evaluation::abstractions::pdb::pdb_collection::PdbCollection;
+use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
@@ -907,7 +905,7 @@ mod tests {
         ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
         remaining_construction_time, require_only_component_sources, split_component_sources,
     };
-    use crate::evaluation::cartesian_abstractions::{
+    use crate::evaluation::abstractions::cartesian::{
         CartesianAbstractPlanSelection, CartesianFlawCandidateGeneration, CartesianSplitSelection,
     };
 
@@ -1010,7 +1008,7 @@ mod tests {
         assert_eq!(patterns.max_pattern_size, 3);
         assert_eq!(
             config.systematic_heuristic.frontier_heuristic,
-            crate::evaluation::pattern_databases::pattern_database::PdbInternalHeuristic::Lmcut
+            crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic::Lmcut
         );
 
         let greedy = crate::config::parse_heuristic_spec(

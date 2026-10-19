@@ -65,7 +65,7 @@ heuristic is an explicit configuration error.
 
 Single-call PDDL pipeline:
 
-    planforge --search 'astar(canonical_domain_abstractions(...))' \
+    planforge --search 'astar(canonical_abstractions::domain(...))' \
               --max-time 30m --max-memory 8G \
               domain.pddl problem.pddl
 
@@ -107,7 +107,7 @@ Common options:
 - `--search SPEC` — search algorithm with a heuristic configuration. Examples:
   - `astar(blind())`
   - `astar(lmcutnumeric())`
-  - `astar(canonical_domain_abstractions(...))`
+  - `astar(canonical_abstractions::domain(...))`
   - `astar(numeric_potential(opt=initial_state,max_potential=1e8))`
   - `astar(numeric_potential(opt=diverse_samples,num_heuristics=4,num_samples=100,max_potential=1e8,cache_estimates=true,invalidate_online_cache_on_growth=true),mpd=true)`
   - `astar(posthoc_optimization(...))` — LP-based dominator of canonical; `pho(...)` is accepted as an alias
@@ -128,7 +128,7 @@ Common options:
   already restricted tasks are retained unchanged.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
   under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
-  `astar(canonical_domain_abstractions(...))` (`--canonical-construction-time`,
+  `astar(canonical_abstractions::domain(...))` (`--canonical-construction-time`,
   `--canonical-memory`, `--canonical-time`). Each stage is a child `planforge`
   process, so stage 1's limits are enforced and stage 2 starts clean.
 
