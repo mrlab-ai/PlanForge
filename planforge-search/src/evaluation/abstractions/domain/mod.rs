@@ -1,3 +1,11 @@
+//! Numeric domain abstractions refined by CEGAR.
+//!
+//! A domain abstraction maps every variable on its own: propositional values
+//! through a domain mapping, numeric values through interval partitions. The
+//! abstract state space is the product of these, so splitting one value
+//! splits every abstract state that contains it -- the factored counterpart
+//! of a Cartesian abstraction, which splits one abstract state at a time.
+
 use planforge_sas::numeric_task::VariableIndex;
 
 pub mod abstract_operators;
