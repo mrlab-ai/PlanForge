@@ -106,7 +106,13 @@ pub(super) fn apply_initial_goal_splits(
     };
 
     for var_id in candidate_var_ids {
-        if var_id.index() >= num_prop_vars || blacklisted_prop_var_ids.contains(&var_id) {
+        // Numeric variables get no initial split of their own, and condition
+        // variables none at all: conditions are derived from the numeric
+        // partitions, whose operands the loop below seeds.
+        if var_id.index() >= num_prop_vars
+            || task.numeric_conditions().is_condition_var(var_id)
+            || blacklisted_prop_var_ids.contains(&var_id)
+        {
             continue;
         }
         let mapping = initial_split_mapping(task, var_id)?;

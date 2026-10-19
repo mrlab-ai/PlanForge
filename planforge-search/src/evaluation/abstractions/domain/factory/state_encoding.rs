@@ -508,7 +508,9 @@ impl DomainAbstractionFactory {
             .collect()
     }
 
-    /// The task's goals in abstract values.
+    /// The task's goals in abstract values. Goals on condition variables keep
+    /// their concrete value: conditions are derived from the numeric
+    /// partitions, and [`Self::is_goal_state`] evaluates them there.
     ///
     /// Every goal fact is one the abstraction can reach --
     /// `validate_abstractable_goal` has already refused a goal on a derived
@@ -523,46 +525,68 @@ impl DomainAbstractionFactory {
         for goal_index in 0..task.get_num_goals() {
             let fact = task.get_goal_fact(goal_index);
             let var = fact.var_index();
-            if self.domain_sizes.get(var.index()).copied().unwrap_or(1) <= 1 {
+            if self.numeric_conditions.is_condition_var(var) {
+                out.push(*fact);
                 continue;
             }
-            let mapped = self
-                .domain_mapping
-                .get(var.index())
-                .and_then(|mapping| mapping.get(fact.value()))
-                .copied()
-                .unwrap_or(fact.value_index());
+            if self.domain_sizes[var.index()] <= 1 {
+                continue;
+            }
+            let mapped = self.domain_mapping[var.index()][fact.value()];
             out.push(ExplicitFact::propositional(var.index(), mapped.index()));
         }
 
         out
     }
 
+    /// Whether abstract state `state_hash` satisfies the abstract `goals`:
+    /// its propositional values match, and its numeric partitions admit every
+    /// goal condition.
     pub fn is_goal_state(
         &self,
+        task: &dyn AbstractNumericTask,
         state_hash: usize,
         goals: &[ExplicitFact],
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-    ) -> bool {
+    ) -> Result<bool> {
         let num_props = self.domain_sizes.len();
-        for g in goals {
-            let var = g.var();
-            let expected = g.value();
-            let mult = hash_multipliers[var];
-            let state = state_hash;
+        let mut numeric_inputs: Option<Vec<Interval>> = None;
+        for goal in goals {
+            let var = goal.var();
+            if let Some(condition) = self.numeric_conditions.for_var(goal.var_index()) {
+                let inputs = match &numeric_inputs {
+                    Some(inputs) => inputs,
+                    None => {
+                        numeric_inputs.insert(prepare_comparison_tree_inputs_from_abstract_state(
+                            task,
+                            self.numeric_conditions.all(),
+                            &self.partitions,
+                            AbstractStateHash {
+                                hash: state_hash,
+                                num_props,
+                                numeric_domain_sizes,
+                                hash_multipliers,
+                            },
+                        )?)
+                    }
+                };
+                let contradicting = Some(goal.value() != ConditionValue::True.as_usize());
+                if condition.evaluate_interval(inputs) == contradicting {
+                    return Ok(false);
+                }
+                continue;
+            }
             let dom_size = if var < num_props {
                 self.domain_sizes[var]
             } else {
-                let n = var - num_props;
-                numeric_domain_sizes.get(n).copied().unwrap_or(0)
+                numeric_domain_sizes[var - num_props]
             };
-            let actual = (state / mult) % dom_size;
-            if actual != expected {
-                return false;
+            if (state_hash / hash_multipliers[var]) % dom_size != goal.value() {
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 
     pub(super) fn compute_initial_state_hash_determined(

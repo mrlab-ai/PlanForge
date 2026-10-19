@@ -361,11 +361,12 @@ impl DomainAbstractionFactory {
         let mut goal_state_hashes = Vec::new();
         for state_hash in 0..num_states {
             if self.is_goal_state(
+                task,
                 state_hash,
                 &goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
-            ) {
+            )? {
                 if comparison_branching {
                     let possible_states = self.enumerate_states_with_evaluated_comparisons_cached(
                         state_hash,

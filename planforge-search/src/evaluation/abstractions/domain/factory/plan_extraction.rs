@@ -204,11 +204,12 @@ impl DomainAbstractionFactory {
 
         let mut safety_steps = 0usize;
         while !self.is_goal_state(
+            task,
             current_hash,
             &table.goal_facts,
             numeric_domain_sizes,
             hash_multipliers,
-        ) {
+        )? {
             if safety_steps.is_multiple_of(64) {
                 ensure_online_scp_deadline(deadline)?;
             }

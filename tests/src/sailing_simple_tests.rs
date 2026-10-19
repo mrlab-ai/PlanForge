@@ -418,19 +418,20 @@ fn numeric_var_id_by_name_parts(
 /// either direction is visible.
 ///
 /// The value is the one the clock-free [`goal_focused_collection_config`]
-/// collection reaches (11; the retired root-group collection reached 12).
+/// collection reaches (12 since conditions are derived from the numeric
+/// partitions; 11 with condition variables as abstract dimensions).
 #[test]
 fn sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum() {
     let optimum = optimum_of("prob_2b2p_x");
     let h = scp_initial_h("prob_2b2p_x");
     assert!(h <= optimum, "prob_2b2p_x: h={h} must be admissible");
-    assert_eq!(h, 11.0);
+    assert_eq!(h, 12.0);
 }
 
 /// Both persons' nearest boat is b0. Per-person abstractions cannot encode that
 /// one boat must perform the 10-move transfer between targets; with the current
-/// residual saturation the goal-focused collection retains 6 units at the
-/// initial state (the retired root-group collection retained 7).
+/// residual saturation the goal-focused collection retains 7 units at the
+/// initial state (6 with condition variables as abstract dimensions).
 #[test]
 fn sailing_simple_assignment_gap() {
     let optimum = optimum_of("prob_2b2p_assign");
@@ -439,7 +440,7 @@ fn sailing_simple_assignment_gap() {
         h <= optimum,
         "prob_2b2p_assign: h={h} must be admissible against h*={optimum}"
     );
-    assert_eq!(h, 6.0);
+    assert_eq!(h, 7.0);
 }
 
 #[test]

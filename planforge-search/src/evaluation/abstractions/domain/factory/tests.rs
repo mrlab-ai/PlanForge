@@ -317,12 +317,17 @@ fn early_goal_distance_matches_exhaustive_walk_when_comparisons_are_cleared() {
         &comparison_var_ids,
     );
     let target_hash = ConditionValue::True.as_usize() * hash_multipliers[0] + hash_multipliers[1];
-    assert!(factory.is_goal_state(
-        target_hash,
-        &goal_facts,
-        numeric_domain_sizes,
-        hash_multipliers
-    ));
+    assert!(
+        factory
+            .is_goal_state(
+                &task,
+                target_hash,
+                &goal_facts,
+                numeric_domain_sizes,
+                hash_multipliers
+            )
+            .unwrap()
+    );
     let target_base = factory
         .clear_comparison_vars_except(target_hash, hash_multipliers, &comparison_var_ids, &[])
         .unwrap();

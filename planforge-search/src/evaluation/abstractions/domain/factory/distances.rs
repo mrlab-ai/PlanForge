@@ -393,11 +393,12 @@ impl DomainAbstractionFactory {
                 ensure_online_scp_deadline(deadline)?;
             }
             if !self.is_goal_state(
+                task,
                 state_hash,
                 goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
-            ) {
+            )? {
                 continue;
             }
             if comparison_branching {

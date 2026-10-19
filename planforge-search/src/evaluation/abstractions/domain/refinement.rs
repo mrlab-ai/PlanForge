@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
+use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, VariableIndex};
 use rand::rngs::SmallRng;
 use tracing::debug;
@@ -15,16 +15,6 @@ use super::config::CegarConfig;
 use super::flaws::{Flaw, NumericFlaw, PropFlaw, can_split_numeric_var};
 use super::partitions::NumericPartitions;
 use super::split_selection::{ChosenFlaws, TieBreak};
-
-/// The only abstract domain a refined condition variable ever has: the value
-/// that establishes the condition in its own class, the value that does not in
-/// the other. Indexed by [`ConditionValue`], so `True` maps to class 1 and
-/// `False` to class 0 — the class an abstract operator's condition effect
-/// targets and the one
-/// [`DomainAbstractionFactory`](super::factory::DomainAbstractionFactory) clears a comparison digit
-/// to before deriving its verdict.
-const CONDITION_SPLIT_MAPPING: [ExplicitValueIndex; ConditionValue::DOMAIN_SIZE] =
-    [ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)];
 
 /// What a refinement writes to: the abstraction's propositional domain mapping
 /// with its per-variable domain sizes, its numeric partitions with theirs, and
@@ -402,33 +392,9 @@ fn try_refine_from_flaw(
             let mut changed = false;
             let mut prop_domain_size_changed = false;
 
-            if task.numeric_conditions().is_condition_var(var_id) {
-                if !can_refine_propositional_variable_with_blacklist(
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    var_id,
-                    2,
-                    config.max_abstraction_size,
-                    task.numeric_conditions(),
-                    blacklisted_prop_var_ids,
-                ) {
-                    return Ok(None);
-                }
-                // A condition variable has one split and only one: the two
-                // values of its domain, told apart. Refining it therefore means
-                // going straight to the full mapping.
-                let old_size = domain_sizes[var_id.index()];
-                if domain_sizes[var_id.index()] < ConditionValue::DOMAIN_SIZE {
-                    domain_sizes[var_id.index()] = ConditionValue::DOMAIN_SIZE;
-                    changed = true;
-                    prop_domain_size_changed = true;
-                }
-                if domain_mapping[var_id.index()] != CONDITION_SPLIT_MAPPING {
-                    domain_mapping[var_id.index()] = CONDITION_SPLIT_MAPPING.to_vec();
-                    changed = true;
-                }
-                debug_assert!(domain_sizes[var_id.index()] >= old_size);
-            } else {
+            // Conditions are derived from the numeric partitions: a flaw on a
+            // condition variable refines only its numeric operands.
+            if !task.numeric_conditions().is_condition_var(var_id) {
                 let abs_size = domain_sizes[var_id.index()];
                 // If we've already fully refined this variable, nothing to do.
                 if abs_size >= concrete_size {
