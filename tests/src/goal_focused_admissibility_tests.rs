@@ -13,8 +13,8 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    CostPartitioningMethod, SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
+use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning::{
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
@@ -138,8 +138,8 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
     .expect("the goal-focused Cartesian collection must build")
 }
 
-fn scp_config(partitioning: CostPartitioningMethod) -> ScpOnlineConfig {
-    ScpOnlineConfig {
+fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
+    ScpConfig {
         max_time: 100.0,
         max_size: 10_000_000,
         table_construction_max_time: 100.0,
@@ -208,34 +208,32 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
             let heuristics = [
                 (
                     "domain",
-                    SaturatedCostPartitioningOnlineHeuristic::new(
+                    SaturatedCostPartitioningHeuristic::new(
                         None,
-                        domain.clone(),
-                        vec![],
+                        collection_components("scp", domain.clone(), Vec::new(), vec![]),
                         scp_config(partitioning),
                         &task,
+                        Default::default(),
                     ),
                 ),
                 (
                     "Cartesian",
-                    SaturatedCostPartitioningOnlineHeuristic::new_with_cartesian(
+                    SaturatedCostPartitioningHeuristic::new(
                         None,
-                        vec![],
-                        cartesian.clone(),
-                        vec![],
+                        collection_components("scp", vec![], cartesian.clone(), vec![]),
                         scp_config(partitioning),
                         &task,
+                        Default::default(),
                     ),
                 ),
                 (
                     "mixed",
-                    SaturatedCostPartitioningOnlineHeuristic::new_with_cartesian(
+                    SaturatedCostPartitioningHeuristic::new(
                         None,
-                        domain.clone(),
-                        cartesian.clone(),
-                        vec![],
+                        collection_components("scp", domain.clone(), cartesian.clone(), vec![]),
                         scp_config(partitioning),
                         &task,
+                        Default::default(),
                     ),
                 ),
             ];

@@ -27,23 +27,8 @@ impl<'task> FillScpHeuristic<'task> {
         config: FillScpConfig,
         task: &'task dyn AbstractNumericTask,
     ) -> Result<Self, EvaluationError> {
-        let mut components = Vec::with_capacity(abstractions.len() + cartesian_abstractions.len());
-        components.extend(
-            abstractions
-                .into_iter()
-                .enumerate()
-                .map(|(index, abstraction)| {
-                    AbstractionComponent::domain(Some(format!("fillSCP_{index}")), abstraction)
-                }),
-        );
-        components.extend(cartesian_abstractions.into_iter().enumerate().map(
-            |(index, abstraction)| {
-                AbstractionComponent::cartesian(
-                    Some(format!("fillSCP_cartesian_{index}")),
-                    abstraction,
-                )
-            },
-        ));
+        let components =
+            collection_components("fillSCP", abstractions, cartesian_abstractions, Vec::new());
         Self::from_components(name, components, config, task)
     }
 
@@ -63,12 +48,15 @@ impl<'task> FillScpHeuristic<'task> {
         }
         config.force_full_goal_tasks();
         let scp_config = config.as_scp_collection_config();
-        let temp = SaturatedCostPartitioningOnlineHeuristic::from_components_with_debug(
+        let temp = SaturatedCostPartitioningHeuristic::new(
             Some("fillSCP_scp_builder".to_string()),
             components,
             scp_config,
             task,
-            config.collection_config.debug,
+            ScpBuildOptions {
+                debug_diagnostics: config.collection_config.debug,
+                ..Default::default()
+            },
         )?;
         let components = temp.components.borrow();
         let abstract_state_ids = components
@@ -99,15 +87,15 @@ impl<'task> FillScpHeuristic<'task> {
                 deadline,
             )?
         };
-        let standalone_current_h = {
+        let abstraction_h = {
             let state = temp.state.borrow();
-            standalone_current_h_values(&state, &abstract_state_ids)
+            abstraction_heuristic_values(&state, &abstract_state_ids)
         };
         let collection = PartitionedCollection {
             task,
             components: &components,
             abstract_state_ids: &abstract_state_ids,
-            standalone_current_h: &standalone_current_h,
+            abstraction_h: &abstraction_h,
             original_costs: &original_costs,
         };
         let (mut cp_heuristic, mut residual_costs, mut residual_partitions) =

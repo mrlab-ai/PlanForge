@@ -10,9 +10,9 @@ use super::{
 };
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
 use crate::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    CostPartitioningMethod, FillScpConfig, LegacyScpOnlineConfig, OrderGenerator, Saturator,
-    ScoringFunction, ScpOnlineConfig,
+use crate::evaluation::abstraction_collections::saturated_cost_partitioning::{
+    CostPartitioningMethod, FillScpConfig, LegacyScpConfig, OrderGenerator, Saturator,
+    ScoringFunction, ScpConfig,
 };
 use crate::evaluation::cartesian_abstractions::CartesianSplitSelection;
 use crate::evaluation::cartesian_abstractions::icaps26::Icaps26SplitSelection;
@@ -80,7 +80,7 @@ fn parses_hierarchical_scp_options_and_sources() {
     assert_eq!(sources.len(), 3);
     assert_eq!(options.len(), 9);
     abstraction_config::validate_scp_combinator_options(&options).unwrap();
-    let mut config = ScpOnlineConfig::default();
+    let mut config = ScpConfig::default();
     ApplyOptions::apply_options(&mut config, &options).unwrap();
     assert!(!config.online);
     assert!(config.diversify);
@@ -104,8 +104,7 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
     let h = astar_heuristic("astar(scp([domain()], max_time=[5]))");
     let source_config = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap();
     let error =
-        ApplyOptions::apply_options(&mut ScpOnlineConfig::default(), &source_config.options)
-            .unwrap_err();
+        ApplyOptions::apply_options(&mut ScpConfig::default(), &source_config.options).unwrap_err();
     assert_eq!(error, "expected scalar value, got a list");
 
     let wrapper = astar_heuristic("astar(check_admissible([domain()]))");
@@ -339,13 +338,13 @@ fn legacy_cartesian_collection_rejects_domain_only_options() {
 fn rejects_boolean_cost_partitioning_mode() {
     let h = astar_heuristic("astar(scp(domain(), partitioning=label))");
     let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let mut config = ScpOnlineConfig::default();
+    let mut config = ScpConfig::default();
     ApplyOptions::apply_options(&mut config, &options).unwrap();
     assert_eq!(config.partitioning, CostPartitioningMethod::Label);
 
     let h = astar_heuristic("astar(scp(domain(), partitioning=true))");
     let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let mut config = ScpOnlineConfig::default();
+    let mut config = ScpConfig::default();
     assert!(ApplyOptions::apply_options(&mut config, &options).is_err());
 }
 
@@ -455,7 +454,7 @@ fn parses_astar_scp_online_with_named_options() {
     let h = astar_heuristic(
         "astar(scp_online(max_time=12.5, table_construction_max_time=34.5, max_size=2048, interval=3, partitioning=region, saturator=perimstar, scoring_function=max_heuristic, orders=dynamic_greedy_orders, order_optimization_max_time=1.5, max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, collection_strategy=complementary, random_seed=7, debug=true))",
     );
-    let mut cfg = LegacyScpOnlineConfig::default();
+    let mut cfg = LegacyScpConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_time, 12.5);
     assert_eq!(cfg.table_construction_max_time, 34.5);
@@ -561,7 +560,7 @@ fn scp_online_accepts_nested_collection_call() {
     let h = astar_heuristic(
         "astar(scp_online(collection=multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
     );
-    let mut cfg = LegacyScpOnlineConfig::default();
+    let mut cfg = LegacyScpConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.collection_config.max_collection_size, 99);
     assert_eq!(cfg.collection_config.total_max_time, 2.5);
@@ -585,7 +584,7 @@ fn nested_collection_ignores_inner_call_name() {
     // validating its name — `collection=anything(max_collection_size=1)` is
     // equivalent. The wrapping name is treated as a free-form label.
     let h = astar_heuristic("astar(scp_online(collection=bogus(max_collection_size=1)))");
-    let mut cfg = LegacyScpOnlineConfig::default();
+    let mut cfg = LegacyScpConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.collection_config.max_collection_size, 1);
 }
@@ -689,7 +688,7 @@ fn parses_astar_multi_domain_abstractions_with_trailing_comma() {
 #[test]
 fn parses_explicit_offline_scp() {
     let h = astar_heuristic("astar(scp_online(online=false))");
-    let mut config = LegacyScpOnlineConfig::default();
+    let mut config = LegacyScpConfig::default();
     ApplyOptions::apply_options(&mut config, &h.args).unwrap();
     assert!(!config.online);
 }
@@ -697,8 +696,7 @@ fn parses_explicit_offline_scp() {
 #[test]
 fn rejects_unknown_options_inside_known_heuristics() {
     let h = astar_heuristic("astar(scp_online(deviation_flaws=false))");
-    let err =
-        ApplyOptions::apply_options(&mut LegacyScpOnlineConfig::default(), &h.args).unwrap_err();
+    let err = ApplyOptions::apply_options(&mut LegacyScpConfig::default(), &h.args).unwrap_err();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");

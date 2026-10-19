@@ -47,7 +47,7 @@ pub(super) fn compute_costs_stolen_by_heuristic(saturated: &[f64], surplus: &[f6
         .sum()
 }
 
-pub(super) fn compute_regional_conflict_scores(
+pub(super) fn interval_stolen_costs(
     components: &[AbstractionComponent<'_>],
     saturated_by_component: &[Vec<f64>],
     operator_costs: &[f64],
@@ -128,7 +128,7 @@ pub(super) fn compute_regional_conflict_scores(
                 if !left_amount.is_finite() || !right_amount.is_finite() || !base_cost.is_finite() {
                     continue;
                 }
-                let conflict = pair_regional_conflict(
+                let conflict = pairwise_interval_stolen_cost(
                     left_regions,
                     left_amount,
                     right_regions,
@@ -149,7 +149,7 @@ pub(super) fn compute_regional_conflict_scores(
     Ok(scores)
 }
 
-pub(super) fn pair_regional_conflict(
+pub(super) fn pairwise_interval_stolen_cost(
     left_regions: &[&StateRegion],
     left_amount: f64,
     right_regions: &[&StateRegion],

@@ -1,13 +1,13 @@
 use super::*;
 
-impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
-    pub(super) fn generate_offline_samples(
+impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    pub(super) fn sample_states(
         &self,
-        state: &mut ScpOnlineState,
+        state: &mut ScpState,
         initial_h: f64,
         deadline: Option<Instant>,
     ) -> Result<(), EvaluationError> {
-        if !state.offline_sample_ids.is_empty() {
+        if !state.sample_abstract_state_ids.is_empty() {
             return Ok(());
         }
         let sampling_task = self
@@ -31,14 +31,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         let mut expansion_context = ExpansionContext::default();
         let mut ids = Vec::new();
 
-        self.map_sample_state(&initial_state, &registry, self.task, &mut ids)?;
-        state.offline_sample_ids.push(ids.clone());
+        self.abstract_state_ids_of_sample(&initial_state, &registry, self.task, &mut ids)?;
+        state.sample_abstract_state_ids.push(ids.clone());
 
-        while state.offline_sample_ids.len() < self.config.samples {
+        while state.sample_abstract_state_ids.len() < self.config.samples {
             if deadline.is_some_and(|end| Instant::now() >= end) {
                 info!(
-                    "scp_online: offline sampling deadline reached after {} samples",
-                    state.offline_sample_ids.len()
+                    "scp: offline sampling deadline reached after {} samples",
+                    state.sample_abstract_state_ids.len()
                 );
                 break;
             }
@@ -81,17 +81,17 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     })?;
                 current = successor;
             }
-            self.map_sample_state(&current, &registry, self.task, &mut ids)?;
-            state.offline_sample_ids.push(ids.clone());
+            self.abstract_state_ids_of_sample(&current, &registry, self.task, &mut ids)?;
+            state.sample_abstract_state_ids.push(ids.clone());
         }
         info!(
-            "scp_online: generated {} offline random-walk samples",
-            state.offline_sample_ids.len()
+            "scp: generated {} offline random-walk samples",
+            state.sample_abstract_state_ids.len()
         );
         Ok(())
     }
 
-    pub(super) fn map_sample_state(
+    pub(super) fn abstract_state_ids_of_sample(
         &self,
         concrete_state: &ConcreteState,
         registry: &StateRegistry<'task>,

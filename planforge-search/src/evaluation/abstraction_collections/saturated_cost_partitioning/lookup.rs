@@ -10,7 +10,7 @@ pub(super) struct LookupTable {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct CostPartitioningHeuristic {
     pub(super) lookup_tables: Vec<LookupTable>,
-    pub(super) specialist_goal_id: Option<usize>,
+    pub(super) goal_cover_goal_id: Option<usize>,
 }
 
 impl CostPartitioningHeuristic {
@@ -23,7 +23,7 @@ impl CostPartitioningHeuristic {
             self.lookup_tables.push(LookupTable {
                 abstraction_id,
                 distances,
-                // As in standalone_envelope_value: an entry this table does not
+                // As in max_abstraction_heuristic: an entry this table does not
                 // have is an unknown lower bound, which is zero, not a proof
                 // that the state is a dead end.
                 unknown_value: 0.0,
@@ -64,15 +64,15 @@ impl CostPartitioningHeuristic {
     }
 }
 
-impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
+impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     pub(super) fn compute_abstract_state_ids_into(
         &self,
         eval_state: &EvaluationState<'_, '_>,
-        required_mask: Option<&[bool]>,
+        lookup_mask: Option<&[bool]>,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
         let components = self.components.borrow();
-        if let Some(mask) = required_mask {
+        if let Some(mask) = lookup_mask {
             assert_eq!(
                 mask.len(),
                 components.len(),
@@ -98,7 +98,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                 .iter()
                 .enumerate()
                 .filter(|(id, component)| {
-                    required_mask.is_none_or(|mask| mask[*id])
+                    lookup_mask.is_none_or(|mask| mask[*id])
                         && matches!(component, AbstractionComponent::Domain(_))
                 })
                 .map(|(id, _)| id),
@@ -118,7 +118,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         }
 
         for (component_id, component) in components.iter().enumerate() {
-            if required_mask.is_some_and(|mask| !mask[component_id]) {
+            if lookup_mask.is_some_and(|mask| !mask[component_id]) {
                 continue;
             }
             ids[component_id] = match component {
@@ -145,15 +145,15 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         Ok(())
     }
 
-    pub(super) fn compute_max_h(state: &ScpOnlineState, ids: &[Option<usize>]) -> f64 {
+    pub(super) fn compute_max_h(state: &ScpState, ids: &[Option<usize>]) -> f64 {
         let partitioned = state
             .cp_heuristics
             .iter()
             .map(|cp| cp.compute_heuristic(ids))
             .fold(0.0, f64::max);
-        let constructing_standalone = standalone_envelope_value(state, ids);
+        let constructing_standalone = max_abstraction_heuristic(state, ids);
         let retained_standalone = state
-            .standalone_lookup_tables
+            .abstraction_lookup_tables
             .iter()
             .map(|table| {
                 lookup_distance(
@@ -169,10 +169,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .max(retained_standalone)
     }
 
-    pub(super) fn required_lookup_mask(
-        state: &ScpOnlineState,
-        component_count: usize,
-    ) -> Vec<bool> {
+    pub(super) fn compute_lookup_mask(state: &ScpState, component_count: usize) -> Vec<bool> {
         let mut ids: Vec<usize> = state
             .cp_heuristics
             .iter()
@@ -180,7 +177,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .collect();
         ids.extend(
             state
-                .standalone_lookup_tables
+                .abstraction_lookup_tables
                 .iter()
                 .map(|table| table.abstraction_id),
         );
@@ -195,12 +192,12 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
         mask
     }
 
-    pub(super) fn retain_standalone_envelope(state: &mut ScpOnlineState, component_count: usize) {
+    pub(super) fn retain_abstraction_lookup_tables(state: &mut ScpState, component_count: usize) {
         assert!(
-            state.standalone_lookup_tables.is_empty(),
+            state.abstraction_lookup_tables.is_empty(),
             "standalone envelope must be retained exactly once"
         );
-        state.standalone_lookup_tables = std::mem::take(&mut state.h_values_by_abstraction)
+        state.abstraction_lookup_tables = std::mem::take(&mut state.goal_distances_by_abstraction)
             .into_iter()
             .enumerate()
             .filter_map(|(abstraction_id, distances)| {
@@ -210,7 +207,7 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
                     .then_some(LookupTable {
                         abstraction_id,
                         distances,
-                        // See standalone_envelope_value: a miss is unknown,
+                        // See max_abstraction_heuristic: a miss is unknown,
                         // not unreachable, so it contributes nothing.
                         unknown_value: 0.0,
                     })
@@ -218,14 +215,14 @@ impl<'task> SaturatedCostPartitioningOnlineHeuristic<'task> {
             .collect();
         state.size_kb = state.size_kb.saturating_add(
             state
-                .standalone_lookup_tables
+                .abstraction_lookup_tables
                 .iter()
                 .map(|table| table.distances.len())
                 .sum::<usize>()
                 .saturating_mul(std::mem::size_of::<f64>())
                 / 1024,
         );
-        state.required_mask = Self::required_lookup_mask(state, component_count);
+        state.lookup_mask = Self::compute_lookup_mask(state, component_count);
     }
 }
 
@@ -244,12 +241,12 @@ pub(super) fn lookup_distance(
         .unwrap_or(unknown_value)
 }
 
-pub(super) fn standalone_envelope_value(
-    state: &ScpOnlineState,
+pub(super) fn max_abstraction_heuristic(
+    state: &ScpState,
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
     state
-        .h_values_by_abstraction
+        .goal_distances_by_abstraction
         .iter()
         .enumerate()
         .map(|(abstraction_id, distances)| {
@@ -260,7 +257,7 @@ pub(super) fn standalone_envelope_value(
             // a state it has no entry for cannot reach the goal. That reading is
             // wrong here: when the online path is not rebuilding a partitioning,
             // it computes abstract state ids only for abstractions selected by
-            // `required_mask`, so every other one is legitimately absent.
+            // `lookup_mask`, so every other one is legitimately absent.
             // Absent then meant infinite, the maximum swallowed every finite
             // estimate, and the search recorded a solvable state as a dead end.
             //
@@ -272,7 +269,7 @@ pub(super) fn standalone_envelope_value(
         .fold(0.0, f64::max)
 }
 
-pub(super) fn standalone_lookup_values_size_kb(tables: &[Vec<f64>]) -> usize {
+pub(super) fn abstraction_lookup_tables_size_kb(tables: &[Vec<f64>]) -> usize {
     tables
         .iter()
         .filter(|distances| distances.iter().any(|value| *value > 0.0))
@@ -307,12 +304,12 @@ pub(super) fn current_h_for_distances(
     })
 }
 
-pub(super) fn standalone_current_h_values(
-    state: &ScpOnlineState,
+pub(super) fn abstraction_heuristic_values(
+    state: &ScpState,
     abstract_state_ids: &[Option<usize>],
 ) -> Vec<f64> {
     state
-        .h_values_by_abstraction
+        .goal_distances_by_abstraction
         .iter()
         .enumerate()
         .map(|(abstraction_id, distances)| {

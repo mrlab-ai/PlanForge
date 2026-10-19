@@ -14,7 +14,7 @@ pub(super) fn log_label_table_summary(
     let (positive_count, total_positive) = positive_cost_stats(saturated_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     debug!(
-        "scp_online: label {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_labels={positive_count}, total_positive_saturated={total_positive:.6}"
+        "scp: label {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_labels={positive_count}, total_positive_saturated={total_positive:.6}"
     );
 }
 
@@ -31,7 +31,7 @@ pub(super) fn log_transition_table_summary(
     let (positive_count, total_positive) = positive_cost_stats(operator_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     debug!(
-        "scp_online: abstract-operator {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
+        "scp: abstract-operator {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
     );
 }
 
@@ -44,14 +44,14 @@ pub(super) fn log_abstract_operator_region_summary(
     }
     let stats = abstract_operator_region_stats(operator_regions);
     debug!(
-        "scp_online: abstract-operator regions abstraction {abstraction_id}: labels={}, bounded_labels={}, bounded_numeric_dimensions={}",
+        "scp: abstract-operator regions abstraction {abstraction_id}: labels={}, bounded_labels={}, bounded_numeric_dimensions={}",
         stats.total_labels, stats.bounded_labels, stats.bounded_numeric_dimensions,
     );
 }
 
 pub(super) fn log_abstraction_candidate_report(
     mode: &str,
-    state: &ScpOnlineState,
+    state: &ScpState,
     components: &[AbstractionComponent<'_>],
     order: &[usize],
     abstract_state_ids: &[Option<usize>],
@@ -61,7 +61,7 @@ pub(super) fn log_abstraction_candidate_report(
         .iter()
         .filter(|&&abstraction_id| {
             state
-                .h_values_by_abstraction
+                .goal_distances_by_abstraction
                 .get(abstraction_id)
                 .map(|distances| {
                     current_h_for_distances(abstraction_id, distances, abstract_state_ids)
@@ -71,14 +71,14 @@ pub(super) fn log_abstraction_candidate_report(
         })
         .count();
     info!(
-        "scp_online: {mode} abstraction candidate report, candidates={}, inactive_current_state={inactive}, showing_top={}",
+        "scp: {mode} abstraction candidate report, candidates={}, inactive_current_state={inactive}, showing_top={}",
         order.len(),
         order.len().min(25),
     );
 
     for (rank, &abstraction_id) in order.iter().take(25).enumerate() {
         let h = state
-            .h_values_by_abstraction
+            .goal_distances_by_abstraction
             .get(abstraction_id)
             .map(|distances| current_h_for_distances(abstraction_id, distances, abstract_state_ids))
             .unwrap_or(0.0);
@@ -89,13 +89,13 @@ pub(super) fn log_abstraction_candidate_report(
             .unwrap_or(0.0);
         let Some(component) = components.get(abstraction_id) else {
             info!(
-                "scp_online: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, missing_component=true"
+                "scp: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, missing_component=true"
             );
             continue;
         };
         let Some(abstraction) = component.as_domain() else {
             info!(
-                "scp_online: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, kind={}",
+                "scp: candidate rank={rank}, id={abstraction_id}, h={h}, stolen={stolen}, kind={}",
                 component.kind()
             );
             continue;
@@ -104,7 +104,7 @@ pub(super) fn log_abstraction_candidate_report(
         let stats = abstract_operator_region_stats(&abstraction.abstract_operator_regions);
         let metadata = &abstraction.metadata;
         info!(
-            "scp_online: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, operator_region_labels={}, bounded_operator_region_labels={}, bounded_numeric_dimensions={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}",
+            "scp: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, operator_region_labels={}, bounded_operator_region_labels={}, bounded_numeric_dimensions={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}",
             abstraction_state_count(abstraction),
             abstraction.abstract_operators.len(),
             stats.total_labels,
@@ -227,7 +227,7 @@ pub(super) fn log_positive_label_operator_region_diagnostics(
         let op_name = op.map(|op| op.name()).unwrap_or("<missing operator>");
         let numeric_effects = op.map(|op| op.assignment_effects().len()).unwrap_or(0);
         info!(
-            "scp_online: abstract-operator label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, operator_regions={operator_region_count}, bounded_operator_regions={bounded_operator_regions}, bounded_numeric_dimensions={bounded_numeric_dimensions}, op={op_name}"
+            "scp: abstract-operator label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, operator_regions={operator_region_count}, bounded_operator_regions={bounded_operator_regions}, bounded_numeric_dimensions={bounded_numeric_dimensions}, op={op_name}"
         );
     }
 }
@@ -248,7 +248,7 @@ pub(super) fn log_transition_residual_summary(remaining_costs: &TransitionResidu
         return;
     }
     debug!(
-        "scp_online: abstract-operator residuals now store {} region reductions",
+        "scp: abstract-operator residuals now store {} region reductions",
         remaining_costs.num_reductions()
     );
 }

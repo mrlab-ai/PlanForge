@@ -51,8 +51,8 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstraction_collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    CostPartitioningMethod, SaturatedCostPartitioningOnlineHeuristic, ScpOnlineConfig,
+use planforge_search::evaluation::abstraction_collections::saturated_cost_partitioning::{
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
 use planforge_search::evaluation::cartesian_abstractions::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
@@ -343,7 +343,7 @@ fn scp_online_initial_h_for_collection(
     task: &NumericRootTask,
     abstractions: Vec<DomainAbstraction>,
 ) -> f64 {
-    let config = ScpOnlineConfig {
+    let config = ScpConfig {
         max_time: 100.0,
         max_size: 10_000_000,
         interval: 100_000_000_000,
@@ -352,9 +352,14 @@ fn scp_online_initial_h_for_collection(
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
-    let heuristic =
-        SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, vec![], config, task)
-            .expect("scp_online heuristic should construct");
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
+        None,
+        collection_components("scp", abstractions, Vec::new(), vec![]),
+        config,
+        task,
+        Default::default(),
+    )
+    .expect("scp_online heuristic should construct");
 
     let mut state_registry = StateRegistry::for_task(Arc::new(task));
     let initial = state_registry.get_initial_state();
@@ -384,7 +389,7 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
     let abstractions = generator
         .generate_collection(&task)
         .expect("scp_online domain abstractions should build");
-    let config = ScpOnlineConfig {
+    let config = ScpConfig {
         max_time: 100.0,
         max_size: 10_000_000,
         interval: 100_000_000_000,
@@ -393,9 +398,14 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
-    let heuristic =
-        SaturatedCostPartitioningOnlineHeuristic::new(None, abstractions, vec![], config, &task)
-            .expect("scp_online heuristic should construct");
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
+        None,
+        collection_components("scp", abstractions, Vec::new(), vec![]),
+        config,
+        &task,
+        Default::default(),
+    )
+    .expect("scp_online heuristic should construct");
     let state_registry = StateRegistry::for_task(Arc::new(&task));
     let mut search = AStarSearch::new(&task, state_registry, Some(Box::new(heuristic)), None, None);
     let result = search.search().expect("scp_online A* search failed");

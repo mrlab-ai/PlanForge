@@ -10,4 +10,4 @@ pub mod cost_partitioning;
 pub mod goal_focused;
 pub mod max_heuristic;
 pub mod portfolio;
-pub mod saturated_cost_partitioning_online_heuristic;
+pub mod saturated_cost_partitioning;

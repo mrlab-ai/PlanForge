@@ -89,8 +89,8 @@ fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstraction {
     .unwrap()
 }
 
-fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpOnlineConfig {
-    ScpOnlineConfig {
+fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpConfig {
+    ScpConfig {
         max_time: 10.0,
         table_construction_max_time: 10.0,
         interval: usize::MAX,
@@ -102,7 +102,7 @@ fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpOnlineConfig 
         } else {
             CostPartitioningMethod::Label
         },
-        ..ScpOnlineConfig::default()
+        ..ScpConfig::default()
     }
 }
 
@@ -157,7 +157,7 @@ fn regional_conflict_scoring_accepts_transition_free_components() {
         AbstractionComponent::cartesian(None, cartesian),
     ];
     assert_eq!(
-        compute_regional_conflict_scores(
+        interval_stolen_costs(
             &components,
             &[
                 vec![f64::NEG_INFINITY; task.get_num_operators()],
@@ -178,7 +178,7 @@ fn regional_conflict_scoring_rejects_missing_operator_regions() {
     abstraction.abstract_operator_regions.clear();
 
     let components = vec![AbstractionComponent::cartesian(None, abstraction)];
-    let error = compute_regional_conflict_scores(
+    let error = interval_stolen_costs(
         &components,
         &[vec![f64::NEG_INFINITY; task.get_num_operators()]],
         &[2.0, 3.0],
@@ -232,7 +232,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         .generate(&task)
         .unwrap();
     let base_order = (0..abstractions.len()).collect::<Vec<_>>();
-    let standalone_h = abstractions
+    let abstraction_h = abstractions
         .iter()
         .map(|abstraction| {
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
@@ -243,8 +243,9 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
         .cloned()
         .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
         .collect::<Vec<_>>();
-    let order =
-        |variant| goal_cover_order(&base_order, &components, &standalone_h, true, variant).unwrap();
+    let order = |variant| {
+        goal_cover_order(&base_order, &components, &abstraction_h, true, variant).unwrap()
+    };
     let goal = |component_id: usize| {
         abstractions[component_id]
             .metadata
@@ -352,10 +353,7 @@ fn compact_goal_cover_schedule_supports_one_abstraction_per_goal() {
 fn specialist_scp<'task>(
     task: &'task std::sync::Arc<NumericRootTask>,
     max_orders: impl FnOnce(usize) -> usize,
-) -> (
-    SaturatedCostPartitioningOnlineHeuristic<'task>,
-    HashSet<usize>,
-) {
+) -> (SaturatedCostPartitioningHeuristic<'task>, HashSet<usize>) {
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             abstraction: CartesianAbstractionConfig {
@@ -397,19 +395,22 @@ fn specialist_scp<'task>(
     config.samples = 16;
     config.max_orders = max_orders(expected_goals.len());
     config.initial_order_generation_max_time = 10.0;
-    let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
         config,
         &**task,
-        task.clone(),
+        ScpBuildOptions {
+            sampling_task: Some(task.clone()),
+            ..Default::default()
+        },
     )
     .unwrap();
     (heuristic, expected_goals)
 }
 
 fn retained_specialists_per_goal(
-    heuristic: &SaturatedCostPartitioningOnlineHeuristic<'_>,
+    heuristic: &SaturatedCostPartitioningHeuristic<'_>,
 ) -> HashMap<usize, usize> {
     let mut retained_per_goal = HashMap::<usize, usize>::new();
     for goal_id in heuristic
@@ -417,7 +418,7 @@ fn retained_specialists_per_goal(
         .borrow()
         .cp_heuristics
         .iter()
-        .filter_map(|cp| cp.specialist_goal_id)
+        .filter_map(|cp| cp.goal_cover_goal_id)
     {
         *retained_per_goal.entry(goal_id).or_default() += 1;
     }
@@ -466,12 +467,12 @@ fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
             distances,
             unknown_value: f64::INFINITY,
         }],
-        specialist_goal_id: None,
+        goal_cover_goal_id: None,
     };
-    let mut state = ScpOnlineState::new(Some(1));
+    let mut state = ScpState::new(Some(1));
     let mut initial_h = 0.0;
 
-    SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+    SaturatedCostPartitioningHeuristic::retain_cp(
         &mut state,
         partition(vec![5.0, 1.0]),
         &[Some(0)],
@@ -479,7 +480,7 @@ fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
         true,
         usize::MAX,
     );
-    SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+    SaturatedCostPartitioningHeuristic::retain_cp(
         &mut state,
         partition(vec![4.0, 4.0]),
         &[Some(0)],
@@ -491,7 +492,7 @@ fn offline_scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
     assert_eq!(state.cp_heuristics.len(), 2);
     assert_eq!(initial_h, 5.0);
     assert_eq!(
-        SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, &[Some(1)]),
+        SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(1)]),
         4.0
     );
 }
@@ -504,12 +505,12 @@ fn online_scp_rejects_a_non_improving_state_specific_order() {
             distances,
             unknown_value: f64::INFINITY,
         }],
-        specialist_goal_id: None,
+        goal_cover_goal_id: None,
     };
-    let mut state = ScpOnlineState::new(Some(1));
+    let mut state = ScpState::new(Some(1));
     let mut current_h = 0.0;
 
-    SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+    SaturatedCostPartitioningHeuristic::retain_cp(
         &mut state,
         partition(vec![5.0]),
         &[Some(0)],
@@ -517,7 +518,7 @@ fn online_scp_rejects_a_non_improving_state_specific_order() {
         false,
         usize::MAX,
     );
-    SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+    SaturatedCostPartitioningHeuristic::retain_cp(
         &mut state,
         partition(vec![4.0]),
         &[Some(0)],
@@ -536,11 +537,12 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
     for saturator in [Saturator::All, Saturator::Perim, Saturator::Perimstar] {
         for abstract_operator in [false, true] {
             let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
-            let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components(
+            let heuristic = SaturatedCostPartitioningHeuristic::new(
                 None,
                 vec![component],
                 scp_config(saturator, abstract_operator),
                 &task,
+                Default::default(),
             )
             .unwrap();
             assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
@@ -555,11 +557,12 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     let mut config = scp_config(Saturator::All, true);
     config.online = false;
     config.interval = 1;
-    let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components(
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         vec![component],
         config,
         &task,
+        Default::default(),
     )
     .unwrap();
 
@@ -604,11 +607,12 @@ fn abstract_operator_scp_combines_all_backend_types() {
         AbstractionComponent::cartesian(None, cartesian_abstraction(&task)),
         AbstractionComponent::pattern_database(pdb),
     ];
-    let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components(
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
         scp_config(Saturator::All, true),
         &task,
+        Default::default(),
     )
     .unwrap();
 
@@ -640,19 +644,22 @@ fn offline_diversification_supports_mixed_abstraction_backends() {
     config.diversify = true;
     config.samples = 16;
     config.max_orders = 8;
-    let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
         config,
         &*task,
-        task.clone(),
+        ScpBuildOptions {
+            sampling_task: Some(task.clone()),
+            ..Default::default()
+        },
     )
     .unwrap();
 
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
     let state = heuristic.state.borrow();
     assert!(state.improvement_ended);
-    assert!(state.offline_sample_ids.is_empty());
+    assert!(state.sample_abstract_state_ids.is_empty());
     assert!(!state.cp_heuristics.is_empty());
     assert!(state.cp_heuristics.len() <= 8);
     drop(state);
@@ -672,12 +679,15 @@ fn offline_diversification_rejects_online_construction() {
     config.online = true;
     config.diversify = true;
 
-    let result = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+    let result = SaturatedCostPartitioningHeuristic::new(
         None,
         vec![component],
         config,
         &*task,
-        task.clone(),
+        ScpBuildOptions {
+            sampling_task: Some(task.clone()),
+            ..Default::default()
+        },
     );
     let error = match result {
         Ok(_) => panic!("online diversified construction must be rejected"),
@@ -694,11 +704,12 @@ fn diverse_orders_require_offline_diversification() {
     let mut config = scp_config(Saturator::All, true);
     config.order_generator = OrderGenerator::Diverse;
 
-    let result = SaturatedCostPartitioningOnlineHeuristic::from_components(
+    let result = SaturatedCostPartitioningHeuristic::new(
         None,
         vec![component],
         config,
         &task,
+        Default::default(),
     );
     let error = match result {
         Ok(_) => panic!("diverse orders without diversification must be rejected"),
@@ -721,12 +732,15 @@ fn offline_diversification_rejects_nan_initial_order_budget() {
     config.diversify = true;
     config.initial_order_generation_max_time = f64::NAN;
 
-    let result = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+    let result = SaturatedCostPartitioningHeuristic::new(
         None,
         vec![component],
         config,
         &*task,
-        task.clone(),
+        ScpBuildOptions {
+            sampling_task: Some(task.clone()),
+            ..Default::default()
+        },
     );
     let error = match result {
         Ok(_) => panic!("NaN initial-order budget must be rejected"),
@@ -748,14 +762,14 @@ fn offline_diversifier_keeps_partitions_that_improve_different_samples() {
             distances,
             unknown_value: f64::INFINITY,
         }],
-        specialist_goal_id: None,
+        goal_cover_goal_id: None,
     };
     let samples = vec![vec![Some(0)], vec![Some(1)]];
     let mut best = vec![f64::NEG_INFINITY; samples.len()];
     let mut portfolio = Vec::new();
     let mut size_kb = 0;
 
-    assert!(retain_if_sample_improving(
+    assert!(retain_if_improving_some_sample(
         partition(vec![5.0, 1.0]),
         &samples,
         &mut best,
@@ -763,7 +777,7 @@ fn offline_diversifier_keeps_partitions_that_improve_different_samples() {
         &mut size_kb,
         usize::MAX,
     ));
-    assert!(retain_if_sample_improving(
+    assert!(retain_if_improving_some_sample(
         partition(vec![4.0, 6.0]),
         &samples,
         &mut best,
@@ -771,7 +785,7 @@ fn offline_diversifier_keeps_partitions_that_improve_different_samples() {
         &mut size_kb,
         usize::MAX,
     ));
-    assert!(!retain_if_sample_improving(
+    assert!(!retain_if_improving_some_sample(
         partition(vec![5.0, 5.0]),
         &samples,
         &mut best,
@@ -786,28 +800,28 @@ fn offline_diversifier_keeps_partitions_that_improve_different_samples() {
 
 #[test]
 fn retained_standalone_envelope_preserves_every_component_without_cp_orders() {
-    let mut state = ScpOnlineState::new(Some(1));
-    state.h_values_by_abstraction = vec![vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]];
+    let mut state = ScpState::new(Some(1));
+    state.goal_distances_by_abstraction = vec![vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]];
     let samples = [vec![Some(0), Some(0), None], vec![Some(1), Some(1), None]];
 
     assert_eq!(
         samples
             .iter()
-            .map(|ids| SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, ids))
+            .map(|ids| SaturatedCostPartitioningHeuristic::compute_max_h(&state, ids))
             .collect::<Vec<_>>(),
         vec![5.0, 6.0]
     );
 
-    SaturatedCostPartitioningOnlineHeuristic::retain_standalone_envelope(&mut state, 3);
+    SaturatedCostPartitioningHeuristic::retain_abstraction_lookup_tables(&mut state, 3);
 
-    assert!(state.h_values_by_abstraction.is_empty());
-    assert_eq!(state.standalone_lookup_tables.len(), 2);
+    assert!(state.goal_distances_by_abstraction.is_empty());
+    assert_eq!(state.abstraction_lookup_tables.len(), 2);
     assert!(state.cp_heuristics.is_empty());
-    assert_eq!(state.required_mask, vec![true, true, false]);
+    assert_eq!(state.lookup_mask, vec![true, true, false]);
     assert_eq!(
         samples
             .iter()
-            .map(|ids| SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, ids))
+            .map(|ids| SaturatedCostPartitioningHeuristic::compute_max_h(&state, ids))
             .collect::<Vec<_>>(),
         vec![5.0, 6.0]
     );
@@ -818,7 +832,7 @@ fn standalone_envelope_size_excludes_tables_that_are_not_retained() {
     let useful = vec![1.0; 128];
     let zero = vec![0.0; 128];
 
-    assert_eq!(standalone_lookup_values_size_kb(&[useful, zero]), 1);
+    assert_eq!(abstraction_lookup_tables_size_kb(&[useful, zero]), 1);
 }
 
 #[test]
@@ -897,11 +911,11 @@ mod handcrafted_sailing_tests {
         let overlapping_tail = region(NumericValue::new(-1.0), INF_VALUE, true, false);
 
         assert_eq!(
-            pair_regional_conflict(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
+            pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
             0.0
         );
         assert_eq!(
-            pair_regional_conflict(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
+            pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
             1.0
         );
     }
@@ -988,7 +1002,7 @@ mod handcrafted_sailing_tests {
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
             })
             .fold(0.0f64, f64::max);
-        let standalone_h = abstractions
+        let abstraction_h = abstractions
             .iter()
             .map(|abstraction| {
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
@@ -1002,7 +1016,7 @@ mod handcrafted_sailing_tests {
         let goal_cover_order = goal_cover_order(
             &(0..abstractions.len()).collect::<Vec<_>>(),
             &components,
-            &standalone_h,
+            &abstraction_h,
             true,
             GoalCoverOrderVariant::default(),
         )
@@ -1036,7 +1050,7 @@ mod handcrafted_sailing_tests {
                 )
             })
             .collect::<Vec<_>>();
-        let config = ScpOnlineConfig {
+        let config = ScpConfig {
             online: true,
             table_construction_max_time: 30.0,
             order_optimization_max_time,
@@ -1052,13 +1066,12 @@ mod handcrafted_sailing_tests {
             },
             ..Default::default()
         };
-        let heuristic = SaturatedCostPartitioningOnlineHeuristic::new_with_cartesian(
+        let heuristic = SaturatedCostPartitioningHeuristic::new(
             None,
-            vec![],
-            abstractions,
-            vec![],
+            collection_components("scp", vec![], abstractions, vec![]),
             config,
             task,
+            Default::default(),
         )
         .expect("failed to construct oracle SCP heuristic");
         let mut state = heuristic.state.borrow_mut();
@@ -1106,7 +1119,7 @@ mod handcrafted_sailing_tests {
             abstractions.push(abstraction);
         }
 
-        let config = ScpOnlineConfig {
+        let config = ScpConfig {
             online: true,
             max_time: 300.0,
             table_construction_max_time: 30.0,
@@ -1126,27 +1139,25 @@ mod handcrafted_sailing_tests {
             residual_sweeps: 1,
         };
 
-        let heuristic = SaturatedCostPartitioningOnlineHeuristic::new(
+        let heuristic = SaturatedCostPartitioningHeuristic::new(
             None,
-            abstractions,
-            vec![],
+            collection_components("scp", abstractions, Vec::new(), vec![]),
             config,
             transformed_task,
+            Default::default(),
         )
         .expect("failed to construct SCP heuristic");
         let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
         {
             let mut state = heuristic.state.borrow_mut();
-            let mut max_h = SaturatedCostPartitioningOnlineHeuristic::compute_max_h(
-                &state,
-                &abstract_state_ids,
-            );
+            let mut max_h =
+                SaturatedCostPartitioningHeuristic::compute_max_h(&state, &abstract_state_ids);
             let mut partitions = heuristic
                 .maybe_build_cp(transformed_task, &mut state, &abstract_state_ids)
                 .expect("initial SCP construction failed");
             assert_eq!(partitions.len(), 1);
             let cp = partitions.pop().unwrap();
-            SaturatedCostPartitioningOnlineHeuristic::retain_cp(
+            SaturatedCostPartitioningHeuristic::retain_cp(
                 &mut state,
                 cp,
                 &abstract_state_ids,
@@ -1158,7 +1169,7 @@ mod handcrafted_sailing_tests {
 
         let state = heuristic.state.borrow();
         let initial_h =
-            SaturatedCostPartitioningOnlineHeuristic::compute_max_h(&state, &abstract_state_ids);
+            SaturatedCostPartitioningHeuristic::compute_max_h(&state, &abstract_state_ids);
         let components = heuristic.components.borrow();
 
         println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
@@ -1181,13 +1192,13 @@ mod handcrafted_sailing_tests {
             let abstraction = component
                 .as_domain()
                 .expect("handcrafted diagnostic uses domain components");
-            let standalone_h = current_h_for_distances(
+            let abstraction_h = current_h_for_distances(
                 index,
                 &abstraction.distance_table.distances,
                 &abstract_state_ids,
             );
             println!(
-                "HANDCRAFTED_FULL_TASK_ABS index={index} name={} standalone_h={standalone_h} scp_contribution={} states={} abstract_ops={} views={}",
+                "HANDCRAFTED_FULL_TASK_ABS index={index} name={} abstraction_h={abstraction_h} scp_contribution={} states={} abstract_ops={} views={}",
                 spec.name,
                 contributions[index],
                 abstraction_state_count(abstraction),
@@ -1331,7 +1342,7 @@ mod handcrafted_sailing_tests {
     }
 
     fn initial_abstract_state_ids(
-        heuristic: &SaturatedCostPartitioningOnlineHeuristic<'_>,
+        heuristic: &SaturatedCostPartitioningHeuristic<'_>,
         task: &dyn AbstractNumericTask,
     ) -> Vec<Option<usize>> {
         let prop = task.get_initial_propositional_state_values();

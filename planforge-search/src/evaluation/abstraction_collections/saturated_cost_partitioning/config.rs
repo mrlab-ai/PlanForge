@@ -1,3 +1,15 @@
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
+use crate::evaluation::pattern_databases::pattern_database::{
+    PdbHeuristicConfig, PdbInternalHeuristic,
+};
+
+use super::super::portfolio::CollectionStrategy;
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScoringFunction {
@@ -80,22 +92,15 @@ impl fmt::Display for Saturator {
 }
 
 impl Saturator {
-    pub(super) fn cap_sequence(
-        self,
-        current_state_id: Option<usize>,
-    ) -> impl Iterator<Item = (&'static str, Option<usize>)> {
-        let (steps, len) = match self {
-            Self::All => ([("all", None), ("all", None)], 1),
-            Self::Perim => ([("perim", current_state_id), ("all", None)], 1),
-            Self::Perimstar => (
-                [
-                    ("perimstar/perim", current_state_id),
-                    ("perimstar/all", None),
-                ],
-                2,
-            ),
-        };
-        steps.into_iter().take(len)
+    /// The saturation passes over one abstraction, each with its log label and
+    /// whether it caps saturation at the evaluated state's abstract goal
+    /// distance (the perimeter of Seipp et al.).
+    pub(super) fn passes(self) -> &'static [(&'static str, bool)] {
+        match self {
+            Self::All => &[("all", false)],
+            Self::Perim => &[("perim", true)],
+            Self::Perimstar => &[("perimstar/perim", true), ("perimstar/all", false)],
+        }
     }
 }
 
@@ -145,7 +150,7 @@ impl crate::config::FromOptionValue for CostPartitioningMethod {
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
-pub struct ScpCollectionConfig {
+pub struct ScpConfig {
     /// Whether to rebuild cost partitions during search. When false, all cost
     /// partitions are built before search and construction-only abstraction
     /// data is released immediately afterwards.
@@ -179,12 +184,12 @@ pub struct ScpCollectionConfig {
 }
 
 /// Parser-only compatibility surface for the flat `scp_online*` registry
-/// names. New hierarchical configurations use [`ScpCollectionConfig`] plus
+/// names. New hierarchical configurations use [`ScpConfig`] plus
 /// explicit abstraction sources.
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
-pub(crate) struct LegacyScpOnlineConfig {
+pub(crate) struct LegacyScpConfig {
     pub online: bool,
     pub max_time: f64,
     pub table_construction_max_time: f64,
@@ -240,14 +245,8 @@ pub struct FillScpConfig {
     #[option(also_sets = "collection_config.random_seed")]
     pub random_seed: Option<u64>,
     pub partitioning: CostPartitioningMethod,
-    /// Flattened so `precision`, `epsilon`, etc. reach the nested LMcut config.
-    /// SCP/fillSCP both flatten collection_config, but this `flatten` only
-    /// applies if `collection_config` does not — only one flatten per struct.
-    /// Here we use `nested = "lmcut"` instead, plus per-key forwarding via the
-    /// hand-written wrapper (see `apply_fill_scp_options`). Actually — since
-    /// `collection_config` is the catch-all, the LMcut fields must be named
-    /// explicitly. `nested = "lmcut"` lets `lmcut=lmcutnumeric(precision=…)`
-    /// work cleanly.
+    /// Configuration of the LM-cut heuristic that fills in the remaining costs,
+    /// set through `lmcut=lmcutnumeric(...)`.
     #[option(nested = "lmcut")]
     pub lmcut_config: LmCutNumericConfig,
 }
@@ -290,8 +289,8 @@ impl FillScpConfig {
         }
     }
 
-    pub(super) fn as_scp_collection_config(&self) -> ScpCollectionConfig {
-        ScpCollectionConfig {
+    pub(super) fn as_scp_collection_config(&self) -> ScpConfig {
+        ScpConfig {
             online: false,
             max_time: 0.0,
             table_construction_max_time: self.table_construction_max_time,
@@ -313,7 +312,7 @@ impl FillScpConfig {
     }
 }
 
-impl Default for ScpCollectionConfig {
+impl Default for ScpConfig {
     fn default() -> Self {
         let random_seed =
             DomainAbstractionCollectionGeneratorMultipleCegarConfig::default().random_seed;
@@ -347,7 +346,46 @@ impl Default for ScpCollectionConfig {
     }
 }
 
-impl ScpCollectionConfig {
+impl ScpConfig {
+    /// Rejects inconsistent settings. Diverse orders need random-walk
+    /// samples, so `has_sampling_task` tells whether the heuristic has a task
+    /// to sample from.
+    pub(super) fn validate(&self, has_sampling_task: bool) -> Result<(), String> {
+        let fail = |message: &str| Err(message.to_string());
+        if self.online && self.interval == 0 {
+            return fail("online SCP interval must be greater than zero");
+        }
+        if self.online && self.diversify {
+            return fail("offline SCP diversification requires online=false");
+        }
+        if self.order_generator == OrderGenerator::Diverse && !self.diversify {
+            return fail("diverse SCP orders require diversify=true");
+        }
+        if self.diversify && self.samples == 0 {
+            return fail("offline SCP diversification requires samples > 0");
+        }
+        if self.diversify && self.max_orders == 0 {
+            return fail("offline SCP diversification requires max_orders > 0");
+        }
+        if self.diversify
+            && (self.initial_order_generation_max_time.is_nan()
+                || self.initial_order_generation_max_time < 0.0)
+        {
+            return fail(
+                "offline SCP diversification requires initial_order_generation_max_time >= 0",
+            );
+        }
+        if self.diversify && !has_sampling_task {
+            return fail(
+                "offline SCP diversification requires an owned task reference for sampling",
+            );
+        }
+        if self.max_size == 0 {
+            return fail("SCP max_size must be greater than zero");
+        }
+        Ok(())
+    }
+
     /// Bound every phase of SCP construction by the caller's remaining time.
     pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
         self.table_construction_max_time = self.table_construction_max_time.min(max_seconds);
@@ -357,9 +395,9 @@ impl ScpCollectionConfig {
     }
 }
 
-impl Default for LegacyScpOnlineConfig {
+impl Default for LegacyScpConfig {
     fn default() -> Self {
-        let collection = ScpCollectionConfig::default();
+        let collection = ScpConfig::default();
         let collection_config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             combine_labels: collection.combine_labels,
             ..Default::default()
@@ -394,9 +432,9 @@ impl Default for LegacyScpOnlineConfig {
     }
 }
 
-impl LegacyScpOnlineConfig {
-    pub(crate) fn scp_collection_config(&self) -> ScpCollectionConfig {
-        ScpCollectionConfig {
+impl LegacyScpConfig {
+    pub(crate) fn scp_collection_config(&self) -> ScpConfig {
+        ScpConfig {
             online: self.online,
             max_time: self.max_time,
             table_construction_max_time: self.table_construction_max_time,
@@ -425,18 +463,3 @@ impl LegacyScpOnlineConfig {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Lookup tables and CP heuristic
-// ---------------------------------------------------------------------------
-use std::fmt;
-
-use serde::{Deserialize, Serialize};
-
-use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
-use crate::evaluation::pattern_databases::pattern_database::{
-    PdbHeuristicConfig, PdbInternalHeuristic,
-};
-
-use super::super::portfolio::CollectionStrategy;
