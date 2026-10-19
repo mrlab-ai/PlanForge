@@ -32,7 +32,7 @@ pub(super) fn split_choice_key(semantics: &CartesianSemantics<'_>, split: &Split
 fn split_child_regions(
     working: &WorkingAbstraction,
     split: &Split,
-) -> Result<(StateRegion, StateRegion)> {
+) -> Result<(CartesianSet, CartesianSet)> {
     let parent = working
         .states
         .get(split.state_id())

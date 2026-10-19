@@ -177,12 +177,12 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// flaw kind chooses its own default (`Forward` for everything except
     /// `TargetCentered`, which defaults to `Backward`).
     pub split_direction: Option<SplitDirection>,
-    /// Pass-through for `CegarConfig::compute_operator_regions`. Default
+    /// Pass-through for `CegarConfig::compute_source_sets`. Default
     /// `true`. Hierarchical combinators disable it during CEGAR and construct
     /// operator regions after collection generation when region SCP needs them.
     /// Set internally by heuristic construction; not exposed as a CLI option.
     #[option(skip)]
-    pub compute_operator_regions: bool,
+    pub compute_source_sets: bool,
     /// Cap on the number of comparison-axiom propositional vars a single
     /// CEGAR run may refine into its pattern. `None` = unbounded (the
     /// historical behavior). When set, the refinement loop rejects any
@@ -235,7 +235,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             single_goal_tasks: true,
             interleave_split_directions: false,
             split_direction: None,
-            compute_operator_regions: true,
+            compute_source_sets: true,
             max_refined_comparison_vars_per_abstraction: None,
         }
     }
@@ -253,8 +253,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// Select whether generated abstractions retain operator regions.
     ///
     /// This is an internal construction policy rather than a user option.
-    pub(crate) fn set_compute_operator_regions(&mut self, enabled: bool) {
-        self.compute_operator_regions = enabled;
+    pub(crate) fn set_compute_source_sets(&mut self, enabled: bool) {
+        self.compute_source_sets = enabled;
     }
 }
 
@@ -467,7 +467,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
             split_direction,
-            compute_operator_regions: self.config.compute_operator_regions,
+            compute_source_sets: self.config.compute_source_sets,
             max_refined_comparison_vars_per_abstraction: self
                 .config
                 .max_refined_comparison_vars_per_abstraction,
@@ -804,7 +804,7 @@ impl GoalFocusedDomainBackend<'_> {
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
             split_direction,
-            compute_operator_regions: self.config.compute_operator_regions,
+            compute_source_sets: self.config.compute_source_sets,
             max_refined_comparison_vars_per_abstraction: self
                 .config
                 .max_refined_comparison_vars_per_abstraction,

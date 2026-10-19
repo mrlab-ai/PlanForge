@@ -1,9 +1,6 @@
 use super::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use super::numeric_bound::NumericBound;
 use super::numeric_helper::{LinearNumericCondition as NumericCondition, NumericTaskHelper};
-use crate::evaluation::abstraction_collections::cost_partitioning::{
-    LmCutResidualOperatorCostPartition, StateRegion,
-};
 use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
@@ -263,9 +260,6 @@ struct OperatorConditionEval {
 pub struct LandmarkCutLandmarks<'task> {
     task: &'task dyn AbstractNumericTask,
     config: LmCutNumericConfig,
-    fixed_operator_costs: Option<Vec<f64>>,
-    residual_operator_cost_partitions: Option<Vec<LmCutResidualOperatorCostPartition>>,
-    residual_variant_precondition_ids: Vec<Vec<Vec<usize>>>,
     propositions: Vec<RelaxedProposition>,
     proposition_runtime: Vec<PropositionRuntime>,
     proposition_precondition_of_data: Vec<OperatorIndex>,
@@ -339,23 +333,6 @@ pub struct LandmarkCutLandmarks<'task> {
 #[allow(unused)]
 impl<'task> LandmarkCutLandmarks<'task> {
     pub fn new(task: &'task dyn AbstractNumericTask, config: LmCutNumericConfig) -> Self {
-        Self::new_with_fixed_operator_costs(task, config, None)
-    }
-
-    pub fn new_with_fixed_operator_costs(
-        task: &'task dyn AbstractNumericTask,
-        config: LmCutNumericConfig,
-        fixed_operator_costs: Option<Vec<f64>>,
-    ) -> Self {
-        Self::new_with_residual_operator_cost_partitions(task, config, fixed_operator_costs, None)
-    }
-
-    pub fn new_with_residual_operator_cost_partitions(
-        task: &'task dyn AbstractNumericTask,
-        config: LmCutNumericConfig,
-        fixed_operator_costs: Option<Vec<f64>>,
-        residual_operator_cost_partitions: Option<Vec<LmCutResidualOperatorCostPartition>>,
-    ) -> Self {
         // PARITY(numeric-fd): `random_pcf` is still blocked until the randomized supporter
         // selection path is ported. The other current feature flags are wired through the same
         // control-flow sites as the C++ implementation.
@@ -394,9 +371,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         let mut result = Self {
             task,
             config,
-            fixed_operator_costs,
-            residual_operator_cost_partitions,
-            residual_variant_precondition_ids: Vec::new(),
             propositions: Vec::new(),
             proposition_runtime: Vec::new(),
             proposition_precondition_of_data: Vec::new(),
@@ -484,7 +458,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.operator_effect_id_data.clear();
         self.operator_effect_id_ranges.clear();
         self.original_to_relaxed_operators.clear();
-        self.residual_variant_precondition_ids.clear();
         self.goal_precondition_ids.clear();
         self.propositions.push(RelaxedProposition::new(
             self.artificial_precondition_id,
@@ -500,7 +473,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.num_propositions = 2;
         self.build_propositional_propositions();
         self.build_numeric_conditions();
-        self.build_residual_variant_conditions();
         self.build_comparison_fact_condition_ids();
         self.add_linear_conditions();
         self.prepare_goal_preconditions();
@@ -805,84 +777,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
             );
             self.add_numeric_condition_proposition_with_epsilon(condition, epsilon);
         }
-    }
-
-    fn build_residual_variant_conditions(&mut self) {
-        self.residual_variant_precondition_ids.clear();
-        let Some(partitions) = self.residual_operator_cost_partitions.clone() else {
-            return;
-        };
-        self.residual_variant_precondition_ids = Vec::with_capacity(partitions.len());
-        for (operator_id, partition) in partitions.iter().enumerate() {
-            let mut operator_variants = Vec::with_capacity(partition.variants.len());
-            for (variant_id, variant) in partition.variants.iter().enumerate() {
-                operator_variants.push(self.residual_region_precondition_ids(
-                    OperatorIndex::from_usize(operator_id),
-                    variant_id,
-                    &variant.source_region,
-                ));
-            }
-            self.residual_variant_precondition_ids
-                .push(operator_variants);
-        }
-    }
-
-    fn residual_region_precondition_ids(
-        &mut self,
-        operator_id: OperatorIndex,
-        variant_id: usize,
-        source_region: &StateRegion,
-    ) -> Vec<usize> {
-        let mut ids = Vec::new();
-        let mut seen = BTreeSet::new();
-        for (var, values) in source_region.propositions().iter().enumerate() {
-            if values.len() == 1 {
-                let fact = self
-                    .numeric_helper
-                    .fact(VariableIndex::from_usize(var), values[0]);
-                for proposition_id in self.precondition_proposition_ids(&fact) {
-                    if seen.insert(proposition_id) {
-                        ids.push(proposition_id);
-                    }
-                }
-            }
-        }
-        let num_numeric_vars = self.task.numeric_variables().len();
-        for (numeric_var_id, interval) in source_region.numeric.iter().enumerate() {
-            if interval.lower.is_finite() {
-                let mut expression = LinearExpression::zero(num_numeric_vars);
-                expression.coefficients[numeric_var_id] = 1.0;
-                expression.constant = -interval.lower.value();
-                let proposition_id =
-                    self.add_numeric_condition_proposition(NumericCondition::from_expression(
-                        expression,
-                        !interval.lower_closed,
-                        format!(
-                            "fillSCP residual op {operator_id} variant {variant_id} n{numeric_var_id} lower"
-                        ),
-                    ));
-                if seen.insert(proposition_id) {
-                    ids.push(proposition_id);
-                }
-            }
-            if interval.upper.is_finite() {
-                let mut expression = LinearExpression::zero(num_numeric_vars);
-                expression.coefficients[numeric_var_id] = -1.0;
-                expression.constant = interval.upper.value();
-                let proposition_id =
-                    self.add_numeric_condition_proposition(NumericCondition::from_expression(
-                        expression,
-                        !interval.upper_closed,
-                        format!(
-                            "fillSCP residual op {operator_id} variant {variant_id} n{numeric_var_id} upper"
-                        ),
-                    ));
-                if seen.insert(proposition_id) {
-                    ids.push(proposition_id);
-                }
-            }
-        }
-        ids
     }
 
     fn build_relaxed_operators(&mut self) {
@@ -1911,20 +1805,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator_id.index() < self.task.get_operators().len(),
             "base operator cost is only defined for concrete operators"
         );
-        if let Some(costs) = &self.fixed_operator_costs {
-            return costs
-                .get(operator_id.index())
-                .copied()
-                .unwrap_or(0.0)
-                .max(0.0);
-        }
-        if let Some(partitions) = &self.residual_operator_cost_partitions {
-            return partitions
-                .get(operator_id.index())
-                .map(|partition| partition.fallback_cost)
-                .unwrap_or(0.0)
-                .max(0.0);
-        }
         let mut operator_cost =
             metric_operator_cost_from_initial_values(self.task, operator).value();
 
@@ -2082,63 +1962,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
             .collect();
         relaxed_operator.assert_well_formed();
         self.relaxed_operators.push(relaxed_operator);
-
-        if let Some(partition) = self
-            .residual_operator_cost_partitions
-            .as_ref()
-            .and_then(|partitions| partitions.get(operator_id.index()))
-            .cloned()
-        {
-            let variant_precondition_ids = self
-                .residual_variant_precondition_ids
-                .get(operator_id.index())
-                .cloned()
-                .unwrap_or_default();
-            for (variant_id, variant) in partition.variants.iter().enumerate() {
-                let mut guarded_precondition_ids = if precondition_ids.is_empty() {
-                    vec![self.artificial_precondition_id]
-                } else {
-                    precondition_ids.clone()
-                };
-                let mut seen: BTreeSet<usize> = guarded_precondition_ids.iter().copied().collect();
-                if let Some(guards) = variant_precondition_ids.get(variant_id) {
-                    for &guard_id in guards {
-                        if seen.insert(guard_id) {
-                            guarded_precondition_ids.push(guard_id);
-                        }
-                    }
-                }
-                let mut guarded_operator = RelaxedOperator::new(
-                    guarded_precondition_ids.clone(),
-                    base_effect_ids.clone(),
-                    operator_id,
-                    variant.cost,
-                    format!("{} residual {}", operator.name(), variant_id),
-                    false,
-                );
-                guarded_operator.assignment_effect_ids =
-                    unconditional_linear_assignment_effect_ids.clone();
-                guarded_operator.linear_assignment_effects =
-                    unconditional_linear_assignment_effect_ids
-                        .iter()
-                        .map(|&assignment_effect_id| {
-                            helper_linearized_assignment_effects
-                                .get(assignment_effect_id)
-                                .and_then(|effect| effect.clone())
-                                .expect("helper linearized assignment effect id must be valid")
-                        })
-                        .collect();
-                guarded_operator.assert_well_formed();
-                self.relaxed_operators.push(guarded_operator);
-                self.build_linear_operators(
-                    operator_id,
-                    operator,
-                    variant.cost,
-                    &guarded_precondition_ids,
-                    &helper_linearized_assignment_effects,
-                )?;
-            }
-        }
 
         self.build_linear_operators(
             operator_id,

@@ -12,8 +12,8 @@ use crate::evaluation::domain_abstractions::cegar::CegarConfig;
 use crate::evaluation::abstraction_collections::canonical_heuristic::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstraction_collections::component::AbstractionComponent;
 use crate::evaluation::abstraction_collections::max_heuristic::MaxAbstractionHeuristic;
-use crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::{
-    FillScpHeuristic, SaturatedCostPartitioningOnlineHeuristic,
+use crate::evaluation::abstraction_collections::saturated_cost_partitioning::{
+    SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
 use crate::evaluation::cartesian_abstractions::{
     CartesianAbstractPlanSelection, CartesianAbstractionConfig, CartesianAbstractionGenerator,
@@ -169,7 +169,7 @@ fn scp_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, Strin
     if !sources.is_empty() {
         return component_task_requirements(spec);
     }
-    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::LegacyScpOnlineConfig::default();
+    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning::LegacyScpConfig::default();
     config.apply_options(&spec.args)?;
     Ok(TaskRequirements {
         restricted: config.use_numeric_pdbs,
@@ -367,7 +367,7 @@ impl From<String> for HeuristicBuildError {
 
 fn cartesian_config_from_collection(
     config: &crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig,
-    compute_operator_regions: bool,
+    compute_source_sets: bool,
 ) -> Result<CartesianAbstractionConfig, String> {
     let max_time = if config.abstraction_generation_max_time.is_finite() {
         Some(
@@ -397,7 +397,7 @@ fn cartesian_config_from_collection(
         max_states: config.max_abstraction_size,
         max_time,
         combine_labels: config.combine_labels,
-        compute_operator_regions,
+        compute_source_sets,
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
@@ -415,7 +415,7 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         max_states: config.max_abstraction_size,
         max_time: config.max_time,
         combine_labels: config.combine_labels,
-        compute_operator_regions: false,
+        compute_source_sets: false,
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
@@ -529,7 +529,9 @@ fn build_scp_from_sources<'task>(
         .into());
     }
     validate_scp_combinator_options(options)?;
-    let mut config = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::ScpCollectionConfig::default();
+    let mut config =
+        crate::evaluation::abstraction_collections::saturated_cost_partitioning::ScpConfig::default(
+        );
     ApplyOptions::apply_options(&mut config, options)?;
     let component_use = if config.partitioning.uses_regions() {
         ComponentUse::RegionalCostPartitioning
@@ -540,12 +542,15 @@ fn build_scp_from_sources<'task>(
     if let Some(remaining) = remaining_construction_time(construction_deadline)? {
         config.cap_construction_time(remaining.as_secs_f64());
     }
-    let heuristic = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task(
+    let heuristic = SaturatedCostPartitioningHeuristic::new(
         Some(name.to_string()),
         components,
         config,
         task,
-        sampling_task,
+        ScpBuildOptions {
+            sampling_task: Some(sampling_task),
+            ..Default::default()
+        },
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     remaining_construction_time(construction_deadline)?;
@@ -650,8 +655,8 @@ heuristic_registry! {
             let mut cfg = CegarConfig::default();
             cfg.apply_options(&spec.args)?;
             // Single DA reads only the distance table; operator regions are
-            // SCP-specific. Skip the per-concrete-op StateRegion cost.
-            cfg.compute_operator_regions = false;
+            // SCP-specific. Skip the per-concrete-op CartesianSet cost.
+            cfg.compute_source_sets = false;
             let generator = DomainAbstractionGenerator::new(cfg)
                 .map_err(|e| format!("failed to construct DomainAbstractionGenerator: {e:#}"))?;
             let abstraction = generator
@@ -731,8 +736,8 @@ heuristic_registry! {
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             // Canonical never consumes operator regions — skip ~12 GB of
-            // per-concrete-op StateRegion storage on big tasks.
-            cfg.set_compute_operator_regions(false);
+            // per-concrete-op CartesianSet storage on big tasks.
+            cfg.set_compute_source_sets(false);
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building canonical domain abstractions (CEGAR)...");
             let abstractions = generator
@@ -767,7 +772,7 @@ heuristic_registry! {
             use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.set_compute_operator_regions(false);
+            cfg.set_compute_source_sets(false);
             let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
             info!("Building multiple domain abstractions (CEGAR)...");
             let abstractions = generator
@@ -803,7 +808,7 @@ heuristic_registry! {
                 use crate::evaluation::domain_abstractions::domain_abstraction_collection_generator_multiple_cegar::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
                 let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-                cfg.set_compute_operator_regions(false);
+                cfg.set_compute_source_sets(false);
                 let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
                 info!("Building posthoc_optimization domain abstractions (CEGAR)...");
                 let abstractions = generator.generate_collection(task).map_err(|e| {
@@ -900,7 +905,7 @@ heuristic_registry! {
             }
             let mut da_config = CegarConfig::default();
             da_config.apply_options(&da_args)?;
-            da_config.compute_operator_regions = false;
+            da_config.compute_source_sets = false;
             info!("Building recorded domain abstraction for pot_da_ocp...");
             let abstraction = DomainAbstractionGenerator::new(da_config)
                 .map_err(|error| format!("failed to construct pot_da_ocp abstraction: {error:#}"))?
@@ -985,7 +990,7 @@ heuristic_registry! {
             if use_cartesian {
                 validate_legacy_cartesian_collection_options(&spec.args)?;
             }
-            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::LegacyScpOnlineConfig::default();
+            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning::LegacyScpConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             let abstractions = if use_cartesian {
                 Vec::new()
@@ -1046,102 +1051,17 @@ heuristic_registry! {
             }
             components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
             let collection_config = cfg.scp_collection_config();
-            let h = SaturatedCostPartitioningOnlineHeuristic::from_components_with_sampling_task_and_debug(
+            let h = SaturatedCostPartitioningHeuristic::new(
                 None,
                 components,
                 collection_config,
                 task,
-                sampling_task,
-                cfg.collection_config.debug,
+                ScpBuildOptions {
+                    sampling_task: Some(sampling_task),
+                    debug_diagnostics: cfg.collection_config.debug,
+                },
             )
             .map_err(|e| format!("failed to construct scp_online heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
-        }
-    }
-
-    FillScp {
-        names: ["fillscp", "fill_scp", "fillscp_cartesian", "fill_scp_cartesian"],
-        backend: RequiredBackend::None,
-        requirements: abstractable_task,
-        nested: no_nested_heuristics,
-        build: {
-            let (component_sources, _) =
-                split_component_sources(spec.name.as_str(), &spec.args)?;
-            if !component_sources.is_empty() {
-                let source_config =
-                    abstraction_config::fill_scp_sources_options_and_deadline(&spec.args)?;
-                let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
-                ApplyOptions::apply_options(&mut cfg, &source_config.options)?;
-                let component_use = if cfg.partitioning.uses_regions() {
-                    ComponentUse::RegionalCostPartitioning
-                } else {
-                    ComponentUse::LabelCostPartitioning
-                };
-                let components = build_components(
-                    task,
-                    &source_config.sources,
-                    component_use,
-                    source_config.construction_deadline,
-                )?;
-                if let Some(remaining) =
-                    remaining_construction_time(source_config.construction_deadline)?
-                {
-                    let seconds = remaining.as_secs_f64();
-                    cfg.table_construction_max_time =
-                        cfg.table_construction_max_time.min(seconds);
-                    cfg.order_optimization_max_time = cfg.order_optimization_max_time.min(seconds);
-                }
-                let h = FillScpHeuristic::from_components(
-                    Some(spec.name.clone()),
-                    components,
-                    cfg,
-                    task,
-                )
-                .map_err(|e| format!("failed to construct `{}`: {e}", spec.name))?;
-                remaining_construction_time(source_config.construction_deadline)?;
-                return Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>));
-            }
-            let use_cartesian = matches!(
-                spec.name.as_str(),
-                "fillscp_cartesian" | "fill_scp_cartesian"
-            );
-            if use_cartesian {
-                validate_legacy_cartesian_collection_options(&spec.args)?;
-            }
-            let mut cfg = crate::evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::FillScpConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.force_full_goal_tasks();
-            let (abstractions, cartesian_abstractions) = if use_cartesian {
-                info!("Building fillSCP Cartesian abstraction (CEGAR)...");
-                let cartesian_config = cartesian_config_from_collection(
-                    &cfg.collection_config,
-                    cfg.partitioning.uses_regions(),
-                )?;
-                let abstraction = CartesianAbstractionGenerator::new(cartesian_config)
-                    .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?
-                    .generate(task)
-                    .map_err(|error| {
-                        format!("failed to build fillSCP Cartesian abstraction: {error:#}")
-                    })?;
-                (Vec::new(), vec![abstraction])
-            } else {
-                let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-                    cfg.collection_config.clone(),
-                );
-                info!("Building fillSCP domain abstractions (CEGAR)...");
-                let abstractions = generator
-                    .generate_collection(task)
-                    .map_err(|e| format!("failed to build fillSCP domain abstractions: {e:#}"))?;
-                (abstractions, Vec::new())
-            };
-            let h = FillScpHeuristic::new_with_cartesian(
-                None,
-                abstractions,
-                cartesian_abstractions,
-                cfg,
-                task,
-            )
-            .map_err(|e| format!("failed to construct fillSCP heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
     }

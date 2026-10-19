@@ -11,7 +11,7 @@ use super::domain_abstraction_factory::{
     AbstractDistanceTable, DistanceTableOptions, DomainAbstractionFactory,
 };
 use crate::evaluation::abstraction_collections::cost_partitioning::{
-    AbstractOperatorRegions, AbstractTransitionSystem,
+    AbstractOperatorSourceSets, AbstractTransitionSystem,
 };
 use crate::evaluation::abstraction_collections::goal_focused::{
     CollectionMembership, ConcreteState,
@@ -27,8 +27,8 @@ pub struct DomainAbstraction {
     pub combine_labels: bool,
     pub relevant_operator_ids: Vec<OperatorIndex>,
     pub abstract_operators: Vec<AbstractOperator>,
-    pub abstract_operator_regions: Vec<AbstractOperatorRegions>,
-    pub(crate) regional_transition_system: RefCell<Option<AbstractTransitionSystem>>,
+    pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
+    pub(crate) interval_transition_system: RefCell<Option<AbstractTransitionSystem>>,
     pub metadata: DomainAbstractionMetadata,
 }
 
@@ -47,8 +47,8 @@ impl DomainAbstraction {
             combine_labels,
             relevant_operator_ids: Vec::new(),
             abstract_operators: Vec::new(),
-            abstract_operator_regions: Vec::new(),
-            regional_transition_system: RefCell::new(None),
+            abstract_source_sets: Vec::new(),
+            interval_transition_system: RefCell::new(None),
             metadata,
         }
     }
@@ -62,19 +62,16 @@ impl DomainAbstraction {
 
     pub fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
-        self.abstract_operator_regions.clear();
-        self.regional_transition_system.get_mut().take();
+        self.abstract_source_sets.clear();
+        self.interval_transition_system.get_mut().take();
     }
 
-    pub fn ensure_abstract_operator_regions(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<()> {
-        if !self.abstract_operator_regions.is_empty() {
+    pub fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
+        if !self.abstract_source_sets.is_empty() {
             ensure!(
-                self.abstract_operator_regions.len() == self.abstract_operators.len(),
+                self.abstract_source_sets.len() == self.abstract_operators.len(),
                 "domain abstraction has {} operator regions for {} abstract operators",
-                self.abstract_operator_regions.len(),
+                self.abstract_source_sets.len(),
                 self.abstract_operators.len()
             );
             return Ok(());
@@ -83,25 +80,25 @@ impl DomainAbstraction {
             !self.abstract_operators.is_empty(),
             "cannot construct regional operator regions after abstract operators were discarded"
         );
-        self.abstract_operator_regions = self
+        self.abstract_source_sets = self
             .factory
-            .build_abstract_operator_regions(task, &self.abstract_operators)
+            .build_abstract_source_sets(task, &self.abstract_operators)
             .context("failed to build abstract-operator regions")?;
         ensure!(
-            self.abstract_operator_regions.len() == self.abstract_operators.len(),
+            self.abstract_source_sets.len() == self.abstract_operators.len(),
             "domain operator-region construction produced {} entries for {} abstract operators",
-            self.abstract_operator_regions.len(),
+            self.abstract_source_sets.len(),
             self.abstract_operators.len()
         );
         Ok(())
     }
 
-    pub fn regional_transition_system<'a>(
+    pub fn interval_transition_system<'a>(
         &'a self,
         task: &dyn AbstractNumericTask,
         deadline: Option<Instant>,
     ) -> Result<Ref<'a, AbstractTransitionSystem>> {
-        if self.regional_transition_system.borrow().is_none() {
+        if self.interval_transition_system.borrow().is_none() {
             let mut transition_system = self
                 .factory
                 .build_abstract_transition_system_from_operators(
@@ -109,14 +106,14 @@ impl DomainAbstraction {
                     self.combine_labels,
                     &self.abstract_operators,
                     DistanceTableOptions::default()
-                        .without_state_regions()
+                        .without_cartesian_sets()
                         .with_deadline(deadline),
                 )?;
             transition_system.forward.clear();
-            *self.regional_transition_system.borrow_mut() = Some(transition_system);
+            *self.interval_transition_system.borrow_mut() = Some(transition_system);
         }
         Ok(Ref::map(
-            self.regional_transition_system.borrow(),
+            self.interval_transition_system.borrow(),
             |transition_system| {
                 transition_system
                     .as_ref()
@@ -206,9 +203,9 @@ impl DomainAbstractionGenerator {
         let abstract_operators = operator_generator
             .build_abstract_operators_with_deadline(task, None)
             .context("failed to build abstract operators")?;
-        let abstract_operator_regions = if self.config.compute_operator_regions {
+        let abstract_source_sets = if self.config.compute_source_sets {
             factory
-                .build_abstract_operator_regions(task, &abstract_operators)
+                .build_abstract_source_sets(task, &abstract_operators)
                 .context("failed to build abstract-operator regions")?
         } else {
             // Heuristics that read only the distance table (canonical, max,
@@ -265,8 +262,8 @@ impl DomainAbstractionGenerator {
             combine_labels: self.config.combine_labels,
             relevant_operator_ids,
             abstract_operators,
-            abstract_operator_regions,
-            regional_transition_system: RefCell::new(None),
+            abstract_source_sets,
+            interval_transition_system: RefCell::new(None),
             metadata: DomainAbstractionMetadata {
                 solved_by_self,
                 abstraction_use: AbstractionUse::Standalone,

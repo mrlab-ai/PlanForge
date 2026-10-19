@@ -17,8 +17,8 @@ use super::icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSemantics, CartesianSplitSelection, CartesianStopReason, FlawKind, OperatorBitSet,
-    RefinementNode, ShortestPaths, Split, SplitDimension, StateRegion, TransitionKey,
+    CartesianSemantics, CartesianSet, CartesianSplitSelection, CartesianStopReason, FlawKind,
+    OperatorBitSet, RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey,
     WorkingAbstraction, artifact_unwanted_score, numeric_split_choice_key, numeric_split_intervals,
     push_unique_split, retain_min_growth_splits, select_refinement_split,
 };
@@ -131,12 +131,12 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let source = StateRegion::with_all_props_constrained(
+    let source = CartesianSet::with_all_props_constrained(
         vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
         vec![],
     );
     let target =
-        StateRegion::with_all_props_constrained(vec![vec![ExplicitValueIndex::new(1)]], vec![]);
+        CartesianSet::with_all_props_constrained(vec![vec![ExplicitValueIndex::new(1)]], vec![]);
 
     let native = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     assert!(
@@ -239,7 +239,7 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
     )
     .unwrap();
     let mut working = WorkingAbstraction::new_icaps26(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![],
         ),
@@ -364,7 +364,7 @@ fn min_growth_uses_projected_transition_count() {
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     let mut working = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![
                 Interval::unbounded(),
@@ -603,7 +603,7 @@ fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
 #[test]
 fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tails() {
     let working = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![
                 ExplicitValueIndex::new(0),
                 ExplicitValueIndex::new(1),
@@ -660,7 +660,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let open_tail = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![Interval::unbounded()],
         ),
@@ -683,7 +683,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let fractional = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![Interval::new(
                 NumericValue::new(0.0),
@@ -710,7 +710,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
     );
 
     let open_integer_interval = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![Interval::new(
                 NumericValue::new(5.0),
@@ -766,7 +766,7 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     };
     let mut semantics = CartesianSemantics::new(&task, &config).unwrap();
     let working = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![vec![
                 ExplicitValueIndex::new(0),
                 ExplicitValueIndex::new(1),
@@ -885,7 +885,7 @@ fn native_random_and_least_refined_selectors_are_independent() {
     let random_a = CartesianSemantics::new(&task, &random_config).unwrap();
     let random_b = CartesianSemantics::new(&task, &random_config).unwrap();
     let working = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(
+        CartesianSet::with_all_props_constrained(
             vec![
                 vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
                 vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
@@ -934,7 +934,7 @@ fn unsupported_cartesian_flaw_kinds_are_rejected() {
 }
 
 #[test]
-fn unchanged_transition_operator_regions_share_state_dimensions() {
+fn unchanged_transition_source_sets_share_state_dimensions() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 1,
         metric: Metric::new(true, None),
@@ -972,21 +972,21 @@ fn unchanged_transition_operator_regions_share_state_dimensions() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
-    let source = StateRegion::with_all_props_constrained(
+    let source = CartesianSet::with_all_props_constrained(
         vec![vec![ExplicitValueIndex::new(0)]],
         vec![Interval::unbounded(), Interval::singleton(ONE_VALUE)],
     );
 
-    let operator_region = semantics
-        .operator_region_source_for_transition(&source, OperatorIndex::new(0), &source)
+    let source_set = semantics
+        .source_set_source_for_transition(&source, OperatorIndex::new(0), &source)
         .unwrap()
         .unwrap();
 
     assert!(Arc::ptr_eq(
         source.propositions_arc(),
-        operator_region.propositions_arc()
+        source_set.propositions_arc()
     ));
-    assert!(Arc::ptr_eq(&source.numeric, &operator_region.numeric));
+    assert!(Arc::ptr_eq(&source.numeric, &source_set.numeric));
 }
 
 #[test]
@@ -1020,7 +1020,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
     });
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 1,
-        compute_operator_regions: true,
+        compute_source_sets: true,
         ..CartesianAbstractionConfig::default()
     })
     .unwrap()
@@ -1028,7 +1028,7 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
     .unwrap();
 
     assert!(abstraction.transition_system.transitions.is_empty());
-    assert!(abstraction.abstract_operator_regions.is_empty());
+    assert!(abstraction.abstract_source_sets.is_empty());
     assert!(abstraction.relevant_operator_ids.is_empty());
     assert_eq!(abstraction.distance_table.distances, vec![0.0]);
 }
@@ -1070,7 +1070,7 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
     let generate = |retain_transition_system| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             max_states: 2,
-            compute_operator_regions: false,
+            compute_source_sets: false,
             retain_transition_system,
             ..CartesianAbstractionConfig::default()
         })
@@ -1092,19 +1092,21 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
     );
     assert!(!full.transition_system.transitions.is_empty());
     assert!(standalone.transition_system.transitions.is_empty());
-    assert!(standalone.transition_system.state_regions.is_empty());
+    assert!(standalone.transition_system.cartesian_sets.is_empty());
 }
 
 #[test]
 fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     let mut working = WorkingAbstraction::new(
-        StateRegion::with_all_props_constrained(Vec::new(), Vec::new()),
+        CartesianSet::with_all_props_constrained(Vec::new(), Vec::new()),
         8,
     );
-    working.states.push(StateRegion::with_all_props_constrained(
-        Vec::new(),
-        Vec::new(),
-    ));
+    working
+        .states
+        .push(CartesianSet::with_all_props_constrained(
+            Vec::new(),
+            Vec::new(),
+        ));
     working.outgoing.push(Vec::new());
     working.incoming.push(Vec::new());
     working
@@ -1718,7 +1720,7 @@ fn assignment_outside_target_is_not_a_cartesian_transition() {
     );
     assert!(
         semantics
-            .operator_region_source_for_transition(&source, OperatorIndex::new(0), &target)
+            .source_set_source_for_transition(&source, OperatorIndex::new(0), &target)
             .unwrap()
             .is_none()
     );
@@ -1846,7 +1848,7 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         max_states: 1,
-        compute_operator_regions: false,
+        compute_source_sets: false,
         ..Default::default()
     })
     .unwrap()
@@ -1860,11 +1862,11 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
         CartesianStopReason::StateLimit
     );
     assert!(abstraction.metadata.pending_flaw.is_some());
-    assert!(abstraction.abstract_operator_regions.is_empty());
+    assert!(abstraction.abstract_source_sets.is_empty());
 }
 
 #[test]
-fn goal_collection_builds_every_goal_with_operator_regions() {
+fn goal_collection_builds_every_goal_with_source_sets() {
     let variables = vec![
         comparison_variable("x-at-two"),
         comparison_variable("y-at-three"),
@@ -1946,7 +1948,7 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             abstraction: CartesianAbstractionConfig {
                 max_states: 64,
-                compute_operator_regions: true,
+                compute_source_sets: true,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::Complementary,
@@ -1966,7 +1968,7 @@ fn goal_collection_builds_every_goal_with_operator_regions() {
         .iter()
         .map(|abstraction| {
             assert_eq!(
-                abstraction.abstract_operator_regions.len(),
+                abstraction.abstract_source_sets.len(),
                 abstraction.transition_system.transitions.len()
             );
             let mut expected_relevant = abstraction
@@ -2913,7 +2915,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             CartesianStopReason::ConcretePlan
         );
         assert_eq!(
-            abstraction.abstract_operator_regions.len(),
+            abstraction.abstract_source_sets.len(),
             abstraction.transition_system.transitions.len()
         );
     }

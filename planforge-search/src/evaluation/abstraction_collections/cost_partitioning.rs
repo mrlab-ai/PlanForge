@@ -1,17 +1,17 @@
 //! Label and regional saturated cost partitioning for abstraction components.
 //!
 //! Vocabulary:
-//! - A *region* is geometry represented by [`StateRegion`] (defined in
+//! - A *region* is geometry represented by [`CartesianSet`] (defined in
 //!   `region.rs`).
 //! - An *operator region* is the region on which a concrete operator's cost is
 //!   claimed.
 //! - *Regional* means per-region cost accounting.
 //!
-//! Each [`OperatorRegion::source`] stores the *regressed
+//! Each [`LabelSourceSet::source`] stores the *regressed
 //! preimage source* of an abstract operator's effect — the intersection of the
 //! abstract source region with the inverse image of the abstract target region
 //! under the operator's numeric effect (computed in
-//! `domain_abstraction_factory::build_operator_region`).
+//! `domain_abstraction_factory::build_source_set`).
 //!
 //! Unbounded preimages are ordinary regions. Cost is allocated on their exact
 //! operator region and remains available on disjoint regions.
@@ -32,40 +32,28 @@ use planforge_sas::utils::float_tolerance;
 #[cfg(test)]
 use planforge_sas::utils::interval::Interval;
 
+#[path = "cartesian_set.rs"]
+mod cartesian_set;
 #[path = "explicit_scp.rs"]
 mod explicit_scp;
-#[path = "region.rs"]
-mod region;
 
+pub use cartesian_set::*;
 pub use explicit_scp::*;
-pub use region::*;
 
 #[derive(Debug)]
-pub struct TransitionResidualCosts {
-    operator_residuals: Vec<OperatorResidual>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LmCutResidualOperatorCostPartition {
-    pub fallback_cost: f64,
-    pub variants: Vec<LmCutResidualCostVariant>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LmCutResidualCostVariant {
-    pub cost: f64,
-    pub source_region: StateRegion,
+pub struct RemainingCosts {
+    operator_residuals: Vec<OperatorRemainingCost>,
 }
 
 #[derive(Debug)]
-struct OperatorResidual {
+struct OperatorRemainingCost {
     base_cost: f64,
     /// Regions where prior tables consumed the complete operator cost. These
     /// may overlap because pointwise max and sum are both equal to the base
     /// cost there; keeping the cover avoids an unnecessary geometric union.
-    full_regional_usage: RegionalUsage,
+    full_source_set_usage: SourceSetUsage,
     /// Exact disjoint overlay for genuinely fractional regional allocations.
-    regional_usage: RegionalUsage,
+    source_set_usage: SourceSetUsage,
     uniform_cost_cache: Cell<Option<f64>>,
 }
 
@@ -74,21 +62,21 @@ struct OperatorResidual {
 /// usage zero. Keeping usage, rather than residual cost, avoids materializing
 /// the universal state region.
 #[derive(Debug, Clone, Default)]
-struct RegionalUsage {
-    cells: Vec<RegionalUsageCell>,
+struct SourceSetUsage {
+    cells: Vec<SourceSetUsageCell>,
     index: RefCell<CellIndex>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct RegionalUsageCell {
-    region: StateRegion,
+struct SourceSetUsageCell {
+    region: CartesianSet,
     amount: f64,
 }
 
 #[derive(Debug, Clone)]
 enum TableRegionalEnvelope {
-    Full(Vec<StateRegion>),
-    Fractional(RegionalUsage),
+    Full(Vec<CartesianSet>),
+    Fractional(SourceSetUsage),
 }
 
 impl Default for TableRegionalEnvelope {
@@ -97,7 +85,7 @@ impl Default for TableRegionalEnvelope {
     }
 }
 
-impl PartialEq for RegionalUsage {
+impl PartialEq for SourceSetUsage {
     fn eq(&self, other: &Self) -> bool {
         self.cells == other.cells
     }
@@ -106,7 +94,7 @@ impl PartialEq for RegionalUsage {
 impl TableRegionalEnvelope {
     fn maximize(
         &mut self,
-        region: &StateRegion,
+        region: &CartesianSet,
         amount: f64,
         base_cost: f64,
         deadline: Option<Instant>,
@@ -123,7 +111,7 @@ impl TableRegionalEnvelope {
 
         if let Self::Full(regions) = self {
             let regions = std::mem::take(regions);
-            let mut usage = RegionalUsage::default();
+            let mut usage = SourceSetUsage::default();
             for full_region in regions {
                 usage.maximize(&full_region, base_cost, deadline)?;
             }
@@ -140,7 +128,7 @@ const REGIONAL_INDEX_MIN_CELLS: usize = 32;
 const REGIONAL_INDEX_BLOCK_SIZE: usize = 32;
 
 #[derive(Debug, Clone)]
-struct RegionalUsageIndex {
+struct SourceSetUsageIndex {
     primary_dim: usize,
     sorted_cell_ids: Vec<usize>,
     blocks: Vec<RegionalUsageIndexBlock>,
@@ -153,22 +141,22 @@ struct RegionalUsageIndexBlock {
     max_upper: NumericValue,
 }
 
-impl RegionalUsage {
+impl SourceSetUsage {
     fn is_empty(&self) -> bool {
         self.cells.is_empty()
     }
 
-    fn append_full_cover(&mut self, regions: Vec<StateRegion>, base_cost: f64) {
+    fn append_full_cover(&mut self, regions: Vec<CartesianSet>, base_cost: f64) {
         debug_assert!(base_cost.is_finite() && base_cost > 0.0);
         self.cells
-            .extend(regions.into_iter().map(|region| RegionalUsageCell {
+            .extend(regions.into_iter().map(|region| SourceSetUsageCell {
                 region,
                 amount: base_cost,
             }));
         *self.index.get_mut() = CellIndex::Stale;
     }
 
-    fn overlaps(&self, query: &StateRegion) -> bool {
+    fn overlaps(&self, query: &CartesianSet) -> bool {
         if self.cells.len() < REGIONAL_INDEX_MIN_CELLS {
             return self.cells.iter().any(|cell| cell.region.overlaps(query));
         }
@@ -198,7 +186,7 @@ impl RegionalUsage {
         false
     }
 
-    fn max_over(&self, query: &StateRegion) -> f64 {
+    fn max_over(&self, query: &CartesianSet) -> f64 {
         if self.cells.len() < REGIONAL_INDEX_MIN_CELLS {
             return self.max_over_cell_ids(query, 0..self.cells.len());
         }
@@ -229,7 +217,11 @@ impl RegionalUsage {
         maximum
     }
 
-    fn max_over_cell_ids(&self, query: &StateRegion, cell_ids: impl Iterator<Item = usize>) -> f64 {
+    fn max_over_cell_ids(
+        &self,
+        query: &CartesianSet,
+        cell_ids: impl Iterator<Item = usize>,
+    ) -> f64 {
         cell_ids
             .filter_map(|cell_id| {
                 let cell = &self.cells[cell_id];
@@ -244,7 +236,7 @@ impl RegionalUsage {
     /// overlap.
     fn maximize(
         &mut self,
-        region: &StateRegion,
+        region: &CartesianSet,
         amount: f64,
         deadline: Option<Instant>,
     ) -> Result<()> {
@@ -258,14 +250,14 @@ impl RegionalUsage {
     /// Pointwise addition. Table envelopes are independent cost partitions and
     /// therefore add across completed tables.
     #[cfg(test)]
-    fn add(&mut self, region: &StateRegion, amount: f64) {
+    fn add(&mut self, region: &CartesianSet, amount: f64) {
         self.add_with_deadline(region, amount, None)
             .expect("an unbounded regional-usage update cannot exceed a deadline");
     }
 
     fn add_with_deadline(
         &mut self,
-        region: &StateRegion,
+        region: &CartesianSet,
         amount: f64,
         deadline: Option<Instant>,
     ) -> Result<()> {
@@ -278,12 +270,12 @@ impl RegionalUsage {
 
     fn overlay(
         &mut self,
-        region: &StateRegion,
+        region: &CartesianSet,
         update_existing: impl Fn(f64) -> f64,
         uncovered_amount: f64,
         deadline: Option<Instant>,
     ) -> Result<()> {
-        debug_assert!(state_region_is_nonempty(region));
+        debug_assert!(cartesian_set_is_nonempty(region));
         let old_cells = std::mem::take(&mut self.cells);
         let mut new_cells = Vec::with_capacity(old_cells.len() + 1);
         let mut uncovered = vec![region.clone()];
@@ -300,33 +292,33 @@ impl RegionalUsage {
                 *self.index.get_mut() = CellIndex::Stale;
                 return Err(error);
             }
-            let Some(intersection) = state_region_intersection(&cell.region, region) else {
+            let Some(intersection) = cartesian_set_intersection(&cell.region, region) else {
                 new_cells.push(cell);
                 continue;
             };
-            for remainder in subtract_state_region(&cell.region, &intersection) {
-                new_cells.push(RegionalUsageCell {
+            for remainder in subtract_cartesian_set(&cell.region, &intersection) {
+                new_cells.push(SourceSetUsageCell {
                     region: remainder,
                     amount: cell.amount,
                 });
             }
-            new_cells.push(RegionalUsageCell {
+            new_cells.push(SourceSetUsageCell {
                 region: intersection.clone(),
                 amount: update_existing(cell.amount),
             });
             uncovered = uncovered
                 .into_iter()
                 .flat_map(|piece| {
-                    let Some(covered_piece) = state_region_intersection(&piece, &intersection)
+                    let Some(covered_piece) = cartesian_set_intersection(&piece, &intersection)
                     else {
                         return vec![piece];
                     };
-                    subtract_state_region(&piece, &covered_piece)
+                    subtract_cartesian_set(&piece, &covered_piece)
                 })
                 .collect();
         }
 
-        new_cells.extend(uncovered.into_iter().map(|region| RegionalUsageCell {
+        new_cells.extend(uncovered.into_iter().map(|region| SourceSetUsageCell {
             region,
             amount: uncovered_amount,
         }));
@@ -335,7 +327,7 @@ impl RegionalUsage {
                 .iter()
                 .all(|cell| cell.amount > float_tolerance::SEARCH_EPSILON)
         );
-        debug_assert!(regional_usage_cells_are_disjoint(&new_cells));
+        debug_assert!(source_set_usage_cells_are_disjoint(&new_cells));
         self.cells = new_cells;
         *self.index.get_mut() = CellIndex::Stale;
         Ok(())
@@ -356,21 +348,21 @@ enum CellIndex {
     Stale,
     /// The cells cannot be indexed; queries scan them linearly.
     Unusable,
-    Ready(RegionalUsageIndex),
+    Ready(SourceSetUsageIndex),
 }
 
 impl CellIndex {
     /// Build on first use, and remember a failed attempt.
-    fn ensure_built(index: &RefCell<Self>, cells: &[RegionalUsageCell]) {
+    fn ensure_built(index: &RefCell<Self>, cells: &[SourceSetUsageCell]) {
         if matches!(&*index.borrow(), CellIndex::Stale) {
-            *index.borrow_mut() = match RegionalUsageIndex::build(cells) {
+            *index.borrow_mut() = match SourceSetUsageIndex::build(cells) {
                 Some(built) => CellIndex::Ready(built),
                 None => CellIndex::Unusable,
             };
         }
     }
 
-    fn ready(&self) -> Option<&RegionalUsageIndex> {
+    fn ready(&self) -> Option<&SourceSetUsageIndex> {
         match self {
             CellIndex::Ready(index) => Some(index),
             CellIndex::Stale | CellIndex::Unusable => None,
@@ -378,8 +370,8 @@ impl CellIndex {
     }
 }
 
-impl RegionalUsageIndex {
-    fn build(cells: &[RegionalUsageCell]) -> Option<Self> {
+impl SourceSetUsageIndex {
+    fn build(cells: &[SourceSetUsageCell]) -> Option<Self> {
         let numeric_dimensions = cells.first()?.region.numeric.len();
         if numeric_dimensions == 0
             || cells
@@ -431,7 +423,7 @@ impl RegionalUsageIndex {
     }
 }
 
-fn regional_usage_cells_are_disjoint(cells: &[RegionalUsageCell]) -> bool {
+fn source_set_usage_cells_are_disjoint(cells: &[SourceSetUsageCell]) -> bool {
     cells.iter().enumerate().all(|(index, cell)| {
         cells[index + 1..]
             .iter()
@@ -439,14 +431,14 @@ fn regional_usage_cells_are_disjoint(cells: &[RegionalUsageCell]) -> bool {
     })
 }
 
-impl TransitionResidualCosts {
+impl RemainingCosts {
     pub fn from_operator_costs(costs: &[f64]) -> Self {
         let operator_residuals = costs
             .iter()
-            .map(|&base_cost| OperatorResidual {
+            .map(|&base_cost| OperatorRemainingCost {
                 base_cost,
-                full_regional_usage: RegionalUsage::default(),
-                regional_usage: RegionalUsage::default(),
+                full_source_set_usage: SourceSetUsage::default(),
+                source_set_usage: SourceSetUsage::default(),
                 uniform_cost_cache: Cell::new(None),
             })
             .collect();
@@ -457,14 +449,14 @@ impl TransitionResidualCosts {
         self.operator_residuals
             .iter()
             .map(|residual| {
-                residual.full_regional_usage.cells.len() + residual.regional_usage.cells.len()
+                residual.full_source_set_usage.cells.len() + residual.source_set_usage.cells.len()
             })
             .sum()
     }
 
     pub fn has_reductions(&self) -> bool {
         self.operator_residuals.iter().any(|residual| {
-            !residual.full_regional_usage.is_empty() || !residual.regional_usage.is_empty()
+            !residual.full_source_set_usage.is_empty() || !residual.source_set_usage.is_empty()
         })
     }
 
@@ -476,7 +468,7 @@ impl TransitionResidualCosts {
     /// and every caller derives the id from the task the residuals were built
     /// from, so a miss is a broken invariant rather than missing input.
     #[inline]
-    fn residual(&self, concrete_op_id: OperatorIndex) -> &OperatorResidual {
+    fn residual(&self, concrete_op_id: OperatorIndex) -> &OperatorRemainingCost {
         self.operator_residuals
             .get(concrete_op_id.index())
             .unwrap_or_else(|| {
@@ -497,14 +489,14 @@ impl TransitionResidualCosts {
                 if let Some(cost) = residual.uniform_cost_cache.get() {
                     return cost;
                 }
-                let full_regional_reduction = if !residual.full_regional_usage.is_empty() {
+                let full_regional_reduction = if !residual.full_source_set_usage.is_empty() {
                     residual.base_cost
                 } else {
                     0.0
                 };
                 let reduction = full_regional_reduction.max(
                     residual
-                        .regional_usage
+                        .source_set_usage
                         .cells
                         .iter()
                         .map(|cell| cell.amount)
@@ -517,72 +509,49 @@ impl TransitionResidualCosts {
             .collect()
     }
 
-    pub fn operator_cost_partitions_for_lmcut(
-        &self,
-        _max_variants_per_operator: usize,
-        _max_guard_conditions_per_variant: usize,
-    ) -> Vec<LmCutResidualOperatorCostPartition> {
-        // Transition reductions were never populated in production, so
-        // fillscp(partitioning=region) gives LM-cut uniform residuals only and
-        // the region-conditional variant machinery remains dormant. Activating
-        // it requires re-deriving variants from the RegionalUsage cells.
-        let uniform_costs = self.operator_costs_for_label_cp();
-        self.operator_residuals
-            .iter()
-            .enumerate()
-            .map(|(op_id, _residual)| LmCutResidualOperatorCostPartition {
-                fallback_cost: uniform_costs[op_id],
-                variants: Vec::new(),
-            })
-            .collect()
-    }
-
-    pub fn cost_for_operator_region(
+    pub fn cost_for_source_set(
         &self,
         _current_abstraction_id: usize,
         _abstract_op_id: usize,
-        operator_region: &OperatorRegion,
+        source_set: &LabelSourceSet,
     ) -> f64 {
-        let residual = self.residual(operator_region.concrete_op_id);
+        let residual = self.residual(source_set.concrete_op_id);
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
         }
-        let regional = if residual
-            .full_regional_usage
-            .overlaps(&operator_region.source)
-        {
+        let regional = if residual.full_source_set_usage.overlaps(&source_set.source) {
             residual.base_cost
         } else {
-            residual.regional_usage.max_over(&operator_region.source)
+            residual.source_set_usage.max_over(&source_set.source)
         };
         (residual.base_cost - regional).max(0.0)
     }
 
-    pub fn reduce_by_abstract_operator_regions(
+    pub fn reduce_by_abstract_source_sets(
         &mut self,
         producing_abstraction_id: usize,
-        operator_regions: &[AbstractOperatorRegions],
+        source_sets: &[AbstractOperatorSourceSets],
         tcf: &AbstractOperatorCostFunction,
     ) -> Result<()> {
-        self.reduce_by_abstract_operator_regions_with_deadline(
+        self.reduce_by_abstract_source_sets_with_deadline(
             producing_abstraction_id,
-            operator_regions,
+            source_sets,
             tcf,
             None,
         )
     }
 
-    pub fn reduce_by_abstract_operator_regions_with_deadline(
+    pub fn reduce_by_abstract_source_sets_with_deadline(
         &mut self,
         producing_abstraction_id: usize,
-        operator_regions: &[AbstractOperatorRegions],
+        source_sets: &[AbstractOperatorSourceSets],
         tcf: &AbstractOperatorCostFunction,
         deadline: Option<Instant>,
     ) -> Result<()> {
         ensure!(
-            operator_regions.len() >= tcf.operator_costs.len(),
-            "abstract-operator region/cost function size mismatch: operator_regions={} costs={}",
-            operator_regions.len(),
+            source_sets.len() >= tcf.operator_costs.len(),
+            "abstract-operator region/cost function size mismatch: source_sets={} costs={}",
+            source_sets.len(),
             tcf.operator_costs.len()
         );
 
@@ -601,8 +570,8 @@ impl TransitionResidualCosts {
                 continue;
             }
 
-            for operator_region in &operator_regions[abstract_op_id].labels {
-                let concrete_op_id = operator_region.concrete_op_id;
+            for source_set in &source_sets[abstract_op_id].labels {
+                let concrete_op_id = source_set.concrete_op_id;
                 let residual = self
                     .operator_residuals
                     .get(concrete_op_id.index())
@@ -612,11 +581,8 @@ impl TransitionResidualCosts {
                             self.operator_residuals.len()
                         )
                     })?;
-                let current_residual = self.cost_for_operator_region(
-                    producing_abstraction_id,
-                    abstract_op_id,
-                    operator_region,
-                );
+                let current_residual =
+                    self.cost_for_source_set(producing_abstraction_id, abstract_op_id, source_set);
                 ensure!(
                     current_residual.is_finite(),
                     "residual cost for abstract op {abstract_op_id}, concrete op {concrete_op_id} must be finite"
@@ -637,22 +603,22 @@ impl TransitionResidualCosts {
                     "residual cost underflow: abstract-operator region reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
                     residual.base_cost
                 );
-                entries.push(RegionalCostAllocationEntry {
-                    operator_region: operator_region.clone(),
+                entries.push(SourceSetCost {
+                    source_set: source_set.clone(),
                     amount: saturated,
                 });
             }
         }
 
-        self.reduce_by_regional_allocation_with_deadline(
-            &RegionalCostAllocation::new(entries),
+        self.reduce_by_source_set_allocation_with_deadline(
+            &SourceSetCostAllocation::new(entries),
             deadline,
         )
     }
 
-    pub fn reduce_by_regional_allocation_with_deadline(
+    pub fn reduce_by_source_set_allocation_with_deadline(
         &mut self,
-        allocation: &RegionalCostAllocation,
+        allocation: &SourceSetCostAllocation,
         deadline: Option<Instant>,
     ) -> Result<()> {
         let mut table_envelopes: HashMap<OperatorIndex, TableRegionalEnvelope> = HashMap::new();
@@ -668,7 +634,7 @@ impl TransitionResidualCosts {
             if entry.amount <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
-            let concrete_op_id = entry.operator_region.concrete_op_id;
+            let concrete_op_id = entry.source_set.concrete_op_id;
             let residual = self
                 .operator_residuals
                 .get(concrete_op_id.index())
@@ -692,7 +658,7 @@ impl TransitionResidualCosts {
                 .entry(concrete_op_id)
                 .or_default()
                 .maximize(
-                    &entry.operator_region.source,
+                    &entry.source_set.source,
                     entry.amount,
                     residual.base_cost,
                     deadline,
@@ -708,10 +674,10 @@ impl TransitionResidualCosts {
             match envelope {
                 TableRegionalEnvelope::Full(regions) => {
                     for region in &regions {
-                        let already_used = if residual.full_regional_usage.overlaps(region) {
+                        let already_used = if residual.full_source_set_usage.overlaps(region) {
                             residual.base_cost
                         } else {
-                            residual.regional_usage.max_over(region)
+                            residual.source_set_usage.max_over(region)
                         };
                         ensure!(
                             already_used <= float_tolerance::SEARCH_EPSILON,
@@ -720,15 +686,16 @@ impl TransitionResidualCosts {
                         );
                     }
                     residual
-                        .full_regional_usage
+                        .full_source_set_usage
                         .append_full_cover(regions, residual.base_cost);
                 }
                 TableRegionalEnvelope::Fractional(envelope) => {
                     for cell in envelope.cells {
-                        let already_used = if residual.full_regional_usage.overlaps(&cell.region) {
+                        let already_used = if residual.full_source_set_usage.overlaps(&cell.region)
+                        {
                             residual.base_cost
                         } else {
-                            residual.regional_usage.max_over(&cell.region)
+                            residual.source_set_usage.max_over(&cell.region)
                         };
                         ensure!(
                             already_used + cell.amount
@@ -737,7 +704,7 @@ impl TransitionResidualCosts {
                             cell.amount,
                             residual.base_cost
                         );
-                        residual.regional_usage.add_with_deadline(
+                        residual.source_set_usage.add_with_deadline(
                             &cell.region,
                             cell.amount,
                             deadline,
@@ -775,7 +742,7 @@ impl TransitionResidualCosts {
     }
 }
 
-impl OperatorResidual {
+impl OperatorRemainingCost {
     fn invalidate_cache(&self) {
         self.uniform_cost_cache.set(None);
     }

@@ -6,7 +6,7 @@ use planforge_sas::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StateRegion {
+pub struct CartesianSet {
     /// Per-dimension value sets, indexed by propositional variable. Private so
     /// that no caller can narrow a dimension without recording it in
     /// [`Self::constrained_props`]; a missing entry there would make two
@@ -32,7 +32,7 @@ pub struct StateRegion {
     constrained_props: Arc<[u32]>,
 }
 
-impl StateRegion {
+impl CartesianSet {
     /// A region over dense per-dimension value sets, with the constrained
     /// dimensions derived from the propositional domain sizes.
     ///
@@ -194,7 +194,7 @@ impl StateRegion {
 /// Sound for any region derived from both: a dimension universal in both inputs
 /// stays universal under intersection and cannot gain a constraint under
 /// subtraction.
-fn union_constrained_props(left: &StateRegion, right: &StateRegion) -> Arc<[u32]> {
+fn union_constrained_props(left: &CartesianSet, right: &CartesianSet) -> Arc<[u32]> {
     let (left_dims, right_dims) = (&left.constrained_props, &right.constrained_props);
     if left_dims.is_empty() {
         return Arc::clone(right_dims);
@@ -226,7 +226,7 @@ fn union_constrained_props(left: &StateRegion, right: &StateRegion) -> Arc<[u32]
     union.into()
 }
 
-pub(super) fn state_region_is_nonempty(region: &StateRegion) -> bool {
+pub(super) fn cartesian_set_is_nonempty(region: &CartesianSet) -> bool {
     region.propositions.iter().all(|values| !values.is_empty())
         && region.numeric.iter().all(|interval| !interval.is_empty())
 }
@@ -236,7 +236,7 @@ pub(super) fn state_region_is_nonempty(region: &StateRegion) -> bool {
 /// Only dimensions `outer` constrains can exclude anything, so unconstrained
 /// dimensions are skipped: `inner`'s values there are a subset of the whole
 /// domain by definition.
-fn region_contains(outer: &StateRegion, inner: &StateRegion) -> bool {
+fn region_contains(outer: &CartesianSet, inner: &CartesianSet) -> bool {
     debug_assert_eq!(outer.propositions.len(), inner.propositions.len());
     debug_assert_eq!(outer.numeric.len(), inner.numeric.len());
     outer.constrained_props.iter().all(|&var_id| {
@@ -270,10 +270,10 @@ fn sorted_value_set_contains(outer: &[ExplicitValueIndex], inner: &[ExplicitValu
     true
 }
 
-pub(crate) fn state_region_intersection(
-    left: &StateRegion,
-    right: &StateRegion,
-) -> Option<StateRegion> {
+pub(crate) fn cartesian_set_intersection(
+    left: &CartesianSet,
+    right: &CartesianSet,
+) -> Option<CartesianSet> {
     debug_assert_eq!(
         left.propositions.len(),
         right.propositions.len(),
@@ -315,7 +315,7 @@ pub(crate) fn state_region_intersection(
     if numeric.iter().any(Interval::is_empty) {
         return None;
     }
-    Some(StateRegion::with_constrained_props(
+    Some(CartesianSet::with_constrained_props(
         propositions,
         numeric,
         union_constrained_props(left, right),
@@ -354,11 +354,11 @@ fn sorted_value_difference(
 
 /// Returns a disjoint cover of `region \\ removed`. `removed` must be a
 /// nonempty subset of `region`.
-pub(super) fn subtract_state_region(
-    region: &StateRegion,
-    removed: &StateRegion,
-) -> Vec<StateRegion> {
-    let intersection = state_region_intersection(region, removed)
+pub(super) fn subtract_cartesian_set(
+    region: &CartesianSet,
+    removed: &CartesianSet,
+) -> Vec<CartesianSet> {
+    let intersection = cartesian_set_intersection(region, removed)
         .expect("removed state region must intersect its parent region");
     debug_assert_eq!(
         &intersection, removed,
@@ -412,12 +412,12 @@ pub(super) fn subtract_state_region(
         }
         Arc::make_mut(&mut core.numeric)[var_id] = cut;
     }
-    debug_assert!(result.iter().all(state_region_is_nonempty));
+    debug_assert!(result.iter().all(cartesian_set_is_nonempty));
     debug_assert!(regional_regions_are_disjoint(&result));
     result
 }
 
-fn regional_regions_are_disjoint(regions: &[StateRegion]) -> bool {
+fn regional_regions_are_disjoint(regions: &[CartesianSet]) -> bool {
     regions.iter().enumerate().all(|(index, region)| {
         regions[index + 1..]
             .iter()
@@ -431,7 +431,7 @@ fn regional_regions_are_disjoint(regions: &[StateRegion]) -> bool {
 /// admits the whole domain, the other side's values are all available. So this
 /// intersects the two constrained-dimension lists instead of walking every
 /// dimension.
-fn prop_regions_overlap(left: &StateRegion, right: &StateRegion) -> bool {
+fn prop_regions_overlap(left: &CartesianSet, right: &CartesianSet) -> bool {
     if left.propositions.len() != right.propositions.len() {
         return false;
     }
@@ -480,7 +480,7 @@ fn numeric_regions_overlap(left: &[Interval], right: &[Interval]) -> bool {
 mod tests {
     use super::*;
 
-    /// Regions built through [`StateRegion::new`], so their constrained-dimension
+    /// Regions built through [`CartesianSet::new`], so their constrained-dimension
     /// lists are derived from real domain sizes rather than declared to be
     /// everything. The unit tests elsewhere use
     /// `with_all_props_constrained`, which makes the sparse path degenerate into
@@ -509,7 +509,7 @@ mod tests {
         }
 
         /// The points a region admits: the oracle every assertion compares to.
-        fn admitted(&self, region: &StateRegion) -> Vec<Vec<ExplicitValueIndex>> {
+        fn admitted(&self, region: &CartesianSet) -> Vec<Vec<ExplicitValueIndex>> {
             self.points()
                 .into_iter()
                 .filter(|point| {
@@ -520,12 +520,12 @@ mod tests {
                 .collect()
         }
 
-        fn region(&self, values: Vec<Vec<ExplicitValueIndex>>) -> StateRegion {
-            StateRegion::new(values, Vec::new(), &self.domain_sizes)
+        fn region(&self, values: Vec<Vec<ExplicitValueIndex>>) -> CartesianSet {
+            CartesianSet::new(values, Vec::new(), &self.domain_sizes)
         }
 
         /// A region whose every dimension admits a nonempty subset of its domain.
-        fn random_region(&self, rng: &mut Lcg) -> StateRegion {
+        fn random_region(&self, rng: &mut Lcg) -> CartesianSet {
             let values = self
                 .domain_sizes
                 .iter()
@@ -582,7 +582,7 @@ mod tests {
                 "iteration {iteration}: overlaps disagrees with the enumerated space"
             );
 
-            match state_region_intersection(&left, &right) {
+            match cartesian_set_intersection(&left, &right) {
                 Some(intersection) => {
                     assert_eq!(
                         space.admitted(&intersection),
@@ -591,10 +591,10 @@ mod tests {
                     );
                     // The pieces of `left` outside the intersection, plus the
                     // intersection itself, must retile `left` exactly.
-                    let pieces = subtract_state_region(&left, &intersection);
+                    let pieces = subtract_cartesian_set(&left, &intersection);
                     for (index, piece) in pieces.iter().enumerate() {
                         assert!(
-                            state_region_is_nonempty(piece),
+                            cartesian_set_is_nonempty(piece),
                             "iteration {iteration}: piece {index} is empty"
                         );
                         for other in &pieces[index + 1..] {

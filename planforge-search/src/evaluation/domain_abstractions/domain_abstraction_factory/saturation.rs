@@ -2,20 +2,6 @@ use planforge_sas::numeric_task::{NumericValue, VariableIndex};
 
 use super::*;
 
-/// One abstraction's turn in a saturated cost partitioning: the costs earlier
-/// abstractions in the order have left unspent, which abstraction of the
-/// collection this is, and the two states that can cut the build short -- the
-/// state being evaluated, whose distance reaching zero means there is nothing
-/// left for this abstraction to contribute, and the perimeter cap beyond which
-/// distances are discarded.
-#[derive(Clone, Copy)]
-pub struct SaturationStep<'a> {
-    pub residual_costs: &'a TransitionResidualCosts,
-    pub abstraction_id: usize,
-    pub current_state_id: Option<usize>,
-    pub cap_state_id: Option<usize>,
-}
-
 pub(super) fn apply_operator_costs(
     operators: &mut [AbstractOperator],
     operator_costs: &[f64],
@@ -41,67 +27,6 @@ pub(super) fn apply_operator_costs(
         op.cost = NumericValue::new(cost);
     }
     Ok(())
-}
-
-fn apply_abstract_operator_costs(
-    operators: &mut [AbstractOperator],
-    operator_costs: &[f64],
-) -> Result<()> {
-    ensure!(
-        operators.len() == operator_costs.len(),
-        "abstract operator/cost vector size mismatch: {} vs {}",
-        operators.len(),
-        operator_costs.len()
-    );
-    for (abstract_op_id, op) in operators.iter_mut().enumerate() {
-        let cost = operator_costs[abstract_op_id];
-        ensure!(
-            cost.is_finite(),
-            "residual cost for abstract operator {abstract_op_id} must be finite"
-        );
-        op.cost = NumericValue::new(cost);
-    }
-    Ok(())
-}
-
-pub(super) fn abstract_operator_costs_from_operator_regions(
-    num_operators: usize,
-    operator_regions: &[AbstractOperatorRegions],
-    residual_costs: &TransitionResidualCosts,
-    abstraction_id: usize,
-    deadline: Option<Instant>,
-) -> Result<Vec<f64>> {
-    let has_reductions = residual_costs.has_reductions();
-    let mut operator_costs = vec![f64::INFINITY; num_operators];
-    for (abstract_op_id, operator_cost) in operator_costs.iter_mut().enumerate() {
-        if abstract_op_id % 64 == 0 {
-            ensure_online_scp_deadline(deadline)?;
-        }
-        let operator_region = operator_regions.get(abstract_op_id).with_context(|| {
-            format!("missing operator region for abstract operator {abstract_op_id}")
-        })?;
-        ensure!(
-            !operator_region.labels.is_empty(),
-            "abstract operator {abstract_op_id} has no concrete operator-region labels"
-        );
-        *operator_cost = operator_region
-            .labels
-            .iter()
-            .map(|label| {
-                let residual = if has_reductions {
-                    residual_costs.cost_for_operator_region(abstraction_id, abstract_op_id, label)
-                } else {
-                    residual_costs.base_cost(label.concrete_op_id)
-                };
-                residual.min(residual_costs.base_cost(label.concrete_op_id))
-            })
-            .fold(f64::INFINITY, f64::min);
-        ensure!(
-            operator_cost.is_finite(),
-            "residual cost for abstract operator {abstract_op_id} is not finite"
-        );
-    }
-    Ok(operator_costs)
 }
 
 pub(super) fn get_comparison_preconditions(
@@ -213,17 +138,17 @@ impl DomainAbstractionFactory {
     }
 
     /// The state region for `state_hash`, materializing it on first use.
-    fn cached_state_region<'cache>(
+    fn cached_cartesian_set<'cache>(
         &self,
-        cache: &'cache mut [Option<StateRegion>],
+        cache: &'cache mut [Option<CartesianSet>],
         state_hash: usize,
         transition_system: &AbstractTransitionSystem,
-    ) -> Result<&'cache StateRegion> {
+    ) -> Result<&'cache CartesianSet> {
         let slot = cache
             .get_mut(state_hash)
             .with_context(|| format!("state hash {state_hash} out of range for region cache"))?;
         if slot.is_none() {
-            *slot = Some(self.state_region_from_hash(
+            *slot = Some(self.cartesian_set_from_hash(
                 state_hash,
                 &transition_system.numeric_domain_sizes,
                 &transition_system.hash_multipliers,
@@ -232,19 +157,19 @@ impl DomainAbstractionFactory {
         Ok(slot.as_ref().expect("region was just materialized"))
     }
 
-    pub fn build_precise_regional_cost_partitioned_distance_table(
+    pub fn build_interval_cost_partitioned_distance_table(
         &self,
         transition_system: &AbstractTransitionSystem,
-        abstract_operator_regions: &[AbstractOperatorRegions],
-        residual_costs: &TransitionResidualCosts,
+        abstract_source_sets: &[AbstractOperatorSourceSets],
+        residual_costs: &RemainingCosts,
         abstraction_id: usize,
         options: DistanceTableOptions<'_>,
-    ) -> Result<(AbstractDistanceTable, RegionalCostAllocation)> {
+    ) -> Result<(AbstractDistanceTable, SourceSetCostAllocation)> {
         let deadline = options.deadline;
         let cap_state_id = options.cap_state_id;
         ensure_online_scp_deadline(deadline)?;
         ensure!(
-            transition_system.state_regions.is_empty(),
+            transition_system.cartesian_sets.is_empty(),
             "precise domain regional SCP expects lazy state regions"
         );
 
@@ -263,14 +188,14 @@ impl DomainAbstractionFactory {
             .map(|transition| transition.source_hash)
             .max()
             .map_or(0, |max_hash| max_hash + 1);
-        let mut source_regions: Vec<Option<StateRegion>> = vec![None; num_states];
+        let mut source_regions: Vec<Option<CartesianSet>> = vec![None; num_states];
 
         let mut transition_costs = Vec::with_capacity(transition_system.transitions.len());
         for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
             if transition_id.is_multiple_of(1024) {
                 ensure_online_scp_deadline(deadline)?;
             }
-            let source_region = self.cached_state_region(
+            let source_region = self.cached_cartesian_set(
                 &mut source_regions,
                 transition.source_hash,
                 transition_system,
@@ -278,16 +203,16 @@ impl DomainAbstractionFactory {
             operator_pairs += transition.concrete_op_ids.len();
             let mut cost = f64::INFINITY;
             for &concrete_op_id in &transition.concrete_op_ids {
-                let operator_region = precise_operator_region_for_transition(
+                let source_set = precise_source_set_for_transition(
                     transition,
                     concrete_op_id,
                     source_region,
-                    abstract_operator_regions,
+                    abstract_source_sets,
                 )?;
-                cost = cost.min(residual_costs.cost_for_operator_region(
+                cost = cost.min(residual_costs.cost_for_source_set(
                     abstraction_id,
                     transition_id,
-                    &operator_region,
+                    &source_set,
                 ));
             }
             transition_costs.push(cost);
@@ -354,29 +279,26 @@ impl DomainAbstractionFactory {
             if !saturated.is_finite() || saturated <= 1e-9 {
                 continue;
             }
-            let source_region = self.cached_state_region(
+            let source_region = self.cached_cartesian_set(
                 &mut source_regions,
                 transition.source_hash,
                 transition_system,
             )?;
             for &concrete_op_id in &transition.concrete_op_ids {
-                let operator_region = precise_operator_region_for_transition(
+                let source_set = precise_source_set_for_transition(
                     transition,
                     concrete_op_id,
                     source_region,
-                    abstract_operator_regions,
+                    abstract_source_sets,
                 )?;
-                let current_residual = residual_costs.cost_for_operator_region(
-                    abstraction_id,
-                    transition_id,
-                    &operator_region,
-                );
+                let current_residual =
+                    residual_costs.cost_for_source_set(abstraction_id, transition_id, &source_set);
                 ensure!(
                     saturated <= current_residual + 1e-7,
                     "regional transition allocation {saturated} exceeds residual {current_residual} for transition {transition_id}, operator {concrete_op_id}"
                 );
-                entries.push(RegionalCostAllocationEntry {
-                    operator_region,
+                entries.push(SourceSetCost {
+                    source_set,
                     amount: saturated,
                 });
             }
@@ -390,157 +312,8 @@ impl DomainAbstractionFactory {
             entries.len(),
         );
 
-        Ok((lookup_table, RegionalCostAllocation::new(entries)))
+        Ok((lookup_table, SourceSetCostAllocation::new(entries)))
     }
-
-    pub fn build_abstract_operator_cost_partitioned_distance_table_with_operators_and_operator_regions(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        operators: &[AbstractOperator],
-        operator_regions: &[AbstractOperatorRegions],
-        step: SaturationStep<'_>,
-        options: DistanceTableOptions<'_>,
-    ) -> Result<(AbstractDistanceTable, AbstractOperatorCostFunction)> {
-        let SaturationStep {
-            residual_costs,
-            abstraction_id,
-            current_state_id,
-            cap_state_id,
-        } = step;
-        let deadline = options.deadline;
-        ensure_online_scp_deadline(deadline)?;
-        ensure!(
-            operator_regions.len() >= operators.len(),
-            "abstract-operator region/operator size mismatch: {} vs {}",
-            operator_regions.len(),
-            operators.len()
-        );
-
-        let operator_costs = abstract_operator_costs_from_operator_regions(
-            operators.len(),
-            operator_regions,
-            residual_costs,
-            abstraction_id,
-            deadline,
-        )?;
-        let mut operators = operators.to_vec();
-        apply_abstract_operator_costs(&mut operators, &operator_costs)?;
-        let generator = self.make_operator_generator(task, combine_labels)?;
-        if operator_costs
-            .iter()
-            .all(|&cost| cost <= float_tolerance::DIJKSTRA_EPSILON)
-        {
-            let table = self.zero_distance_table_for_generator(task, &generator)?;
-            let tcf = AbstractOperatorCostFunction {
-                operator_costs: vec![0.0; operator_costs.len()],
-            };
-            return Ok((table, tcf));
-        }
-        if residual_costs.has_reductions()
-            && let Some(current_state_id) = current_state_id
-        {
-            let current_distance = self.compute_distance_to_goal_state_with_operators(
-                task,
-                &generator,
-                &operators,
-                current_state_id,
-                deadline,
-            )?;
-            if current_distance <= float_tolerance::DIJKSTRA_EPSILON {
-                let table = self.zero_distance_table_for_generator(task, &generator)?;
-                let tcf = AbstractOperatorCostFunction {
-                    operator_costs: vec![0.0; operator_costs.len()],
-                };
-                return Ok((table, tcf));
-            }
-        }
-        // Build the match tree once. It depends only on
-        // (domain_sizes, numeric_domain_sizes, hash_multipliers, regression
-        // preconditions of `operators`); none of those change when we re-apply
-        // costs below. Reusing it avoids 2x (or 4x for perimstar) rebuilds.
-        let comparison_var_ids_for_tree = self.comparison_var_ids();
-        let match_tree = MatchTree::build(
-            generator.domain_sizes(),
-            generator.numeric_domain_sizes(),
-            generator.hash_multipliers(),
-            &operators,
-            &comparison_var_ids_for_tree,
-        );
-
-        let goal_facts = self.compute_abstract_goals(task);
-        let table = self.build_distance_table_with_operators_for_goals_inner(
-            task,
-            &generator,
-            &operators,
-            &goal_facts,
-            DistanceTableOptions {
-                prebuilt_match_tree: Some(&match_tree),
-                deadline,
-                ..DistanceTableOptions::default()
-            },
-        )?;
-
-        if let Some(state_id) = cap_state_id
-            && let Some(&h_cap) = table.distances.get(state_id)
-            && h_cap.is_finite()
-        {
-            let mut perim_table = table.clone();
-            for h in &mut perim_table.distances {
-                if !h.is_finite() || *h > h_cap {
-                    *h = f64::NEG_INFINITY;
-                }
-            }
-            let tcf = self.compute_saturated_abstract_operator_costs_from_operators_inner(
-                SolvedAbstraction {
-                    task,
-                    generator: &generator,
-                    operators: &operators,
-                    table: &perim_table,
-                    match_tree: &match_tree,
-                    comparison_var_ids: &comparison_var_ids_for_tree,
-                },
-                &operator_costs,
-                deadline,
-            )?;
-            let mut saturated_operators = operators;
-            apply_abstract_operator_costs(&mut saturated_operators, &tcf.operator_costs)?;
-            let global_table = self.build_distance_table_with_operators_for_goals_inner(
-                task,
-                &generator,
-                &saturated_operators,
-                &goal_facts,
-                DistanceTableOptions {
-                    prebuilt_match_tree: Some(&match_tree),
-                    deadline,
-                    ..DistanceTableOptions::default()
-                },
-            )?;
-            return Ok((global_table, tcf));
-        }
-
-        let tcf = self.compute_saturated_abstract_operator_costs_from_operators_inner(
-            SolvedAbstraction {
-                task,
-                generator: &generator,
-                operators: &operators,
-                table: &table,
-                match_tree: &match_tree,
-                comparison_var_ids: &comparison_var_ids_for_tree,
-            },
-            &operator_costs,
-            deadline,
-        )?;
-        // For Saturator::All, the saturated abstract-operator costs are tight
-        // wrt `table.distances`: by construction every transition (u,v) using
-        // operator op has saturated[op] >= h(u) - h(v), so any path from s to
-        // the goal has length >= h(s) under saturated costs (telescoping), and
-        // the original shortest path remains feasible. Therefore distances
-        // under saturated costs equal `table.distances`, and the historic
-        // second Dijkstra over saturated_operators was redundant.
-        Ok((table, tcf))
-    }
-
     pub(super) fn compute_saturated_transition_costs(
         &self,
         transition_system: &AbstractTransitionSystem,
@@ -570,128 +343,6 @@ impl DomainAbstractionFactory {
         }
         Ok(AbstractTransitionCostFunction {
             transition_costs: saturated,
-        })
-    }
-
-    pub(super) fn compute_saturated_abstract_operator_costs_from_operators_inner(
-        &self,
-        abstraction: SolvedAbstraction<'_>,
-        operator_costs: &[f64],
-        deadline: Option<Instant>,
-    ) -> Result<AbstractOperatorCostFunction> {
-        let SolvedAbstraction {
-            task,
-            generator,
-            operators,
-            table,
-            match_tree,
-            comparison_var_ids,
-        } = abstraction;
-        ensure!(
-            operators.len() == operator_costs.len(),
-            "abstract operator/cost vector size mismatch: {} vs {}",
-            operators.len(),
-            operator_costs.len()
-        );
-
-        let num_states = table.distances.len();
-        let comparison_branching = !comparison_var_ids.is_empty();
-        let mut saturated = vec![0.0_f64; operators.len()];
-        let mut applicable_operator_ids = Vec::new();
-
-        // Mirror `compute_distances_and_generating_ops`: under
-        // comparison-branching the regression Dijkstra clears each popped
-        // state's comparison-axiom digits before consulting the match tree,
-        // computes the natural predecessor from the cleared form, and then
-        // expands every wildcard-consistent predecessor.
-        // Comparison-axiom prop vars are not directly written by
-        // operators (their values are derived from the predecessor's
-        // numeric intervals), so the "hash_effect alone determines the
-        // source" rationale that was here previously was wrong — under
-        // comparison-branching it both pulls in transitions Dijkstra
-        // never took (those with mismatched comparison bits on the
-        // target) and skips the very transitions Dijkstra used (the
-        // wildcard-enumerated predecessors). The mismatch made
-        // `saturated[abstract_op_id]` reflect `src_h - target_h` for
-        // transitions outside the cost partition that produced the
-        // distance table, so `sum_k h_k > h*` on plant-watering
-        // AOCP-fillSCP (prob_4_2_2: 34 vs 33, prob_5_1_2: 30 vs 24,
-        // prob_4_2_3: 32 vs 29, etc.).
-        let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, comparison_var_ids)
-        } else {
-            Vec::new()
-        };
-        let mut comparison_enumeration_memo =
-            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
-                numeric_domain_sizes: generator.numeric_domain_sizes(),
-                hash_multipliers: generator.hash_multipliers(),
-                comparison_var_ids,
-            });
-
-        for target_hash in 0..num_states {
-            if target_hash % 64 == 0 {
-                ensure_online_scp_deadline(deadline)?;
-            }
-            let target_h = table.distances[target_hash];
-            if !target_h.is_finite() {
-                continue;
-            }
-
-            let base_target = if comparison_branching {
-                self.clear_comparison_vars_except(
-                    target_hash,
-                    generator.hash_multipliers(),
-                    comparison_var_ids,
-                    &[],
-                )?
-            } else {
-                target_hash
-            };
-
-            match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
-            for &abstract_op_id in &applicable_operator_ids {
-                let op = &operators[abstract_op_id];
-                let predecessor_i64 = base_target as i64 + op.hash_effect as i64;
-                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
-                    continue;
-                }
-                let base_predecessor = predecessor_i64 as usize;
-
-                let consider_source = |source_hash: usize, saturated: &mut [f64]| -> Result<()> {
-                    let source_h = table.distances[source_hash];
-                    let Some(needed) = saturation_need(
-                        source_h,
-                        target_h,
-                        operator_costs[abstract_op_id],
-                        "saturated abstract-operator cost",
-                    )?
-                    else {
-                        return Ok(());
-                    };
-                    saturated[abstract_op_id] = saturated[abstract_op_id].max(needed);
-                    Ok(())
-                };
-
-                if comparison_branching {
-                    let possible_predecessors = self
-                        .enumerate_states_with_evaluated_comparisons_cached(
-                            base_predecessor,
-                            task,
-                            &comparison_preconditions[abstract_op_id],
-                            &mut comparison_enumeration_memo,
-                        )?;
-                    for &source_hash in possible_predecessors.iter() {
-                        consider_source(source_hash, &mut saturated)?;
-                    }
-                } else {
-                    consider_source(base_predecessor, &mut saturated)?;
-                }
-            }
-        }
-
-        Ok(AbstractOperatorCostFunction {
-            operator_costs: saturated,
         })
     }
 

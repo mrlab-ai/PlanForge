@@ -50,7 +50,7 @@ The full per-module degrees are in the appendix.
 
 | Type | Public fields | Mutation/read findings |
 |---|---:|---|
-| `ScpOnlineConfig` | 25 of 25 | Post-option normalization is now in two production modules: deadline caps are assigned in `heuristic_factory.rs`, while collection normalization is implemented in `config.rs` and invoked from both the factory and `fill_scp.rs`. Tests still mutate fields directly. |
+| `ScpConfig` | 25 of 25 | Post-option normalization is now in two production modules: deadline caps are assigned in `heuristic_factory.rs`, while collection normalization is implemented in `config.rs` and invoked from both the factory and `fill_scp.rs`. Tests still mutate fields directly. |
 | `DomainAbstractionCollectionGeneratorMultipleCegarConfig` | 23 of 23 | Post-option changes occur in `heuristic_factory/abstraction_config.rs` and SCP's `config.rs` (time caps, footprint mode, and full-goal normalization). |
 | `DomainAbstractionFactory` | 4 of 7 | The four representation fields are public despite same-named read accessors. Across production plus tests there are 45 direct field reads versus 40 accessor calls; production alone has 29 direct versus 27 accessor calls. `cegar.rs` is the production mutator and takes all four as separate mutable references during a split. |
 
@@ -72,7 +72,7 @@ The focused tests are in `domain_abstraction_factory/tests.rs`, `domain_abstract
 
 ### Add a new saturator
 
-A saturator expressible as a cap sequence needs `saturated_cost_partitioning_online_heuristic/config.rs` (enum, spelling, and sequence), `saturated_cost_partitioning_online_heuristic/mod.rs` (construction behavior if the existing sequence protocol is insufficient), `domain_abstraction_factory/saturation.rs` (new saturation calculation), and `saturated_cost_partitioning_online_heuristic/tests.rs`: three production files and one test file. `fill_scp.rs` and the heuristic factory already pass the enum generically. This is adequately localized and uses static/concrete calls on the construction path.
+A saturator expressible as a cap sequence needs `saturated_cost_partitioning/config.rs` (enum, spelling, and sequence), `saturated_cost_partitioning/mod.rs` (construction behavior if the existing sequence protocol is insufficient), `domain_abstraction_factory/saturation.rs` (new saturation calculation), and `saturated_cost_partitioning/tests.rs`: three production files and one test file. `fill_scp.rs` and the heuristic factory already pass the enum generically. This is adequately localized and uses static/concrete calls on the construction path.
 
 ### Change the open-list discipline
 
@@ -141,7 +141,7 @@ heuristic boundary, but it no longer accepts the unused `g_value` and
 The two configuration types intentionally remain public-field option DTOs:
 making one field private would prevent downstream struct-update construction
 and force a wholesale builder API. Instead, the coupled mutations now have one
-named implementation each: `ScpOnlineConfig::cap_construction_time` updates all
+named implementation each: `ScpConfig::cap_construction_time` updates all
 three SCP phase limits, while the multiple-CEGAR config owns its two-level time
 cap and internal footprint policy. Generating accessors for every ordinary
 option was judged churn without a reduction in algorithmic coupling.
@@ -233,10 +233,10 @@ option was judged churn without a reduction in algorithmic coupling.
 | `evaluation::abstraction_collections::max_heuristic` | 1 | 3 |
 | `evaluation::abstraction_collections::portfolio` | 4 | 1 |
 | `evaluation::abstraction_collections::region` | 1 | 0 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic` | 3 | 12 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::config` | 0 | 4 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::diagnostics` | 0 | 1 |
-| `evaluation::abstraction_collections::saturated_cost_partitioning_online_heuristic::fill_scp` | 0 | 1 |
+| `evaluation::abstraction_collections::saturated_cost_partitioning` | 3 | 12 |
+| `evaluation::abstraction_collections::saturated_cost_partitioning::config` | 0 | 4 |
+| `evaluation::abstraction_collections::saturated_cost_partitioning::diagnostics` | 0 | 1 |
+| `evaluation::abstraction_collections::saturated_cost_partitioning::fill_scp` | 0 | 1 |
 | `evaluation::abstraction_task` | 4 | 0 |
 | `evaluation::cartesian_abstractions` | 10 | 10 |
 | `evaluation::cartesian_abstractions::finalize` | 0 | 1 |

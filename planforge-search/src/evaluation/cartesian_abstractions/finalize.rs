@@ -5,12 +5,12 @@ pub(super) fn finalize_abstraction(
     semantics: &CartesianSemantics<'_>,
     initial_state_hash: usize,
     combine_labels: bool,
-    compute_operator_regions: bool,
+    compute_source_sets: bool,
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
     Vec<OperatorIndex>,
-    Vec<AbstractOperatorRegions>,
+    Vec<AbstractOperatorSourceSets>,
 )> {
     let mut grouped: HashMap<(usize, usize), Vec<OperatorIndex>> = HashMap::new();
     let mut raw = Vec::new();
@@ -44,12 +44,12 @@ pub(super) fn finalize_abstraction(
     let mut transitions = Vec::with_capacity(raw.len());
     let mut forward = vec![Vec::new(); working.states().len()];
     let mut backward = vec![Vec::new(); working.states().len()];
-    let mut operator_regions = if compute_operator_regions {
+    let mut source_sets = if compute_source_sets {
         Vec::with_capacity(raw.len())
     } else {
         Vec::new()
     };
-    let shared_state_regions = working
+    let shared_cartesian_sets = working
         .states
         .iter()
         .cloned()
@@ -62,28 +62,28 @@ pub(super) fn finalize_abstraction(
                 relevant.insert(label);
             }
         }
-        if compute_operator_regions {
-            operator_regions.push(AbstractOperatorRegions {
+        if compute_source_sets {
+            source_sets.push(AbstractOperatorSourceSets {
                 labels: labels
                     .iter()
                     .copied()
                     .map(|concrete_op_id| {
-                        let operator_region = semantics.operator_region_source_for_transition(
-                            &shared_state_regions[source],
+                        let source_set = semantics.source_set_source_for_transition(
+                            &shared_cartesian_sets[source],
                             concrete_op_id,
-                            &shared_state_regions[target],
+                            &shared_cartesian_sets[target],
                         )?
                         .with_context(|| {
                             format!(
                                 "emitted Cartesian transition {source} --{concrete_op_id}--> {target} has an empty source operator region"
                             )
                         })?;
-                        let source_region = if operator_region == *shared_state_regions[source] {
-                            Arc::clone(&shared_state_regions[source])
+                        let source_region = if source_set == *shared_cartesian_sets[source] {
+                            Arc::clone(&shared_cartesian_sets[source])
                         } else {
-                            Arc::new(operator_region)
+                            Arc::new(source_set)
                         };
-                        Ok(OperatorRegion {
+                        Ok(LabelSourceSet {
                             concrete_op_id,
                             source: source_region,
                         })
@@ -119,7 +119,7 @@ pub(super) fn finalize_abstraction(
         initial_state_hash,
         hash_multipliers: Vec::new(),
         numeric_domain_sizes: Vec::new(),
-        state_regions: shared_state_regions,
+        cartesian_sets: shared_cartesian_sets,
     };
     let transition_costs = transition_system
         .transitions
@@ -153,7 +153,7 @@ pub(super) fn finalize_abstraction(
         transition_system,
         distance_table,
         relevant_operator_ids,
-        operator_regions,
+        source_sets,
     ))
 }
 
@@ -166,7 +166,7 @@ pub(super) fn finalize_standalone_abstraction(
     AbstractTransitionSystem,
     AbstractDistanceTable,
     Vec<OperatorIndex>,
-    Vec<AbstractOperatorRegions>,
+    Vec<AbstractOperatorSourceSets>,
 )> {
     ensure!(
         shortest_paths.distances().len() == working.states().len(),
@@ -200,7 +200,7 @@ pub(super) fn finalize_standalone_abstraction(
         initial_state_hash,
         hash_multipliers: Vec::new(),
         numeric_domain_sizes: Vec::new(),
-        state_regions: Vec::new(),
+        cartesian_sets: Vec::new(),
     };
     Ok((
         transition_system,
