@@ -22,8 +22,6 @@ pub(super) struct PartitionedCollection<'a, 'task> {
 pub(super) enum SaturatedCosts {
     /// One cost per operator (label SCP).
     Label(Vec<f64>),
-    /// One cost per abstract operator, valid on its source sets.
-    AbstractOperator(AbstractOperatorCostFunction),
     /// One cost per source set of an abstract transition (interval SCP).
     Interval(SourceSetCostAllocation),
 }
@@ -162,8 +160,6 @@ impl ComponentSaturation<'_, '_> {
                 Ok((distances, SaturatedCosts::Label(saturated)))
             }
             (AbstractionComponent::Cartesian(heuristic), SaturationCostSpace::Interval) => {
-                // Phase 5 should give Cartesian components native regional allocations;
-                // the Regional arm currently degrades to abstract-operator granularity.
                 let abstraction = heuristic.abstraction();
                 let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
                     &abstraction.transition_system,
@@ -181,7 +177,7 @@ impl ComponentSaturation<'_, '_> {
                         error,
                     )
                 })?;
-                Ok((distances, SaturatedCosts::AbstractOperator(saturated)))
+                Ok((distances, SaturatedCosts::Interval(saturated)))
             }
             (AbstractionComponent::PatternDatabase(pdb), _) => {
                 // Phase 5 will add regional PDB support; until then every PDB
@@ -345,15 +341,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             combine_labels: self.config.combine_labels,
             cost_space,
         };
-        let source_sets = match component {
-            AbstractionComponent::Domain(heuristic) => {
-                heuristic.abstraction().abstract_source_sets.as_slice()
-            }
-            AbstractionComponent::Cartesian(heuristic) => {
-                heuristic.abstraction().abstract_source_sets.as_slice()
-            }
-            AbstractionComponent::PatternDatabase(_) => &[],
-        };
         self.add_saturation_steps(
             cp,
             remaining_costs,
@@ -378,16 +365,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                         })?;
                     Ok(true)
                 }
-                SaturatedCosts::AbstractOperator(costs) => Self::reduce_abstract_operator_costs(
-                    residual,
-                    component_id,
-                    source_sets,
-                    costs,
-                    deadline,
-                    &format!(
-                        "failed to reduce abstract-operator residual costs for component {component_id}"
-                    ),
-                ),
                 SaturatedCosts::Interval(allocation) => Self::reduce_source_set_allocation(
                     residual,
                     allocation,
@@ -403,13 +380,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                     component_id,
                     distances,
                     costs,
-                    abstract_state_ids,
-                ),
-                SaturatedCosts::AbstractOperator(costs) => log_transition_table_summary(
-                    step,
-                    component_id,
-                    distances,
-                    &costs.operator_costs,
                     abstract_state_ids,
                 ),
                 SaturatedCosts::Interval(allocation) => log_transition_table_summary(
@@ -436,28 +406,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             EvaluationError::ConstructionDeadlineExceeded
         } else {
             EvaluationError::ComputationFailed(format!("{context}: {error:#}"))
-        }
-    }
-
-    pub(super) fn reduce_abstract_operator_costs(
-        remaining_costs: &mut RemainingCosts,
-        abstraction_id: usize,
-        source_sets: &[AbstractOperatorSourceSets],
-        tcf: &AbstractOperatorCostFunction,
-        deadline: Option<Instant>,
-        context: &str,
-    ) -> Result<bool, EvaluationError> {
-        match remaining_costs.reduce_by_abstract_source_sets_with_deadline(
-            abstraction_id,
-            source_sets,
-            tcf,
-            deadline,
-        ) {
-            Ok(()) => Ok(true),
-            Err(error) if Self::is_deadline_error(&error) => Ok(false),
-            Err(error) => Err(EvaluationError::ComputationFailed(format!(
-                "{context}: {error:#}"
-            ))),
         }
     }
 
@@ -528,7 +476,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 if let AbstractionComponent::Domain(heuristic) = component {
                     let abstraction = heuristic.abstraction();
                     debug!(
-                        "scp: abstract-operator CP step abstraction {component_id}, abstract_states={}, abstraction_h={}, metadata={}",
+                        "scp: interval CP step abstraction {component_id}, abstract_states={}, abstraction_h={}, metadata={}",
                         abstraction_state_count(abstraction),
                         abstraction_h[component_id],
                         abstraction_metadata_summary(abstraction),
@@ -557,20 +505,20 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                         deadline,
                         cost_space: SaturationCostSpace::Interval,
                         saturator,
-                        step_prefix: "abstract-operator",
+                        step_prefix: "interval",
                     },
                 );
                 match result {
                     Ok(true) => log_transition_residual_summary(&remaining_costs),
                     Ok(false) => {
                         info!(
-                            "scp: abstract-operator component {component_id} stopped while reducing residual costs (deadline)"
+                            "scp: interval component {component_id} stopped while reducing residual costs (deadline)"
                         );
                         break;
                     }
                     Err(error) if Self::is_deadline_exceeded(&error) => {
                         info!(
-                            "scp: abstract-operator component {component_id} stopped while computing table (deadline)"
+                            "scp: interval component {component_id} stopped while computing table (deadline)"
                         );
                         break;
                     }

@@ -31,7 +31,7 @@ pub(super) fn log_transition_table_summary(
     let (positive_count, total_positive) = positive_cost_stats(operator_costs);
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
     debug!(
-        "scp: abstract-operator {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
+        "scp: interval {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
     );
 }
 
@@ -44,7 +44,7 @@ pub(super) fn log_abstract_source_set_summary(
     }
     let stats = abstract_source_set_stats(source_sets);
     debug!(
-        "scp: abstract-operator regions abstraction {abstraction_id}: labels={}, bounded_labels={}, bounded_numeric_dimensions={}",
+        "scp: source sets of abstraction {abstraction_id}: labels={}, bounded_labels={}, bounded_numeric_dimensions={}",
         stats.total_labels, stats.bounded_labels, stats.bounded_numeric_dimensions,
     );
 }
@@ -227,7 +227,7 @@ pub(super) fn log_positive_label_source_set_diagnostics(
         let op_name = op.map(|op| op.name()).unwrap_or("<missing operator>");
         let numeric_effects = op.map(|op| op.assignment_effects().len()).unwrap_or(0);
         info!(
-            "scp: abstract-operator label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, source_sets={source_set_count}, bounded_source_sets={bounded_source_sets}, bounded_numeric_dimensions={bounded_numeric_dimensions}, op={op_name}"
+            "scp: interval label diagnostic detail abstraction {abstraction_id}: rank={rank}, label={concrete_op_id}, saturated={saturated_cost:.6}, numeric_effects={numeric_effects}, source_sets={source_set_count}, bounded_source_sets={bounded_source_sets}, bounded_numeric_dimensions={bounded_numeric_dimensions}, op={op_name}"
         );
     }
 }
@@ -248,7 +248,7 @@ pub(super) fn log_transition_residual_summary(remaining_costs: &RemainingCosts) 
         return;
     }
     debug!(
-        "scp: abstract-operator residuals now store {} region reductions",
+        "scp: remaining costs now store {} source-set reductions",
         remaining_costs.num_reductions()
     );
 }
@@ -286,7 +286,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let (positive_labels, total_label_saturated) = positive_cost_stats(&label_saturated);
         let stats = abstract_source_set_stats(&abstraction.abstract_source_sets);
         info!(
-            "scp: abstract-operator label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, source_set_labels={}, bounded_source_set_labels={}",
+            "scp: interval label diagnostic abstraction {abstraction_id}: label_equivalent_h={label_h}, positive_saturated_labels={positive_labels}, total_label_saturated={total_label_saturated:.6}, source_set_labels={}, bounded_source_set_labels={}",
             stats.total_labels(),
             stats.bounded_labels(),
         );

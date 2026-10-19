@@ -524,36 +524,24 @@ impl RemainingCosts {
         (residual.base_cost - regional).max(0.0)
     }
 
-    pub fn reduce_by_abstract_source_sets(
-        &mut self,
+    /// The allocation that subtracts `operator_costs[o]` on every source set
+    /// of abstract operator `o`, skipping concrete operators without cost.
+    pub fn source_set_allocation(
+        &self,
         producing_abstraction_id: usize,
         source_sets: &[AbstractOperatorSourceSets],
-        tcf: &AbstractOperatorCostFunction,
-    ) -> Result<()> {
-        self.reduce_by_abstract_source_sets_with_deadline(
-            producing_abstraction_id,
-            source_sets,
-            tcf,
-            None,
-        )
-    }
-
-    pub fn reduce_by_abstract_source_sets_with_deadline(
-        &mut self,
-        producing_abstraction_id: usize,
-        source_sets: &[AbstractOperatorSourceSets],
-        tcf: &AbstractOperatorCostFunction,
+        operator_costs: &[f64],
         deadline: Option<Instant>,
-    ) -> Result<()> {
+    ) -> Result<SourceSetCostAllocation> {
         ensure!(
-            source_sets.len() >= tcf.operator_costs.len(),
+            source_sets.len() >= operator_costs.len(),
             "abstract-operator region/cost function size mismatch: source_sets={} costs={}",
             source_sets.len(),
-            tcf.operator_costs.len()
+            operator_costs.len()
         );
 
         let mut entries = Vec::new();
-        for (abstract_op_id, &saturated) in tcf.operator_costs.iter().enumerate() {
+        for (abstract_op_id, &saturated) in operator_costs.iter().enumerate() {
             if abstract_op_id.is_multiple_of(64) {
                 ensure_scp_table_deadline(deadline)?;
             }
@@ -607,10 +595,25 @@ impl RemainingCosts {
             }
         }
 
-        self.reduce_by_source_set_allocation_with_deadline(
-            &SourceSetCostAllocation::new(entries),
-            deadline,
-        )
+        Ok(SourceSetCostAllocation::new(entries))
+    }
+
+    /// Subtracts `operator_costs[o]` on every source set of abstract
+    /// operator `o`.
+    #[cfg(test)]
+    pub fn reduce_by_abstract_source_sets(
+        &mut self,
+        producing_abstraction_id: usize,
+        source_sets: &[AbstractOperatorSourceSets],
+        operator_costs: &[f64],
+    ) -> Result<()> {
+        let allocation = self.source_set_allocation(
+            producing_abstraction_id,
+            source_sets,
+            operator_costs,
+            None,
+        )?;
+        self.reduce_by_source_set_allocation_with_deadline(&allocation, None)
     }
 
     pub fn reduce_by_source_set_allocation_with_deadline(
