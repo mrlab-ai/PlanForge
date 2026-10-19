@@ -45,21 +45,15 @@ pub(crate) const COMPONENT_SOURCE_NAMES: &[&str] = &[
 ];
 
 const SCP_COMBINATOR_OPTIONS: &[&str] = &[
-    "online",
     "max_time",
     "table_construction_max_time",
-    "max_size",
     "diversify",
     "samples",
     "max_orders",
-    "interval",
     "combine_labels",
-    "scoring_function",
     "orders",
     "initial_order_generation_max_time",
-    "order_optimization_max_time",
     "saturator",
-    "residual_sweeps",
     "random_seed",
     "partitioning",
 ];

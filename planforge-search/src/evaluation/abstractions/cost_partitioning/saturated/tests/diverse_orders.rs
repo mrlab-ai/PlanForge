@@ -55,7 +55,6 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         AbstractionComponent::pattern_database(pdb),
     ];
     let mut config = scp_config(Saturator::All, true);
-    config.online = false;
     config.diversify = true;
     config.samples = 16;
     config.max_orders = 8;
@@ -73,7 +72,7 @@ fn diverse_orders_support_mixed_abstraction_representations() {
 
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
     let state = heuristic.state.borrow();
-    assert!(state.improvement_ended);
+    assert!(state.built);
     assert!(state.sample_abstract_state_ids.is_empty());
     assert!(!state.cp_heuristics.is_empty());
     assert!(state.cp_heuristics.len() <= 8);
@@ -84,32 +83,6 @@ fn diverse_orders_support_mixed_abstraction_representations() {
             .as_cartesian()
             .is_none_or(|abstraction| abstraction.transition_system.transitions.is_empty())
     }));
-}
-
-#[test]
-fn diverse_orders_reject_online_construction() {
-    let task = std::sync::Arc::new(independent_goals_task());
-    let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
-    let mut config = scp_config(Saturator::All, true);
-    config.online = true;
-    config.diversify = true;
-
-    let result = SaturatedCostPartitioningHeuristic::new(
-        None,
-        vec![component],
-        config,
-        &*task,
-        ScpBuildOptions {
-            sampling_task: Some(task.clone()),
-            ..Default::default()
-        },
-    );
-    let error = match result {
-        Ok(_) => panic!("online diversified construction must be rejected"),
-        Err(error) => error,
-    };
-
-    assert!(error.to_string().contains("requires online=false"));
 }
 
 #[test]
@@ -143,7 +116,6 @@ fn diverse_orders_reject_nan_initial_order_budget() {
     let task = std::sync::Arc::new(independent_goals_task());
     let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
     let mut config = scp_config(Saturator::All, true);
-    config.online = false;
     config.diversify = true;
     config.initial_order_generation_max_time = f64::NAN;
 
@@ -181,35 +153,32 @@ fn diverse_orders_keep_partitionings_that_improve_different_samples() {
     };
     let samples = vec![vec![Some(0)], vec![Some(1)]];
     let mut best = vec![f64::NEG_INFINITY; samples.len()];
-    let mut portfolio = Vec::new();
+    let mut selected = Vec::new();
     let mut size_kb = 0;
 
     assert!(retain_if_improving_some_sample(
         partition(vec![5.0, 1.0]),
         &samples,
         &mut best,
-        &mut portfolio,
+        &mut selected,
         &mut size_kb,
-        usize::MAX,
     ));
     assert!(retain_if_improving_some_sample(
         partition(vec![4.0, 6.0]),
         &samples,
         &mut best,
-        &mut portfolio,
+        &mut selected,
         &mut size_kb,
-        usize::MAX,
     ));
     assert!(!retain_if_improving_some_sample(
         partition(vec![5.0, 5.0]),
         &samples,
         &mut best,
-        &mut portfolio,
+        &mut selected,
         &mut size_kb,
-        usize::MAX,
     ));
 
-    assert_eq!(portfolio.len(), 2);
+    assert_eq!(selected.len(), 2);
     assert_eq!(best, vec![5.0, 6.0]);
 }
 
@@ -227,7 +196,8 @@ fn abstraction_maximum_keeps_every_abstraction_without_orders() {
         vec![5.0, 6.0]
     );
 
-    SaturatedCostPartitioningHeuristic::retain_abstraction_lookup_tables(&mut state, 3);
+    SaturatedCostPartitioningHeuristic::retain_abstraction_lookup_tables(&mut state);
+    state.lookup_mask = SaturatedCostPartitioningHeuristic::compute_lookup_mask(&state, 3);
 
     assert!(state.goal_distances_by_abstraction.is_empty());
     assert_eq!(state.abstraction_lookup_tables.len(), 2);

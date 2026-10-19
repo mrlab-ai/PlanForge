@@ -39,8 +39,7 @@ mod orders;
 mod sampling;
 mod saturation;
 mod scoring;
-pub(crate) use config::LegacyScpConfig;
-pub use config::{CostPartitioningMethod, OrderGenerator, Saturator, ScoringFunction, ScpConfig};
+pub use config::{CostPartitioningMethod, OrderGenerator, Saturator, ScpConfig};
 use deadline::*;
 use diagnostics::*;
 use goal_cover_orders::*;
@@ -58,16 +57,14 @@ use scoring::*;
 
 #[derive(Debug, Clone)]
 struct ScpState {
-    start_time: Instant,
-    evaluated_states: usize,
-    improve_heuristic: bool,
-    size_kb: usize,
+    /// Whether the cost partitionings have been built, which happens at the
+    /// first evaluated state.
+    built: bool,
     cp_heuristics: Vec<CostPartitioningHeuristic>,
     goal_distances_by_abstraction: Vec<Vec<f64>>,
     abstraction_lookup_tables: Vec<LookupTable>,
     stolen_costs_by_abstraction: Vec<f64>,
     rng: SmallRng,
-    improvement_ended: bool,
     lookup_mask: Vec<bool>,
     sample_abstract_state_ids: Vec<Vec<Option<usize>>>,
 }
@@ -76,16 +73,12 @@ impl ScpState {
     fn new(seed: Option<u64>) -> Self {
         let seed = seed.unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED);
         Self {
-            start_time: Instant::now(),
-            evaluated_states: 0,
-            improve_heuristic: true,
-            size_kb: 0,
+            built: false,
             cp_heuristics: Vec::new(),
             goal_distances_by_abstraction: Vec::new(),
             abstraction_lookup_tables: Vec::new(),
             stolen_costs_by_abstraction: Vec::new(),
             rng: SmallRng::seed_from_u64(seed),
-            improvement_ended: false,
             lookup_mask: Vec::new(),
             sample_abstract_state_ids: Vec::new(),
         }
@@ -263,50 +256,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         })
     }
 
-    fn update_improvement_status(&self, state: &mut ScpState) {
-        if !self.config.online {
-            return;
-        }
-        let time_limit_reached = self.config.max_time.is_finite()
-            && state.start_time.elapsed() >= Duration::from_secs_f64(self.config.max_time);
-
-        if state.improve_heuristic && (time_limit_reached || state.size_kb >= self.config.max_size)
-        {
-            state.improve_heuristic = false;
-        }
-    }
-
-    fn release_abstractions_if_finished(&self, state: &mut ScpState) {
-        if !state.improve_heuristic && !state.improvement_ended {
-            for component in self.components.borrow_mut().iter_mut() {
-                component.discard_transition_data();
-            }
-            state.improvement_ended = true;
-        }
-    }
-
-    fn should_build_cp(&self, state: &ScpState) -> bool {
-        state.improve_heuristic
-            && (state.evaluated_states == 0
-                || (self.config.online
-                    && state.evaluated_states.is_multiple_of(self.config.interval)))
-    }
-
-    fn maybe_build_cp(
+    /// The cost partitionings of the collection, built at the first
+    /// evaluated state: the greedy order's, or the diverse orders' over the
+    /// random-walk samples.
+    fn build_cost_partitionings(
         &self,
         task: &dyn AbstractNumericTask,
         state: &mut ScpState,
         abstract_state_ids: &[Option<usize>],
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
-        if !self.should_build_cp(state) {
-            return Ok(Vec::new());
-        }
-
         let components = self.components.borrow();
-        if components.is_empty() {
-            return Ok(Vec::new());
-        }
-        let original_costs = self.original_operator_costs.as_slice();
         let deadline = self
             .config
             .table_construction_max_time
@@ -320,153 +279,62 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             components: &components,
             abstract_state_ids,
             abstraction_h: &abstraction_h,
-            original_costs,
+            original_costs: &self.original_operator_costs,
         };
-        let mut order =
-            self.compute_order_for_state(task, state, abstract_state_ids, &components, deadline)?;
+        let mut order = self.compute_order_for_state(state, abstract_state_ids, &components);
         let mode = if self.config.partitioning.uses_regions() {
-            "regional"
+            "interval"
         } else {
             "label"
         };
         info!(
-            "scp: building {mode} CP at evaluation {}, stored_cps={}, current_h={}, size={} KiB, order_len={}, saturator={}, elapsed={:.3}s",
-            state.evaluated_states,
-            state.cp_heuristics.len(),
+            "scp: building {mode} cost partitionings, h={}, order_len={}, saturator={}",
             Self::compute_max_h(state, abstract_state_ids),
-            state.size_kb,
             order.len(),
             self.config.saturator,
-            state.start_time.elapsed().as_secs_f64(),
         );
         if self.debug_diagnostics {
-            log_abstraction_candidate_report(
-                mode,
-                state,
-                &components,
-                &order,
-                abstract_state_ids,
-                self.config.scoring_function,
-            );
+            log_abstraction_candidate_report(mode, state, &components, &order, abstract_state_ids);
         }
 
-        let initial_order_generation_max_time = if self.config.diversify {
-            self.config.initial_order_generation_max_time
-        } else {
-            self.config.order_optimization_max_time
-        };
+        if !self.config.diversify {
+            let cp = self.build_cp(collection, &order, deadline)?;
+            if cp.is_empty() {
+                info!("scp: the greedy order's {mode} cost partitioning has no lookup tables");
+                return Ok(Vec::new());
+            }
+            return Ok(vec![cp]);
+        }
         let mut candidates = self.build_best_cp_from_candidate_orders(
             collection,
             &mut order,
             deadline,
-            initial_order_generation_max_time,
+            self.config.initial_order_generation_max_time,
         )?;
-
-        if self.config.order_optimization_max_time > 0.0 {
-            let local_deadline = optimization_deadline(self.config.order_optimization_max_time);
-            self.optimize_order_with_hill_climbing(
-                collection,
-                &mut order,
-                &mut candidates.partitions[candidates.best_index],
-                earliest_deadline(deadline, local_deadline),
-            )?;
-        }
-
-        if self.config.online {
-            let best = candidates.partitions.swap_remove(candidates.best_index);
-            if best.is_empty() {
-                info!("scp: {mode} CP attempt produced no lookup tables");
-                return Ok(Vec::new());
-            }
-            return Ok(vec![best]);
-        }
-        if self.config.diversify {
-            let best = candidates.partitions.swap_remove(candidates.best_index);
-            candidates.partitions.retain(|cp| !cp.is_empty());
-            if best.is_empty() && candidates.partitions.is_empty() {
-                info!("scp: {mode} CP attempt produced no positive lookup tables");
-                return Ok(Vec::new());
-            }
-            let mut initial_candidates = Vec::with_capacity(candidates.partitions.len() + 1);
-            if !best.is_empty() {
-                initial_candidates.push(best);
-            }
-            initial_candidates.extend(candidates.partitions);
-            return self.select_diverse_orders(collection, state, initial_candidates, deadline);
-        }
+        let best = candidates.partitions.swap_remove(candidates.best_index);
         candidates.partitions.retain(|cp| !cp.is_empty());
-        if candidates.partitions.is_empty() {
-            info!("scp: {mode} CP attempt produced no lookup tables");
+        if best.is_empty() && candidates.partitions.is_empty() {
+            info!("scp: no candidate order gives a {mode} cost partitioning with lookup tables");
             return Ok(Vec::new());
         }
-        info!(
-            "scp: retaining {} offline SCP order partitions",
-            candidates.partitions.len()
-        );
-        Ok(candidates.partitions)
+        let mut initial_candidates = Vec::with_capacity(candidates.partitions.len() + 1);
+        if !best.is_empty() {
+            initial_candidates.push(best);
+        }
+        initial_candidates.extend(candidates.partitions);
+        self.select_diverse_orders(collection, state, initial_candidates, deadline)
     }
 
-    fn retain_cp(
-        state: &mut ScpState,
-        cp: CostPartitioningHeuristic,
-        abstract_state_ids: &[Option<usize>],
-        max_h: &mut f64,
-        retain_alternative: bool,
-        max_size_kb: usize,
-    ) {
+    /// Stores `cp` unless an identical cost partitioning is stored already.
+    fn retain_cp(state: &mut ScpState, cp: CostPartitioningHeuristic) {
         if state.cp_heuristics.contains(&cp) {
             info!(
-                "scp: discarded duplicate CP with {} lookup tables",
+                "scp: discarded duplicate cost partitioning with {} lookup tables",
                 cp.lookup_tables.len()
             );
             return;
         }
-        let new_h = cp.compute_heuristic(abstract_state_ids);
-        let improves_current_state = new_h > *max_h;
-        let size_kb = cp.estimate_size_in_kb();
-        let fits_size_limit =
-            state.cp_heuristics.is_empty() || state.size_kb.saturating_add(size_kb) <= max_size_kb;
-        if (improves_current_state || retain_alternative) && fits_size_limit {
-            let component_values = cp
-                .lookup_tables
-                .iter()
-                .map(|table| {
-                    let value = abstract_state_ids
-                        .get(table.abstraction_id)
-                        .copied()
-                        .flatten()
-                        .and_then(|state_id| table.distances.get(state_id))
-                        .copied()
-                        .unwrap_or(table.unknown_value);
-                    (table.abstraction_id, value)
-                })
-                .collect::<Vec<_>>();
-            info!(
-                "scp: retained CP, current-state h {} -> {}, lookup_tables={}, components={:?}, size={} KiB, alternative={}",
-                *max_h,
-                new_h,
-                cp.lookup_tables.len(),
-                component_values,
-                size_kb,
-                !improves_current_state,
-            );
-            state.size_kb = state.size_kb.saturating_add(size_kb);
-            state.cp_heuristics.push(cp);
-            state.lookup_mask = Self::compute_lookup_mask(state, abstract_state_ids.len());
-            *max_h = (*max_h).max(new_h);
-        } else if !fits_size_limit {
-            info!(
-                "scp: discarded CP because storing {} KiB would exceed max_size={} KiB (stored={} KiB)",
-                size_kb, max_size_kb, state.size_kb
-            );
-        } else {
-            info!(
-                "scp: rejected CP, candidate_h={} did not improve current_h={}, lookup_tables={}",
-                new_h,
-                *max_h,
-                cp.lookup_tables.len(),
-            );
-        }
+        state.cp_heuristics.push(cp);
     }
 }
 
@@ -475,70 +343,42 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
         &self,
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
-        let task = eval_state.task();
-        let build_cp = {
-            let state = self.state.borrow();
-            self.should_build_cp(&state)
-        };
-
+        let built = self.state.borrow().built;
         let mut component_ids = self.component_ids_scratch.borrow_mut();
-        if build_cp {
-            self.compute_abstract_state_ids_into(eval_state, None, &mut component_ids)?;
-        } else {
+        {
             let state = self.state.borrow();
-            self.compute_abstract_state_ids_into(
-                eval_state,
-                Some(&state.lookup_mask),
-                &mut component_ids,
-            )?;
+            let lookup_mask = built.then_some(state.lookup_mask.as_slice());
+            self.compute_abstract_state_ids_into(eval_state, lookup_mask, &mut component_ids)?;
         }
         let abstract_state_ids = component_ids.as_slice();
-
         let mut state = self.state.borrow_mut();
-        let mut max_h = Self::compute_max_h(&state, abstract_state_ids);
+        if built {
+            return Ok(Self::compute_max_h(&state, abstract_state_ids));
+        }
+        let max_h = Self::compute_max_h(&state, abstract_state_ids);
         if max_h.is_infinite() {
+            // The first state is an abstract dead end; there is nothing to
+            // partition for.
             return Ok(max_h);
         }
 
-        if build_cp {
-            self.update_improvement_status(&mut state);
-            self.release_abstractions_if_finished(&mut state);
-        } else if !state.improve_heuristic && !state.improvement_ended {
-            self.release_abstractions_if_finished(&mut state);
+        let cost_partitionings =
+            self.build_cost_partitionings(eval_state.task(), &mut state, abstract_state_ids)?;
+        Self::retain_abstraction_lookup_tables(&mut state);
+        for cp in cost_partitionings {
+            Self::retain_cp(&mut state, cp);
         }
-
-        let candidate_partitions = self.maybe_build_cp(task, &mut state, abstract_state_ids)?;
-        if build_cp && !self.config.online {
-            Self::retain_abstraction_lookup_tables(&mut state, abstract_state_ids.len());
-            max_h = max_h.max(Self::compute_max_h(&state, abstract_state_ids));
+        state.lookup_mask = Self::compute_lookup_mask(&state, abstract_state_ids.len());
+        state.stolen_costs_by_abstraction = Vec::new();
+        for component in self.components.borrow_mut().iter_mut() {
+            component.discard_transition_data();
         }
-        for cp in candidate_partitions {
-            Self::retain_cp(
-                &mut state,
-                cp,
-                abstract_state_ids,
-                &mut max_h,
-                !self.config.online,
-                self.config.max_size,
-            );
-        }
-
-        if build_cp && (!self.config.online || self.config.interval == usize::MAX) {
-            state.improve_heuristic = false;
-        }
-        if build_cp && !self.config.online {
-            assert!(
-                state.goal_distances_by_abstraction.is_empty(),
-                "offline standalone tables must move into the retained envelope"
-            );
-            state.stolen_costs_by_abstraction.clear();
-            state.stolen_costs_by_abstraction.shrink_to_fit();
-        }
-        self.update_improvement_status(&mut state);
-        self.release_abstractions_if_finished(&mut state);
-
-        state.evaluated_states = state.evaluated_states.saturating_add(1);
-        Ok(max_h)
+        state.built = true;
+        info!(
+            "scp: retained {} cost partitionings",
+            state.cp_heuristics.len()
+        );
+        Ok(Self::compute_max_h(&state, abstract_state_ids))
     }
 
     fn heuristic_name(&self) -> &str {

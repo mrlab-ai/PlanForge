@@ -103,8 +103,6 @@ pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpCo
     ScpConfig {
         max_time: 10.0,
         table_construction_max_time: 10.0,
-        interval: usize::MAX,
-        order_optimization_max_time: 0.0,
         saturator,
         random_seed: Some(1),
         partitioning: if abstract_operator {
@@ -168,7 +166,6 @@ pub(super) fn goal_cover_scp<'task>(
         .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
         .collect();
     let mut config = scp_config(Saturator::All, true);
-    config.online = false;
     config.diversify = true;
     config.samples = 16;
     config.max_orders = max_orders(expected_goals.len());

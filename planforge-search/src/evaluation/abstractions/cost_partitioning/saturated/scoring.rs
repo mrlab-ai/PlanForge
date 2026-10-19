@@ -1,11 +1,9 @@
 use super::*;
 
-pub(super) fn compute_score(h: f64, stolen_costs: f64, scoring_function: ScoringFunction) -> f64 {
-    match scoring_function {
-        ScoringFunction::MaxHeuristic => h,
-        ScoringFunction::MinStolenCosts => -stolen_costs,
-        ScoringFunction::MaxHeuristicPerStolenCosts => h / stolen_costs.max(1.0),
-    }
+/// The greedy-order score of an abstraction (Seipp 2017): its heuristic
+/// value per cost it steals from the others.
+pub(super) fn compute_score(h: f64, stolen_costs: f64) -> f64 {
+    h / stolen_costs.max(1.0)
 }
 
 /// How much of an operator's cost an abstraction that wants `wanted` takes

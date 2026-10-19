@@ -77,7 +77,7 @@ independent. For example:
       domain.pddl problem.pddl
 
     planforge --restrict-task --search \
-      'astar(scp([domain(max_abstraction_size=1000,max_collection_size=100000)],online=false,partitioning=region,construction_max_time=900))' \
+      'astar(scp([domain(max_abstraction_size=1000,max_collection_size=100000)],partitioning=region,construction_max_time=900))' \
       domain.pddl problem.pddl
 
     planforge --restrict-task --search \

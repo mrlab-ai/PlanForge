@@ -8,13 +8,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         initial_candidates: Vec<CostPartitioningHeuristic>,
         table_deadline: Option<Instant>,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
-        let PartitionedCollection {
-            task,
-            components,
-            abstract_state_ids: initial_abstract_state_ids,
-            ..
-        } = collection;
-        assert!(!self.config.online);
+        let initial_abstract_state_ids = collection.abstract_state_ids;
         assert!(self.config.diversify);
         assert!(!initial_candidates.is_empty());
         assert!(!initial_candidates[0].is_empty());
@@ -39,7 +33,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .iter()
             .map(|ids| max_abstraction_heuristic(state, ids))
             .collect::<Vec<_>>();
-        let mut portfolio = Vec::new();
+        let mut selected = Vec::new();
         // The standalone envelope and the mandatory orders below are part of
         // the heuristic, not optional extras: max_orders and max_size only
         // bound the diversified orders added after them.
@@ -80,17 +74,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 candidate,
                 &state.sample_abstract_state_ids,
                 &mut sample_best,
-                &mut portfolio,
+                &mut selected,
                 &mut selected_size_kb,
             );
         }
         info!(
-            "scp: reserved {abstraction_tables_size_kb} KiB for the standalone envelope and retained {goal_cover_order_count} specialists across {represented_goal_count} goals plus the global best"
+            "scp: reserved {abstraction_tables_size_kb} KiB for the abstraction heuristics and retained the best order plus {goal_cover_order_count} goal-cover orders of {represented_goal_count} goals"
         );
 
         for candidate in initial_candidates.into_iter().flatten() {
-            if portfolio.len() >= self.config.max_orders
-                || selected_size_kb >= self.config.max_size
+            if selected.len() >= self.config.max_orders
                 || deadline.is_some_and(|end| Instant::now() >= end)
             {
                 break;
@@ -99,19 +92,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 candidate,
                 &state.sample_abstract_state_ids,
                 &mut sample_best,
-                &mut portfolio,
+                &mut selected,
                 &mut selected_size_kb,
-                self.config.max_size,
             );
         }
-        assert!(
-            !portfolio.is_empty(),
-            "the global best SCP must be retained"
-        );
+        assert!(!selected.is_empty(), "the global best SCP must be retained");
 
         for sample_index in 1..state.sample_abstract_state_ids.len() {
-            if portfolio.len() >= self.config.max_orders
-                || selected_size_kb >= self.config.max_size
+            if selected.len() >= self.config.max_orders
                 || deadline.is_some_and(|end| Instant::now() >= end)
             {
                 break;
@@ -119,62 +107,47 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             let sample_ids = state.sample_abstract_state_ids[sample_index].clone();
             let abstraction_h = abstraction_heuristic_values(state, &sample_ids);
             // The same collection, evaluated at this sample rather than at the
-            // state the portfolio was seeded from.
+            // state the selected was seeded from.
             let sample_collection = PartitionedCollection {
                 abstract_state_ids: &sample_ids,
                 abstraction_h: &abstraction_h,
                 ..collection
             };
-            let orders =
-                self.diverse_orders_for_sample(task, state, &sample_ids, components, deadline)?;
-            for mut order in orders {
-                if portfolio.len() >= self.config.max_orders
-                    || selected_size_kb >= self.config.max_size
+            for order in self.diverse_orders_for_sample(state, &sample_ids) {
+                if selected.len() >= self.config.max_orders
                     || deadline.is_some_and(|end| Instant::now() >= end)
                 {
                     break;
                 }
                 let candidate = self.build_cp(sample_collection, &order, deadline);
-                let mut candidate = match candidate {
+                let candidate = match candidate {
                     Ok(candidate) => candidate,
                     Err(error) if Self::is_deadline_exceeded(&error) => break,
                     Err(error) => return Err(error),
                 };
                 evaluated_orders += 1;
 
-                if self.config.order_optimization_max_time > 0.0 {
-                    let local_deadline =
-                        optimization_deadline(self.config.order_optimization_max_time);
-                    self.optimize_order_with_hill_climbing(
-                        sample_collection,
-                        &mut order,
-                        &mut candidate,
-                        earliest_deadline(deadline, local_deadline),
-                    )?;
-                }
-
                 retain_if_improving_some_sample(
                     candidate,
                     &state.sample_abstract_state_ids,
                     &mut sample_best,
-                    &mut portfolio,
+                    &mut selected,
                     &mut selected_size_kb,
-                    self.config.max_size,
                 );
             }
         }
 
         let sample_count = state.sample_abstract_state_ids.len();
         info!(
-            "scp: offline diversification retained {} of {} evaluated partitions over {} samples ({} KiB)",
-            portfolio.len(),
+            "scp: retained {} of {} evaluated orders over {} samples ({} KiB)",
+            selected.len(),
             evaluated_orders,
             sample_count,
             selected_size_kb,
         );
         state.sample_abstract_state_ids.clear();
         state.sample_abstract_state_ids.shrink_to_fit();
-        Ok(portfolio)
+        Ok(selected)
     }
 }
 
@@ -182,18 +155,14 @@ pub(super) fn retain_if_improving_some_sample(
     candidate: CostPartitioningHeuristic,
     sample_ids: &[Vec<Option<usize>>],
     sample_best: &mut [f64],
-    portfolio: &mut Vec<CostPartitioningHeuristic>,
+    selected: &mut Vec<CostPartitioningHeuristic>,
     selected_size_kb: &mut usize,
-    max_size_kb: usize,
 ) -> bool {
     assert_eq!(sample_ids.len(), sample_best.len());
-    if portfolio.contains(&candidate) {
+    if selected.contains(&candidate) {
         return false;
     }
     let candidate_size = candidate.estimate_size_in_kb();
-    if !portfolio.is_empty() && selected_size_kb.saturating_add(candidate_size) > max_size_kb {
-        return false;
-    }
     let values = sample_ids
         .iter()
         .map(|ids| candidate.compute_heuristic(ids))
@@ -209,7 +178,7 @@ pub(super) fn retain_if_improving_some_sample(
         *best = (*best).max(value);
     }
     *selected_size_kb = selected_size_kb.saturating_add(candidate_size);
-    portfolio.push(candidate);
+    selected.push(candidate);
     true
 }
 
@@ -262,7 +231,7 @@ pub(super) fn retain_required_order(
     candidate: CostPartitioningHeuristic,
     sample_ids: &[Vec<Option<usize>>],
     sample_best: &mut [f64],
-    portfolio: &mut Vec<CostPartitioningHeuristic>,
+    selected: &mut Vec<CostPartitioningHeuristic>,
     selected_size_kb: &mut usize,
 ) {
     assert_eq!(sample_ids.len(), sample_best.len());
@@ -270,5 +239,5 @@ pub(super) fn retain_required_order(
         *best = (*best).max(candidate.compute_heuristic(ids));
     }
     *selected_size_kb = selected_size_kb.saturating_add(candidate.estimate_size_in_kb());
-    portfolio.push(candidate);
+    selected.push(candidate);
 }

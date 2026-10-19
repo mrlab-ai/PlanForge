@@ -457,73 +457,62 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining_costs = RemainingCosts::from_operator_costs(original_costs);
 
-        for sweep in 0..=self.config.residual_sweeps {
-            if sweep > 0 {
-                info!(
-                    "scp: starting regional residual abstraction sweep {sweep}/{}",
-                    self.config.residual_sweeps
-                );
+        for &component_id in order {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                break;
             }
-            for &component_id in order {
-                if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            let component = components.get(component_id).ok_or_else(|| {
+                EvaluationError::InvalidState(format!(
+                    "regional SCP order references missing component {component_id}"
+                ))
+            })?;
+            if let AbstractionComponent::Domain(heuristic) = component {
+                let abstraction = heuristic.abstraction();
+                debug!(
+                    "scp: interval CP step abstraction {component_id}, abstract_states={}, abstraction_h={}, metadata={}",
+                    abstraction_state_count(abstraction),
+                    abstraction_h[component_id],
+                    abstraction_metadata_summary(abstraction),
+                );
+                log_abstract_source_set_summary(component_id, &abstraction.abstract_source_sets);
+                self.log_abstract_operator_label_diagnostic(
+                    abstraction,
+                    abstraction.task_for_factory(task),
+                    component_id,
+                    abstract_state_ids,
+                    &remaining_costs,
+                )?;
+            }
+
+            let result = self.add_saturation_step(
+                &mut cp,
+                &mut remaining_costs,
+                ComponentStepContext {
+                    component_id,
+                    component,
+                    task,
+                    abstract_state_ids,
+                    deadline,
+                    cost_space: SaturationCostSpace::Interval,
+                    saturator,
+                    step_prefix: "interval",
+                },
+            );
+            match result {
+                Ok(true) => log_transition_residual_summary(&remaining_costs),
+                Ok(false) => {
+                    info!(
+                        "scp: interval component {component_id} stopped while reducing residual costs (deadline)"
+                    );
                     break;
                 }
-                let component = components.get(component_id).ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "regional SCP order references missing component {component_id}"
-                    ))
-                })?;
-                if let AbstractionComponent::Domain(heuristic) = component {
-                    let abstraction = heuristic.abstraction();
-                    debug!(
-                        "scp: interval CP step abstraction {component_id}, abstract_states={}, abstraction_h={}, metadata={}",
-                        abstraction_state_count(abstraction),
-                        abstraction_h[component_id],
-                        abstraction_metadata_summary(abstraction),
+                Err(error) if Self::is_deadline_exceeded(&error) => {
+                    info!(
+                        "scp: interval component {component_id} stopped while computing table (deadline)"
                     );
-                    log_abstract_source_set_summary(
-                        component_id,
-                        &abstraction.abstract_source_sets,
-                    );
-                    self.log_abstract_operator_label_diagnostic(
-                        abstraction,
-                        abstraction.task_for_factory(task),
-                        component_id,
-                        abstract_state_ids,
-                        &remaining_costs,
-                    )?;
+                    break;
                 }
-
-                let result = self.add_saturation_step(
-                    &mut cp,
-                    &mut remaining_costs,
-                    ComponentStepContext {
-                        component_id,
-                        component,
-                        task,
-                        abstract_state_ids,
-                        deadline,
-                        cost_space: SaturationCostSpace::Interval,
-                        saturator,
-                        step_prefix: "interval",
-                    },
-                );
-                match result {
-                    Ok(true) => log_transition_residual_summary(&remaining_costs),
-                    Ok(false) => {
-                        info!(
-                            "scp: interval component {component_id} stopped while reducing residual costs (deadline)"
-                        );
-                        break;
-                    }
-                    Err(error) if Self::is_deadline_exceeded(&error) => {
-                        info!(
-                            "scp: interval component {component_id} stopped while computing table (deadline)"
-                        );
-                        break;
-                    }
-                    Err(error) => return Err(error),
-                }
+                Err(error) => return Err(error),
             }
         }
 
