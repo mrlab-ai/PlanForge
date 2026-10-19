@@ -291,7 +291,7 @@ fn single_var_interval(coefficient: f64, constant: f64, op: CompOp) -> Option<In
     })
 }
 
-fn split_for_missing_numeric_requirement(
+pub(super) fn split_for_missing_numeric_requirement(
     requirement: Interval,
     concrete_value: NumericValue,
 ) -> Option<(NumericValue, bool)> {

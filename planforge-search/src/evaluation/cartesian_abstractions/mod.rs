@@ -37,8 +37,7 @@ use ordered_float::NotNan;
 use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
-    NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
-    metric_operator_cost_from_initial_values,
+    NumericValue, OperatorIndex, VariableIndex, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
@@ -61,7 +60,7 @@ use super::abstraction_collections::goal_focused::{
 };
 use super::abstraction_collections::portfolio::{CollectionStrategy, mix_seed, stable_text_seed};
 use super::abstraction_task::{AbstractionUse, validate_abstraction_operator};
-use super::cegar::regression::ensure_conditions_are_regressable;
+use super::cegar::regression::{ensure_conditions_are_regressable, numeric_effect_preimage};
 use super::cegar::{
     CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, progress_concrete_state,
 };
@@ -1712,58 +1711,13 @@ impl<'task> CartesianSemantics<'task> {
         op_id: OperatorIndex,
         numeric_var_id: VariableIndex,
     ) -> Result<Option<Interval>> {
-        let mut preimage = target;
-        if let Some(view) = self.additive_numeric_views[numeric_var_id.index()].as_ref() {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
-            preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Ok(Some(preimage));
-        }
-        let op = &self.task.get_operators()[op_id.index()];
-        for effect in op
-            .assignment_effects()
-            .iter()
-            .filter(|effect| effect.affected_var_id() == numeric_var_id)
-            .rev()
-        {
-            let rhs = float_tolerance::canonicalize(
-                self.task.get_initial_numeric_state_values()[effect.var_id().index()],
-            );
-            match effect.operation() {
-                AssignmentOperation::Assign => {
-                    if !preimage.contains(rhs) {
-                        return Ok(None);
-                    }
-                    preimage = Interval::unbounded();
-                }
-                AssignmentOperation::Plus => {
-                    preimage
-                        .apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(rhs));
-                }
-                AssignmentOperation::Minus => {
-                    preimage
-                        .apply_reverse_op(&AssignmentOperation::Minus, &Interval::singleton(rhs));
-                }
-                AssignmentOperation::Times => {
-                    if rhs == ZERO_VALUE {
-                        if !preimage.contains(ZERO_VALUE) {
-                            return Ok(None);
-                        }
-                        preimage = Interval::unbounded();
-                    } else {
-                        preimage.apply_reverse_op(
-                            &AssignmentOperation::Times,
-                            &Interval::singleton(rhs),
-                        );
-                    }
-                }
-                AssignmentOperation::Divide => {
-                    preimage
-                        .apply_reverse_op(&AssignmentOperation::Divide, &Interval::singleton(rhs));
-                }
-            }
-            preimage = preimage.canonicalized();
-        }
-        Ok(Some(preimage))
+        numeric_effect_preimage(
+            self.task,
+            &self.additive_numeric_views,
+            target,
+            op_id,
+            numeric_var_id,
+        )
     }
 
     fn operator_region_source_for_transition(

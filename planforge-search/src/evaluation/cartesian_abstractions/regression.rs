@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::evaluation::cegar::regression::{
-    FailedConditions, failed_conditions_on_relaxed_suffix, regression_candidates,
-    writes_propositional_variable,
+    FailedConditions, failed_conditions_on_relaxed_suffix, regress_numeric_interval,
+    regression_candidates, writes_propositional_variable,
 };
 
 /// Regression flaw search: the failed conditions of the optimal abstract
@@ -246,17 +246,18 @@ fn desired_region_regression_splits(
             .with_context(|| format!("failed to construct desired region for {description}"))?;
     }
     let mut numeric = desired.numeric.to_vec();
-    for &op_id in ops.iter().rev() {
-        for (var_id, interval) in numeric.iter_mut().enumerate() {
-            match semantics.numeric_effect_preimage(
-                *interval,
-                op_id,
-                VariableIndex::from_usize(var_id),
-            )? {
-                Some(preimage) if !preimage.is_empty() => *interval = preimage,
-                _ => return Ok(Vec::new()),
-            }
-        }
+    for (var_id, interval) in numeric.iter_mut().enumerate() {
+        let Some(regressed) = regress_numeric_interval(
+            semantics.task(),
+            semantics.additive_numeric_views(),
+            *interval,
+            ops,
+            VariableIndex::from_usize(var_id),
+        )?
+        else {
+            return Ok(Vec::new());
+        };
+        *interval = regressed;
     }
     let state = &working.states()[anchor_state.abstract_state];
     let overlaps = state

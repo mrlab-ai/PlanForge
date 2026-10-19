@@ -55,6 +55,28 @@ pub fn get_progression_flaws(
     wildcard_plan: &WildcardPlanResult,
     direction: SplitDirection,
 ) -> Result<FlawSearchOutcome> {
+    trace_progression_flaws(task, partitions, wildcard_plan, direction, None)
+}
+
+/// The concrete trace a progression flaw search executed: the states
+/// `s_0, ..., s_k` up to the one exposing the flaws (or the last state of a
+/// concrete plan) and the operators `o_1, ..., o_k` between them.
+#[derive(Debug, Default)]
+pub(crate) struct ExecutedTrace {
+    /// Packed propositional and numeric values of each state.
+    pub(crate) states: Vec<(Vec<u64>, Vec<NumericValue>)>,
+    pub(crate) operator_ids: Vec<OperatorIndex>,
+}
+
+/// [`get_progression_flaws`], recording the executed trace into `trace`
+/// when given.
+pub(crate) fn trace_progression_flaws(
+    task: &dyn AbstractNumericTask,
+    partitions: &NumericPartitions,
+    wildcard_plan: &WildcardPlanResult,
+    direction: SplitDirection,
+    mut trace: Option<&mut ExecutedTrace>,
+) -> Result<FlawSearchOutcome> {
     let state_packer = std::sync::Arc::new(make_prop_state_packer(task));
     let axiom_evaluator = AxiomEvaluator::new(std::sync::Arc::new(task), state_packer.clone());
 
@@ -108,8 +130,15 @@ pub fn get_progression_flaws(
                 // where the abstract plan said, so the flaws the alternatives
                 // produced are not flaws of the plan.
                 collected_flaws.clear();
-                prop_state = next_prop_state;
-                numeric_state = next_numeric_state;
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.states.push((
+                        std::mem::replace(&mut prop_state, next_prop_state),
+                        std::mem::replace(&mut numeric_state, next_numeric_state),
+                    ));
+                } else {
+                    prop_state = next_prop_state;
+                    numeric_state = next_numeric_state;
+                }
                 executed_operator_ids.push(op_id);
                 break;
             }
@@ -123,6 +152,12 @@ pub fn get_progression_flaws(
         step += 1;
     }
 
+    if let Some(trace) = trace {
+        trace
+            .states
+            .push((prop_state.clone(), numeric_state.clone()));
+        trace.operator_ids.clone_from(&executed_operator_ids);
+    }
     if !collected_flaws.is_empty() {
         return Ok(FlawSearchOutcome::without_plan(collected_flaws));
     }

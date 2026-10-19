@@ -25,7 +25,8 @@
 use anyhow::{Result, bail, ensure};
 use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, NumericType, NumericValue, OperatorIndex, VariableIndex,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericType, NumericValue,
+    OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::float_tolerance;
@@ -201,6 +202,72 @@ pub(crate) fn progress_numeric_box(
         }
     }
     Ok(())
+}
+
+/// The values of `numeric_var_id` before `op_id` whose image lies in
+/// `target`, or `None` when no value's does.
+///
+/// Exact for the coordinates an abstraction splits: a derived additive
+/// coordinate shifts back by the operator's delta, and a regular variable
+/// inverts its effect, whose right-hand side is constant.
+pub(crate) fn numeric_effect_preimage(
+    task: &dyn AbstractNumericTask,
+    additive_views: &[Option<AdditiveNumericView>],
+    target: Interval,
+    op_id: OperatorIndex,
+    numeric_var_id: VariableIndex,
+) -> Result<Option<Interval>> {
+    let mut preimage = target;
+    if let Some(view) = &additive_views[numeric_var_id.index()] {
+        let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+        preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
+        return Ok(Some(preimage));
+    }
+    let initial = task.get_initial_numeric_state_values();
+    for effect in task.get_operators()[op_id.index()]
+        .assignment_effects()
+        .iter()
+        .filter(|effect| effect.affected_var_id() == numeric_var_id)
+        .rev()
+    {
+        let rhs = float_tolerance::canonicalize(initial[effect.var_id().index()]);
+        match effect.operation() {
+            AssignmentOperation::Assign => {
+                if !preimage.contains(rhs) {
+                    return Ok(None);
+                }
+                preimage = Interval::unbounded();
+            }
+            AssignmentOperation::Times if rhs == ZERO_VALUE => {
+                if !preimage.contains(ZERO_VALUE) {
+                    return Ok(None);
+                }
+                preimage = Interval::unbounded();
+            }
+            operation => preimage.apply_reverse_op(operation, &Interval::singleton(rhs)),
+        }
+        preimage = preimage.canonicalized();
+    }
+    Ok(Some(preimage))
+}
+
+/// The values of `numeric_var_id` whose progression through `ops` lies in
+/// `target`, or `None` when no value's does.
+pub(crate) fn regress_numeric_interval(
+    task: &dyn AbstractNumericTask,
+    additive_views: &[Option<AdditiveNumericView>],
+    target: Interval,
+    ops: &[OperatorIndex],
+    numeric_var_id: VariableIndex,
+) -> Result<Option<Interval>> {
+    let mut interval = target;
+    for &op_id in ops.iter().rev() {
+        match numeric_effect_preimage(task, additive_views, interval, op_id, numeric_var_id)? {
+            Some(preimage) if !preimage.is_empty() => interval = preimage,
+            _ => return Ok(None),
+        }
+    }
+    Ok(Some(interval))
 }
 
 #[cfg(test)]

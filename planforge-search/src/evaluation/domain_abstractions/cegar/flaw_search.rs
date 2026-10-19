@@ -97,7 +97,7 @@ pub struct FlawSearchOutcome {
     /// The concrete operator chosen at every abstract plan step. `Some`
     /// exactly when `flaws` is empty and the flaw search executes the plan
     /// concretely (progression, target-centered, execute-entire-plan, and
-    /// regression's progression fallback); the plan then reaches the goal from
+    /// regression); the plan then reaches the goal from
     /// the task initial state.
     pub concrete_plan: Option<Vec<OperatorIndex>>,
 }
@@ -197,14 +197,7 @@ impl FlawKind {
                 get_progression_flaws(task, partitions, wildcard_plan, direction)
             }
             Self::Regression => {
-                let flaws = get_regression_flaws(task, partitions, domain_mapping, wildcard_plan)?;
-                // Progression flaw fallback if no regression flaw is found
-                // (numeric deviation flaws not detected).
-                if flaws.is_empty() {
-                    get_progression_flaws(task, partitions, wildcard_plan, direction)
-                } else {
-                    Ok(FlawSearchOutcome::without_plan(flaws))
-                }
+                get_regression_flaws(task, partitions, domain_mapping, wildcard_plan, direction)
             }
             Self::ExecuteEntirePlan => {
                 get_execute_entire_plan_flaws(task, partitions, wildcard_plan, direction)

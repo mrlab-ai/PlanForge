@@ -163,6 +163,7 @@ impl crate::config::ApplyOptions for CegarConfig {
             "flaw_treatment",
             "flaw_kind",
             "init_split_method",
+            "split_direction",
         ];
         for_each_option(args, ORDER, |key, value| {
             match key {
@@ -184,6 +185,7 @@ impl crate::config::ApplyOptions for CegarConfig {
                 "flaw_treatment" => self.flaw_treatment = parse(value)?,
                 "flaw_kind" => self.flaw_kind = parse(value)?,
                 "init_split_method" => self.init_split_method = parse(value)?,
+                "split_direction" => self.split_direction = parse(value)?,
                 other => {
                     return Err(format!("unknown option `{other}` for `domain_abstraction`"));
                 }
@@ -312,6 +314,9 @@ impl Cegar {
     fn run_cegar(&self, task: &dyn AbstractNumericTask) -> Result<CegarOutcome> {
         let config = &self.config;
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
+        if config.flaw_kind == FlawKind::Regression {
+            crate::evaluation::cegar::regression::ensure_conditions_are_regressable(task)?;
+        }
         ensure!(
             config.max_abstraction_size > 0,
             "max_abstraction_size must be > 0"
