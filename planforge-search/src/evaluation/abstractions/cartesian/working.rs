@@ -128,10 +128,7 @@ pub(super) struct WorkingAbstraction {
     pub(super) outgoing: Vec<Vec<usize>>,
     pub(super) incoming: Vec<Vec<usize>>,
     pub(super) self_loop_operator_ids: Vec<OperatorBitSet>,
-    pub(super) icaps_self_loop_order: Option<Vec<Vec<OperatorIndex>>>,
-    pub(super) transition_ids_by_key: Option<HashMap<TransitionKey, usize>>,
-    pub(super) propositional_refinement_counts: Vec<usize>,
-    pub(super) numeric_refinement_counts: Vec<usize>,
+    pub(super) transition_ids_by_key: HashMap<TransitionKey, usize>,
 }
 
 impl WorkingAbstraction {
@@ -155,29 +152,7 @@ impl WorkingAbstraction {
         &self.self_loop_operator_ids
     }
 
-    pub(super) fn propositional_refinement_counts(&self) -> &[usize] {
-        &self.propositional_refinement_counts
-    }
-
-    pub(super) fn numeric_refinement_counts(&self) -> &[usize] {
-        &self.numeric_refinement_counts
-    }
-
     pub(super) fn new(initial_region: CartesianSet, operator_count: usize) -> Self {
-        Self::new_with_transition_index(initial_region, operator_count, true)
-    }
-
-    pub(super) fn new_icaps26(initial_region: CartesianSet, operator_count: usize) -> Self {
-        Self::new_with_transition_index(initial_region, operator_count, false)
-    }
-
-    pub(super) fn new_with_transition_index(
-        initial_region: CartesianSet,
-        operator_count: usize,
-        index_transitions: bool,
-    ) -> Self {
-        let propositional_refinement_counts = vec![0; initial_region.propositions().len()];
-        let numeric_refinement_counts = vec![0; initial_region.numeric.len()];
         Self {
             states: vec![initial_region],
             leaf_node_ids: vec![0],
@@ -186,29 +161,14 @@ impl WorkingAbstraction {
             free_transition_ids: Vec::new(),
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
-            self_loop_operator_ids: vec![OperatorBitSet::empty(if index_transitions {
-                operator_count
-            } else {
-                0
-            })],
-            icaps_self_loop_order: (!index_transitions).then(|| vec![Vec::new()]),
-            transition_ids_by_key: index_transitions.then(HashMap::new),
-            propositional_refinement_counts,
-            numeric_refinement_counts,
+            self_loop_operator_ids: vec![OperatorBitSet::empty(operator_count)],
+            transition_ids_by_key: HashMap::new(),
         }
     }
 
     pub(super) fn add_transition(&mut self, source: usize, op_id: OperatorIndex, target: usize) {
         if source == target {
-            if let Some(loop_order) = &mut self.icaps_self_loop_order {
-                debug_assert!(
-                    !loop_order[source].contains(&op_id),
-                    "ICAPS Cartesian refinement generated a duplicate self-loop"
-                );
-                loop_order[source].push(op_id);
-            } else {
-                self.self_loop_operator_ids[source].insert(op_id);
-            }
+            self.self_loop_operator_ids[source].insert(op_id);
             return;
         }
         let key = TransitionKey {
@@ -216,21 +176,8 @@ impl WorkingAbstraction {
             concrete_op_id: op_id,
             target,
         };
-        if let Some(transition_ids_by_key) = &self.transition_ids_by_key {
-            if transition_ids_by_key.contains_key(&key) {
-                return;
-            }
-        } else {
-            debug_assert!(
-                !self.outgoing[source].iter().any(|&transition_id| {
-                    self.transitions[transition_id]
-                        .as_ref()
-                        .is_some_and(|transition| {
-                            transition.concrete_op_id == op_id && transition.target == target
-                        })
-                }),
-                "ICAPS Cartesian refinement generated a duplicate transition"
-            );
+        if self.transition_ids_by_key.contains_key(&key) {
+            return;
         }
         let transition = WorkingTransition {
             source,
@@ -249,10 +196,8 @@ impl WorkingAbstraction {
             self.transitions.push(Some(transition));
             transition_id
         };
-        if let Some(transition_ids_by_key) = &mut self.transition_ids_by_key {
-            let old = transition_ids_by_key.insert(key, transition_id);
-            assert!(old.is_none(), "duplicate Cartesian transition key");
-        }
+        let old = self.transition_ids_by_key.insert(key, transition_id);
+        assert!(old.is_none(), "duplicate Cartesian transition key");
         self.outgoing[source].push(transition_id);
         self.incoming[target].push(transition_id);
     }
@@ -261,18 +206,16 @@ impl WorkingAbstraction {
         let transition = self.transitions[transition_id]
             .take()
             .expect("Cartesian adjacency references a removed transition");
-        if let Some(transition_ids_by_key) = &mut self.transition_ids_by_key {
-            let removed_id = transition_ids_by_key.remove(&TransitionKey {
-                source: transition.source,
-                concrete_op_id: transition.concrete_op_id,
-                target: transition.target,
-            });
-            assert_eq!(
-                removed_id,
-                Some(transition_id),
-                "active Cartesian transition key is missing or inconsistent"
-            );
-        }
+        let removed_id = self.transition_ids_by_key.remove(&TransitionKey {
+            source: transition.source,
+            concrete_op_id: transition.concrete_op_id,
+            target: transition.target,
+        });
+        assert_eq!(
+            removed_id,
+            Some(transition_id),
+            "active Cartesian transition key is missing or inconsistent"
+        );
         self.free_transition_ids.push(transition_id);
         transition
     }
@@ -325,18 +268,9 @@ impl WorkingAbstraction {
 
     pub(super) fn contains_transition(&self, key: TransitionKey) -> bool {
         if key.source == key.target {
-            if let Some(loop_order) = &self.icaps_self_loop_order {
-                loop_order[key.source].contains(&key.concrete_op_id)
-            } else {
-                self.self_loop_operator_ids[key.source].contains(key.concrete_op_id)
-            }
-        } else if let Some(transition_ids_by_key) = &self.transition_ids_by_key {
-            transition_ids_by_key.contains_key(&key)
+            self.self_loop_operator_ids[key.source].contains(key.concrete_op_id)
         } else {
-            self.outgoing[key.source].iter().any(|&transition_id| {
-                let transition = self.transition(transition_id);
-                transition.concrete_op_id == key.concrete_op_id && transition.target == key.target
-            })
+            self.transition_ids_by_key.contains_key(&key)
         }
     }
 }

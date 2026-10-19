@@ -6,9 +6,8 @@
 //! CLI help are generated from that declaration.
 
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractPlanSelection, CartesianAbstractionConfig, CartesianAbstractionGenerator,
-    CartesianAbstractionHeuristic, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
-    CartesianSplitSelection,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+    CartesianRefinementDirection, CartesianSplitSelection,
 };
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
@@ -356,8 +355,6 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
         refinement_direction: CartesianRefinementDirection::Progression,
-        abstract_plan_selection: CartesianAbstractPlanSelection::BackwardShortestPath,
-        flaw_candidate_generation: CartesianFlawCandidateGeneration::General,
         split_selection_rank: None,
         split_selection: CartesianSplitSelection::MinTransitionGrowth,
         debug: config.debug,
@@ -374,15 +371,14 @@ fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
         "random_seed",
         "flaw_treatment",
         "flaw_kind",
-        "init_split_method",
     ];
     crate::config::for_each_option(args, ORDER, |key, _| match key {
         "max_abstraction_size" | "max_time" | "combine_labels" | "random_seed" | "flaw_kind" => {
             Ok(())
         }
-        "max_iterations" | "use_wildcard_plans" | "flaw_treatment" | "init_split_method" => Err(
-            format!("option `{key}` is not supported for Cartesian abstractions"),
-        ),
+        "max_iterations" | "use_wildcard_plans" | "flaw_treatment" => Err(format!(
+            "option `{key}` is not supported for Cartesian abstractions"
+        )),
         other => Err(format!(
             "unknown option `{other}` for `cartesian_abstraction`"
         )),

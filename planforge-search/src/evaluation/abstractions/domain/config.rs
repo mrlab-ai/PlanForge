@@ -7,7 +7,7 @@ use anyhow::Result;
 use planforge_sas::numeric_task::VariableIndex;
 
 use super::flaws::SplitDirection;
-use super::split_selection::{FlawTreatmentVariants, InitSplitMethod};
+use super::split_selection::FlawTreatmentVariants;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 
 #[derive(Debug, Clone)]
@@ -21,7 +21,6 @@ pub struct CegarConfig {
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
-    pub init_split_method: InitSplitMethod,
     pub init_split_var_ids: Option<HashSet<VariableIndex>>,
     pub blacklisted_prop_var_ids: HashSet<VariableIndex>,
     pub blacklisted_numeric_var_ids: HashSet<VariableIndex>,
@@ -68,7 +67,6 @@ impl Default for CegarConfig {
             random_seed: Some(2011),
             flaw_kind: FlawKind::Progression,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
-            init_split_method: InitSplitMethod::InitValue,
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
@@ -81,11 +79,10 @@ impl Default for CegarConfig {
 }
 
 impl CegarConfig {
-    /// The split direction refinement uses: the configured one, or the flaw
-    /// kind's default.
+    /// The split direction refinement uses: the configured one, or concrete
+    /// splits.
     pub fn effective_split_direction(&self) -> SplitDirection {
-        self.split_direction
-            .unwrap_or_else(|| self.flaw_kind.default_split_direction())
+        self.split_direction.unwrap_or(SplitDirection::Forward)
     }
 }
 
@@ -110,7 +107,6 @@ impl crate::config::ApplyOptions for CegarConfig {
             "random_seed",
             "flaw_treatment",
             "flaw_kind",
-            "init_split_method",
             "split_direction",
         ];
         for_each_option(args, ORDER, |key, value| {
@@ -132,7 +128,6 @@ impl crate::config::ApplyOptions for CegarConfig {
                 "random_seed" => self.random_seed = parse(value)?,
                 "flaw_treatment" => self.flaw_treatment = parse(value)?,
                 "flaw_kind" => self.flaw_kind = parse(value)?,
-                "init_split_method" => self.init_split_method = parse(value)?,
                 "split_direction" => self.split_direction = parse(value)?,
                 other => {
                     return Err(format!("unknown option `{other}` for `domain_abstraction`"));

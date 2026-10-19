@@ -1,7 +1,7 @@
 //! The splits a domain abstraction starts CEGAR from: the trivial abstraction
 //! refined on the goal variables.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{
@@ -9,14 +9,15 @@ use planforge_sas::numeric_task::{
 };
 use rand::Rng;
 use rand::rngs::SmallRng;
-use rand::seq::SliceRandom;
 
 use super::abstract_operators::DomainMapping;
 use super::config::CegarConfig;
+use planforge_sas::numeric_conditions::ConditionValue;
+
 use super::refinement::{
     RefinementState, can_refine_numeric_variable, can_refine_propositional_variable,
 };
-use super::split_selection::InitSplitMethod;
+
 use crate::evaluation::abstractions::common::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
@@ -38,111 +39,40 @@ pub(super) fn sorted_goal_facts(task: &dyn AbstractNumericTask) -> Vec<ExplicitF
     goals
 }
 
-fn choose_random_domain_value(domain_size: usize, rng: &mut SmallRng) -> ExplicitValueIndex {
-    if domain_size <= 1 {
-        ExplicitValueIndex::new(0)
-    } else {
-        ExplicitValueIndex::from_usize(rng.gen_range(0..domain_size))
-    }
-}
-
-pub(super) fn compute_initial_split_mapping(
+/// The initial split of propositional variable `var_id`: the value it is
+/// split off on in one class, every other value in the other. That value is
+/// the initial value, or for a condition variable the value that establishes
+/// the condition.
+pub(super) fn initial_split_mapping(
     task: &dyn AbstractNumericTask,
-    config: &CegarConfig,
     var_id: VariableIndex,
-    goal_value: Option<ExplicitValueIndex>,
-    rng: &mut SmallRng,
-) -> Option<(usize, Vec<ExplicitValueIndex>)> {
-    let concrete_domain_size = task.get_variable_domain_size(var_id).unwrap_or(0);
-    if concrete_domain_size == 0 {
-        return None;
-    }
-
-    let initial_value = task
-        .get_initial_propositional_state_values()
-        .get(var_id.index())
-        .copied()
-        .unwrap_or(ExplicitValueIndex::new(0));
-    let is_comparison_var = task.numeric_conditions().is_condition_var(var_id);
-
-    match config.init_split_method {
-        InitSplitMethod::GoalValue => {
-            let goal = goal_value?;
-            let mut mapping = vec![ExplicitValueIndex::new(0); concrete_domain_size];
-            mapping[goal.index()] = ExplicitValueIndex::new(1);
-            Some((2, mapping))
-        }
-        InitSplitMethod::GoalValueOrRandomIfNonGoal => {
-            let chosen =
-                goal_value.unwrap_or_else(|| choose_random_domain_value(concrete_domain_size, rng));
-            let mut mapping = vec![ExplicitValueIndex::new(0); concrete_domain_size];
-            mapping[chosen.index()] = ExplicitValueIndex::new(1);
-            Some((2, mapping))
-        }
-        InitSplitMethod::InitValue => {
-            let mut mapping = vec![ExplicitValueIndex::new(0); concrete_domain_size];
-            let chosen = if is_comparison_var {
-                ExplicitValueIndex::new(0)
-            } else {
-                initial_value
-            };
-            if chosen.index() < mapping.len() {
-                mapping[chosen.index()] = ExplicitValueIndex::new(1);
-            }
-            Some((2, mapping))
-        }
-        InitSplitMethod::RandomValue => {
-            let chosen = choose_random_domain_value(concrete_domain_size, rng);
-            let mut mapping = vec![ExplicitValueIndex::new(0); concrete_domain_size];
-            mapping[chosen.index()] = ExplicitValueIndex::new(1);
-            Some((2, mapping))
-        }
-        InitSplitMethod::RandomPartition => {
-            let mut order: Vec<usize> = (0..concrete_domain_size).collect();
-            order.shuffle(rng);
-            let max_partition = choose_random_domain_value(concrete_domain_size, rng)
-                .max(ExplicitValueIndex::new(1));
-            let mut mapping = vec![ExplicitValueIndex::new(0); concrete_domain_size];
-            for (index, concrete_value) in order.into_iter().enumerate() {
-                mapping[concrete_value] =
-                    ExplicitValueIndex::from_usize(index % (max_partition.index() + 1));
-            }
-            let abstract_domain_size = mapping
-                .iter()
-                .copied()
-                .max()
-                .unwrap_or(ExplicitValueIndex::new(0))
-                .index()
-                + 1;
-            Some((abstract_domain_size, mapping))
-        }
-        InitSplitMethod::RandomBinaryPartitionSeparatingInitGoal => {
-            let mut mapping: Vec<ExplicitValueIndex> = (0..concrete_domain_size)
-                .map(|_| choose_random_domain_value(2, rng))
-                .collect();
-            if let Some(goal) = goal_value
-                && initial_value != goal
-                && initial_value.index() < mapping.len()
-                && goal.index() < mapping.len()
-            {
-                mapping[initial_value.index()] = ExplicitValueIndex::new(0);
-                mapping[goal.index()] = ExplicitValueIndex::new(1);
-            }
-            if mapping.iter().all(|&value| value == mapping[0]) {
-                None
-            } else {
-                Some((2, mapping))
-            }
-        }
-        InitSplitMethod::Identity => Some((
-            concrete_domain_size,
-            (0..concrete_domain_size)
-                .map(ExplicitValueIndex::from_usize)
-                .collect(),
-        )),
-    }
+) -> Result<Vec<ExplicitValueIndex>> {
+    let domain_size = task
+        .get_variable_domain_size(var_id)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+        .with_context(|| format!("domain size of variable {var_id}"))?;
+    let separated = if task.numeric_conditions().is_condition_var(var_id) {
+        ExplicitValueIndex::from_usize(ConditionValue::True.as_usize())
+    } else {
+        *task
+            .get_initial_propositional_state_values()
+            .get(var_id.index())
+            .with_context(|| format!("variable {var_id} has no initial value"))?
+    };
+    ensure!(
+        separated.index() < domain_size,
+        "initial split value {separated} of variable {var_id} is outside its domain of size {domain_size}"
+    );
+    let mut mapping = vec![ExplicitValueIndex::new(0); domain_size];
+    mapping[separated.index()] = ExplicitValueIndex::new(1);
+    Ok(mapping)
 }
 
+/// Split the trivial abstraction on the initial-split variables: the
+/// configured ones, or the goal variables. Propositional variables are split
+/// by [`initial_split_mapping`]; a selected numeric variable gets no split of
+/// its own. The numeric operands of goal conditions on selected variables are
+/// split at their initial values, so an operator can change the condition.
 pub(super) fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
@@ -157,18 +87,15 @@ pub(super) fn apply_initial_goal_splits(
         blacklisted_prop_var_ids,
         blacklisted_numeric_var_ids,
     } = state;
-    let goal_values: HashMap<VariableIndex, ExplicitValueIndex> = sorted_goal_facts(task)
-        .into_iter()
-        .map(|v| (v.var_index(), v.value_index()))
-        .collect();
+    let goals = sorted_goal_facts(task);
+    let goal_var_ids: HashSet<VariableIndex> = goals.iter().map(|goal| goal.var_index()).collect();
     let num_prop_vars = task.variables().len();
-    let mut candidate_var_ids: Vec<VariableIndex> = config
-        .init_split_var_ids
-        .as_ref()
-        .map(|var_ids| var_ids.iter().copied().collect())
-        .unwrap_or_else(|| goal_values.keys().copied().collect());
+    let mut candidate_var_ids: Vec<VariableIndex> = match &config.init_split_var_ids {
+        Some(var_ids) => var_ids.iter().copied().collect(),
+        None => goal_var_ids.iter().copied().collect(),
+    };
     candidate_var_ids.sort_by_key(|var_id| {
-        let is_goal = var_id.index() < num_prop_vars && goal_values.contains_key(var_id);
+        let is_goal = var_id.index() < num_prop_vars && goal_var_ids.contains(var_id);
         (!is_goal, *var_id)
     });
     candidate_var_ids.dedup();
@@ -177,143 +104,64 @@ pub(super) fn apply_initial_goal_splits(
     } else {
         config.max_abstraction_size
     };
-    let initial_numeric = initial_numeric_values_with_additive_views(task);
 
-    for encoded_var_id in candidate_var_ids {
-        if encoded_var_id.index() >= num_prop_vars {
-            let numeric_var_id = VariableIndex::from_usize(encoded_var_id.index() - num_prop_vars);
-            if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
-                continue;
-            }
-            let Some(_) = task.numeric_variables().get(numeric_var_id.index()) else {
-                continue;
-            };
-            if !is_refinable_numeric_dimension(task, numeric_var_id) {
-                continue;
-            }
-            if !matches!(
-                config.init_split_method,
-                InitSplitMethod::Identity | InitSplitMethod::GoalValueOrRandomIfNonGoal
-            ) {
-                continue;
-            }
-            let Some(&init_value) = initial_numeric.get(numeric_var_id.index()) else {
-                continue;
-            };
-            if !can_refine_numeric_variable(
-                domain_sizes,
-                numeric_domain_sizes,
-                numeric_var_id,
-                initial_max_abstraction_size,
-            ) {
-                continue;
-            }
-            let include_in_lower = rng.gen_range(0..2) == 0;
-            if partitions.split_at(numeric_var_id, init_value, include_in_lower)
-                && let Some(parts) = partitions.partitions(numeric_var_id)
-                && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id.index())
-            {
-                *slot = parts.len();
-            }
+    for var_id in candidate_var_ids {
+        if var_id.index() >= num_prop_vars || blacklisted_prop_var_ids.contains(&var_id) {
             continue;
         }
-
-        let var_id = encoded_var_id;
-        if blacklisted_prop_var_ids.contains(&var_id) {
-            continue;
-        }
-        let Some((new_domain_size, mapping)) = compute_initial_split_mapping(
-            task,
-            config,
-            var_id,
-            goal_values.get(&var_id).copied(),
-            rng,
-        ) else {
-            continue;
-        };
-        if new_domain_size <= 1 {
-            continue;
-        }
+        let mapping = initial_split_mapping(task, var_id)?;
         if !can_refine_propositional_variable(
             domain_sizes,
             numeric_domain_sizes,
             var_id,
-            new_domain_size,
+            2,
             initial_max_abstraction_size,
         ) {
             continue;
         }
-        if let Some(slot) = domain_mapping.get_mut(var_id.index()) {
-            *slot = mapping;
-        }
-        if let Some(slot) = domain_sizes.get_mut(var_id.index()) {
-            *slot = new_domain_size;
-        }
+        domain_mapping[var_id.index()] = mapping;
+        domain_sizes[var_id.index()] = 2;
     }
 
-    // For every comparison-axiom prop var actually being refined by this
-    // CEGAR run (the intersection of `init_split_var_ids` with goal-side
-    // comparison vars; if `init_split_var_ids` is unset, fall back to all
-    // goal-side comparison vars), seed numeric splits at the initial
-    // concrete numeric value of each of the axiom's regular numeric
-    // dependencies. Without this, the initial abstraction contains the
-    // comparison-axiom prop vars at binary resolution but the underlying
-    // numerics are unrefined — so no operator can flip the comparison bit,
-    // and the abstract initial state cannot reach the goal. CEGAR then
-    // bails with "abstract dead end at iteration 1".
-    //
-    // The previous version of this loop seeded numerics for *every* goal
-    // comparison axiom regardless of which prop var the collection
-    // generator chose for this CEGAR iteration. With `init_split_quantity
-    // = Single` (the canonical-DA default), one iteration selects one
-    // comparison var as its init split, but the unconditional seeding
-    // still drove all numeric deps of all goal comparisons into the
-    // partition — so every CEGAR run started with the same fully-seeded
-    // numeric universe and refined the remaining comparison vars
-    // identically. Result: every abstraction's pattern ended up with all
-    // goal comparison vars refined and cascade-relevance covering every
-    // op, so Bron-Kerbosch returned singleton additive subsets and
-    // canonical degenerated to `max h_i`. Scoping the seeding to the
-    // selected init split lets different CEGAR iterations focus on
-    // different comparison axioms, producing pattern diversity (and
-    // hence additivity) in the resulting collection.
-    let init_split_filter: Option<&HashSet<VariableIndex>> = config.init_split_var_ids.as_ref();
-    for fact in sorted_goal_facts(task) {
-        if let Some(allowed) = init_split_filter
-            && !allowed.contains(&fact.var_index())
+    // Seed the numeric operands of every goal condition whose variable this
+    // run splits initially. A condition variable split without its operands
+    // has no operator that flips it, so the abstract initial state cannot
+    // reach the goal. Seeding only the selected conditions, rather than every
+    // goal condition, lets the members of a collection focus on different
+    // conditions; seeding them all made every member refine the same
+    // conditions, which left canonical heuristics no additive subsets.
+    let initial_numeric = initial_numeric_values_with_additive_views(task);
+    for goal in &goals {
+        if let Some(selected) = &config.init_split_var_ids
+            && !selected.contains(&goal.var_index())
         {
             continue;
         }
-        let Some(tree) = task.numeric_conditions().for_var(fact.var_index()) else {
+        let Some(condition) = task.numeric_conditions().for_var(goal.var_index()) else {
             continue;
         };
-        for numeric_var_id in comparison_refinement_dimensions(task, tree) {
-            if blacklisted_numeric_var_ids.contains(&numeric_var_id) {
-                continue;
-            }
-            let Some(_) = task.numeric_variables().get(numeric_var_id.index()) else {
-                continue;
-            };
-            if !is_refinable_numeric_dimension(task, numeric_var_id) {
-                continue;
-            }
-            if !can_refine_numeric_variable(
-                domain_sizes,
-                numeric_domain_sizes,
-                numeric_var_id,
-                initial_max_abstraction_size,
-            ) {
-                continue;
-            }
-            let Some(&init_value) = initial_numeric.get(numeric_var_id.index()) else {
-                continue;
-            };
-            let include_in_lower = rng.gen_range(0..2) == 0;
-            if partitions.split_at(numeric_var_id, init_value, include_in_lower)
-                && let Some(parts) = partitions.partitions(numeric_var_id)
-                && let Some(slot) = numeric_domain_sizes.get_mut(numeric_var_id.index())
+        for numeric_var_id in comparison_refinement_dimensions(task, condition) {
+            if blacklisted_numeric_var_ids.contains(&numeric_var_id)
+                || !is_refinable_numeric_dimension(task, numeric_var_id)
+                || !can_refine_numeric_variable(
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    numeric_var_id,
+                    initial_max_abstraction_size,
+                )
             {
-                *slot = parts.len();
+                continue;
+            }
+            let include_in_lower = rng.gen_range(0..2) == 0;
+            if partitions.split_at(
+                numeric_var_id,
+                initial_numeric[numeric_var_id.index()],
+                include_in_lower,
+            ) {
+                numeric_domain_sizes[numeric_var_id.index()] = partitions
+                    .partitions(numeric_var_id)
+                    .expect("a split numeric variable has partitions")
+                    .len();
             }
         }
     }

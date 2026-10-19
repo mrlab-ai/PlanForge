@@ -101,16 +101,6 @@ impl CartesianSemantics<'_> {
                 .binary_search(&(effect.value() as ExplicitValueIndex))
                 .is_ok();
         }
-        if matches!(self.split_selection, CartesianSplitSelection::Icaps26(_))
-            && let Some(precondition) = op
-                .preconditions()
-                .iter()
-                .find(|precondition| precondition.var_index() == var_id)
-        {
-            return target.propositions()[var_id.index()]
-                .binary_search(&(precondition.value_index()))
-                .is_ok();
-        }
         sorted_value_sets_overlap(
             &source.propositions()[var_id.index()],
             &target.propositions()[var_id.index()],
@@ -147,31 +137,7 @@ impl CartesianSemantics<'_> {
         let Some(preimage) = self.numeric_effect_preimage(target, op_id, var_id)? else {
             return Ok(false);
         };
-        let source = if matches!(self.split_selection, CartesianSplitSelection::Icaps26(_)) {
-            source.intersection(&self.icaps_numeric_precondition(op_id, var_id)?)
-        } else {
-            source
-        };
         Ok(!source.is_empty() && preimage.intersects(&source))
-    }
-
-    pub(in super::super) fn icaps_numeric_precondition(
-        &self,
-        op_id: OperatorIndex,
-        var_id: VariableIndex,
-    ) -> Result<Interval> {
-        let mut interval = Interval::unbounded();
-        for fact in self.task.get_operators()[op_id.index()].preconditions() {
-            let Some(tree_id) = self.task.numeric_conditions().id_for_var(fact.var_index()) else {
-                continue;
-            };
-            let (condition_var_id, condition) =
-                desired_comparison_interval(self, tree_id, fact.value_index())?;
-            if condition_var_id == var_id {
-                interval = interval.intersection(&condition);
-            }
-        }
-        Ok(interval)
     }
 
     pub(in super::super) fn parent_loop_source_to_split_children(

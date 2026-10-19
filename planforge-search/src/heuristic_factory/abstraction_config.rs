@@ -2,11 +2,9 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
-use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
-    CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianAbstractionGenerator, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
+    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSplitSelection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
@@ -16,6 +14,7 @@ use crate::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
+use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbHeuristicConfig;
@@ -499,7 +498,7 @@ pub(crate) fn build_components<'task>(
                 let mut config = apply_icaps26_cartesian_options(source.args(), component_use)?;
                 cap_duration(&mut config.max_time, remaining);
                 info!("Building ICAPS 2026 Cartesian abstraction source {source_index}...");
-                let abstraction = CartesianAbstractionGenerator::new(config)
+                let abstraction = Icaps26CartesianGenerator::new(config)
                     .map_err(|error| {
                         format!(
                             "failed to construct ICAPS 2026 Cartesian source {source_index}: {error:#}"
@@ -627,73 +626,13 @@ fn is_component_source_name(name: &str) -> bool {
 pub(crate) fn apply_icaps26_cartesian_options(
     args: &[ConfigArg],
     component_use: ComponentUse,
-) -> Result<CartesianAbstractionConfig, String> {
-    let mut config = CartesianAbstractionConfig {
-        max_states: usize::MAX,
-        max_time: Some(Duration::from_secs(900)),
-        combine_labels: false,
+) -> Result<Icaps26CartesianConfig, String> {
+    let mut config = Icaps26CartesianConfig {
         compute_source_sets: component_use.needs_source_sets(),
         retain_transition_system: component_use.needs_transition_system(),
-        random_seed: Some(2011),
-        flaw_kind: FlawKind::Progression,
-        refinement_direction: CartesianRefinementDirection::Regression,
-        abstract_plan_selection: CartesianAbstractPlanSelection::StableAStar,
-        flaw_candidate_generation: CartesianFlawCandidateGeneration::DesiredRegion,
-        split_selection_rank: None,
-        split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted),
-        debug: false,
+        ..Icaps26CartesianConfig::default()
     };
-
-    let mut seen = HashSet::new();
-    for arg in args {
-        let key = arg
-            .key()
-            .ok_or_else(|| "all options for `icaps26_cartesian` must be named".to_string())?;
-        if !seen.insert(key) {
-            return Err(format!("duplicate option `{key}` for `icaps26_cartesian`"));
-        }
-        match key {
-            "pick" => {
-                let value = String::from_option_value(arg.value())?;
-                let policy = match value.to_ascii_lowercase().as_str() {
-                    "random" => Icaps26SplitSelection::Random,
-                    "min_unwanted" => Icaps26SplitSelection::MinUnwanted,
-                    "max_unwanted" => Icaps26SplitSelection::MaxUnwanted,
-                    _ => {
-                        return Err(format!(
-                            "invalid ICAPS 2026 split selector `{value}`; expected random, min_unwanted, or max_unwanted"
-                        ));
-                    }
-                };
-                config.split_selection = CartesianSplitSelection::Icaps26(policy);
-            }
-            "max_states" => {
-                config.max_states = usize::from_option_value(arg.value())?;
-            }
-            "max_time" => {
-                let seconds = f64::from_option_value(arg.value())?;
-                config.max_time = if seconds.is_infinite() {
-                    None
-                } else {
-                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
-                        format!("invalid ICAPS 2026 max_time {seconds}: {error}")
-                    })?)
-                };
-            }
-            "random_seed" => {
-                config.random_seed = Some(u64::from_option_value(arg.value())?);
-            }
-            "combine_labels" => {
-                config.combine_labels = bool::from_option_value(arg.value())?;
-            }
-            "debug" => {
-                config.debug = bool::from_option_value(arg.value())?;
-            }
-            other => {
-                return Err(format!("unknown option `{other}` for `icaps26_cartesian`"));
-            }
-        }
-    }
+    config.apply_options(args)?;
     Ok(config)
 }
 
@@ -772,11 +711,7 @@ fn apply_cartesian_source_options(
                 config.abstraction.random_seed = Some(u64::from_option_value(arg.value())?);
             }
             "flaw_kind" => {
-                let flaw_kind = FlawKind::from_option_value(arg.value())?;
-                crate::evaluation::abstractions::cartesian::validate_cartesian_flaw_kind(
-                    flaw_kind,
-                )?;
-                config.abstraction.flaw_kind = flaw_kind;
+                config.abstraction.flaw_kind = FlawKind::from_option_value(arg.value())?;
             }
             "refinement_direction" => {
                 let value = String::from_option_value(arg.value())?;
@@ -796,38 +731,10 @@ fn apply_cartesian_source_options(
                     "min_transition_growth" | "min_growth" => {
                         CartesianSplitSelection::MinTransitionGrowth
                     }
-                    "max_additive_steps" => CartesianSplitSelection::MaxAdditiveSteps,
                     "random" => CartesianSplitSelection::Random,
-                    "least_refined" => CartesianSplitSelection::LeastRefined,
                     _ => {
                         return Err(format!(
-                            "invalid Cartesian split_selection `{value}`; expected min_transition_growth, max_additive_steps, random, or least_refined"
-                        ));
-                    }
-                };
-            }
-            "abstract_plan" => {
-                let value = String::from_option_value(arg.value())?;
-                config.abstraction.abstract_plan_selection = match value.as_str() {
-                    "backward_shortest_path" => {
-                        CartesianAbstractPlanSelection::BackwardShortestPath
-                    }
-                    "stable_astar" => CartesianAbstractPlanSelection::StableAStar,
-                    _ => {
-                        return Err(format!(
-                            "invalid Cartesian abstract_plan `{value}`; expected backward_shortest_path or stable_astar"
-                        ));
-                    }
-                };
-            }
-            "flaw_candidates" => {
-                let value = String::from_option_value(arg.value())?;
-                config.abstraction.flaw_candidate_generation = match value.as_str() {
-                    "general" => CartesianFlawCandidateGeneration::General,
-                    "desired_region" => CartesianFlawCandidateGeneration::DesiredRegion,
-                    _ => {
-                        return Err(format!(
-                            "invalid Cartesian flaw_candidates `{value}`; expected general or desired_region"
+                            "invalid Cartesian split_selection `{value}`; expected min_transition_growth or random"
                         ));
                     }
                 };
@@ -894,9 +801,7 @@ mod tests {
         ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
         remaining_construction_time, require_only_component_sources, split_component_sources,
     };
-    use crate::evaluation::abstractions::cartesian::{
-        CartesianAbstractPlanSelection, CartesianFlawCandidateGeneration, CartesianSplitSelection,
-    };
+    use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
 
     #[test]
     fn separates_component_sources_from_combinator_options() {
@@ -1044,12 +949,7 @@ mod tests {
                 "min_transition_growth",
                 CartesianSplitSelection::MinTransitionGrowth,
             ),
-            (
-                "max_additive_steps",
-                CartesianSplitSelection::MaxAdditiveSteps,
-            ),
             ("random", CartesianSplitSelection::Random),
-            ("least_refined", CartesianSplitSelection::LeastRefined),
         ] {
             let args = vec![ConfigArg::new(
                 Some("split_selection".to_string()),
@@ -1068,41 +968,5 @@ mod tests {
         )];
         let error = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap_err();
         assert!(error.contains("invalid Cartesian split_selection"));
-    }
-
-    #[test]
-    fn parses_native_cartesian_abstract_plan_selection() {
-        for (name, expected) in [
-            (
-                "backward_shortest_path",
-                CartesianAbstractPlanSelection::BackwardShortestPath,
-            ),
-            ("stable_astar", CartesianAbstractPlanSelection::StableAStar),
-        ] {
-            let args = vec![ConfigArg::new(
-                Some("abstract_plan".to_string()),
-                ConfigValue::Atom(name.to_string()),
-            )];
-            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
-            assert_eq!(config.abstract_plan_selection, expected);
-        }
-    }
-
-    #[test]
-    fn parses_native_cartesian_flaw_candidate_generation() {
-        for (name, expected) in [
-            ("general", CartesianFlawCandidateGeneration::General),
-            (
-                "desired_region",
-                CartesianFlawCandidateGeneration::DesiredRegion,
-            ),
-        ] {
-            let args = vec![ConfigArg::new(
-                Some("flaw_candidates".to_string()),
-                ConfigValue::Atom(name.to_string()),
-            )];
-            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
-            assert_eq!(config.flaw_candidate_generation, expected);
-        }
     }
 }

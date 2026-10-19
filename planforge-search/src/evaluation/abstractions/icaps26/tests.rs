@@ -1,3 +1,12 @@
+use planforge_sas::numeric_task::{
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType,
+    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
+};
+
+use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
+use planforge_sas::numeric_conditions::ConditionValue;
+
 use super::*;
 
 #[test]
@@ -32,7 +41,7 @@ fn icaps_numeric_splits_preserve_integer_lattices_without_dropping_continuous_va
 }
 
 #[test]
-fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
+fn icaps_prevail_conditions_fix_the_post_value() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 1,
         metric: Metric::new(true, None),
@@ -67,18 +76,11 @@ fn icaps_prevail_conditions_fix_the_post_value_only_in_artifact_mode() {
     let target =
         CartesianSet::with_all_props_constrained(vec![vec![ExplicitValueIndex::new(1)]], vec![]);
 
-    let native = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
-    assert!(
-        native
-            .may_transition(&source, OperatorIndex::new(0), &target)
-            .unwrap()
-    );
-
     let icaps = CartesianSemantics::new(
         &task,
-        &CartesianAbstractionConfig {
-            split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
-            ..CartesianAbstractionConfig::default()
+        &Icaps26CartesianConfig {
+            pick: Icaps26SplitSelection::MinUnwanted,
+            ..Icaps26CartesianConfig::default()
         },
     )
     .unwrap();
@@ -161,9 +163,9 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
     });
     let semantics = CartesianSemantics::new(
         &task,
-        &CartesianAbstractionConfig {
-            split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
-            ..CartesianAbstractionConfig::default()
+        &Icaps26CartesianConfig {
+            pick: Icaps26SplitSelection::MinUnwanted,
+            ..Icaps26CartesianConfig::default()
         },
     )
     .unwrap();
@@ -224,117 +226,8 @@ fn icaps_split_preserves_artifact_loop_and_arc_order() {
 }
 
 #[test]
-fn icaps_transition_storage_matches_indexed_storage_after_refinement() {
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 1,
-        metric: Metric::new(true, None),
-        variables: vec![ExplicitVariable::new(
-            2,
-            "location".into(),
-            vec!["left".into(), "right".into()],
-            None,
-            ExplicitValueIndex::new(0),
-        )],
-        numeric_variables: vec![
-            NumericVariable::new("x".into(), NumericType::Regular, None),
-            NumericVariable::new("one".into(), NumericType::Constant, None),
-        ],
-        goals: vec![ExplicitFact::propositional(0, 0)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![NumericValue::new(0.0), NumericValue::new(1.0)],
-        operators: vec![Operator::new(
-            "increment-x".into(),
-            vec![],
-            vec![],
-            vec![AssignmentEffect::new(
-                VariableIndex::from_usize(0),
-                AssignmentOperation::Plus,
-                VariableIndex::from_usize(1),
-                false,
-                vec![],
-            )],
-            OperatorCost::new(1),
-        )],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-    let config = CartesianAbstractionConfig::default();
-    let semantics = CartesianSemantics::new(&task, &config).unwrap();
-    let region = semantics.trivial_region().unwrap();
-    let mut indexed = WorkingAbstraction::new(region.clone(), 1);
-    let mut icaps = WorkingAbstraction::new_icaps26(region, 1);
-    indexed.add_transition(0, OperatorIndex::new(0), 0);
-    icaps.add_transition(0, OperatorIndex::new(0), 0);
-
-    let numeric_split = Split::Numeric {
-        state_id: 0,
-        var_id: VariableIndex::new(0),
-        boundary: NumericValue::new(0.0),
-        lower_includes_boundary: true,
-        witness_value: NumericValue::new(0.0),
-        desired_contains_witness: true,
-        integer_lattice: false,
-        description: String::new(),
-    };
-    indexed
-        .apply_split(&semantics, numeric_split.clone())
-        .unwrap();
-    icaps.apply_split(&semantics, numeric_split).unwrap();
-
-    let propositional_split = Split::Propositional {
-        state_id: 0,
-        var_id: VariableIndex::from_usize(0),
-        wanted: vec![ExplicitValueIndex::new(0)],
-        witness_value: ExplicitValueIndex::new(0),
-        description: String::new(),
-    };
-    indexed
-        .apply_split(&semantics, propositional_split.clone())
-        .unwrap();
-    icaps.apply_split(&semantics, propositional_split).unwrap();
-
-    let snapshot = |working: &WorkingAbstraction| {
-        let mut transitions = working
-            .active_transition_ids()
-            .map(|transition_id| {
-                let transition = working.transition(transition_id);
-                (
-                    transition.source,
-                    transition.concrete_op_id,
-                    transition.target,
-                )
-            })
-            .collect::<Vec<_>>();
-        transitions.sort_unstable();
-        let loops = if let Some(loop_order) = &working.icaps_self_loop_order {
-            loop_order.clone()
-        } else {
-            working
-                .self_loop_operator_ids
-                .iter()
-                .map(|operators| operators.intersection_iter(operators).collect::<Vec<_>>())
-                .collect::<Vec<_>>()
-        };
-        (transitions, loops)
-    };
-    assert_eq!(snapshot(&indexed), snapshot(&icaps));
-    assert!(indexed.transition_ids_by_key.is_some());
-    assert!(icaps.transition_ids_by_key.is_none());
-    assert!(
-        icaps
-            .self_loop_operator_ids
-            .iter()
-            .all(|operators| operators.words.is_empty()),
-        "ICAPS abstractions must not duplicate ordered loops in bitsets"
-    );
-}
-
-#[test]
 fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tails() {
-    let working = WorkingAbstraction::new(
+    let working = WorkingAbstraction::new_icaps26(
         CartesianSet::with_all_props_constrained(
             vec![vec![
                 ExplicitValueIndex::new(0),
@@ -391,7 +284,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         14.0
     );
 
-    let open_tail = WorkingAbstraction::new(
+    let open_tail = WorkingAbstraction::new_icaps26(
         CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![Interval::unbounded()],
@@ -414,7 +307,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
             .is_infinite()
     );
 
-    let fractional = WorkingAbstraction::new(
+    let fractional = WorkingAbstraction::new_icaps26(
         CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![Interval::new(
@@ -441,7 +334,7 @@ fn icaps26_unwanted_score_counts_excluded_values_and_penalizes_open_desired_tail
         0.25
     );
 
-    let open_integer_interval = WorkingAbstraction::new(
+    let open_integer_interval = WorkingAbstraction::new_icaps26(
         CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
             vec![Interval::new(
@@ -492,12 +385,12 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 3),
     });
-    let mut config = CartesianAbstractionConfig {
-        split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
-        ..CartesianAbstractionConfig::default()
+    let mut config = Icaps26CartesianConfig {
+        pick: Icaps26SplitSelection::MinUnwanted,
+        ..Icaps26CartesianConfig::default()
     };
     let mut semantics = CartesianSemantics::new(&task, &config).unwrap();
-    let working = WorkingAbstraction::new(
+    let working = WorkingAbstraction::new_icaps26(
         CartesianSet::with_all_props_constrained(
             vec![vec![
                 ExplicitValueIndex::new(0),
@@ -527,13 +420,13 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     let selected = select_refinement_split(&working, &semantics, candidates.clone(), 0).unwrap();
     assert!(matches!(selected, Split::Propositional { wanted, .. } if wanted.len() == 3));
 
-    config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MaxUnwanted);
-    semantics.split_selection = config.split_selection;
+    config.pick = Icaps26SplitSelection::MaxUnwanted;
+    semantics.pick = config.pick;
     let selected = select_refinement_split(&working, &semantics, candidates, 0).unwrap();
     assert!(matches!(selected, Split::Propositional { wanted, .. } if wanted.len() == 1));
 
-    config.split_selection = CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random);
-    config.random_seed = Some(2011);
+    config.pick = Icaps26SplitSelection::Random;
+    config.random_seed = 2011;
     let random_a = CartesianSemantics::new(&task, &config).unwrap();
     let random_b = CartesianSemantics::new(&task, &config).unwrap();
     let draw = |semantics: &CartesianSemantics<'_>| {
@@ -563,4 +456,183 @@ fn icaps26_selector_uses_unwanted_values_without_native_growth_filtering() {
     let sequence = draw(&random_a);
     assert_eq!(sequence, draw(&random_b));
     assert!(sequence.contains(&1) && sequence.contains(&3));
+}
+
+#[test]
+fn desired_region_uses_additive_snp_coordinate() {
+    let variables = vec![comparison_variable("sum-at-four")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("sum".into(), NumericType::Derived, None),
+        NumericVariable::new("four".into(), NumericType::Constant, None),
+    ];
+    let increment = |name: &str, var_id| {
+        Operator::new(
+            name.into(),
+            vec![],
+            vec![],
+            vec![AssignmentEffect::new(
+                var_id,
+                AssignmentOperation::Plus,
+                VariableIndex::from_usize(2),
+                false,
+                vec![],
+            )],
+            OperatorCost::new(1),
+        )
+    };
+    let task = numeric_goal_task(
+        variables,
+        numeric_variables,
+        // The stored value of the derived sum is intentionally stale. The
+        // Cartesian initial-state hash must use the axiom-evaluated value 3.
+        vec![
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(4.0),
+        ],
+        vec![
+            increment("increment-x", VariableIndex::from_usize(0)),
+            increment("increment-y", VariableIndex::from_usize(1)),
+        ],
+        vec![ComparisonAxiom::new(
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
+    );
+
+    let abstraction = Icaps26CartesianGenerator::new(Icaps26CartesianConfig {
+        max_states: 32,
+        random_seed: 1,
+        pick: Icaps26SplitSelection::Random,
+        ..Icaps26CartesianConfig::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+
+    assert_eq!(
+        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+        1.0
+    );
+    assert!(abstraction.metadata.solved_by_self);
+}
+
+#[test]
+fn desired_region_rejects_non_additive_snp_coordinate() {
+    let variables = vec![comparison_variable("product-at-nine")];
+    let numeric_variables = vec![
+        NumericVariable::new("x".into(), NumericType::Regular, None),
+        NumericVariable::new("y".into(), NumericType::Regular, None),
+        NumericVariable::new("one".into(), NumericType::Constant, None),
+        NumericVariable::new("product".into(), NumericType::Derived, None),
+        NumericVariable::new("nine".into(), NumericType::Constant, None),
+    ];
+    let task = numeric_goal_task(
+        variables,
+        numeric_variables,
+        vec![
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(9.0),
+        ],
+        vec![Operator::new(
+            "increment-both".into(),
+            vec![],
+            vec![],
+            vec![
+                AssignmentEffect::new(
+                    VariableIndex::new(0),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(2),
+                    false,
+                    vec![],
+                ),
+                AssignmentEffect::new(
+                    VariableIndex::new(1),
+                    AssignmentOperation::Plus,
+                    VariableIndex::new(2),
+                    false,
+                    vec![],
+                ),
+            ],
+            OperatorCost::new(1),
+        )],
+        vec![ComparisonAxiom::new(
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(3),
+            VariableIndex::from_usize(4),
+            ComparisonOperator::GreaterThanOrEqual,
+        )],
+        vec![AssignmentAxiom::new(
+            VariableIndex::from_usize(3),
+            CalOperator::Product,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
+    );
+    let error = Icaps26CartesianGenerator::new(Icaps26CartesianConfig {
+        max_states: 32,
+        random_seed: 1,
+        pick: Icaps26SplitSelection::Random,
+        ..Icaps26CartesianConfig::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap_err();
+
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("exact additive coordinate"),
+        "unexpected diagnostic: {diagnostic}"
+    );
+}
+
+fn comparison_variable(name: &str) -> ExplicitVariable {
+    ExplicitVariable::new(
+        ConditionValue::DOMAIN_SIZE,
+        name.into(),
+        vec!["true".into(), "false".into()],
+        Some(0),
+        ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+    )
+}
+
+fn numeric_goal_task(
+    variables: Vec<ExplicitVariable>,
+    numeric_variables: Vec<NumericVariable>,
+    initial_numeric: Vec<NumericValue>,
+    operators: Vec<Operator>,
+    comparison_axioms: Vec<ComparisonAxiom>,
+    assignment_axioms: Vec<AssignmentAxiom>,
+) -> NumericRootTask {
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables,
+        numeric_variables,
+        goals: vec![ExplicitFact::propositional(0, 0)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(2)],
+        numeric_state: initial_numeric,
+        operators,
+        axioms: vec![],
+        comparison_axioms,
+        assignment_axioms,
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
 }

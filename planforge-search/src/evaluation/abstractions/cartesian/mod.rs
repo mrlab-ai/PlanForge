@@ -16,7 +16,6 @@ mod flaws;
 mod generator;
 mod heuristic;
 mod hierarchy;
-pub mod icaps26;
 mod refinement;
 mod semantics;
 mod split;
@@ -47,7 +46,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
 use ordered_float::NotNan;
-use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
+use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
     NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
@@ -82,9 +81,7 @@ use crate::evaluation::abstractions::common::cartesian_set::{
 use crate::evaluation::abstractions::common::concrete_state::{
     ConcreteState, get_initial_state, make_prop_state_packer,
 };
-use crate::evaluation::abstractions::common::coordinates::{
-    AdditiveNumericView, comparison_refinement_dimensions, numeric_dimension_delta_for_operator,
-};
+use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
 use crate::evaluation::abstractions::common::task::{
     AbstractionUse, validate_abstraction_operator,
 };
@@ -92,7 +89,6 @@ use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
     AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
 };
-use icaps26::*;
 use planforge_sas::utils::interval::Interval;
 
 #[inline]

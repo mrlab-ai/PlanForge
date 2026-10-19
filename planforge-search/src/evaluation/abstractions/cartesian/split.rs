@@ -15,7 +15,6 @@ pub(super) enum Split {
         boundary: NumericValue,
         lower_includes_boundary: bool,
         witness_value: NumericValue,
-        desired_contains_witness: bool,
         integer_lattice: bool,
         description: String,
     },

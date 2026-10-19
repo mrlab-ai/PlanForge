@@ -177,11 +177,3 @@ pub(crate) fn partition_for_value(partitions: &[Interval], value: NumericValue) 
     );
     found
 }
-
-pub(crate) fn partitions_for_interval(partitions: &[Interval], value: &Interval) -> Vec<usize> {
-    partitions
-        .iter()
-        .enumerate()
-        .filter_map(|(i, iv)| if iv.intersects(value) { Some(i) } else { None })
-        .collect()
-}

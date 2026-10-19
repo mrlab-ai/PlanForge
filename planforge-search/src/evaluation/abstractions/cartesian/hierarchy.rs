@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone)]
-pub(super) enum RefinementNode {
+pub(crate) enum RefinementNode {
     Leaf {
         state_id: usize,
     },
@@ -22,11 +22,11 @@ pub(super) enum RefinementNode {
 
 #[derive(Debug, Clone)]
 pub struct CartesianRefinementHierarchy {
-    pub(super) nodes: Vec<RefinementNode>,
+    pub(crate) nodes: Vec<RefinementNode>,
 }
 
 impl CartesianRefinementHierarchy {
-    pub(super) fn trivial() -> Self {
+    pub(crate) fn trivial() -> Self {
         Self {
             nodes: vec![RefinementNode::Leaf { state_id: 0 }],
         }
@@ -82,7 +82,7 @@ impl CartesianRefinementHierarchy {
         }
     }
 
-    pub(super) fn split_propositional(
+    pub(crate) fn split_propositional(
         &mut self,
         leaf_node_id: usize,
         old_state_id: usize,
@@ -126,7 +126,7 @@ impl CartesianRefinementHierarchy {
         Ok(())
     }
 
-    pub(super) fn split_numeric(
+    pub(crate) fn split_numeric(
         &mut self,
         leaf_node_id: usize,
         old_state_id: usize,
@@ -181,11 +181,11 @@ impl CartesianRefinementHierarchy {
 /// Where a numeric refinement cuts one variable's range, and on which side of
 /// the cut the state being split ends up.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct NumericSplit {
-    pub(super) var_id: VariableIndex,
-    pub(super) boundary: NumericValue,
+pub(crate) struct NumericSplit {
+    pub(crate) var_id: VariableIndex,
+    pub(crate) boundary: NumericValue,
     /// Whether `boundary` itself belongs to the lower child.
-    pub(super) lower_includes_boundary: bool,
+    pub(crate) lower_includes_boundary: bool,
     /// Whether the state that existed before the split becomes the lower child.
-    pub(super) old_state_is_lower: bool,
+    pub(crate) old_state_is_lower: bool,
 }

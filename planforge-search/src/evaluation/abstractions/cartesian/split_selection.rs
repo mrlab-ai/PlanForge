@@ -171,8 +171,6 @@ fn projected_transition_count(
 
     let unaffected = working
         .transition_ids_by_key
-        .as_ref()
-        .expect("projected transition growth requires the native transition index")
         .len()
         .checked_sub(incident.len())
         .expect("incident Cartesian transition count exceeds active transition count");
@@ -302,197 +300,6 @@ fn select_min_growth_split(
     Ok(candidates.swap_remove(index))
 }
 
-fn select_least_refined_split(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    mut candidates: Vec<Split>,
-    tag: u64,
-) -> Result<Split> {
-    ensure!(
-        !candidates.is_empty(),
-        "cannot select a Cartesian refinement from an empty candidate set"
-    );
-    let minimum = candidates
-        .iter()
-        .map(|split| match split.dimension() {
-            SplitDimension::Propositional(var_id) => {
-                working.propositional_refinement_counts()[var_id.index()]
-            }
-            SplitDimension::Numeric(var_id) => working.numeric_refinement_counts()[var_id.index()],
-        })
-        .min()
-        .expect("nonempty Cartesian candidate set has no minimum");
-    candidates.retain(|split| {
-        let count = match split.dimension() {
-            SplitDimension::Propositional(var_id) => {
-                working.propositional_refinement_counts()[var_id.index()]
-            }
-            SplitDimension::Numeric(var_id) => working.numeric_refinement_counts()[var_id.index()],
-        };
-        count == minimum
-    });
-    let index = semantics.choose_split_index(&candidates, tag);
-    Ok(candidates.swap_remove(index))
-}
-
-fn additive_step_distance(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    split: &Split,
-) -> Result<Option<f64>> {
-    let Split::Numeric {
-        var_id,
-        witness_value,
-        desired_contains_witness,
-        ..
-    } = split
-    else {
-        return Ok(None);
-    };
-    if *desired_contains_witness {
-        return Ok(None);
-    }
-    let (_, desired_region) = split_child_regions(working, split)?;
-    let desired = desired_region.numeric[var_id.index()];
-    let (distance, positive_direction) = if *witness_value < desired.lower
-        || (*witness_value == desired.lower && !desired.lower_closed)
-    {
-        (desired.lower.value() - witness_value.value(), true)
-    } else if *witness_value > desired.upper
-        || (*witness_value == desired.upper && !desired.upper_closed)
-    {
-        (witness_value.value() - desired.upper.value(), false)
-    } else {
-        bail!(
-            "numeric refinement witness {witness_value} is inside its purported desired child {desired:?}"
-        );
-    };
-    ensure!(
-        distance.is_finite() && distance >= 0.0,
-        "invalid additive refinement distance {distance}"
-    );
-    let maximum_progress = semantics.additive_effect_deltas()[var_id.index()]
-        .iter()
-        .copied()
-        .filter(|delta| {
-            if positive_direction {
-                delta.value() > float_tolerance::SEARCH_EPSILON
-            } else {
-                delta.value() < -float_tolerance::SEARCH_EPSILON
-            }
-        })
-        .map(|a| a.value().abs())
-        .max_by(f64::total_cmp);
-    Ok(maximum_progress.map(|progress| (distance / progress).max(1.0)))
-}
-
-fn select_max_additive_steps_split(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    mut candidates: Vec<Split>,
-    tag: u64,
-) -> Result<Split> {
-    ensure!(
-        !candidates.is_empty(),
-        "cannot select a Cartesian refinement from an empty candidate set"
-    );
-    let scores = candidates
-        .iter()
-        .map(|candidate| additive_step_distance(working, semantics, candidate))
-        .collect::<Result<Vec<_>>>()?;
-    let Some(maximum) = scores.iter().flatten().copied().max_by(f64::total_cmp) else {
-        return select_min_growth_split(working, semantics, candidates, tag);
-    };
-    let mut index = 0;
-    candidates.retain(|_| {
-        let retain = scores[index].is_some_and(|score| approximately_equal(score, maximum));
-        index += 1;
-        retain
-    });
-    select_min_growth_split(working, semantics, candidates, tag)
-}
-
-pub(super) fn artifact_unwanted_score(working: &WorkingAbstraction, split: &Split) -> Result<f64> {
-    let parent = working
-        .states
-        .get(split.state_id())
-        .with_context(|| format!("missing split state {}", split.state_id()))?;
-    match split {
-        Split::Propositional { var_id, wanted, .. } => {
-            let current = parent
-                .propositions()
-                .get(var_id.index())
-                .with_context(|| format!("split references missing prop var {var_id}"))?;
-            let wanted_count = current
-                .iter()
-                .filter(|value| wanted.binary_search(value).is_ok())
-                .count();
-            ensure!(
-                wanted_count > 0 && wanted_count < current.len(),
-                "ICAPS 2026 selector received a non-strict propositional split"
-            );
-            Ok((current.len() - wanted_count) as f64)
-        }
-        Split::Numeric {
-            var_id,
-            desired_contains_witness,
-            ..
-        } => {
-            let (witness_region, other_region) = split_child_regions(working, split)?;
-            let desired_region = if *desired_contains_witness {
-                witness_region
-            } else {
-                other_region
-            };
-            let desired = desired_region.numeric[var_id.index()];
-            if !desired.lower.is_finite() || !desired.upper.is_finite() {
-                return Ok(f64::INFINITY);
-            }
-            let current = parent.numeric[var_id.index()];
-            if !current.lower.is_finite() || !current.upper.is_finite() {
-                return Ok(f64::INFINITY);
-            }
-            let current_values = integer_interval_cardinality(current);
-            let desired_values = integer_interval_cardinality(desired);
-            let unwanted_values = current_values - desired_values;
-            ensure!(
-                unwanted_values >= 0.0,
-                "ICAPS 2026 desired interval contains more integer values than its parent"
-            );
-            let unwanted_width =
-                ((current.upper - current.lower) - (desired.upper - desired.lower)).value();
-            ensure!(
-                unwanted_width >= 0.0,
-                "ICAPS 2026 desired interval is wider than its parent"
-            );
-            // Preserve the artifact's integer-task ordering whenever the
-            // excluded child contains an integer value. Strict fractional
-            // splits can exclude no integer while still having positive
-            // width; only that previously unsupported case uses the width.
-            Ok(if unwanted_values > 0.0 {
-                unwanted_values
-            } else {
-                unwanted_width
-            })
-        }
-    }
-}
-
-fn integer_interval_cardinality(interval: Interval) -> f64 {
-    debug_assert!(interval.lower.is_finite() && interval.upper.is_finite());
-    let first = if interval.lower_closed {
-        interval.lower.value().ceil()
-    } else {
-        interval.lower.value().floor() + 1.0
-    };
-    let last = if interval.upper_closed {
-        interval.upper.value().floor()
-    } else {
-        interval.upper.value().ceil() - 1.0
-    };
-    (last - first + 1.0).max(0.0)
-}
-
 pub(super) fn select_refinement_split(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
@@ -503,9 +310,6 @@ pub(super) fn select_refinement_split(
         CartesianSplitSelection::MinTransitionGrowth => {
             select_min_growth_split(working, semantics, candidates, tag)
         }
-        CartesianSplitSelection::MaxAdditiveSteps => {
-            select_max_additive_steps_split(working, semantics, candidates, tag)
-        }
         CartesianSplitSelection::Random => {
             ensure!(
                 !candidates.is_empty(),
@@ -513,41 +317,6 @@ pub(super) fn select_refinement_split(
             );
             let index = semantics.choose_random_split_index(candidates.len());
             Ok(candidates.swap_remove(index))
-        }
-        CartesianSplitSelection::LeastRefined => {
-            select_least_refined_split(working, semantics, candidates, tag)
-        }
-        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random) => {
-            ensure!(
-                !candidates.is_empty(),
-                "cannot select a Cartesian refinement from an empty candidate set"
-            );
-            if candidates.len() == 1 {
-                return Ok(candidates.pop().expect("checked nonempty split set"));
-            }
-            let index = semantics.choose_icaps_random_index(candidates.len());
-            Ok(candidates.swap_remove(index))
-        }
-        CartesianSplitSelection::Icaps26(policy) => {
-            ensure!(
-                !candidates.is_empty(),
-                "cannot select a Cartesian refinement from an empty candidate set"
-            );
-            let mut selected = 0;
-            let mut selected_score = artifact_unwanted_score(working, &candidates[0])?;
-            for (index, candidate) in candidates.iter().enumerate().skip(1) {
-                let score = artifact_unwanted_score(working, candidate)?;
-                let better = match policy {
-                    Icaps26SplitSelection::MinUnwanted => score < selected_score,
-                    Icaps26SplitSelection::MaxUnwanted => score > selected_score,
-                    Icaps26SplitSelection::Random => unreachable!(),
-                };
-                if better {
-                    selected = index;
-                    selected_score = score;
-                }
-            }
-            Ok(candidates.swap_remove(selected))
         }
     }
 }

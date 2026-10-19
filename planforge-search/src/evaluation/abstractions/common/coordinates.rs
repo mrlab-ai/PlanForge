@@ -36,10 +36,6 @@ impl AdditiveNumericView {
             })
     }
 
-    pub(crate) fn operator_deltas(&self) -> &[NumericValue] {
-        &self.operator_deltas
-    }
-
     pub(crate) fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
         self.expression.evaluate(numeric_values)
     }

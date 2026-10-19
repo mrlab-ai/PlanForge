@@ -78,14 +78,14 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         ("linear goal", linear_goal_task(), 2.0),
         ("diagonal", diagonal_task(), 2.0),
     ] {
-        for flaw_candidate_generation in [
-            CartesianFlawCandidateGeneration::General,
-            CartesianFlawCandidateGeneration::DesiredRegion,
+        for refinement_direction in [
+            CartesianRefinementDirection::Progression,
+            CartesianRefinementDirection::Regression,
         ] {
             let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
                 max_states: 1_000,
                 flaw_kind: FlawKind::Regression,
-                flaw_candidate_generation,
+                refinement_direction,
                 ..Default::default()
             })
             .unwrap()
@@ -94,12 +94,12 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
             assert_eq!(
                 abstraction.metadata.stop_reason,
                 CartesianStopReason::ConcretePlan,
-                "{name}, {flaw_candidate_generation:?}"
+                "{name}, {refinement_direction:?}"
             );
             assert_eq!(
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
                 optimal_cost,
-                "{name}, {flaw_candidate_generation:?}"
+                "{name}, {refinement_direction:?}"
             );
         }
     }

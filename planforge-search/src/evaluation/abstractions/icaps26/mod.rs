@@ -1,0 +1,89 @@
+//! The Cartesian abstractions of Schindler, Speck, and Helmert (ICAPS 2026),
+//! reproduced from their artifact as the ICAPS baseline of the AAMAS27
+//! experiments (`icaps26_cartesian(...)`).
+//!
+//! A frozen copy of the Cartesian construction as it stood when the AAMAS27
+//! experiments ran, so the native Cartesian abstractions can change without
+//! moving the baseline. It builds the native artifact type
+//! [`CartesianAbstraction`]. Delete this module once AAMAS27 is accepted.
+
+mod artifact;
+mod config;
+mod distances;
+mod finalize;
+mod flaws;
+mod generator;
+mod refinement;
+mod semantics;
+mod split;
+mod split_selection;
+#[cfg(test)]
+mod tests;
+mod working;
+
+pub use artifact::Icaps26SplitSelection;
+pub use config::*;
+use distances::*;
+use finalize::*;
+use flaws::*;
+pub use generator::*;
+use semantics::*;
+use split::*;
+use split_selection::*;
+use working::*;
+
+use super::cartesian::{
+    CartesianAbstraction, CartesianAbstractionMetadata, CartesianRefinementDirection,
+    CartesianRefinementHierarchy, CartesianStopReason, NumericSplit, RefinementNode,
+};
+
+use std::cell::RefCell;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail, ensure};
+use ordered_float::NotNan;
+use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
+    NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
+    metric_operator_cost_from_initial_values,
+};
+use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::state_packer::StatePacker;
+use tracing::info;
+
+use crate::evaluation::validate_abstractable_goal;
+
+use super::common::cegar::{
+    CegarDriver, CegarIterationResult, CegarStopReason, progress_concrete_state,
+};
+use super::common::coordinates::Coordinates;
+use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, sorted_value_sets_overlap,
+};
+use crate::evaluation::abstractions::common::concrete_state::{
+    ConcreteState, get_initial_state, make_prop_state_packer,
+};
+use crate::evaluation::abstractions::common::coordinates::{
+    AdditiveNumericView, comparison_refinement_dimensions,
+};
+use crate::evaluation::abstractions::common::task::{
+    AbstractionUse, validate_abstraction_operator,
+};
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
+    AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
+};
+use artifact::*;
+use planforge_sas::utils::interval::Interval;
+
+#[inline]
+fn fact_is_held(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bool {
+    fact.is_held(
+        planforge_sas::state_registry::ConcreteStateView::from_decoded(packer, buffer, &[]),
+    )
+}

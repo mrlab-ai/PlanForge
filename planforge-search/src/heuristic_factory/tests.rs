@@ -9,18 +9,15 @@ use super::{
     register_external_heuristics,
 };
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
-use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
-use crate::evaluation::abstractions::cartesian::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
-use crate::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity, VariableSubset,
-};
+use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
+use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
@@ -55,18 +52,16 @@ fn parses_astar_domain_abstraction_with_named_options() {
 #[test]
 fn parses_astar_canonical_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_progression, random_seed=7))",
+        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, random_seed=7))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
 
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(cfg.total_max_time, 4.5);
-    assert_eq!(cfg.blacklist_option, VariableSubset::NonGoals);
-    assert_eq!(cfg.init_split_quantity, InitSplitQuantity::All);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::SequenceProgression);
+    assert_eq!(cfg.flaw_kind, FlawKind::Progression);
     assert_eq!(cfg.random_seed, Some(7));
 }
 
@@ -151,24 +146,9 @@ fn parses_strict_icaps26_cartesian_source() {
         abstraction_config::ComponentUse::RegionalCostPartitioning,
     )
     .unwrap();
-    assert_eq!(
-        config.split_selection,
-        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted)
-    );
+    assert_eq!(config.pick, Icaps26SplitSelection::MinUnwanted);
     assert_eq!(config.max_time, Some(std::time::Duration::from_secs(900)));
-    assert_eq!(config.random_seed, Some(7));
-    assert_eq!(
-        config.refinement_direction,
-        crate::evaluation::abstractions::cartesian::CartesianRefinementDirection::Regression
-    );
-    assert_eq!(
-        config.abstract_plan_selection,
-        crate::evaluation::abstractions::cartesian::CartesianAbstractPlanSelection::StableAStar
-    );
-    assert_eq!(
-        config.flaw_candidate_generation,
-        crate::evaluation::abstractions::cartesian::CartesianFlawCandidateGeneration::DesiredRegion
-    );
+    assert_eq!(config.random_seed, 7);
     assert!(config.compute_source_sets);
     assert!(config.retain_transition_system);
 
@@ -177,7 +157,7 @@ fn parses_strict_icaps26_cartesian_source() {
         abstraction_config::ComponentUse::Standalone,
     )
     .unwrap();
-    assert_eq!(defaults.random_seed, Some(2011));
+    assert_eq!(defaults.random_seed, 2011);
 }
 
 #[test]
@@ -198,10 +178,7 @@ fn parses_matched_single_abstraction_icaps26_configuration() {
     .unwrap();
     assert_eq!(config.max_states, usize::MAX);
     assert_eq!(config.max_time, Some(std::time::Duration::from_secs(900)));
-    assert_eq!(
-        config.split_selection,
-        CartesianSplitSelection::Icaps26(Icaps26SplitSelection::Random)
-    );
+    assert_eq!(config.pick, Icaps26SplitSelection::Random);
     assert!(!config.retain_transition_system);
 }
 
@@ -258,7 +235,7 @@ fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
 }
 
 #[test]
-fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
+fn cartesian_sources_reject_unknown_flaw_kinds() {
     let h =
         astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=sequence_regression)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
@@ -266,22 +243,17 @@ fn hierarchical_cartesian_collection_rejects_unsupported_flaw_kind() {
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
     )
-    .expect_err("unsupported Cartesian flaw kind must fail during parsing");
-    assert!(error.contains("flaw_kind=sequence_regression"));
-}
-
-#[test]
-fn direct_cartesian_abstraction_rejects_unsupported_flaw_kind() {
-    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
-    let mut cegar = CegarConfig::default();
-    cegar.apply_options(&h.args).unwrap();
-
-    let result = crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator::new(
-        super::cartesian_config_from_cegar(&cegar),
-    );
+    .expect_err("an unknown flaw kind must fail during parsing");
     assert!(
-        result.is_err(),
-        "flaw_kind=sequence_regression must not silently become progression"
+        error.contains("invalid flaw_kind `sequence_regression`"),
+        "got `{error}`"
+    );
+
+    let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
+    let error = CegarConfig::default().apply_options(&h.args).unwrap_err();
+    assert!(
+        error.contains("invalid flaw_kind `sequence_regression`"),
+        "got `{error}`"
     );
 }
 
@@ -291,7 +263,6 @@ fn direct_cartesian_abstraction_rejects_cegar_only_options() {
         "max_iterations=10",
         "use_wildcard_plans=true",
         "flaw_treatment=first",
-        "init_split_method=identity",
     ] {
         let h = astar_heuristic(&format!("astar(cartesian_abstraction({option}))"));
         let error = super::validate_cartesian_cegar_options(&h.args).unwrap_err();
@@ -474,17 +445,15 @@ fn parses_astar_lmcutnumeric_with_named_options() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, blacklist_option=non_goals, init_split_quantity=all, use_wildcard_plans=false, combine_labels=true, flaw_kind=sequence_bidirectional, collection_strategy=complementary, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=execute_entire_plan, collection_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(cfg.total_max_time, 4.5);
-    assert_eq!(cfg.blacklist_option, VariableSubset::NonGoals);
-    assert_eq!(cfg.init_split_quantity, InitSplitQuantity::All);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::SequenceBidirectional);
+    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
     assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
     assert_eq!(cfg.random_seed, Some(7));
     assert!(cfg.debug);

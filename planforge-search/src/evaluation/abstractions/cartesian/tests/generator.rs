@@ -1,16 +1,5 @@
 use super::*;
 
-#[test]
-fn unsupported_cartesian_flaw_kinds_are_rejected() {
-    let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        flaw_kind: FlawKind::SequenceRegression,
-        ..Default::default()
-    })
-    .err()
-    .expect("unsupported flaw kind must fail");
-    assert!(error.to_string().contains("flaw_kind=sequence_regression"));
-}
-
 /// A goal on a derived variable is refused, by name.
 ///
 /// The goal is `derived=default`: the derived variable at the value its axioms

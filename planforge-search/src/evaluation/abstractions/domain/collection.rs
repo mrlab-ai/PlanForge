@@ -28,93 +28,9 @@ use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
 use super::config::CegarConfig;
 use super::flaws::SplitDirection;
 use super::generator::DomainAbstractionGenerator;
-use super::split_selection::{FlawTreatmentVariants, InitSplitMethod};
+use super::split_selection::FlawTreatmentVariants;
 use crate::resource_limits;
 use planforge_sas::utils::interval::Interval;
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum VariableSubset {
-    Goals,
-    NonGoals,
-    All,
-}
-
-impl fmt::Display for VariableSubset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Goals => write!(f, "goals"),
-            Self::NonGoals => write!(f, "non_goals"),
-            Self::All => write!(f, "all"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for VariableSubset {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "goals" => Ok(Self::Goals),
-            "non_goals" => Ok(Self::NonGoals),
-            "all" => Ok(Self::All),
-            other => Err(format!("invalid VariableSubset `{other}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum InitSplitQuantity {
-    None,
-    Single,
-    All,
-}
-
-impl fmt::Display for InitSplitQuantity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::None => write!(f, "none"),
-            Self::Single => write!(f, "single"),
-            Self::All => write!(f, "all"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for InitSplitQuantity {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "none" => Ok(Self::None),
-            "single" => Ok(Self::Single),
-            "all" => Ok(Self::All),
-            other => Err(format!("invalid InitSplitQuantity `{other}`")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum NumericSplitStrategy {
-    Standard,
-    Exclusion,
-}
-
-impl fmt::Display for NumericSplitStrategy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Standard => write!(f, "standard"),
-            Self::Exclusion => write!(f, "exclusion"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for NumericSplitStrategy {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "standard" => Ok(Self::Standard),
-            "exclusion" => Ok(Self::Exclusion),
-            other => Err(format!("invalid NumericSplitStrategy `{other}`")),
-        }
-    }
-}
 
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
@@ -127,17 +43,12 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub stagnation_limit: f64,
     pub blacklist_trigger_percentage: f64,
     pub enable_blacklist_on_stagnation: bool,
-    pub blacklist_option: VariableSubset,
-    pub init_split_candidates: VariableSubset,
-    pub init_split_quantity: InitSplitQuantity,
     pub random_seed: Option<u64>,
     pub debug: bool,
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub flaw_kind: FlawKind,
     pub flaw_treatment: FlawTreatmentVariants,
-    pub init_split_method: InitSplitMethod,
-    pub numeric_split_strategy: NumericSplitStrategy,
     /// `standard` refines full-task abstractions with random restarts,
     /// blacklisting, stagnation detection, and deduplication.
     /// `complementary` builds the goal-focused collection shared with
@@ -212,9 +123,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
-            blacklist_option: VariableSubset::All,
-            init_split_candidates: VariableSubset::All,
-            init_split_quantity: InitSplitQuantity::Single,
             random_seed: Some(2011),
             debug: false,
             use_wildcard_plans: false,
@@ -225,8 +133,6 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             // complementary portfolio selects its direction per variant.
             flaw_kind: FlawKind::ExecuteEntirePlan,
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
-            init_split_method: InitSplitMethod::InitValue,
-            numeric_split_strategy: NumericSplitStrategy::Standard,
             collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
             progressive_goal_roots: false,
@@ -295,16 +201,11 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "stagnation_limit={}, ",
                 "blacklist_trigger_percentage={}, ",
                 "enable_blacklist_on_stagnation={}, ",
-                "blacklist_option={}, ",
-                "init_split_candidates={}, ",
-                "init_split_quantity={}, ",
                 "random_seed={}, ",
                 "debug={}, ",
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
                 "flaw_treatment={}, ",
-                "init_split_method={}, ",
-                "numeric_split_strategy={}, ",
                 "collection_strategy={}, ",
                 "variants_per_goal={}, ",
                 "progressive_goal_roots={}, ",
@@ -319,16 +220,11 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             fmt_f64(self.stagnation_limit),
             fmt_f64(self.blacklist_trigger_percentage),
             self.enable_blacklist_on_stagnation,
-            self.blacklist_option,
-            self.init_split_candidates,
-            self.init_split_quantity,
             fmt_optional_seed(self.random_seed),
             self.debug,
             self.use_wildcard_plans,
             self.combine_labels,
             self.flaw_treatment,
-            self.init_split_method,
-            self.numeric_split_strategy,
             self.collection_strategy,
             self.variants_per_goal,
             self.progressive_goal_roots,
@@ -361,9 +257,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     fn validate_supported_options(&self) -> Result<()> {
-        if self.config.numeric_split_strategy != NumericSplitStrategy::Standard {
-            bail!("`numeric_split_strategy=exclusion` is not supported in the current Rust port");
-        }
         ensure!(
             self.config.variants_per_goal > 0,
             "`variants_per_goal` must be > 0"
@@ -458,10 +351,6 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             random_seed: Some(random_seed),
             flaw_kind: self.config.flaw_kind,
             flaw_treatment: self.config.flaw_treatment,
-            init_split_method: match self.config.init_split_quantity {
-                InitSplitQuantity::None => InitSplitMethod::Identity,
-                InitSplitQuantity::Single | InitSplitQuantity::All => self.config.init_split_method,
-            },
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
@@ -531,8 +420,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<DomainAbstraction>> {
         let mut rng = self.create_rng();
-        let blacklist_candidates =
-            collect_blacklist_candidate_var_ids(task, self.config.blacklist_option);
+        let blacklist_candidates = collect_initial_split_candidate_var_ids(task);
 
         let start = Instant::now();
         let mut remaining_collection_size = self.config.max_collection_size;
@@ -729,25 +617,21 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         Ok(generated_abstractions)
     }
 
+    /// The variable member `iteration` splits initially: the candidates take
+    /// turns.
     fn initial_split_var_ids(
         &self,
         task: &dyn AbstractNumericTask,
         iteration: usize,
     ) -> Option<HashSet<VariableIndex>> {
-        let candidate_var_ids =
-            collect_init_split_candidate_var_ids(task, self.config.init_split_candidates);
-
-        let selected_var_ids: HashSet<VariableIndex> = match self.config.init_split_quantity {
-            InitSplitQuantity::None => HashSet::new(),
-            InitSplitQuantity::All => candidate_var_ids.iter().copied().collect(),
-            InitSplitQuantity::Single => {
-                select_single_init_split_var(&candidate_var_ids, iteration)
-                    .into_iter()
-                    .collect()
-            }
-        };
-
-        Some(selected_var_ids)
+        let candidate_var_ids = collect_initial_split_candidate_var_ids(task);
+        Some(
+            candidate_var_ids
+                .get(iteration % candidate_var_ids.len().max(1))
+                .copied()
+                .into_iter()
+                .collect(),
+        )
     }
 
     fn split_direction_for_iteration(&self, iteration: usize) -> Option<SplitDirection> {
@@ -798,7 +682,6 @@ impl GoalFocusedDomainBackend<'_> {
             random_seed: variant.seed,
             flaw_kind: self.config.flaw_kind,
             flaw_treatment: self.config.flaw_treatment,
-            init_split_method: InitSplitMethod::Identity,
             init_split_var_ids: Some(HashSet::new()),
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
@@ -995,68 +878,31 @@ fn goal_var_ids(task: &dyn AbstractNumericTask) -> HashSet<VariableIndex> {
         .collect()
 }
 
-fn collect_init_split_candidate_var_ids(
-    task: &dyn AbstractNumericTask,
-    subset: VariableSubset,
-) -> Vec<VariableIndex> {
+/// The variables initial splits and blacklisting choose from: every
+/// propositional variable no axiom writes, except condition variables that no
+/// goal mentions, and every regular numeric variable (encoded after the
+/// propositional ones).
+fn collect_initial_split_candidate_var_ids(task: &dyn AbstractNumericTask) -> Vec<VariableIndex> {
     let goal_related = goal_var_ids(task);
     let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
-
-    let mut candidates: Vec<VariableIndex> = match subset {
-        VariableSubset::Goals => goal_related.iter().copied().collect(),
-        VariableSubset::NonGoals => (0..task.variables().len())
-            .map(VariableIndex::from_usize)
-            .filter(|var_id| {
-                !goal_related.contains(var_id)
-                    && !logic_axiom_effect_vars.contains(var_id)
-                    && !task.numeric_conditions().is_condition_var(*var_id)
-            })
-            .collect(),
-        VariableSubset::All => (0..task.variables().len())
-            .map(VariableIndex::from_usize)
-            .filter(|var_id| {
-                !logic_axiom_effect_vars.contains(var_id)
-                    && (!task.numeric_conditions().is_condition_var(*var_id)
-                        || goal_related.contains(var_id))
-            })
-            .collect(),
-    };
-    if matches!(subset, VariableSubset::NonGoals | VariableSubset::All) {
-        let encoded_numeric_offset = task.variables().len();
-        candidates.extend(
-            task.numeric_variables()
-                .iter()
-                .enumerate()
-                .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
-                .map(|(numeric_var_id, _)| {
-                    VariableIndex::from_usize(encoded_numeric_offset + numeric_var_id)
-                }),
-        );
-    }
-    candidates.sort_unstable();
-    candidates.dedup();
-    candidates
-}
-
-fn collect_blacklist_candidate_var_ids(
-    task: &dyn AbstractNumericTask,
-    subset: VariableSubset,
-) -> Vec<VariableIndex> {
-    let mut candidates = collect_init_split_candidate_var_ids(task, subset);
-    if matches!(subset, VariableSubset::NonGoals | VariableSubset::All) {
-        let encoded_numeric_offset = task.variables().len();
-        candidates.extend(
-            task.numeric_variables()
-                .iter()
-                .enumerate()
-                .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
-                .map(|(numeric_var_id, _)| {
-                    VariableIndex::from_usize(encoded_numeric_offset + numeric_var_id)
-                }),
-        );
-    }
-    candidates.sort_unstable();
-    candidates.dedup();
+    let mut candidates: Vec<VariableIndex> = (0..task.variables().len())
+        .map(VariableIndex::from_usize)
+        .filter(|var_id| {
+            !logic_axiom_effect_vars.contains(var_id)
+                && (!task.numeric_conditions().is_condition_var(*var_id)
+                    || goal_related.contains(var_id))
+        })
+        .collect();
+    let encoded_numeric_offset = task.variables().len();
+    candidates.extend(
+        task.numeric_variables()
+            .iter()
+            .enumerate()
+            .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+            .map(|(numeric_var_id, _)| {
+                VariableIndex::from_usize(encoded_numeric_offset + numeric_var_id)
+            }),
+    );
     candidates
 }
 
@@ -1094,17 +940,6 @@ fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
     let mut shuffled = candidates.to_vec();
     shuffled.shuffle(rng);
     shuffled.into_iter().take(blacklist_size).collect()
-}
-
-fn select_single_init_split_var(
-    candidate_var_ids: &[VariableIndex],
-    iteration: usize,
-) -> Option<VariableIndex> {
-    if candidate_var_ids.is_empty() {
-        return None;
-    }
-    let index = iteration % candidate_var_ids.len();
-    candidate_var_ids.get(index).copied()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

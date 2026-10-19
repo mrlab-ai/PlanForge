@@ -301,7 +301,7 @@ fn goal_focused_collection_config(
         max_collection_size: 10_000,
         abstraction_generation_max_time: f64::INFINITY,
         total_max_time: f64::INFINITY,
-        flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
+        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
         use_wildcard_plans: true,
         combine_labels: false,
         flaw_kind: FlawKind::ExecuteEntirePlan,

@@ -50,58 +50,6 @@ fn numeric_flaw(var: VariableIndex) -> NumericFlaw {
 }
 
 #[test]
-fn max_refined_scores_comparison_flaws_like_numeric_fd() {
-    let flaws = vec![
-        prop_flaw(VariableIndex::from_usize(1), Vec::new()),
-        prop_flaw(
-            VariableIndex::from_usize(0),
-            vec![numeric_flaw(VariableIndex::from_usize(0))],
-        ),
-    ];
-    let conditions = condition_on_prop_var(VariableIndex::from_usize(0));
-    let domain_sizes = vec![1, 2];
-    let numeric_domain_sizes = vec![1];
-    let mut rng = SmallRng::seed_from_u64(1);
-
-    let chosen = fix_single_flaw_max_refined(
-        &flaws,
-        &conditions,
-        &domain_sizes,
-        &numeric_domain_sizes,
-        1,
-        &mut rng,
-    );
-
-    assert_eq!(chosen[0].idx, 0);
-}
-
-#[test]
-fn max_refined_continues_most_refined_dependent_numeric_view() {
-    let flaws = vec![prop_flaw(
-        VariableIndex::from_usize(0),
-        vec![
-            numeric_flaw(VariableIndex::from_usize(0)),
-            numeric_flaw(VariableIndex::from_usize(1)),
-        ],
-    )];
-    let conditions = condition_on_prop_var(VariableIndex::from_usize(0));
-    let domain_sizes = vec![2];
-    let numeric_domain_sizes = vec![7, 2];
-
-    let (chosen, _) =
-        compute_max_refined(&flaws, &conditions, &domain_sizes, &numeric_domain_sizes, 1);
-
-    let restricted = chosen[0]
-        .restricted_dep
-        .as_ref()
-        .expect("comparison flaw should restrict dependent numeric flaws");
-    assert_eq!(
-        restricted,
-        &vec![numeric_flaw(VariableIndex::from_usize(0))]
-    );
-}
-
-#[test]
 fn min_growth_continues_most_refined_dependent_numeric_view() {
     let flaws = vec![prop_flaw(
         VariableIndex::from_usize(0),
@@ -204,7 +152,7 @@ fn first_choice(
         Some(rank) => TieBreak::Rank(rank),
         None => TieBreak::Random(&mut rng),
     };
-    let chosen = treatment.choose_flaws(&task, flaws, &[1], numeric_domain_sizes, tie_break, 1);
+    let chosen = treatment.choose_flaws(&task, flaws, &[1], numeric_domain_sizes, tie_break);
     assert_eq!(chosen.len(), flaws.len(), "every flaw stays a fallback");
     chosen[0].idx
 }
@@ -250,9 +198,7 @@ fn ranked_selection_ignores_the_input_order_and_the_seed() {
     let reversed = flaws.iter().rev().cloned().collect::<Vec<_>>();
     for treatment in [
         FlawTreatmentVariants::RandomSingleAtom,
-        FlawTreatmentVariants::MaxRefinedSingleAtom,
         FlawTreatmentVariants::MinGrowthSingleAtom,
-        FlawTreatmentVariants::ClosestToGoal,
     ] {
         for rank in 0..3 {
             let choices = (0..8)
@@ -272,19 +218,5 @@ fn ranked_selection_ignores_the_input_order_and_the_seed() {
                 "{treatment} rank {rank}: {choices:?}"
             );
         }
-    }
-}
-
-#[test]
-fn refine_all_treatments_have_no_tie_to_rank() {
-    let flaws = vec![numeric_flaw_on(1, 0.0), numeric_flaw_on(0, 0.0)];
-    for treatment in [
-        FlawTreatmentVariants::OneSplitPerAtom,
-        FlawTreatmentVariants::OneSplitPerVariable,
-    ] {
-        assert_eq!(
-            first_choice(treatment, &flaws, &[1, 1], 0, Some(1)),
-            first_choice(treatment, &flaws, &[1, 1], 0, None),
-        );
     }
 }

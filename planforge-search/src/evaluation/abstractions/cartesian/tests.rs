@@ -8,27 +8,23 @@ use planforge_sas::axioms::{
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType,
-    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
-    ZERO_VALUE,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
+    NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
 };
 
-use super::icaps26::{ArtifactMt19937, Icaps26SplitSelection};
 use super::{
-    CartesianAbstractPlanSelection, CartesianAbstractionCollectionConfig,
-    CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianAbstractionGenerator, CartesianFlawCandidateGeneration, CartesianRefinementDirection,
+    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
     CartesianSemantics, CartesianSet, CartesianSplitSelection, CartesianStopReason, FlawKind,
     OperatorBitSet, RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey,
-    WorkingAbstraction, artifact_unwanted_score, numeric_split_choice_key, numeric_split_intervals,
-    push_unique_split, retain_min_growth_splits, select_refinement_split,
+    WorkingAbstraction, numeric_split_choice_key, push_unique_split, retain_min_growth_splits,
+    select_refinement_split,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use planforge_sas::utils::interval::Interval;
 
 mod collection;
 mod generator;
-mod icaps26;
 mod regression;
 mod semantics;
 mod split_selection;
