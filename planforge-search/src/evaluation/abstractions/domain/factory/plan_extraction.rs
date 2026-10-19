@@ -1,4 +1,4 @@
-use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 
 use super::*;
 
@@ -13,7 +13,6 @@ pub(super) struct SolvedAbstraction<'a> {
     pub(super) operators: &'a [AbstractOperator],
     pub(super) table: &'a AbstractDistanceTable,
     pub(super) match_tree: &'a MatchTree,
-    pub(super) comparison_var_ids: &'a [VariableIndex],
 }
 
 #[derive(Debug, Clone)]
@@ -107,15 +106,12 @@ impl DomainAbstractionFactory {
             table_start.elapsed().as_secs_f64()
         );
         ensure_online_scp_deadline(deadline)?;
-
-        let comparison_var_ids = self.comparison_var_ids();
         let match_tree_start = Instant::now();
         let match_tree = MatchTree::build(
             generator.domain_sizes(),
             generator.numeric_domain_sizes(),
             generator.hash_multipliers(),
             &operators,
-            &comparison_var_ids,
         );
         debug!(
             "domain abstraction factory: built match tree in {:.3}s",
@@ -131,7 +127,6 @@ impl DomainAbstractionFactory {
                 operators: &operators,
                 table: &table,
                 match_tree: &match_tree,
-                comparison_var_ids: &comparison_var_ids,
             },
             use_wildcard_plans,
             plan_step_rng,
@@ -157,28 +152,15 @@ impl DomainAbstractionFactory {
             operators,
             table,
             match_tree,
-            comparison_var_ids,
         } = abstraction;
         ensure_online_scp_deadline(deadline)?;
         let domain_sizes = generator.domain_sizes();
         let hash_multipliers = generator.hash_multipliers();
         let num_props = domain_sizes.len();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let comparison_branching = !comparison_var_ids.is_empty();
 
         let dist = &table.distances;
         let generating_op = &table.generating_op_ids;
-        let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, comparison_var_ids)
-        } else {
-            Vec::new()
-        };
-        let mut comparison_enumeration_memo =
-            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
-                numeric_domain_sizes,
-                hash_multipliers,
-                comparison_var_ids,
-            });
 
         let mut current_hash = table.initial_state_hash;
         if current_hash >= dist.len() || !dist[current_hash].is_finite() {
@@ -229,16 +211,7 @@ impl DomainAbstractionFactory {
                 base_successor_i64 >= 0 && base_successor_i64 < dist.len() as i64,
                 "plan-extraction base successor out of range for state {current_hash} with op {op_id}"
             );
-            let base_successor = if comparison_branching {
-                self.clear_comparison_vars_except(
-                    base_successor_i64 as usize,
-                    hash_multipliers,
-                    comparison_var_ids,
-                    &[],
-                )?
-            } else {
-                base_successor_i64 as usize
-            };
+            let base_successor = base_successor_i64 as usize;
             let cur_d = dist[current_hash];
             ensure!(cur_d.is_finite(), "current distance must be finite");
 
@@ -270,19 +243,7 @@ impl DomainAbstractionFactory {
                     lowest_so_far = cd;
                 }
             };
-            if comparison_branching {
-                let possible_successors = self.enumerate_states_with_evaluated_comparisons_cached(
-                    base_successor,
-                    task,
-                    &[],
-                    &mut comparison_enumeration_memo,
-                )?;
-                for cand in possible_successors.iter().copied() {
-                    consider_successor(cand);
-                }
-            } else {
-                consider_successor(base_successor);
-            }
+            consider_successor(base_successor);
             let successor_hash = chosen_successor.with_context(|| {
                 format!(
                     "plan-extraction: no successor satisfies dist equation for state {current_hash} with op {op_id} (cur_d={cur_d}, op.cost={})",
@@ -313,18 +274,7 @@ impl DomainAbstractionFactory {
                 if cand_pred_i64 < 0 || cand_pred_i64 >= dist.len() as i64 {
                     continue;
                 }
-                let contains_current = if comparison_branching {
-                    let possible_predecessors = self
-                        .enumerate_states_with_evaluated_comparisons_cached(
-                            cand_pred_i64 as usize,
-                            task,
-                            &comparison_preconditions[cand_op_id],
-                            &mut comparison_enumeration_memo,
-                        )?;
-                    possible_predecessors.contains(&current_hash)
-                } else {
-                    cand_pred_i64 as usize == current_hash
-                };
+                let contains_current = cand_pred_i64 as usize == current_hash;
                 if contains_current {
                     step = cand_op.concrete_op_ids.clone();
                     step.sort_unstable();

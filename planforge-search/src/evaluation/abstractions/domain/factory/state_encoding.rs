@@ -2,76 +2,6 @@ use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
 
 use super::*;
 
-/// What one comparison-enumeration loop remembers across calls: the successor
-/// sets it already resolved.
-///
-/// A memo serves the one layout it is created with (hash multipliers, numeric
-/// domain sizes, refined comparison variables), so an entry is determined by
-/// its base state and its fixed comparison facts. Entries are found through a
-/// 64-bit signature of that key, and a hit compares the stored key with the
-/// requested one, so a signature collision costs a comparison, never a wrong
-/// answer. The memo holds every set its loop resolves; only the run's memory
-/// limit bounds it.
-pub(super) struct ComparisonEnumerationMemo<'layout> {
-    layout: ComparisonBranchingLayout<'layout>,
-    entries_by_signature: ComparisonEnumerationCache,
-}
-
-impl<'layout> ComparisonEnumerationMemo<'layout> {
-    pub(super) fn new(layout: ComparisonBranchingLayout<'layout>) -> Self {
-        Self {
-            layout,
-            entries_by_signature: ComparisonEnumerationCache::default(),
-        }
-    }
-}
-
-/// One resolved successor set and the exact key it was resolved for.
-struct ComparisonEnumerationEntry {
-    base_state_hash: usize,
-    fixed_comparisons: Box<[ExplicitFact]>,
-    states: Vec<usize>,
-}
-
-/// Entries by the signature of their key. The signature is already mixed, so
-/// the table uses an identity hasher: a lookup is a load and a probe, with no
-/// hash function and no allocation.
-type ComparisonEnumerationCache = HashMap<
-    u64,
-    Vec<ComparisonEnumerationEntry>,
-    std::hash::BuildHasherDefault<planforge_sas::utils::hashing::IdentityU64Hasher>,
->;
-
-#[inline]
-fn comparison_enumeration_signature(
-    base_state_hash: usize,
-    fixed_comparisons: &[ExplicitFact],
-) -> u64 {
-    // FNV-1a u64 mix + a SplitMix64 finalizer for even bit distribution
-    // (same construction as `compute_signature_hash` for abstract operators).
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x00000100000001B3;
-
-    let mut h = FNV_OFFSET;
-    h ^= base_state_hash as u64;
-    h = h.wrapping_mul(FNV_PRIME);
-    h ^= fixed_comparisons.len() as u64;
-    h = h.wrapping_mul(FNV_PRIME);
-    for fact in fixed_comparisons {
-        h ^= fact.var() as u64;
-        h = h.wrapping_mul(FNV_PRIME);
-        h ^= fact.value() as u64;
-        h = h.wrapping_mul(FNV_PRIME);
-    }
-
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xff51afd7ed558ccd);
-    h ^= h >> 33;
-    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
-    h ^= h >> 33;
-    h
-}
-
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
     value_children: Vec<Option<Box<MatchTreeNode>>>,
@@ -116,7 +46,6 @@ impl MatchTree {
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
         operators: &[AbstractOperator],
-        _comparison_var_ids: &[VariableIndex],
     ) -> Self {
         let total_vars = domain_sizes.len() + numeric_domain_sizes.len();
         let mut var_counts = vec![0usize; total_vars];
@@ -500,14 +429,6 @@ impl DomainAbstractionFactory {
         Ok(region)
     }
 
-    pub(super) fn comparison_var_ids(&self) -> Vec<VariableIndex> {
-        self.numeric_conditions
-            .condition_var_ids()
-            .filter(|&var_id| self.domain_sizes.get(var_id).copied().unwrap_or(1) > 1)
-            .map(VariableIndex::from_usize)
-            .collect()
-    }
-
     /// The task's goals in abstract values. Goals on condition variables keep
     /// their concrete value: conditions are derived from the numeric
     /// partitions, and [`Self::is_goal_state`] evaluates them there.
@@ -594,7 +515,6 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-        comparison_var_ids: &[VariableIndex],
     ) -> Result<usize> {
         let prop_init = task.get_initial_propositional_state_values();
         let num_init = task.get_initial_numeric_state_values();
@@ -615,15 +535,7 @@ impl DomainAbstractionFactory {
         for var in 0..num_props {
             let var = VariableIndex::from_usize(var);
             let mult = hash_multipliers[var.index()];
-            let concrete_value = if comparison_var_ids.contains(&var)
-                && let Some(tree) = self.numeric_conditions.for_var(var)
-            {
-                ExplicitValueIndex::from_usize(
-                    ConditionValue::from(tree.evaluate_point(num_init)).as_usize(),
-                )
-            } else {
-                prop_init[var.index()]
-            };
+            let concrete_value = prop_init[var.index()];
             let abs_val = *self.domain_mapping[var.index()]
                 .get(concrete_value.index())
                 .with_context(|| {
@@ -662,217 +574,4 @@ impl DomainAbstractionFactory {
 
         Ok(index)
     }
-
-    /// The abstract class a comparison digit is cleared to before the verdict
-    /// for this abstract state is derived: the class of [`ConditionValue::False`],
-    /// which is also the class every abstract operator's comparison effect
-    /// targets.
-    pub(super) fn cleared_comparison_class(
-        &self,
-        var_id: VariableIndex,
-    ) -> Result<ExplicitValueIndex> {
-        self.domain_mapping[var_id.index()]
-            .get(ConditionValue::False.as_usize())
-            .copied()
-            .with_context(|| format!("missing FALSE mapping for comparison var {var_id}"))
-    }
-
-    /// Clear every comparison digit of `state_hash` to its
-    /// [cleared class](Self::cleared_comparison_class), except the ones
-    /// `fixed_comparisons` pins to a value.
-    pub(super) fn clear_comparison_vars_except(
-        &self,
-        state_hash: usize,
-        hash_multipliers: &[usize],
-        comparison_var_ids: &[VariableIndex],
-        fixed_comparisons: &[ExplicitFact],
-    ) -> Result<usize> {
-        let mut out = state_hash;
-        for &var_id in comparison_var_ids {
-            ensure!(
-                var_id.index() < self.domain_sizes.len(),
-                "comparison var id out of range: {var_id}"
-            );
-            if self.domain_sizes[var_id.index()] <= 1 {
-                continue;
-            }
-            let mult = hash_multipliers[var_id.index()];
-            let dom = self.domain_sizes[var_id.index()];
-            ensure!(dom > 0, "domain size must be > 0 for var {var_id}");
-            let cur = (out / mult) % dom;
-            let target_abs = if let Some(fixed_value) = fixed_comparisons
-                .iter()
-                .find(|fact| fact.var_index() == var_id)
-                .map(|fact| fact.value_index())
-            {
-                ensure!(
-                    fixed_value.index() < dom,
-                    "fixed comparison value {fixed_value} out of abstract domain for var {var_id} with size {dom}"
-                );
-                fixed_value
-            } else {
-                self.cleared_comparison_class(var_id)?
-            };
-            let cur_offset = cur
-                .checked_mul(mult)
-                .context("comparison current digit offset overflow")?;
-            let target_offset = target_abs
-                .index()
-                .checked_mul(mult)
-                .context("comparison target digit offset overflow")?;
-            out = out
-                .checked_sub(cur_offset)
-                .context("comparison reset encountered an invalid state hash")?;
-            out = out
-                .checked_add(target_offset)
-                .context("comparison reset hash overflow")?;
-        }
-        Ok(out)
-    }
-
-    pub(super) fn enumerate_states_with_evaluated_comparisons(
-        &self,
-        base_state_hash: usize,
-        task: &dyn AbstractNumericTask,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-        comparison_var_ids: &[VariableIndex],
-        fixed_comparisons: &[ExplicitFact],
-    ) -> Result<Vec<usize>> {
-        if comparison_var_ids.is_empty() {
-            return Ok(vec![base_state_hash]);
-        }
-        let num_props = self.domain_sizes.len();
-        let cleared_state = self.clear_comparison_vars_except(
-            base_state_hash,
-            hash_multipliers,
-            comparison_var_ids,
-            fixed_comparisons,
-        )?;
-
-        // `fixed_comparisons` is typically empty or has 1-3 entries — replace the
-        // per-call `HashMap<usize, usize>` (with default SipHash + heap alloc) with
-        // a stack-friendly slice scan.
-        let is_fixed_var = |var_id: VariableIndex| -> bool {
-            fixed_comparisons.iter().any(|f| f.var_index() == var_id)
-        };
-        let is_evaluated_var =
-            |var_id: VariableIndex| -> bool { comparison_var_ids.contains(&var_id) };
-
-        // Build the numeric intervals for this abstract state ONCE, then
-        // evaluate each comparison tree against the shared buffer. The old
-        // path called `evaluate_comparison_tree_from_abstract_state` per tree,
-        // each call allocating a fresh `Vec<Interval>` and re-running
-        // `fill_derived_numeric_intervals_from_comparison_trees`.
-        let mut numeric_intervals: Vec<Interval> = Vec::new();
-        let mut intervals_built = false;
-
-        let mut states: Vec<usize> = vec![cleared_state];
-        for tree in self.numeric_conditions.iter() {
-            let var_id = tree.prop_var_id();
-            ensure!(
-                var_id.index() < num_props,
-                "numeric condition variable out of range: {var_id} >= {num_props}"
-            );
-            if !is_evaluated_var(var_id) {
-                continue;
-            }
-            if self.domain_sizes[var_id.index()] <= 1 {
-                continue;
-            }
-            if is_fixed_var(var_id) {
-                continue;
-            }
-
-            // The digit starts at the class of `False`, so only `True` moves it.
-            let mult = hash_multipliers[var_id.index()];
-            let delta_true = (self.domain_mapping[var_id.index()]
-                .get(ConditionValue::True.as_usize())
-                .copied()
-                .with_context(|| format!("missing TRUE mapping for comparison var {var_id}"))?
-                .index() as i32
-                - self.cleared_comparison_class(var_id)?.index() as i32)
-                * mult as i32;
-
-            if !intervals_built {
-                prepare_comparison_tree_inputs_from_abstract_state_into(
-                    task,
-                    self.numeric_conditions.all(),
-                    &self.partitions,
-                    AbstractStateHash {
-                        hash: base_state_hash,
-                        num_props,
-                        numeric_domain_sizes,
-                        hash_multipliers,
-                    },
-                    &mut numeric_intervals,
-                )?;
-                intervals_built = true;
-            }
-
-            match tree.evaluate_interval(&numeric_intervals) {
-                Some(true) => {
-                    for s in &mut states {
-                        *s = (*s as i32 + delta_true) as usize;
-                    }
-                }
-                // The digit already stands at the class of `False`.
-                Some(false) => {}
-                // The abstract state straddles the comparison, so both verdicts
-                // are reachable from it and both states have to be enumerated.
-                None => {
-                    let mut next: Vec<usize> = Vec::with_capacity(states.len() * 2);
-                    for &s in &states {
-                        next.push((s as i32 + delta_true) as usize);
-                        next.push(s);
-                    }
-                    states = next;
-                }
-            }
-        }
-        Ok(states)
-    }
-
-    pub(super) fn enumerate_states_with_evaluated_comparisons_cached<'memo>(
-        &self,
-        base_state_hash: usize,
-        task: &dyn AbstractNumericTask,
-        fixed_comparisons: &[ExplicitFact],
-        memo: &'memo mut ComparisonEnumerationMemo<'_>,
-    ) -> Result<&'memo [usize]> {
-        let layout = memo.layout;
-        let entries = memo
-            .entries_by_signature
-            .entry(comparison_enumeration_signature(
-                base_state_hash,
-                fixed_comparisons,
-            ))
-            .or_default();
-        let index = match entries.iter().position(|entry| {
-            entry.base_state_hash == base_state_hash
-                && *entry.fixed_comparisons == *fixed_comparisons
-        }) {
-            Some(index) => index,
-            None => {
-                let states = self.enumerate_states_with_evaluated_comparisons(
-                    base_state_hash,
-                    task,
-                    layout.numeric_domain_sizes,
-                    layout.hash_multipliers,
-                    layout.comparison_var_ids,
-                    fixed_comparisons,
-                )?;
-                entries.push(ComparisonEnumerationEntry {
-                    base_state_hash,
-                    fixed_comparisons: fixed_comparisons.into(),
-                    states,
-                });
-                entries.len() - 1
-            }
-        };
-        Ok(&entries[index].states)
-    }
 }
-
-#[cfg(test)]
-mod tests;

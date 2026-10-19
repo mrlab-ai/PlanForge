@@ -1,12 +1,11 @@
-use planforge_sas::numeric_task::VariableIndex;
-
 use super::*;
 
+/// How abstract states are hashed: the numeric domain sizes and the
+/// mixed-radix multipliers of every variable.
 #[derive(Clone, Copy)]
-pub(super) struct ComparisonBranchingLayout<'a> {
+pub(super) struct HashLayout<'a> {
     pub(super) numeric_domain_sizes: &'a [usize],
     pub(super) hash_multipliers: &'a [usize],
-    pub(super) comparison_var_ids: &'a [VariableIndex],
 }
 
 /// The abstract state space a backward goal-distance Dijkstra runs over: the
@@ -19,7 +18,7 @@ pub(super) struct AbstractGoalDistanceSpace<'a> {
     pub(super) operators: &'a [AbstractOperator],
     pub(super) match_tree: &'a MatchTree,
     pub(super) goal_facts: &'a [ExplicitFact],
-    pub(super) layout: ComparisonBranchingLayout<'a>,
+    pub(super) layout: HashLayout<'a>,
     pub(super) num_states: usize,
 }
 
@@ -210,7 +209,6 @@ impl DomainAbstractionFactory {
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let comparison_var_ids = self.comparison_var_ids();
 
         // Numeric-fd computes a *single* initial abstract state hash directly from the
         // concrete initial state (comparisons are evaluated, not enumerated).
@@ -218,7 +216,6 @@ impl DomainAbstractionFactory {
             task,
             numeric_domain_sizes,
             hash_multipliers,
-            &comparison_var_ids,
         )?;
 
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
@@ -229,7 +226,6 @@ impl DomainAbstractionFactory {
                 numeric_domain_sizes,
                 hash_multipliers,
                 operators,
-                &comparison_var_ids,
             ))
         } else {
             None
@@ -241,10 +237,9 @@ impl DomainAbstractionFactory {
                 operators,
                 match_tree,
                 goal_facts,
-                layout: ComparisonBranchingLayout {
+                layout: HashLayout {
                     numeric_domain_sizes,
                     hash_multipliers,
-                    comparison_var_ids: &comparison_var_ids,
                 },
                 num_states,
             },
@@ -370,10 +365,9 @@ impl DomainAbstractionFactory {
             layout,
             num_states,
         } = space;
-        let ComparisonBranchingLayout {
+        let HashLayout {
             numeric_domain_sizes,
             hash_multipliers,
-            comparison_var_ids,
         } = layout;
         ensure_online_scp_deadline(deadline)?;
         let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
@@ -385,8 +379,6 @@ impl DomainAbstractionFactory {
             );
         }
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-        let mut comparison_enumeration_memo = ComparisonEnumerationMemo::new(layout);
-        let comparison_branching = !comparison_var_ids.is_empty();
 
         for (state_hash, distance) in distances.iter_mut().enumerate() {
             if state_hash % 1024 == 0 {
@@ -401,26 +393,9 @@ impl DomainAbstractionFactory {
             )? {
                 continue;
             }
-            if comparison_branching {
-                let alts = self.enumerate_states_with_evaluated_comparisons_cached(
-                    state_hash,
-                    task,
-                    &[],
-                    &mut comparison_enumeration_memo,
-                )?;
-                if !alts.contains(&state_hash) {
-                    continue;
-                }
-            }
             *distance = 0.0;
             heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
         }
-
-        let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, comparison_var_ids)
-        } else {
-            Vec::new()
-        };
         let mut applicable_operator_ids: Vec<usize> = Vec::new();
         while let Some((Reverse(d), state_hash)) = heap.pop() {
             if state_hash % 1024 == 0 {
@@ -431,16 +406,7 @@ impl DomainAbstractionFactory {
                 continue;
             }
 
-            let base_state = if comparison_branching {
-                self.clear_comparison_vars_except(
-                    state_hash,
-                    hash_multipliers,
-                    comparison_var_ids,
-                    &[],
-                )?
-            } else {
-                state_hash
-            };
+            let base_state = state_hash;
             match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
             for &op_id in &applicable_operator_ids {
                 let op = &operators[op_id];
@@ -450,46 +416,17 @@ impl DomainAbstractionFactory {
                 if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
                     continue;
                 }
-                if comparison_branching {
-                    let possible_predecessors = self
-                        .enumerate_states_with_evaluated_comparisons_cached(
-                            predecessor_i64 as usize,
-                            task,
-                            &comparison_preconditions[op_id],
-                            &mut comparison_enumeration_memo,
-                        )?;
-
-                    for pred in possible_predecessors.iter().copied() {
-                        debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                        if alternative_cost + float_tolerance::DIJKSTRA_EPSILON < distances[pred] {
-                            distances[pred] = alternative_cost;
-                            if let Some(generating) = generating_op_ids.as_deref_mut() {
-                                generating[pred] = Some(op_id);
-                            }
-                            heap.push((
-                                Reverse(
-                                    NotNan::new(alternative_cost)
-                                        .context("alternative cost is NaN")?,
-                                ),
-                                pred,
-                            ));
-                        }
+                let pred = predecessor_i64 as usize;
+                debug_assert!(pred < num_states, "predecessor hash does not fit usize");
+                if alternative_cost + float_tolerance::DIJKSTRA_EPSILON < distances[pred] {
+                    distances[pred] = alternative_cost;
+                    if let Some(generating) = generating_op_ids.as_deref_mut() {
+                        generating[pred] = Some(op_id);
                     }
-                } else {
-                    let pred = predecessor_i64 as usize;
-                    debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                    if alternative_cost + float_tolerance::DIJKSTRA_EPSILON < distances[pred] {
-                        distances[pred] = alternative_cost;
-                        if let Some(generating) = generating_op_ids.as_deref_mut() {
-                            generating[pred] = Some(op_id);
-                        }
-                        heap.push((
-                            Reverse(
-                                NotNan::new(alternative_cost).context("alternative cost is NaN")?,
-                            ),
-                            pred,
-                        ));
-                    }
+                    heap.push((
+                        Reverse(NotNan::new(alternative_cost).context("alternative cost is NaN")?),
+                        pred,
+                    ));
                 }
             }
         }

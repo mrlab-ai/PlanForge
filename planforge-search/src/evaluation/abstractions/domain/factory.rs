@@ -2,9 +2,9 @@
 mod tests;
 
 use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 #[cfg(any(test, debug_assertions))]
 use std::collections::HashSet;
-use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -24,7 +24,6 @@ use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator, Dom
 use super::abstraction_numeric_var;
 use super::comparison_inputs::{
     AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
-    prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::debug_dump::dump_distances;
 use super::partitions::NumericPartitions;
@@ -105,6 +104,13 @@ impl DomainAbstractionFactory {
             ensure!(
                 abs_size > 0,
                 "non-positive abstract domain size for var {var}: {abs_size}"
+            );
+            ensure!(
+                abs_size == 1
+                    || !task
+                        .numeric_conditions()
+                        .is_condition_var(VariableIndex::from_usize(var)),
+                "condition variable {var} has {abs_size} abstract values; conditions are derived from the numeric partitions"
             );
 
             let concrete_size = task
