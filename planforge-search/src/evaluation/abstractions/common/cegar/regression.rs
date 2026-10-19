@@ -25,12 +25,24 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
-    VariableIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, ONE_VALUE, OperatorIndex,
+    VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::interval::Interval;
 
+use std::sync::Arc;
+
+use planforge_sas::utils::state_packer::StatePacker;
+
+use super::SplitKind;
+use super::progression::{ConcretePlan, PlanCheck};
+use super::semantics::CegarSemantics;
+use super::split::{Split, numeric_split_intervals};
+use super::view::{AbstractionView, TransitionKey};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::concrete_state::{
+    ConcreteState, concrete_prop_values,
+};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 
 /// Where a case-3 split separates the initial state from `p_0`. Cases 1 and 2
@@ -656,6 +668,139 @@ pub(crate) mod test_tasks {
             )],
             global_constraint: ExplicitFact::propositional(0, 0),
         })
+    }
+}
+
+/// Regression flaw search on the optimal abstract plan from the abstract
+/// state of `refinement_root`. Without a flaw, the plan's operators are a
+/// concrete plan.
+pub(crate) fn regression_plan_check(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
+    state_packer: &Arc<StatePacker>,
+    refinement_root: &ConcreteState,
+) -> Result<PlanCheck> {
+    let mut prop_values = Vec::new();
+    concrete_prop_values(
+        semantics.task(),
+        state_packer,
+        &refinement_root.propositions,
+        &mut prop_values,
+    );
+    let initial_state = view.abstract_state(&prop_values, &refinement_root.numeric)?;
+    if !view.goal_distance(initial_state).is_finite() {
+        return Ok(PlanCheck::AbstractDeadEnd(initial_state));
+    }
+    let plan = abstract_plan(view, initial_state)?;
+    let state_ids = std::iter::once(initial_state)
+        .chain(plan.iter().map(|transition| transition.target))
+        .collect::<Vec<_>>();
+    let states = state_ids
+        .iter()
+        .map(|&state_id| view.region(state_id).into_owned())
+        .collect::<Vec<_>>();
+    let operator_ids = plan
+        .iter()
+        .map(|transition| transition.concrete_op_id)
+        .collect::<Vec<_>>();
+    let initial_cut = match semantics.split_kind() {
+        SplitKind::Concrete => InitialCut::Concrete,
+        SplitKind::Wanted => InitialCut::Wanted,
+    };
+    let Some(flaw) = find_regression_flaw(
+        semantics.task(),
+        semantics.coordinates(),
+        &states,
+        &operator_ids,
+        InitialState {
+            propositions: &prop_values,
+            numeric: &refinement_root.numeric,
+        },
+        initial_cut,
+    )?
+    else {
+        let cost = operator_ids
+            .iter()
+            .map(|op_id| semantics.operator_costs()[op_id.index()].value())
+            .sum();
+        return Ok(PlanCheck::ConcretePlan(ConcretePlan::new(
+            operator_ids,
+            cost,
+        )));
+    };
+    let state_id = state_ids[flaw.state];
+    let description = format!(
+        "regression flaw in abstract state {} of the plan",
+        flaw.state
+    );
+    Ok(PlanCheck::Refine(match flaw.cut {
+        Cut::Numeric {
+            var,
+            boundary,
+            lower_includes_boundary,
+            wanted_is_lower,
+        } => {
+            let integer_lattice = semantics.numeric_integer_lattice()[var.index()];
+            let (lower, upper) = numeric_split_intervals(
+                view.region(state_id).numeric[var.index()],
+                boundary,
+                lower_includes_boundary,
+                integer_lattice,
+            )?;
+            Split::Numeric {
+                state_id,
+                var_id: var,
+                boundary,
+                lower_includes_boundary,
+                witness_value: interior_value(if wanted_is_lower { upper } else { lower }),
+                integer_lattice,
+                description,
+            }
+        }
+        Cut::Propositional { var, wanted } => {
+            let witness_value = *view.region(state_id).propositions()[var.index()]
+                .iter()
+                .find(|&&value| value != wanted)
+                .with_context(|| {
+                    format!("propositional cut of {var} at {wanted} in abstract state {state_id} is not strict")
+                })?;
+            Split::Propositional {
+                state_id,
+                var_id: var,
+                wanted: vec![wanted],
+                witness_value,
+                description,
+            }
+        }
+    }))
+}
+
+/// The transitions of the optimal abstract plan from `initial_state`: the
+/// generating transitions of the shortest paths.
+fn abstract_plan(view: &impl AbstractionView, initial_state: usize) -> Result<Vec<TransitionKey>> {
+    let mut plan = Vec::new();
+    let mut state = initial_state;
+    while !view.is_goal(state) {
+        ensure!(
+            plan.len() <= view.num_states(),
+            "optimal abstract transitions contain a cycle"
+        );
+        let transition = view.optimal_transition(state)?;
+        plan.push(transition);
+        state = transition.target;
+    }
+    Ok(plan)
+}
+
+/// A value of the non-empty interval `interval`.
+fn interior_value(interval: Interval) -> NumericValue {
+    match (interval.lower.is_finite(), interval.upper.is_finite()) {
+        (true, _) if interval.lower_closed => interval.lower,
+        (_, true) if interval.upper_closed => interval.upper,
+        (true, true) => NumericValue::new((interval.lower.value() + interval.upper.value()) / 2.0),
+        (true, false) => interval.lower + ONE_VALUE,
+        (false, true) => interval.upper - ONE_VALUE,
+        (false, false) => ZERO_VALUE,
     }
 }
 

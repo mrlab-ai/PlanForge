@@ -12,7 +12,6 @@ mod collection;
 mod config;
 mod distances;
 mod finalize;
-mod flaws;
 mod generator;
 mod heuristic;
 mod hierarchy;
@@ -24,6 +23,7 @@ mod view;
 mod working;
 
 use super::common::cegar::progression::*;
+use super::common::cegar::regression::regression_plan_check;
 use super::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use super::common::cegar::split::*;
 use super::common::cegar::view::{AbstractionView, TransitionKey};
@@ -33,7 +33,6 @@ pub use collection::*;
 pub use config::*;
 use distances::*;
 use finalize::*;
-use flaws::*;
 pub use generator::*;
 pub use heuristic::*;
 pub use hierarchy::*;
@@ -51,10 +50,9 @@ use ordered_float::NotNan;
 use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericType, NumericValue,
-    OperatorIndex, VariableIndex, ZERO_VALUE,
+    OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::state_packer::StatePacker;
 use tracing::info;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -81,4 +79,3 @@ use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
     AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
 };
-use planforge_sas::utils::interval::Interval;

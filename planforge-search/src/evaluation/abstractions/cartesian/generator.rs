@@ -78,9 +78,12 @@ impl CartesianAbstractionGenerator {
                         &axiom_evaluator,
                         &refinement_root,
                     )?,
-                    FlawKind::Regression => {
-                        find_regression_flaw(&view, &semantics, &state_packer, &refinement_root)?
-                    }
+                    FlawKind::Regression => regression_plan_check(
+                        &view,
+                        semantics.cegar(),
+                        &state_packer,
+                        &refinement_root,
+                    )?,
                     FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
                         &view,
                         semantics.cegar(),
