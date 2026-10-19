@@ -6,8 +6,8 @@ use std::cell::RefCell;
 
 use anyhow::Result;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, OperatorIndex,
-    metric_operator_cost_from_initial_values,
+    AbstractNumericTask, AssignmentOperation, NumericTaskExt, NumericType, NumericValue,
+    OperatorIndex,
 };
 use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
@@ -54,10 +54,10 @@ impl<'task> CegarSemantics<'task> {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
         let regions = RegionSemantics::new(task)?;
-        let operator_costs = task
-            .get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
+        // Task views that move the initial state keep these costs pinned to
+        // the base task, so the goal distances stay admissible there.
+        let operator_costs = (0..task.get_operators().len())
+            .map(|op_id| task.abstract_operator_cost(OperatorIndex::from_usize(op_id)))
             .collect();
         let mut target_split_boundaries = task
             .numeric_variables()

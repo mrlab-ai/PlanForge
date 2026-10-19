@@ -66,7 +66,7 @@ use planforge_search::evaluation::abstractions::domain::collection::{
 use planforge_search::evaluation::abstractions::domain::config::CegarConfig;
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
-use planforge_search::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
+use planforge_search::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};

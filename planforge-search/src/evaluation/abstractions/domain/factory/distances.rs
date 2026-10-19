@@ -155,6 +155,25 @@ impl DomainAbstractionFactory {
         )
     }
 
+    /// Goal distances of every abstract state under `operators`, to the
+    /// task's abstract goals.
+    pub(crate) fn build_distance_table(
+        &self,
+        task: &dyn AbstractNumericTask,
+        generator: &AbstractOperatorGenerator,
+        operators: &[AbstractOperator],
+        options: DistanceTableOptions<'_>,
+    ) -> Result<AbstractDistanceTable> {
+        let goal_facts = self.compute_abstract_goals(task);
+        self.build_distance_table_with_operators_for_goals_inner(
+            task,
+            generator,
+            operators,
+            &goal_facts,
+            options,
+        )
+    }
+
     pub(crate) fn build_distance_table_with_operators(
         &self,
         task: &dyn AbstractNumericTask,

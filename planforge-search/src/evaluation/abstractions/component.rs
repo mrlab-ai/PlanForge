@@ -12,8 +12,8 @@ use crate::evaluation::abstractions::collections::goal_focused::{
 };
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
+use crate::evaluation::abstractions::domain::config::SplitDirection;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
-use crate::evaluation::abstractions::domain::flaws::SplitDirection;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -281,9 +281,7 @@ impl<'task> AbstractionComponent<'task> {
                     .map(|membership| GoalFocusedMember {
                         membership,
                         direction: match metadata.split_direction {
-                            SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {
-                                MemberDirection::Progression
-                            }
+                            SplitDirection::Forward => MemberDirection::Progression,
                             SplitDirection::Backward => MemberDirection::Regression,
                         },
                         tie_rank: metadata.flaw_selection_rank,

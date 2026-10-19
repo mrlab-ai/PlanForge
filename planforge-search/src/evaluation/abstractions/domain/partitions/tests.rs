@@ -142,17 +142,20 @@ fn reachable_partitions_use_the_numeric_state_lattice() {
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.9999999999999964),
-        true
+        true,
+        false
     ));
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.799999999999997),
-        true
+        true,
+        false
     ));
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
         NumericValue::new(-5.6999999999999975),
-        true
+        true,
+        false
     ));
 
     assert_eq!(

@@ -14,9 +14,7 @@ use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::state_packer::StatePacker;
 
-use super::fact_splits::{
-    DeviationWitness, split_deviation, split_deviation_candidates, split_failed_fact,
-};
+use super::fact_splits::{DeviationWitness, split_deviation_candidates, split_failed_fact};
 use super::progress_concrete_state;
 use super::selection::{push_unique_split, select_refinement, select_refinement_split};
 use super::semantics::CegarSemantics;
@@ -45,6 +43,11 @@ impl ConcretePlan {
         self.operator_ids
     }
 }
+
+/// The decisions split selection draws a seeded choice for, by flaw kind.
+const GOAL_TAG: u64 = 0x474F_414C;
+const PRECONDITION_TAG: u64 = 0x5052_4543;
+const DEVIATION_TAG: u64 = 0x4445_5649;
 
 pub(crate) enum PlanCheck {
     ConcretePlan(ConcretePlan),
@@ -135,10 +138,7 @@ pub(crate) fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             return Ok(PlanCheck::Refine(select_refinement_split(
-                view,
-                semantics,
-                candidates,
-                0x474F_414C,
+                view, semantics, candidates, GOAL_TAG,
             )?));
         }
 
@@ -147,18 +147,22 @@ pub(crate) fn replay_optimal_abstract_trace(
             "optimal abstract transitions contain a cycle"
         );
         let transition = view.optimal_transition(abstract_state)?;
-        let op_id = transition.concrete_op_id;
-        let op = &semantics.task().get_operators()[op_id.index()];
-        let failed_preconditions = op
-            .preconditions()
-            .iter()
-            .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
-            .collect::<Vec<_>>();
-        if !failed_preconditions.is_empty() {
-            let candidates = failed_preconditions
+        // Every operator of the step is tried in turn: the first one that
+        // applies and lands in the planned successor is executed, and only if
+        // none does are the flaws the step's operators witnessed refined.
+        let mut precondition_splits = Vec::new();
+        let mut deviation_splits = Vec::new();
+        let mut executed = None;
+        for op_id in view.step_operators(transition) {
+            let op = &semantics.task().get_operators()[op_id.index()];
+            let failed_preconditions = op
+                .preconditions()
                 .iter()
-                .map(|failed| {
-                    split_failed_fact(
+                .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
+                .collect::<Vec<_>>();
+            if !failed_preconditions.is_empty() {
+                for failed in failed_preconditions {
+                    precondition_splits.push(split_failed_fact(
                         view,
                         semantics,
                         abstract_state,
@@ -166,46 +170,58 @@ pub(crate) fn replay_optimal_abstract_trace(
                         &prop_values,
                         &numeric,
                         format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-                    )
-                })
-                .collect::<Result<Vec<_>>>()?;
+                    )?);
+                }
+                continue;
+            }
+            let mut successor_propositions = propositions.clone();
+            let mut successor_numeric = numeric.clone();
+            progress_concrete_state(
+                op,
+                axiom_evaluator,
+                state_packer,
+                &mut successor_propositions,
+                &mut successor_numeric,
+            )?;
+            concrete_prop_values(
+                semantics.task(),
+                state_packer,
+                &successor_propositions,
+                &mut successor_prop_values,
+            );
+            let concrete_target =
+                view.abstract_state(&successor_prop_values, &successor_numeric)?;
+            if concrete_target != transition.target {
+                deviation_splits.extend(split_deviation_candidates(
+                    view,
+                    semantics,
+                    DeviationWitness::new(
+                        abstract_state,
+                        transition.target,
+                        op_id,
+                        &successor_prop_values,
+                        &numeric,
+                        &successor_numeric,
+                    ),
+                )?);
+                continue;
+            }
+            executed = Some((op_id, successor_propositions, successor_numeric));
+            break;
+        }
+        let Some((op_id, successor_propositions, successor_numeric)) = executed else {
+            let (candidates, tag) = if precondition_splits.is_empty() {
+                (deviation_splits, DEVIATION_TAG)
+            } else {
+                precondition_splits.extend(deviation_splits);
+                (precondition_splits, PRECONDITION_TAG)
+            };
             return Ok(PlanCheck::Refine(select_refinement_split(
-                view,
-                semantics,
-                candidates,
-                0x5052_4543,
+                view, semantics, candidates, tag,
             )?));
-        }
-
-        let source_numeric = numeric.clone();
-        progress_concrete_state(
-            op,
-            axiom_evaluator,
-            state_packer,
-            &mut propositions,
-            &mut numeric,
-        )?;
-        concrete_prop_values(
-            semantics.task(),
-            state_packer,
-            &propositions,
-            &mut successor_prop_values,
-        );
-        let concrete_target = view.abstract_state(&successor_prop_values, &numeric)?;
-        if concrete_target != transition.target {
-            return Ok(PlanCheck::Refine(split_deviation(
-                view,
-                semantics,
-                DeviationWitness::new(
-                    abstract_state,
-                    transition.target,
-                    op_id,
-                    &successor_prop_values,
-                    &source_numeric,
-                    &numeric,
-                ),
-            )?));
-        }
+        };
+        propositions = successor_propositions;
+        numeric = successor_numeric;
 
         let op_cost = semantics.operator_costs()[op_id.index()];
         ensure!(
@@ -213,7 +229,7 @@ pub(crate) fn replay_optimal_abstract_trace(
                 op_cost.value() + view.goal_distance(transition.target),
                 abstract_distance
             ),
-            "Cartesian generating transition is not distance preserving"
+            "optimal abstract transition does not preserve the goal distance"
         );
         concrete_cost += op_cost.value();
         operator_ids.push(op_id);
@@ -252,7 +268,7 @@ pub(crate) fn replay_entire_optimal_abstract_trace(
         if !visited_abstract_states.insert(abstract_state) {
             ensure!(
                 !candidates.is_empty(),
-                "Cartesian whole-plan replay cycled without witnessing a flaw"
+                "whole-plan replay cycled without witnessing a flaw"
             );
             return select_refinement(view, semantics, candidates);
         }
@@ -305,27 +321,45 @@ pub(crate) fn replay_entire_optimal_abstract_trace(
                     + view.goal_distance(transition.target),
                 abstract_distance
             ),
-            "Cartesian generating transition is not distance preserving"
+            "optimal abstract transition does not preserve the goal distance"
         );
 
-        let op_id = transition.concrete_op_id;
-        let op = &semantics.task().get_operators()[op_id.index()];
-        for failed in op
-            .preconditions()
-            .iter()
-            .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
-        {
-            let split = split_failed_fact(
-                view,
-                semantics,
-                abstract_state,
-                failed,
-                &prop_values,
-                &numeric,
-                format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-            )?;
+        // The first operator of the step whose preconditions hold is executed;
+        // the precondition flaws of the operators before it are not flaws of
+        // the plan. If none applies, the first operator is executed anyway and
+        // the step's precondition flaws are kept.
+        let step_operators = view.step_operators(transition);
+        let mut step_splits = Vec::new();
+        let mut applicable = None;
+        for &op_id in &step_operators {
+            let op = &semantics.task().get_operators()[op_id.index()];
+            let failed_preconditions = op
+                .preconditions()
+                .iter()
+                .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
+                .collect::<Vec<_>>();
+            if failed_preconditions.is_empty() {
+                applicable = Some(op_id);
+                step_splits.clear();
+                break;
+            }
+            for failed in failed_preconditions {
+                step_splits.push(split_failed_fact(
+                    view,
+                    semantics,
+                    abstract_state,
+                    failed,
+                    &prop_values,
+                    &numeric,
+                    format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+                )?);
+            }
+        }
+        for split in step_splits {
             push_unique_split(&mut candidates, &mut candidate_identities, split);
         }
+        let op_id = applicable.unwrap_or(step_operators[0]);
+        let op = &semantics.task().get_operators()[op_id.index()];
 
         let source_numeric = numeric.clone();
         progress_concrete_state(
@@ -398,11 +432,11 @@ pub(crate) fn validate_concrete_plan(
     }
     ensure!(
         concrete_is_goal(semantics, state_packer, &propositions),
-        "replayed Cartesian concrete plan does not satisfy the full goal"
+        "replayed concrete plan does not satisfy the full goal"
     );
     ensure!(
         approximately_equal(cost, plan.cost),
-        "replayed Cartesian concrete plan cost {cost} differs from recorded cost {}",
+        "replayed concrete plan cost {cost} differs from recorded cost {}",
         plan.cost
     );
     Ok(())

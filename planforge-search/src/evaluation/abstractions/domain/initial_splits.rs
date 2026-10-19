@@ -11,12 +11,10 @@ use rand::Rng;
 use rand::rngs::SmallRng;
 
 use super::abstract_operators::DomainMapping;
+use super::abstraction::compute_abstraction_size_u128;
 use super::config::CegarConfig;
+use super::partitions::NumericPartitions;
 use planforge_sas::numeric_conditions::ConditionValue;
-
-use super::refinement::{
-    RefinementState, can_refine_numeric_variable, can_refine_propositional_variable,
-};
 
 use crate::evaluation::abstractions::common::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
@@ -76,6 +74,7 @@ pub(super) fn initial_split_mapping(
 pub(super) fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
     config: &CegarConfig,
+    numeric_integer_lattice: &[bool],
     rng: &mut SmallRng,
     state: RefinementState<'_>,
 ) -> Result<()> {
@@ -163,6 +162,7 @@ pub(super) fn apply_initial_goal_splits(
                 numeric_var_id,
                 initial_numeric[numeric_var_id.index()],
                 include_in_lower,
+                numeric_integer_lattice[numeric_var_id.index()],
             ) {
                 numeric_domain_sizes[numeric_var_id.index()] = partitions
                     .partitions(numeric_var_id)
@@ -219,4 +219,80 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     }
 
     Ok((domain_mapping, domain_sizes))
+}
+
+/// What a refinement writes to: the abstraction's propositional domain mapping
+/// with its per-variable domain sizes, its numeric partitions with theirs, and
+/// the variables refinement has given up on.
+///
+/// Every landed split adds one value to one of the two halves and bumps the
+/// matching size, which is how the CEGAR loop detects progress. The initial-split
+/// functions only read the two blacklists; `fix_flaws` lets flaw selection extend
+/// them.
+pub struct RefinementState<'a> {
+    pub domain_mapping: &'a mut DomainMapping,
+    pub domain_sizes: &'a mut [usize],
+    pub partitions: &'a mut NumericPartitions,
+    pub numeric_domain_sizes: &'a mut [usize],
+    pub blacklisted_prop_var_ids: &'a mut HashSet<VariableIndex>,
+    pub blacklisted_numeric_var_ids: &'a mut HashSet<VariableIndex>,
+}
+
+/// Whether growing one variable's abstract domain from `old_size` to
+/// `new_size` keeps the abstraction within `max_abstraction_size`.
+///
+/// Sizes are compared exactly in `u128`. A size that does not fit `u128` is
+/// above every `usize` limit, so the refinement does not fit: that is the
+/// configured size limit, and the callers blacklist the variable for it.
+fn refined_size_fits(
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+    old_size: usize,
+    new_size: usize,
+    max_abstraction_size: usize,
+) -> bool {
+    assert!(
+        old_size > 0 && new_size > 0,
+        "abstract domain sizes are positive, got {old_size} -> {new_size}"
+    );
+    let Some(total_size) = compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
+        // The current abstraction is already larger than u128 and thus than
+        // any limit.
+        return false;
+    };
+    (total_size / old_size as u128)
+        .checked_mul(new_size as u128)
+        .is_some_and(|candidate| candidate <= max_abstraction_size as u128)
+}
+
+pub(super) fn can_refine_propositional_variable(
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+    var_id: VariableIndex,
+    new_domain_size: usize,
+    max_abstraction_size: usize,
+) -> bool {
+    refined_size_fits(
+        domain_sizes,
+        numeric_domain_sizes,
+        domain_sizes[var_id.index()],
+        new_domain_size,
+        max_abstraction_size,
+    )
+}
+
+pub(super) fn can_refine_numeric_variable(
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+    numeric_var_id: VariableIndex,
+    max_abstraction_size: usize,
+) -> bool {
+    let old_partition_count = numeric_domain_sizes[numeric_var_id.index()];
+    refined_size_fits(
+        domain_sizes,
+        numeric_domain_sizes,
+        old_partition_count,
+        old_partition_count + 1,
+        max_abstraction_size,
+    )
 }

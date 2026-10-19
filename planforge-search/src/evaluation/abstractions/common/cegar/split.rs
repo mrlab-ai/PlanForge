@@ -138,7 +138,7 @@ pub(crate) fn split_child_regions(
                 .with_context(|| format!("split references missing prop var {var_id}"))?;
             ensure!(
                 wanted.windows(2).all(|values| values[0] < values[1]),
-                "propositional Cartesian split values must be sorted and unique: {wanted:?}"
+                "propositional split values must be sorted and unique: {wanted:?}"
             );
             let wanted_values = current
                 .iter()
@@ -152,7 +152,7 @@ pub(crate) fn split_child_regions(
                 .collect::<Vec<_>>();
             ensure!(
                 !wanted_values.is_empty() && !other_values.is_empty(),
-                "non-strict propositional Cartesian split on var {var_id}: current={current:?}, wanted={wanted:?}"
+                "non-strict propositional split on var {var_id}: current={current:?}, wanted={wanted:?}"
             );
             let witness_is_wanted = wanted_values.binary_search(witness_value).is_ok();
             let mut wanted_region = parent.clone();
@@ -179,7 +179,7 @@ pub(crate) fn split_child_regions(
                 .with_context(|| format!("split references missing numeric var {var_id}"))?;
             ensure!(
                 current.can_split_at(*boundary, *lower_includes_boundary),
-                "non-strict numeric Cartesian split on var {var_id} at {boundary}: parent={current:?}, include_lower={lower_includes_boundary}"
+                "non-strict numeric split on var {var_id} at {boundary}: parent={current:?}, include_lower={lower_includes_boundary}"
             );
             let (lower, upper) = numeric_split_intervals(
                 current,
@@ -216,7 +216,7 @@ pub(crate) fn numeric_split_intervals(
     let (lower_bound, upper_bound, lower_closed, upper_closed) = if integer_lattice {
         ensure!(
             boundary.is_finite() && approximately_equal(boundary.value(), boundary.value().round()),
-            "integer Cartesian split has non-integer boundary {boundary}"
+            "integer split has non-integer boundary {boundary}"
         );
         if lower_includes_boundary {
             (boundary, boundary + ONE_VALUE, true, true)
@@ -240,7 +240,7 @@ pub(crate) fn numeric_split_intervals(
     let upper = parent.intersection(&Interval::new(upper_bound, INF_VALUE, upper_closed, false));
     ensure!(
         !lower.is_empty() && !upper.is_empty(),
-        "non-strict numeric Cartesian split at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
+        "non-strict numeric split at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
     );
     Ok((lower, upper))
 }

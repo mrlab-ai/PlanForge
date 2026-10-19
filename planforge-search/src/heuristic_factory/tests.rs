@@ -16,7 +16,7 @@ use crate::evaluation::abstractions::cost_partitioning::saturated::{
 };
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use crate::evaluation::abstractions::domain::config::CegarConfig;
-use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
+use crate::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
@@ -312,19 +312,6 @@ fn parses_single_domain_abstraction_time_limit() {
 }
 
 #[test]
-fn parses_forward_partition_deviation_split_direction() {
-    let h = astar_heuristic(
-        "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
-    );
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(
-        cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::flaws::SplitDirection::ForwardPartitionDeviation)
-    );
-}
-
-#[test]
 fn parses_full_task_interleaved_domain_collection() {
     let h = astar_heuristic(
         "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_kind=execute_entire_plan,flaw_treatment=min_growth_single_atom)))",
@@ -490,7 +477,7 @@ fn parses_goal_focused_domain_collection_options() {
     assert!(cfg.single_goal_tasks);
     assert_eq!(
         cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::flaws::SplitDirection::Backward)
+        Some(crate::evaluation::abstractions::domain::config::SplitDirection::Backward)
     );
 }
 

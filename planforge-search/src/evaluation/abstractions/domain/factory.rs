@@ -15,8 +15,8 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::debug;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericTaskExt, NumericType,
-    NumericValue, Operator, OperatorIndex, VariableIndex,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
+    NumericType, NumericValue, Operator, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
 
@@ -28,6 +28,7 @@ use super::comparison_inputs::{
 use super::debug_dump::dump_distances;
 use super::partitions::NumericPartitions;
 use super::partitions::partition_for_value;
+use crate::evaluation::abstractions::common::cegar::split::Split;
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 
 mod distances;
@@ -213,6 +214,74 @@ impl DomainAbstractionFactory {
         );
         self.state_constrained_props = Self::derive_state_constrained_props(&self.domain_sizes);
         result
+    }
+
+    /// Refine with `split` in every abstract state: a propositional split
+    /// gives the wanted values of the witness's abstract value a new abstract
+    /// value, a numeric split cuts the partition the boundary lies in.
+    pub(super) fn apply_split(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+        split: &Split,
+    ) -> Result<()> {
+        self.refine(|domain_mapping, domain_sizes, partitions, numeric_domain_sizes| {
+            match split {
+                Split::Propositional {
+                    var_id,
+                    wanted,
+                    witness_value,
+                    ..
+                } => {
+                    ensure!(
+                        !task.numeric_conditions().is_condition_var(*var_id),
+                        "split of condition variable {var_id}; conditions are derived from the numeric partitions"
+                    );
+                    let mapping = &mut domain_mapping[var_id.index()];
+                    let class = mapping[witness_value.index()];
+                    let new_class = ExplicitValueIndex::from_usize(domain_sizes[var_id.index()]);
+                    let mut separated = 0usize;
+                    let mut kept = 0usize;
+                    for (value, abstract_value) in mapping.iter_mut().enumerate() {
+                        if *abstract_value != class {
+                            continue;
+                        }
+                        if wanted.binary_search(&ExplicitValueIndex::from_usize(value)).is_ok() {
+                            *abstract_value = new_class;
+                            separated += 1;
+                        } else {
+                            kept += 1;
+                        }
+                    }
+                    ensure!(
+                        separated > 0 && kept > 0,
+                        "non-strict propositional split of variable {var_id}: wanted={wanted:?}"
+                    );
+                    domain_sizes[var_id.index()] += 1;
+                }
+                Split::Numeric {
+                    var_id,
+                    boundary,
+                    lower_includes_boundary,
+                    integer_lattice,
+                    ..
+                } => {
+                    ensure!(
+                        partitions.split_at(
+                            *var_id,
+                            *boundary,
+                            *lower_includes_boundary,
+                            *integer_lattice,
+                        ),
+                        "non-strict numeric split of variable {var_id} at {boundary}"
+                    );
+                    numeric_domain_sizes[var_id.index()] = partitions
+                        .partitions(*var_id)
+                        .expect("a split numeric variable has partitions")
+                        .len();
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Propositional variables an abstract state can constrain: exactly those

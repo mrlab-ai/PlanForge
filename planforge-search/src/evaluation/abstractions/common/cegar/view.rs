@@ -45,4 +45,16 @@ pub(crate) trait AbstractionView {
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey>;
 
     fn growth(&self, split: &Split) -> Result<Self::Growth>;
+
+    /// The concrete operators a plan step along `transition` may execute,
+    /// tried in this order; just the transition's own by default.
+    fn step_operators(&self, transition: TransitionKey) -> Vec<OperatorIndex> {
+        vec![transition.concrete_op_id]
+    }
+
+    /// Whether the abstraction can take `split` within its limits. Split
+    /// selection prefers such splits; CEGAR stops when the chosen one is not.
+    fn refinable(&self, _split: &Split) -> bool {
+        true
+    }
 }

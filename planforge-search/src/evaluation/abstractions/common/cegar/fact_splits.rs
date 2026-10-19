@@ -16,6 +16,7 @@ use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::AbstractionView;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
 
 pub(crate) fn split_failed_fact(
     view: &impl AbstractionView,
@@ -238,7 +239,7 @@ fn split_to_guarantee_fact(
     let allowed = &region.propositions()[fact.var()];
     ensure!(
         allowed.binary_search(&witness_value).is_ok() && allowed.len() > 1,
-        "fact {fact:?} is already guaranteed in Cartesian state {state_id}"
+        "fact {fact:?} is already guaranteed in abstract state {state_id}"
     );
     Ok(Split::Propositional {
         state_id,
@@ -294,12 +295,16 @@ fn comparison_refinement(
     );
     let state = view.region(state_id);
     let mut candidates = Vec::new();
-    for var_id in tree.regular_numeric_var_dependencies().iter().copied() {
-        let witness_value = float_tolerance::canonicalize(
-            *numeric_values
-                .get(var_id.index())
-                .with_context(|| format!("missing concrete numeric var {var_id}"))?,
-        );
+    // The coordinates the condition is over, or its regular operands when it
+    // is over no coordinate.
+    for var_id in comparison_refinement_dimensions(semantics.task(), tree) {
+        let witness_value =
+            float_tolerance::canonicalize(match &semantics.coordinates().views()[var_id.index()] {
+                Some(view) => view.evaluate(numeric_values),
+                None => *numeric_values
+                    .get(var_id.index())
+                    .with_context(|| format!("missing concrete numeric var {var_id}"))?,
+            });
         ensure!(
             witness_value.is_finite(),
             "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"
@@ -307,7 +312,7 @@ fn comparison_refinement(
         let parent = *state
             .numeric
             .get(var_id.index())
-            .with_context(|| format!("missing Cartesian numeric var {var_id}"))?;
+            .with_context(|| format!("missing numeric var {var_id} in the abstract state"))?;
         let mut boundaries = Vec::new();
         if semantics.split_kind() == SplitKind::Wanted {
             boundaries.extend(semantics.target_split_boundaries().iter().copied());
@@ -369,7 +374,7 @@ fn comparison_refinement(
     }
     ensure!(
         !candidates.is_empty(),
-        "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
+        "comparison tree {tree_id} has no strict split in abstract state {state_id}"
     );
     if semantics.split_selection() == SplitSelection::MinGrowth {
         retain_min_growth_splits(view, &mut candidates, |(_, _, split)| split)?;
@@ -459,15 +464,6 @@ impl<'a> DeviationWitness<'a> {
     }
 }
 
-pub(crate) fn split_deviation(
-    view: &impl AbstractionView,
-    semantics: &CegarSemantics<'_>,
-    witness: DeviationWitness<'_>,
-) -> Result<Split> {
-    let candidates = split_deviation_candidates(view, semantics, witness)?;
-    select_refinement_split(view, semantics, candidates, 0x4445_5649)
-}
-
 pub(crate) fn split_deviation_candidates(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
@@ -525,7 +521,7 @@ pub(crate) fn split_deviation_candidates(
             .preimage(target_interval, op_id, var_id)?
             .with_context(|| {
                 format!(
-                    "Cartesian transition for operator {op_id} has no numeric preimage for var {var_id} and target {target_interval:?}"
+                    "abstract transition for operator {op_id} has no numeric preimage for var {var_id} and target {target_interval:?}"
                 )
             })?;
         let source = source_numeric[var_id.index()];
@@ -548,7 +544,7 @@ pub(crate) fn split_deviation_candidates(
         let parent = view.region(source_state_id).numeric[var_id.index()];
         ensure!(
             parent.contains(source),
-            "Cartesian source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"
+            "abstract source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"
         );
         if !boundary.is_finite() {
             rejected_numeric_splits.push(format!(
@@ -579,7 +575,7 @@ pub(crate) fn split_deviation_candidates(
     }
     ensure!(
         !candidates.is_empty(),
-        "concrete successor maps from Cartesian state {source_state_id} to a state other than abstract target {target_state_id}, but no sound strict split exists for operator {op_id} ({}); numeric split rejections: [{}]",
+        "concrete successor maps from abstract state {source_state_id} to a state other than abstract target {target_state_id}, but no sound strict split exists for operator {op_id} ({}); numeric split rejections: [{}]",
         semantics.task().get_operators()[op_id.index()].name(),
         rejected_numeric_splits.join("; ")
     );

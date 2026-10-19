@@ -263,7 +263,7 @@ impl DomainAbstractionFactory {
         }
     }
 
-    pub(super) fn cartesian_set_from_hash(
+    pub(crate) fn cartesian_set_from_hash(
         &self,
         state_hash: usize,
         numeric_domain_sizes: &[usize],
@@ -516,60 +516,69 @@ impl DomainAbstractionFactory {
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
     ) -> Result<usize> {
-        let prop_init = task.get_initial_propositional_state_values();
-        let num_init = task.get_initial_numeric_state_values();
+        self.abstract_state_hash(
+            task.get_initial_propositional_state_values(),
+            task.get_initial_numeric_state_values(),
+            numeric_domain_sizes,
+            hash_multipliers,
+        )
+    }
+
+    /// The hash of the abstract state containing the concrete state with
+    /// these values. Coordinates with an additive view are evaluated through
+    /// it.
+    pub(crate) fn abstract_state_hash(
+        &self,
+        propositions: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+        numeric_domain_sizes: &[usize],
+        hash_multipliers: &[usize],
+    ) -> Result<usize> {
         let num_props = self.domain_sizes.len();
         ensure!(
-            prop_init.len() >= num_props,
-            "initial propositional state too short: {} < {num_props}",
-            prop_init.len()
+            propositions.len() == num_props,
+            "concrete state has {} propositional values, the abstraction {num_props}",
+            propositions.len()
         );
         ensure!(
-            num_init.len() >= numeric_domain_sizes.len(),
-            "initial numeric state too short: {} < {}",
-            num_init.len(),
+            numeric.len() == numeric_domain_sizes.len(),
+            "concrete state has {} numeric values, the abstraction {}",
+            numeric.len(),
             numeric_domain_sizes.len()
         );
 
         let mut index: usize = 0;
-        for var in 0..num_props {
-            let var = VariableIndex::from_usize(var);
-            let mult = hash_multipliers[var.index()];
-            let concrete_value = prop_init[var.index()];
-            let abs_val = *self.domain_mapping[var.index()]
+        for (var, &concrete_value) in propositions.iter().enumerate() {
+            let abstract_value = *self.domain_mapping[var]
                 .get(concrete_value.index())
                 .with_context(|| {
                     format!(
                         "missing mapping for propositional var {var} value index {concrete_value}"
                     )
                 })?;
-            index += mult * abs_val.index();
+            index += hash_multipliers[var] * abstract_value.index();
         }
 
-        for num_var_id in 0..numeric_domain_sizes.len() {
-            let num_var_id = VariableIndex::from_usize(num_var_id);
+        for num_var_id in (0..numeric_domain_sizes.len()).map(VariableIndex::from_usize) {
             let abs_var = abstraction_numeric_var(num_props, num_var_id);
-            let mult = hash_multipliers[abs_var.index()];
             let concrete_value = self
                 .additive_numeric_views
                 .get(num_var_id.index())
-                .map(|view| view.evaluate(num_init))
-                .unwrap_or(num_init[num_var_id.index()]);
+                .map(|view| view.evaluate(numeric))
+                .unwrap_or(numeric[num_var_id.index()]);
             let val = float_tolerance::canonicalize(concrete_value);
             ensure!(
-                val.is_finite() && !val.is_nan(),
-                "initial numeric value for var {num_var_id} must be finite, got {val}"
+                val.is_finite(),
+                "numeric value for var {num_var_id} must be finite, got {val}"
             );
             let parts = self
                 .partitions
                 .partitions(num_var_id)
                 .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
             let part = partition_for_value(parts, val).with_context(|| {
-                format!(
-                    "initial numeric value {val} not contained in any partition for numeric var {num_var_id}"
-                )
+                format!("numeric value {val} is in no partition of numeric var {num_var_id}")
             })?;
-            index += mult * part;
+            index += hash_multipliers[abs_var.index()] * part;
         }
 
         Ok(index)

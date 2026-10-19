@@ -368,7 +368,12 @@ fn build_handcrafted_abstraction(
 ) -> anyhow::Result<DomainAbstraction> {
     let mut partitions = NumericPartitions::trivial(transformed_task);
     for seed in &spec.seed_splits {
-        partitions.split_at(seed.numeric_var_id, seed.value, seed.include_in_lower);
+        partitions.split_at(
+            seed.numeric_var_id,
+            seed.value,
+            seed.include_in_lower,
+            false,
+        );
     }
 
     let goal_vars = (0..transformed_task.get_num_goals())
