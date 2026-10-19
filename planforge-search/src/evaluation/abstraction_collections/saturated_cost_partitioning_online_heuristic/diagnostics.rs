@@ -252,3 +252,12 @@ pub(super) fn log_transition_residual_summary(remaining_costs: &TransitionResidu
         remaining_costs.num_reductions()
     );
 }
+
+pub(super) fn abstraction_state_count(abstraction: &DomainAbstraction) -> u128 {
+    abstraction
+        .factory
+        .domain_sizes()
+        .iter()
+        .chain(abstraction.factory.numeric_domain_sizes().iter())
+        .fold(1_u128, |acc, &size| acc.saturating_mul(size as u128))
+}
