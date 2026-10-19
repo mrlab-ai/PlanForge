@@ -20,7 +20,7 @@
 //! | `..._multiboat_scp_falls_short_of_the_additive_optimum` | 91.3s | 5.9s |
 //! | `blind_astar_reproduces_every_..._optimum` | 72.2s | 3.0s + optimized-only |
 //! | `sailing_simple_assignment_gap` | 55.0s | 5.9s |
-//! | `sailing_simple_scp_online_admissible` | 37.2s | 1.3s |
+//! | `sailing_simple_scp_admissible` | 37.2s | 1.3s |
 //! | `sailing_simple_ratchet_equilibrium` | 25.1s | 3.3s |
 //! | `..._complementary_collection_keeps_single_goal_solved_abstractions` | 18.9s | 2.1s |
 //!
@@ -312,7 +312,7 @@ fn goal_focused_collection_config(
     }
 }
 
-fn scp_online_initial_h_with_config(
+fn scp_initial_h_with_config(
     instance: &str,
     collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 ) -> f64 {
@@ -325,8 +325,8 @@ fn scp_online_initial_h_with_config(
         DomainAbstractionCollectionGeneratorMultipleCegar::new(collection_config.clone());
     let abstractions = generator
         .generate_collection(&task)
-        .expect("scp_online domain abstractions should build");
-    scp_online_initial_h_for_collection(&task, abstractions)
+        .expect("scp domain abstractions should build");
+    scp_initial_h_for_collection(&task, abstractions)
 }
 
 /// Greedy order optimization is the third budget that is spent in full instead
@@ -338,7 +338,7 @@ fn scp_online_initial_h_with_config(
 /// hook for a regression while paying a fifth of the price.
 const ORDER_OPTIMIZATION_MAX_TIME: f64 = 1.0;
 
-fn scp_online_initial_h_for_collection(
+fn scp_initial_h_for_collection(
     task: &NumericRootTask,
     abstractions: Vec<DomainAbstraction>,
 ) -> f64 {
@@ -355,7 +355,7 @@ fn scp_online_initial_h_for_collection(
         task,
         Default::default(),
     )
-    .expect("scp_online heuristic should construct");
+    .expect("scp heuristic should construct");
 
     let mut state_registry = StateRegistry::for_task(Arc::new(task));
     let initial = state_registry.get_initial_state();
@@ -364,7 +364,7 @@ fn scp_online_initial_h_for_collection(
     eval.set_is_goal(false);
     heuristic
         .compute_heuristic(&eval)
-        .expect("scp_online initial evaluation should succeed")
+        .expect("scp initial evaluation should succeed")
 }
 
 /// Runs A* to completion with the online SCP heuristic and returns the cost.
@@ -374,7 +374,7 @@ fn scp_online_initial_h_for_collection(
 /// abstraction. Only later states take the other branch, where ids are computed
 /// for the abstractions in `required_lookup_ids` and left absent for the rest,
 /// and that is the branch a missing id used to be read as a dead end on.
-fn scp_online_search_cost(instance: &str) -> Option<f64> {
+fn scp_search_cost(instance: &str) -> Option<f64> {
     let (task, _scratch) = sailing_task(instance);
     let task = build_restricted_task(&task)
         .expect("sailing-simple restricted task construction must not fail")
@@ -384,7 +384,7 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
         DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
     let abstractions = generator
         .generate_collection(&task)
-        .expect("scp_online domain abstractions should build");
+        .expect("scp domain abstractions should build");
     let config = ScpConfig {
         max_time: 100.0,
         table_construction_max_time: 100.0,
@@ -398,15 +398,15 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
         &task,
         Default::default(),
     )
-    .expect("scp_online heuristic should construct");
+    .expect("scp heuristic should construct");
     let state_registry = StateRegistry::for_task(Arc::new(&task));
     let mut search = AStarSearch::new(&task, state_registry, Some(Box::new(heuristic)), None, None);
-    let result = search.search().expect("scp_online A* search failed");
+    let result = search.search().expect("scp A* search failed");
     result.solution_cost
 }
 
-fn scp_online_initial_h(instance: &str) -> f64 {
-    scp_online_initial_h_with_config(instance, goal_focused_collection_config(1))
+fn scp_initial_h(instance: &str) -> f64 {
+    scp_initial_h_with_config(instance, goal_focused_collection_config(1))
 }
 
 fn numeric_var_id_by_name_parts(
@@ -430,7 +430,7 @@ fn numeric_var_id_by_name_parts(
 #[test]
 fn sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum() {
     let optimum = optimum_of("prob_2b2p_x");
-    let h = scp_online_initial_h("prob_2b2p_x");
+    let h = scp_initial_h("prob_2b2p_x");
     assert!(h <= optimum, "prob_2b2p_x: h={h} must be admissible");
     assert_eq!(h, 11.0);
 }
@@ -442,7 +442,7 @@ fn sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum() {
 #[test]
 fn sailing_simple_assignment_gap() {
     let optimum = optimum_of("prob_2b2p_assign");
-    let h = scp_online_initial_h("prob_2b2p_assign");
+    let h = scp_initial_h("prob_2b2p_assign");
     assert!(
         h <= optimum,
         "prob_2b2p_assign: h={h} must be admissible against h*={optimum}"
@@ -502,15 +502,15 @@ fn sailing_simple_ratchet_equilibrium() {
         "expected at least one saved(p0) abstraction refining both boat x roots"
     );
 
-    let h = scp_online_initial_h_for_collection(&task, abstractions);
+    let h = scp_initial_h_for_collection(&task, abstractions);
     assert!(h >= 10.0, "prob_2b1p: initial h={h} should stay >= 10");
 }
 
 #[test]
-fn sailing_simple_scp_online_admissible() {
+fn sailing_simple_scp_admissible() {
     for instance in ["prob_1b1p_x", "prob_1b2p_x"] {
         let optimum = optimum_of(instance);
-        let h = scp_online_initial_h(instance);
+        let h = scp_initial_h(instance);
         assert!(
             h <= optimum,
             "{instance}: h={h} must be admissible against h*={optimum}"
@@ -521,21 +521,21 @@ fn sailing_simple_scp_online_admissible() {
 
 /// The online heuristic must not turn a solvable state into a dead end.
 ///
-/// `sailing_simple_scp_online_admissible` above checks the initial state, and
+/// `sailing_simple_scp_admissible` above checks the initial state, and
 /// that is not enough: the initial state always rebuilds a cost partitioning, so
 /// it never reaches the branch that reads a state's abstract ids from a subset
 /// of the abstractions. Reading an absent id there as "unreachable" made the
 /// search record solvable successors as dead ends, and it reported no solution
 /// for a task that has one. Running the search to completion is what covers it.
 #[test]
-fn sailing_simple_scp_online_solves_rather_than_reporting_dead_ends() {
+fn sailing_simple_scp_solves_rather_than_reporting_dead_ends() {
     for instance in ["prob_1b1p_x", "prob_1b2p_x"] {
         let optimum = optimum_of(instance);
-        let found = scp_online_search_cost(instance);
+        let found = scp_search_cost(instance);
         assert_eq!(
             found,
             Some(optimum),
-            "{instance}: scp_online must find the optimum, not report the task unsolvable"
+            "{instance}: scp must find the optimum, not report the task unsolvable"
         );
     }
 }

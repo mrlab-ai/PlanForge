@@ -177,7 +177,7 @@ impl DomainAbstractionFactory {
         // undercounted on cascade-only transitions, the residual stays high,
         // subsequent abstractions over-saturate the same operator, and the
         // sum exceeds the optimal — inadmissibility (plant-watering/prob_4_1_2
-        // h=31 reproducer with `scp_online`).
+        // h=31 reproducer with `scp`).
         let comparison_branching = !comparison_var_ids.is_empty();
         let comparison_preconditions = if comparison_branching {
             comparison_preconditions_by_operator(operators, &comparison_var_ids)

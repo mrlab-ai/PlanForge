@@ -243,7 +243,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         st.lookup_mask = vec![false; components.len()];
 
         Ok(Self {
-            name: name.unwrap_or_else(|| "scp_online".to_string()),
+            name: name.unwrap_or_else(|| "scp".to_string()),
             task,
             components: RefCell::new(components),
             config,

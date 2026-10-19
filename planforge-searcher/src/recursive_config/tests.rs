@@ -107,13 +107,13 @@ fn rejects_nested_collection_source_lists() {
 }
 
 #[test]
-fn parses_astar_scp_online_with_or_without_unit_parens() {
-    let h = astar_heuristic("astar(scp_online)");
-    assert_eq!(h.name, "scp_online");
+fn parses_astar_scp_with_or_without_unit_parens() {
+    let h = astar_heuristic("astar(scp)");
+    assert_eq!(h.name, "scp");
     assert!(h.args.is_empty());
 
-    let h = astar_heuristic("astar(scp_online())");
-    assert_eq!(h.name, "scp_online");
+    let h = astar_heuristic("astar(scp())");
+    assert_eq!(h.name, "scp");
     assert!(h.args.is_empty());
 }
 
@@ -192,9 +192,9 @@ fn display_round_trips_hierarchical_abstraction_collection() {
 }
 
 #[test]
-fn display_round_trips_scp_online() {
+fn display_round_trips_scp_options() {
     let parsed = parse_search_spec(
-        "astar(scp_online(max_time=12.5, max_abstraction_size=42, abstraction_generation_max_time=infinity, partitioning=region, saturator=perimstar, scoring_function=min_stolen_costs, orders=random_orders, order_optimization_max_time=0.25))",
+        "astar(scp([domain(max_abstraction_size=42, abstraction_generation_max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, max_orders=3))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -202,9 +202,9 @@ fn display_round_trips_scp_online() {
 }
 
 #[test]
-fn display_round_trips_scp_online_with_nested_collection() {
+fn display_round_trips_scp_with_nested_collection() {
     let parsed = parse_search_spec(
-        "astar(scp_online(collection=multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
+        "astar(scp(multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
