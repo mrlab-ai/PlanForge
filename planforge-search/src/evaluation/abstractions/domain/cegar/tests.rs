@@ -6,10 +6,8 @@ use planforge_sas::numeric_conditions::ConditionValue;
 
 use super::*;
 use crate::evaluation::abstractions::domain::flaws::SplitDirection;
-use crate::evaluation::abstractions::domain::initial_splits::compute_initial_split_mapping;
-use crate::evaluation::abstractions::domain::split_selection::{
-    FlawTreatmentVariants, InitSplitMethod,
-};
+use crate::evaluation::abstractions::domain::initial_splits::initial_split_mapping;
+use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
@@ -336,7 +334,6 @@ fn cegar_default_config_matches_numeric_fd_defaults() {
         config.flaw_treatment,
         FlawTreatmentVariants::RandomSingleAtom
     );
-    assert_eq!(config.init_split_method, InitSplitMethod::InitValue);
 }
 
 #[test]
@@ -508,86 +505,12 @@ fn init_value_split_uses_true_branch_for_comparison_variables() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let mut config = CegarConfig {
-        init_split_method: InitSplitMethod::InitValue,
-        ..Default::default()
-    };
-    config.init_split_method = InitSplitMethod::InitValue;
-    let mut rng = SmallRng::seed_from_u64(7);
+    let mapping = initial_split_mapping(&task, VariableIndex::from_usize(0)).unwrap();
 
-    let (new_domain_size, mapping) = compute_initial_split_mapping(
-        &task,
-        &config,
-        VariableIndex::from_usize(0),
-        Some(ExplicitValueIndex::new(0)),
-        &mut rng,
-    )
-    .unwrap();
-
-    assert_eq!(new_domain_size, 2);
     assert_eq!(
         mapping,
         vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)]
     );
-}
-
-#[test]
-fn numeric_init_split_is_applied_for_encoded_init_split_var() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "g".into(),
-        vec!["g0".into(), "g1".into()],
-        None,
-        ExplicitValueIndex::new(0),
-    )];
-    let numeric_variables = vec![NumericVariable::new("x".into(), NumericType::Regular, None)];
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals: vec![ExplicitFact::propositional(0, 1)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![NumericValue::new(3.5)],
-        operators: vec![],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-
-    let config = CegarConfig {
-        init_split_method: InitSplitMethod::Identity,
-        init_split_var_ids: Some(HashSet::from([VariableIndex::from_usize(1usize)])),
-        ..Default::default()
-    };
-
-    let mut rng = SmallRng::seed_from_u64(7);
-    let mut domain_mapping = vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)]];
-    let mut domain_sizes = vec![1];
-    let mut partitions = NumericPartitions::trivial(&task);
-    let mut numeric_domain_sizes = vec![1];
-
-    apply_initial_goal_splits(
-        &task,
-        &config,
-        &mut rng,
-        RefinementState {
-            domain_mapping: &mut domain_mapping,
-            domain_sizes: &mut domain_sizes,
-            partitions: &mut partitions,
-            numeric_domain_sizes: &mut numeric_domain_sizes,
-            blacklisted_prop_var_ids: &mut HashSet::new(),
-            blacklisted_numeric_var_ids: &mut HashSet::new(),
-        },
-    )
-    .unwrap();
-
-    assert_eq!(numeric_domain_sizes, vec![2]);
-    let parts = partitions.partitions(VariableIndex::from_usize(0)).unwrap();
-    assert_eq!(parts.len(), 2);
-    assert!(parts[0].contains(NumericValue::new(3.5)) || parts[1].contains(NumericValue::new(3.5)));
 }
 
 #[test]

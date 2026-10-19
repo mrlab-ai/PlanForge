@@ -23,51 +23,6 @@ pub struct FlawCandidate {
 }
 pub type ChosenFlaws = Vec<FlawCandidate>;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum InitSplitMethod {
-    GoalValue,
-    GoalValueOrRandomIfNonGoal,
-    InitValue,
-    RandomValue,
-    RandomPartition,
-    RandomBinaryPartitionSeparatingInitGoal,
-    Identity,
-}
-
-impl fmt::Display for InitSplitMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::GoalValue => write!(f, "goal_value"),
-            Self::GoalValueOrRandomIfNonGoal => write!(f, "goal_value_or_random_if_non_goal"),
-            Self::InitValue => write!(f, "init_value"),
-            Self::RandomValue => write!(f, "random_value"),
-            Self::RandomPartition => write!(f, "random_partition"),
-            Self::RandomBinaryPartitionSeparatingInitGoal => {
-                write!(f, "random_binary_partition_separating_init_goal")
-            }
-            Self::Identity => write!(f, "identity"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for InitSplitMethod {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "goal_value" => Ok(Self::GoalValue),
-            "goal_value_or_random_if_non_goal" => Ok(Self::GoalValueOrRandomIfNonGoal),
-            "init_value" => Ok(Self::InitValue),
-            "random_value" => Ok(Self::RandomValue),
-            "random_partition" => Ok(Self::RandomPartition),
-            "random_binary_partition_separating_init_goal" => {
-                Ok(Self::RandomBinaryPartitionSeparatingInitGoal)
-            }
-            "identity" => Ok(Self::Identity),
-            other => Err(format!("invalid InitSplitMethod `{other}`")),
-        }
-    }
-}
-
 /// How a flaw treatment decides between equally good flaws.
 pub enum TieBreak<'rng> {
     /// Shuffle them with the seeded generator.

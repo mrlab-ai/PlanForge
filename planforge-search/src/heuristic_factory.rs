@@ -371,15 +371,14 @@ fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
         "random_seed",
         "flaw_treatment",
         "flaw_kind",
-        "init_split_method",
     ];
     crate::config::for_each_option(args, ORDER, |key, _| match key {
         "max_abstraction_size" | "max_time" | "combine_labels" | "random_seed" | "flaw_kind" => {
             Ok(())
         }
-        "max_iterations" | "use_wildcard_plans" | "flaw_treatment" | "init_split_method" => Err(
-            format!("option `{key}` is not supported for Cartesian abstractions"),
-        ),
+        "max_iterations" | "use_wildcard_plans" | "flaw_treatment" => Err(format!(
+            "option `{key}` is not supported for Cartesian abstractions"
+        )),
         other => Err(format!(
             "unknown option `{other}` for `cartesian_abstraction`"
         )),

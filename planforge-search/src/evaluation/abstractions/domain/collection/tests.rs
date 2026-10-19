@@ -88,21 +88,6 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
 }
 
 #[test]
-fn single_init_split_selection_uses_round_robin_iteration_order() {
-    let candidates = [0, 1, 2, 3, 4].map(VariableIndex::new);
-    let selected = (1..=8)
-        .map(|iteration| select_single_init_split_var(&candidates, iteration).unwrap())
-        .collect::<Vec<_>>();
-
-    assert_eq!(selected, [1, 2, 3, 4, 0, 1, 2, 3].map(VariableIndex::new));
-}
-
-#[test]
-fn single_init_split_selection_handles_empty_candidates() {
-    assert_eq!(select_single_init_split_var(&[], 1), None);
-}
-
-#[test]
 fn standard_can_interleave_split_directions_on_the_full_task() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         collection_strategy: CollectionStrategy::Standard,
