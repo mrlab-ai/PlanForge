@@ -9,7 +9,7 @@ use super::*;
 use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
-use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 
 const X: VariableIndex = VariableIndex::new(0);

@@ -1,5 +1,5 @@
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
-use crate::evaluation::abstractions::domain::utils::identity_domain_mapping_and_sizes;
+use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
 
 use super::*;
 

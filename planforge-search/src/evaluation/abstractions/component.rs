@@ -10,9 +10,9 @@ use crate::evaluation::abstractions::cartesian::{
 use crate::evaluation::abstractions::collections::goal_focused::{
     CollectionMembership, MemberDirection,
 };
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
 use crate::evaluation::abstractions::domain::flaws::SplitDirection;
-use crate::evaluation::abstractions::domain::generator::DomainAbstraction;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};

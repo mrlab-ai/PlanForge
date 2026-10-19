@@ -16,10 +16,10 @@ use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
-use crate::evaluation::abstractions::domain::cegar::CegarConfig;
 use crate::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig, InitSplitQuantity, VariableSubset,
 };
+use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;

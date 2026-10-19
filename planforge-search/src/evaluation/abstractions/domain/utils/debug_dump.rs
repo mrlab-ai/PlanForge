@@ -579,22 +579,6 @@ fn fmt_delta_numeric_partitions(
     out
 }
 
-#[allow(unused)]
-pub(crate) fn debug_print_evaluate_state(
-    prop_str: &str,
-    num_str_vec: &[String],
-    abs_prop_str: &[String],
-    abs_num_str: &[String],
-    dist: f64,
-) {
-    debug!("[Evaluate State]");
-    debug!("  concrete props: {}", prop_str);
-    debug!("  concrete nums:  {}", num_str_vec.join(" "));
-    debug!("  abstract props: {}", abs_prop_str.join(" "));
-    debug!("  abstract nums:  {}", abs_num_str.join(" "));
-    debug!("  distance:       {}", dist);
-}
-
 pub(crate) fn dump_distances(
     factory: &DomainAbstractionFactory,
     task: &dyn AbstractNumericTask,

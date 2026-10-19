@@ -15,10 +15,10 @@ use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
-use crate::evaluation::abstractions::domain::generator::{
+use crate::evaluation::abstractions::domain::abstraction::{
     DomainAbstraction, compute_hash_multipliers,
 };
+use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 
 fn simple_var(name: &str) -> ExplicitVariable {

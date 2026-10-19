@@ -18,8 +18,8 @@ use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::Po
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
-use crate::evaluation::abstractions::domain::cegar::CegarConfig;
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegar;
+use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;

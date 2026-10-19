@@ -5,10 +5,10 @@ use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use tracing::{info, warn};
 
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::{
     DistanceTableOptions, OcpTransitionSystemBuild,
 };
-use crate::evaluation::abstractions::domain::generator::DomainAbstraction;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 

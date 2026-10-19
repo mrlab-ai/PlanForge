@@ -9,8 +9,8 @@ use crate::evaluation::heuristic::Heuristic;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, Operator, VariableIndex};
 use planforge_sas::state_registry::ConcreteState;
 
+use super::abstraction::DomainAbstraction;
 use super::abstraction_numeric_var;
-use super::generator::DomainAbstraction;
 use super::utils;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
 

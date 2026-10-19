@@ -22,11 +22,11 @@ use planforge_search::evaluation::abstractions::common::cegar::FlawKind;
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
+use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
-use planforge_search::evaluation::abstractions::domain::generator::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;

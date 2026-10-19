@@ -23,8 +23,7 @@ use planforge_sas::utils::float_tolerance;
 use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator, DomainMapping};
 use super::abstraction_numeric_var;
 use super::comparison_inputs::{
-    AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
-    prepare_comparison_tree_inputs_from_abstract_state_into,
+    AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state_into,
 };
 use super::partitions::NumericPartitions;
 use super::utils;
@@ -136,8 +135,8 @@ impl DomainAbstractionFactory {
             ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");
             let actual = partitions
                 .partitions(VariableIndex::from_usize(n))
-                .map(|p| p.len())
-                .unwrap_or(0);
+                .with_context(|| format!("numeric variable {n} has no partitions"))?
+                .len();
             ensure!(
                 actual == parts,
                 "numeric_domain_sizes[{n}]={parts} does not match partitions len {actual}"
@@ -179,12 +178,8 @@ impl DomainAbstractionFactory {
         &self.numeric_domain_sizes
     }
 
-    /// The coordinated representation pieces changed by one CEGAR refinement.
-    ///
-    /// Keeping this crate-private and returning all four at once makes the
-    /// factory the only mutation boundary. Read-only consumers use the named
-    /// accessors above.
-    /// Refine the abstraction in place.
+    /// Refine the abstraction in place. This is the factory's only mutation
+    /// boundary; read-only consumers use the accessors above.
     ///
     /// Takes a closure rather than handing out the four `&mut` parts so that
     /// [`Self::state_constrained_props`] is always rederived afterwards. That

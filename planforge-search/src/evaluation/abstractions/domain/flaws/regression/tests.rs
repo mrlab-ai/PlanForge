@@ -3,7 +3,7 @@ use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::cegar::regression::test_tasks::{
     diagonal_task, jump_task, linear_goal_task,
 };
-use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 
 /// Domain-abstraction CEGAR with regression flaws alone reaches a concrete

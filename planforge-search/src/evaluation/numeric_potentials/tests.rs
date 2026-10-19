@@ -18,7 +18,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigValue};
-use crate::evaluation::abstractions::domain::cegar::CegarConfig;
+use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::{EvaluationState, Heuristic};
 

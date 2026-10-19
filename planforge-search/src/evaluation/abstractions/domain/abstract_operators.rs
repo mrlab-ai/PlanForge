@@ -7,8 +7,6 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
-use planforge_sas::axioms::CalOperator;
-
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
     NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
@@ -20,11 +18,10 @@ use crate::evaluation::abstractions::common::task::validate_abstraction_operator
 use super::abstraction_numeric_var;
 use super::comparison_inputs::fill_derived_numeric_intervals_from_comparison_trees;
 use super::partitions::NumericPartitions;
-use super::utils;
 use crate::evaluation::abstractions::common::coordinates::{
     AdditiveNumericViews, active_comparison_dimensions,
 };
-use planforge_sas::numeric_conditions::{ArithOp, ConditionValue};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::utils::interval::Interval;
 
 const EPSILON: f64 = 1e-12;
@@ -593,16 +590,6 @@ fn materialize_skeletons_into(
     Ok(())
 }
 
-#[allow(unused)]
-fn arith_op_from_axiom(operator: &CalOperator) -> ArithOp {
-    match operator {
-        CalOperator::Sum => ArithOp::Add,
-        CalOperator::Difference => ArithOp::Sub,
-        CalOperator::Product => ArithOp::Mul,
-        CalOperator::Division => ArithOp::Div,
-    }
-}
-
 #[derive(Clone)]
 pub struct AbstractOperatorGenerator {
     domain_mapping: DomainMapping,
@@ -867,82 +854,6 @@ impl AbstractOperatorGenerator {
             )
         })
     }
-}
-
-#[allow(unused)]
-fn format_abstract_fact(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    fact: &ExplicitFact,
-) -> String {
-    let num_props = generator.domain_sizes.len();
-    let var_id = fact.var_index();
-    if var_id.index() < num_props {
-        let var_name = task.get_variable_name(var_id).unwrap_or("<unknown>");
-        let concrete_size = task.get_variable_domain_size(var_id).unwrap_or(0);
-        let mapping = generator.domain_mapping.get(var_id.index());
-        let mut mapped_concretes: Vec<String> = Vec::new();
-        for concrete_val in 0..concrete_size {
-            let Some(abs_val) = mapping.and_then(|m| m.get(concrete_val)).copied() else {
-                continue;
-            };
-            if abs_val == fact.value_index() {
-                mapped_concretes.push(
-                    task.get_fact_name(&ExplicitFact::in_namespace(
-                        fact.namespace(),
-                        fact.var(),
-                        concrete_val,
-                    ))
-                    .to_string(),
-                );
-            }
-        }
-        if mapped_concretes.is_empty() {
-            format!("var{var_id}({var_name})=abs{}", fact.value())
-        } else {
-            format!(
-                "var{var_id}({var_name})=abs{} => [{}]",
-                fact.value(),
-                mapped_concretes.join(" | ")
-            )
-        }
-    } else {
-        let numeric_var_id = VariableIndex::from_usize(var_id.index() - num_props);
-        let var_name = task
-            .numeric_variables()
-            .get(numeric_var_id.index())
-            .map(|v| v.name())
-            .unwrap_or("<unknown>");
-        let interval = generator
-            .partitions
-            .partition_interval(numeric_var_id, fact.value());
-        match interval {
-            Some(iv) => format!(
-                "num{numeric_var_id}({var_name})=p{}:{}",
-                fact.value(),
-                utils::fmt_interval(iv)
-            ),
-            None => format!("num{numeric_var_id}({var_name})=p{}", fact.value()),
-        }
-    }
-}
-
-#[allow(unused)]
-fn normalize_preconditions(mut preconditions: Vec<ExplicitFact>) -> Option<Vec<ExplicitFact>> {
-    preconditions.sort();
-    let mut out: Vec<ExplicitFact> = Vec::with_capacity(preconditions.len());
-    for pre in preconditions {
-        if let Some(last) = out.last()
-            && last.var() == pre.var()
-        {
-            if last.value() != pre.value() {
-                return None;
-            }
-            continue;
-        }
-        out.push(pre);
-    }
-    Some(out)
 }
 
 fn build_branch_for_operator(

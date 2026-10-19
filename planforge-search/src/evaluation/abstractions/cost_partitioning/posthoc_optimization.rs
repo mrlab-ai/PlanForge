@@ -45,7 +45,7 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::state_value_cache::StateValueCache;
 
-use crate::evaluation::abstractions::domain::generator::DomainAbstraction;
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::heuristic::{
     DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
     compute_collection_abstract_state_ids,

@@ -1,14 +1,18 @@
 use planforge_sas::numeric_task::VariableIndex;
 
 pub mod abstract_operators;
+pub mod abstraction;
 pub mod cegar;
 pub mod collection;
 pub mod comparison_inputs;
+pub mod config;
 pub mod factory;
 pub mod flaws;
 pub mod generator;
 pub mod heuristic;
+pub mod initial_splits;
 pub mod partitions;
+pub mod refinement;
 pub mod split_selection;
 pub mod utils;
 

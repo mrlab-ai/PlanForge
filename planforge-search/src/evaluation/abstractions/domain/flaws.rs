@@ -259,32 +259,6 @@ pub fn goal_facts(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
         .collect()
 }
 
-#[allow(unused)]
-fn score_flaw(
-    flaw: &Flaw,
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    _abstraction_size: usize,
-) -> usize {
-    match flaw {
-        Flaw::Numeric(nf) => numeric_domain_sizes
-            .get(nf.numeric_var_id.index())
-            .copied()
-            .unwrap_or(0),
-        Flaw::Propositional(pf) => {
-            let var_id = pf.fact.var();
-            let base = domain_sizes.get(var_id).copied().unwrap_or(0);
-            let max_dep = pf
-                .dependent_numeric_flaws
-                .iter()
-                .filter_map(|nf| numeric_domain_sizes.get(nf.numeric_var_id.index()).copied())
-                .max()
-                .unwrap_or(0);
-            base + max_dep
-        }
-    }
-}
-
 fn dependent_numeric_flaws_for_comparison_prop_var(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,

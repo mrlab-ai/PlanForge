@@ -11,7 +11,8 @@ use crate::evaluation::abstractions::common::transition_system::{
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     RemainingCosts, build_explicit_label_cost_partitioning_table,
 };
-use crate::evaluation::abstractions::domain::utils::identity_domain_mapping_and_sizes;
+use crate::evaluation::abstractions::domain::comparison_inputs::prepare_comparison_tree_inputs_from_abstract_state;
+use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
@@ -1244,14 +1245,18 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
         + c2_partition * hash_multipliers[2]
         + derived_partition * hash_multipliers[3];
 
-    let numeric_intervals = factory
-        .build_numeric_intervals(
-            state_hash,
-            generator.numeric_domain_sizes(),
-            &hash_multipliers,
-            &task,
-        )
-        .unwrap();
+    let numeric_intervals = prepare_comparison_tree_inputs_from_abstract_state(
+        &task,
+        factory.numeric_conditions().all(),
+        factory.partitions(),
+        AbstractStateHash {
+            hash: state_hash,
+            num_props: factory.domain_sizes().len(),
+            numeric_domain_sizes: generator.numeric_domain_sizes(),
+            hash_multipliers: &hash_multipliers,
+        },
+    )
+    .unwrap();
 
     assert_eq!(
         numeric_intervals[0],
