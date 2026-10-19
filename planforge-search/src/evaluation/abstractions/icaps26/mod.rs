@@ -33,9 +33,10 @@ use split_selection::*;
 use working::*;
 
 use super::cartesian::{
-    CartesianAbstraction, CartesianAbstractionMetadata, CartesianRefinementDirection,
-    CartesianRefinementHierarchy, CartesianStopReason, NumericSplit, RefinementNode,
+    CartesianAbstraction, CartesianAbstractionMetadata, CartesianRefinementHierarchy,
+    CartesianStopReason, NumericSplit, RefinementNode,
 };
+use super::common::cegar::SplitKind;
 
 use std::cell::RefCell;
 use std::cmp::Reverse;

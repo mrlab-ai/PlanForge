@@ -213,7 +213,7 @@ impl Icaps26CartesianGenerator {
                 pending_flaw,
                 refinements,
                 collection_member: None,
-                refinement_direction: CartesianRefinementDirection::Regression,
+                split_kind: SplitKind::Wanted,
                 split_selection_rank: None,
                 concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
                 transition_count,

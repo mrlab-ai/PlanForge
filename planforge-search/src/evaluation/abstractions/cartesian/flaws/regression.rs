@@ -2,7 +2,6 @@
 //! [`crate::evaluation::abstractions::common::cegar::regression`] for the definition.
 
 use super::super::*;
-use super::*;
 use crate::evaluation::abstractions::common::cegar::regression::{
     Cut, InitialCut, InitialState, find_regression_flaw as find_trace_flaw,
 };
@@ -12,14 +11,19 @@ use planforge_sas::numeric_task::ONE_VALUE;
 /// state of `refinement_root`. Without a flaw, the plan's operators are a
 /// concrete plan.
 pub(in super::super) fn find_regression_flaw(
-    working: &WorkingAbstraction,
+    view: &CartesianView<'_>,
     semantics: &CartesianSemantics<'_>,
-    shortest_paths: &ShortestPaths,
     state_packer: &Arc<StatePacker>,
     refinement_root: &ConcreteState,
 ) -> Result<PlanCheck> {
+    let CartesianView {
+        working,
+        shortest_paths,
+        ..
+    } = *view;
     let mut prop_values = Vec::new();
-    semantics.concrete_prop_values(
+    concrete_prop_values(
+        semantics.task(),
         state_packer,
         &refinement_root.propositions,
         &mut prop_values,
@@ -42,13 +46,13 @@ pub(in super::super) fn find_regression_flaw(
         .iter()
         .map(|transition| transition.concrete_op_id)
         .collect::<Vec<_>>();
-    let initial_cut = match semantics.refinement_direction() {
-        CartesianRefinementDirection::Progression => InitialCut::Concrete,
-        CartesianRefinementDirection::Regression => InitialCut::Wanted,
+    let initial_cut = match semantics.cegar().split_kind() {
+        SplitKind::Concrete => InitialCut::Concrete,
+        SplitKind::Wanted => InitialCut::Wanted,
     };
     let Some(flaw) = find_trace_flaw(
         semantics.task(),
-        semantics.coordinates(),
+        semantics.cegar().coordinates(),
         &states,
         &operator_ids,
         InitialState {
@@ -60,7 +64,7 @@ pub(in super::super) fn find_regression_flaw(
     else {
         let cost = operator_ids
             .iter()
-            .map(|op_id| semantics.operator_costs()[op_id.index()].value())
+            .map(|op_id| semantics.cegar().operator_costs()[op_id.index()].value())
             .sum();
         return Ok(PlanCheck::ConcretePlan(ConcretePlan::new(
             operator_ids,
@@ -79,7 +83,7 @@ pub(in super::super) fn find_regression_flaw(
             lower_includes_boundary,
             wanted_is_lower,
         } => {
-            let integer_lattice = semantics.numeric_integer_lattice()[var.index()];
+            let integer_lattice = semantics.cegar().numeric_integer_lattice()[var.index()];
             let (lower, upper) = numeric_split_intervals(
                 working.states()[state_id].numeric[var.index()],
                 boundary,

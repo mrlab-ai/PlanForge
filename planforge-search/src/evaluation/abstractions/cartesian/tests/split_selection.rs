@@ -137,7 +137,13 @@ fn min_growth_uses_projected_transition_count() {
     };
 
     let mut candidates = vec![split(VariableIndex::new(0)), split(VariableIndex::new(1))];
-    retain_min_growth_splits(&working, &semantics, &mut candidates, |candidate| candidate).unwrap();
+    let paths = all_goal_paths(working.states().len());
+    let view = CartesianView {
+        working: &working,
+        semantics: &semantics,
+        shortest_paths: &paths,
+    };
+    retain_min_growth_splits(&view, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
     assert!(matches!(
         candidates[0],
@@ -190,7 +196,7 @@ fn native_random_selector_is_seeded() {
     ];
 
     let random_config = CartesianAbstractionConfig {
-        split_selection: CartesianSplitSelection::Random,
+        split_selection: SplitSelection::Random,
         random_seed: Some(7),
         ..CartesianAbstractionConfig::default()
     };
@@ -206,10 +212,16 @@ fn native_random_selector_is_seeded() {
         ),
         0,
     );
+    let paths = all_goal_paths(working.states().len());
     let draw = |semantics: &CartesianSemantics<'_>| {
+        let view = CartesianView {
+            working: &working,
+            semantics,
+            shortest_paths: &paths,
+        };
         (0..32)
             .map(|_| {
-                select_refinement_split(&working, semantics, candidates.clone(), 0)
+                select_refinement_split(&view, semantics.cegar(), candidates.clone(), 0)
                     .unwrap()
                     .dimension()
             })

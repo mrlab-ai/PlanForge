@@ -22,7 +22,7 @@ impl CartesianAbstractionGenerator {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
         let initial_region = semantics.regions().trivial_region()?;
-        let operator_count = semantics.task.get_operators().len();
+        let operator_count = semantics.task().get_operators().len();
         let mut working = WorkingAbstraction::new(initial_region, operator_count);
         for op_id in 0..task.get_operators().len() {
             if semantics.regions().may_transition(
@@ -65,26 +65,25 @@ impl CartesianAbstractionGenerator {
         let run = CegarDriver::new(usize::MAX, None).run_from_zero_based(
             start,
             |_iteration, _deadline| {
+                let view = CartesianView {
+                    working: &working,
+                    semantics: &semantics,
+                    shortest_paths: &shortest_paths,
+                };
                 let check = match self.config.flaw_kind {
                     FlawKind::Progression => replay_optimal_abstract_trace(
-                        &working,
-                        &semantics,
-                        &shortest_paths,
+                        &view,
+                        semantics.cegar(),
                         &state_packer,
                         &axiom_evaluator,
                         &refinement_root,
                     )?,
-                    FlawKind::Regression => find_regression_flaw(
-                        &working,
-                        &semantics,
-                        &shortest_paths,
-                        &state_packer,
-                        &refinement_root,
-                    )?,
+                    FlawKind::Regression => {
+                        find_regression_flaw(&view, &semantics, &state_packer, &refinement_root)?
+                    }
                     FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
-                        &working,
-                        &semantics,
-                        &shortest_paths,
+                        &view,
+                        semantics.cegar(),
                         &state_packer,
                         &axiom_evaluator,
                         &refinement_root,
@@ -148,7 +147,8 @@ impl CartesianAbstractionGenerator {
 
         let working_transition_count = working.active_transition_ids().count();
         let mut initial_prop_values = Vec::new();
-        semantics.concrete_prop_values(
+        concrete_prop_values(
+            semantics.task(),
             &state_packer,
             &initial_propositions,
             &mut initial_prop_values,
@@ -180,14 +180,15 @@ impl CartesianAbstractionGenerator {
         };
         if let Some(plan) = &solved_plan {
             validate_concrete_plan(
-                &semantics,
+                semantics.cegar(),
                 &state_packer,
                 &axiom_evaluator,
                 &refinement_root,
                 plan,
             )?;
             let mut root_prop_values = Vec::new();
-            semantics.concrete_prop_values(
+            concrete_prop_values(
+                semantics.task(),
                 &state_packer,
                 &refinement_root.propositions,
                 &mut root_prop_values,
@@ -223,7 +224,7 @@ impl CartesianAbstractionGenerator {
                 pending_flaw,
                 refinements,
                 collection_member: None,
-                refinement_direction: self.config.refinement_direction,
+                split_kind: self.config.split_kind,
                 split_selection_rank: self.config.split_selection_rank,
                 concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
                 transition_count,

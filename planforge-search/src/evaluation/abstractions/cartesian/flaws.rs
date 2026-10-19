@@ -1,10 +1,6 @@
-//! Flaw search on the abstract plan: progression and regression flaws, and
-//! the splits that refine them.
+//! Regression flaws on the Cartesian abstract plan; progression flaws are
+//! [shared](crate::evaluation::abstractions::common::cegar::progression).
 
-mod condition_splits;
-mod progression;
 mod regression;
 
-pub(super) use condition_splits::*;
-pub(super) use progression::*;
 pub(super) use regression::*;

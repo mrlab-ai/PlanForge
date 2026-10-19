@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
 use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::float_tolerance;
@@ -175,4 +175,23 @@ pub(crate) fn get_initial_state(
         .map_err(|e| anyhow::anyhow!("failed to evaluate axioms for initial state: {e:?}"))?;
 
     Ok((buffer, numeric_state))
+}
+
+/// Whether `fact` holds in the packed propositional state `buffer`.
+pub(crate) fn fact_is_held(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bool {
+    fact.is_held(ConcreteStateView::from_decoded(packer, buffer, &[]))
+}
+
+/// The propositional values of the packed state `packed`, into `out`.
+pub(crate) fn concrete_prop_values(
+    task: &dyn AbstractNumericTask,
+    packer: &StatePacker,
+    packed: &[u64],
+    out: &mut Vec<ExplicitValueIndex>,
+) {
+    out.clear();
+    out.extend(
+        (0..task.get_num_variables())
+            .map(|var_id| ExplicitValueIndex::from_usize(packer.get(packed, var_id) as usize)),
+    );
 }

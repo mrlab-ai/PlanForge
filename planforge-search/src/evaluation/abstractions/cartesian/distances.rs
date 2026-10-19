@@ -136,7 +136,7 @@ pub(super) fn compute_shortest_paths_with_goals(
             if transition.source == target {
                 continue;
             }
-            let cost = semantics.operator_costs()[transition.concrete_op_id.index()];
+            let cost = semantics.cegar().operator_costs()[transition.concrete_op_id.index()];
             ensure!(
                 cost.value() >= -float_tolerance::SEARCH_EPSILON && cost.is_finite(),
                 "invalid operator cost {cost}"
@@ -261,7 +261,7 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let candidate = target_distance
-                + semantics.operator_costs()[transition.concrete_op_id.index()]
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()]
                     .value()
                     .max(0.0);
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
@@ -290,7 +290,7 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let alternative = distance
-                + semantics.operator_costs()[transition.concrete_op_id.index()]
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()]
                     .value()
                     .max(0.0);
             if alternative + float_tolerance::SEARCH_EPSILON

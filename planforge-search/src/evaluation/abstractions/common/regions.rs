@@ -50,6 +50,10 @@ impl<'task> RegionSemantics<'task> {
         })
     }
 
+    pub(crate) fn task(&self) -> &'task dyn AbstractNumericTask {
+        self.task
+    }
+
     pub(crate) fn coordinates(&self) -> &Coordinates<'task> {
         &self.coordinates
     }

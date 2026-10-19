@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::SplitKind;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
@@ -9,7 +10,7 @@ use planforge_sas::numeric_task::{
 
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianRefinementDirection,
+    CartesianAbstractionConfig,
 };
 use crate::evaluation::abstractions::collections::goal_focused::MemberKind;
 use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocusedMember};
@@ -567,7 +568,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             abstraction: CartesianAbstractionConfig {
                 max_states: 64,
                 random_seed: Some(1),
-                refinement_direction: CartesianRefinementDirection::Regression,
+                split_kind: SplitKind::Wanted,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::Complementary,
@@ -660,11 +661,11 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             }
         );
         assert_eq!(
-            cartesian.metadata.refinement_direction,
+            cartesian.metadata.split_kind,
             if expected_backward {
-                CartesianRefinementDirection::Regression
+                SplitKind::Wanted
             } else {
-                CartesianRefinementDirection::Progression
+                SplitKind::Concrete
             }
         );
         assert_eq!(domain.metadata.flaw_selection_rank, Some(0));

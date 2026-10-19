@@ -1,17 +1,5 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CartesianRefinementDirection {
-    Progression,
-    Regression,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CartesianSplitSelection {
-    MinTransitionGrowth,
-    Random,
-}
-
 #[derive(Debug, Clone)]
 pub struct CartesianAbstractionConfig {
     pub max_states: usize,
@@ -22,9 +10,9 @@ pub struct CartesianAbstractionConfig {
     pub retain_transition_system: bool,
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
-    pub refinement_direction: CartesianRefinementDirection,
+    pub split_kind: SplitKind,
     pub split_selection_rank: Option<usize>,
-    pub split_selection: CartesianSplitSelection,
+    pub split_selection: SplitSelection,
     pub debug: bool,
 }
 
@@ -38,9 +26,9 @@ impl Default for CartesianAbstractionConfig {
             retain_transition_system: true,
             random_seed: None,
             flaw_kind: FlawKind::Progression,
-            refinement_direction: CartesianRefinementDirection::Progression,
+            split_kind: SplitKind::Concrete,
             split_selection_rank: None,
-            split_selection: CartesianSplitSelection::MinTransitionGrowth,
+            split_selection: SplitSelection::MinGrowth,
             debug: false,
         }
     }

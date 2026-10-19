@@ -1,8 +1,25 @@
-use super::super::*;
+//! The splits that refine a flaw: separate a concrete witness from the facts
+//! it violates, or from the abstract successor it misses.
 
-pub(in super::super) fn split_failed_fact(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+use std::sync::Arc;
+
+use anyhow::{Context, Result, bail, ensure};
+use planforge_sas::numeric_task::{
+    ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
+};
+use planforge_sas::utils::float_tolerance;
+
+use super::SplitKind;
+use super::SplitSelection;
+use super::selection::{retain_min_growth_splits, select_refinement_split};
+use super::semantics::CegarSemantics;
+use super::split::{Split, numeric_split_intervals};
+use super::view::AbstractionView;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+
+pub(crate) fn split_failed_fact(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     state_id: usize,
     fact: &ExplicitFact,
     prop_values: &[ExplicitValueIndex],
@@ -15,7 +32,7 @@ pub(in super::super) fn split_failed_fact(
         .id_for_var(fact.var_index())
     {
         return comparison_refinement(
-            working,
+            view,
             semantics,
             state_id,
             tree_id,
@@ -45,10 +62,10 @@ pub(in super::super) fn split_failed_fact(
                 for condition in axiom.conditions() {
                     if !semantics
                         .regions()
-                        .guarantees(&working.states()[state_id], condition)?
+                        .guarantees(&*view.region(state_id), condition)?
                     {
                         return split_to_guarantee_fact(
-                            working,
+                            view,
                             semantics,
                             state_id,
                             condition,
@@ -72,11 +89,7 @@ pub(in super::super) fn split_failed_fact(
         for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
             let axiom = &semantics.task().axioms()[axiom_id];
             if axiom.effect_value() != fact.value_index()
-                || !all_conditions_admitted(
-                    semantics,
-                    &working.states()[state_id],
-                    axiom.conditions(),
-                )?
+                || !all_conditions_admitted(semantics, &*view.region(state_id), axiom.conditions())?
             {
                 continue;
             }
@@ -86,7 +99,7 @@ pub(in super::super) fn split_failed_fact(
                     .with_context(|| format!("missing concrete prop var {}", condition.var()))?;
                 if value != condition.value_index() {
                     return split_failed_fact(
-                        working,
+                        view,
                         semantics,
                         state_id,
                         condition,
@@ -119,8 +132,8 @@ pub(in super::super) fn split_failed_fact(
 }
 
 fn split_to_guarantee_fact(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     state_id: usize,
     fact: &ExplicitFact,
     prop_values: &[ExplicitValueIndex],
@@ -140,7 +153,7 @@ fn split_to_guarantee_fact(
         .id_for_var(fact.var_index())
     {
         return comparison_refinement(
-            working,
+            view,
             semantics,
             state_id,
             tree_id,
@@ -154,11 +167,8 @@ fn split_to_guarantee_fact(
         if fact.value_index() == default_value {
             for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
                 let axiom = &semantics.task().axioms()[axiom_id];
-                if !all_conditions_admitted(
-                    semantics,
-                    &working.states()[state_id],
-                    axiom.conditions(),
-                )? {
+                if !all_conditions_admitted(semantics, &*view.region(state_id), axiom.conditions())?
+                {
                     continue;
                 }
                 let condition = axiom
@@ -179,7 +189,7 @@ fn split_to_guarantee_fact(
                 let witness_fact =
                     ExplicitFact::propositional(condition.var(), witness_value.index());
                 return split_to_guarantee_fact(
-                    working,
+                    view,
                     semantics,
                     state_id,
                     &witness_fact,
@@ -203,10 +213,10 @@ fn split_to_guarantee_fact(
             for condition in axiom.conditions() {
                 if !semantics
                     .regions()
-                    .guarantees(&working.states()[state_id], condition)?
+                    .guarantees(&*view.region(state_id), condition)?
                 {
                     return split_to_guarantee_fact(
-                        working,
+                        view,
                         semantics,
                         state_id,
                         condition,
@@ -224,11 +234,8 @@ fn split_to_guarantee_fact(
     }
 
     let witness_value = concrete_value as ExplicitValueIndex;
-    let allowed = working
-        .states
-        .get(state_id)
-        .and_then(|state| state.propositions().get(fact.var()))
-        .with_context(|| format!("missing Cartesian state {state_id} prop var {}", fact.var()))?;
+    let region = view.region(state_id);
+    let allowed = &region.propositions()[fact.var()];
     ensure!(
         allowed.binary_search(&witness_value).is_ok() && allowed.len() > 1,
         "fact {fact:?} is already guaranteed in Cartesian state {state_id}"
@@ -265,8 +272,8 @@ impl ComparisonRefinementGoal {
 }
 
 fn comparison_refinement(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     state_id: usize,
     tree_id: usize,
     numeric_values: &[NumericValue],
@@ -275,7 +282,7 @@ fn comparison_refinement(
 ) -> Result<Split> {
     let desired_truth = goal.desired_truth();
     let tree = semantics
-        .task
+        .task()
         .numeric_conditions()
         .get(tree_id)
         .with_context(|| format!("missing comparison tree {tree_id}"))?;
@@ -285,10 +292,7 @@ fn comparison_refinement(
             == (concrete_truth != desired_truth),
         "comparison refinement goal disagrees with concrete truth for tree {tree_id}"
     );
-    let state = working
-        .states
-        .get(state_id)
-        .with_context(|| format!("missing Cartesian state {state_id}"))?;
+    let state = view.region(state_id);
     let mut candidates = Vec::new();
     for var_id in tree.regular_numeric_var_dependencies().iter().copied() {
         let witness_value = float_tolerance::canonicalize(
@@ -305,7 +309,7 @@ fn comparison_refinement(
             .get(var_id.index())
             .with_context(|| format!("missing Cartesian numeric var {var_id}"))?;
         let mut boundaries = Vec::new();
-        if semantics.refinement_direction() == CartesianRefinementDirection::Regression {
+        if semantics.split_kind() == SplitKind::Wanted {
             boundaries.extend(semantics.target_split_boundaries().iter().copied());
         }
         boundaries.push(witness_value);
@@ -367,11 +371,10 @@ fn comparison_refinement(
         !candidates.is_empty(),
         "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
     );
-    if semantics.split_selection() == CartesianSplitSelection::MinTransitionGrowth {
-        retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
+    if semantics.split_selection() == SplitSelection::MinGrowth {
+        retain_min_growth_splits(view, &mut candidates, |(_, _, split)| split)?;
     }
-    let has_target_centered_candidate = semantics.refinement_direction()
-        == CartesianRefinementDirection::Regression
+    let has_target_centered_candidate = semantics.split_kind() == SplitKind::Wanted
         && candidates
             .iter()
             .any(|(separates_truth, _, _)| *separates_truth);
@@ -383,14 +386,14 @@ fn comparison_refinement(
         candidates.retain(|(_, achieved, _)| *achieved);
     }
     select_refinement_split(
-        working,
+        view,
         semantics,
         candidates.into_iter().map(|(_, _, split)| split).collect(),
         0x434F_4D50,
     )
 }
 
-pub(in super::super) fn comparison_truth(prop_value: ExplicitValueIndex) -> Result<bool> {
+pub(crate) fn comparison_truth(prop_value: ExplicitValueIndex) -> Result<bool> {
     match prop_value.index() {
         0 => Ok(true),
         1 => Ok(false),
@@ -414,7 +417,7 @@ fn conditions_hold_concretely(
 }
 
 fn all_conditions_admitted(
-    semantics: &CartesianSemantics<'_>,
+    semantics: &CegarSemantics<'_>,
     region: &CartesianSet,
     conditions: &[ExplicitFact],
 ) -> Result<bool> {
@@ -427,7 +430,7 @@ fn all_conditions_admitted(
 }
 
 #[derive(Clone, Copy)]
-pub(in super::super) struct DeviationWitness<'a> {
+pub(crate) struct DeviationWitness<'a> {
     source_state_id: usize,
     target_state_id: usize,
     op_id: OperatorIndex,
@@ -437,7 +440,7 @@ pub(in super::super) struct DeviationWitness<'a> {
 }
 
 impl<'a> DeviationWitness<'a> {
-    pub(in super::super) fn new(
+    pub(crate) fn new(
         source_state_id: usize,
         target_state_id: usize,
         op_id: OperatorIndex,
@@ -456,18 +459,18 @@ impl<'a> DeviationWitness<'a> {
     }
 }
 
-pub(in super::super) fn split_deviation(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+pub(crate) fn split_deviation(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     witness: DeviationWitness<'_>,
 ) -> Result<Split> {
-    let candidates = split_deviation_candidates(working, semantics, witness)?;
-    select_refinement_split(working, semantics, candidates, 0x4445_5649)
+    let candidates = split_deviation_candidates(view, semantics, witness)?;
+    select_refinement_split(view, semantics, candidates, 0x4445_5649)
 }
 
-pub(in super::super) fn split_deviation_candidates(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+pub(crate) fn split_deviation_candidates(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     witness: DeviationWitness<'_>,
 ) -> Result<Vec<Split>> {
     let DeviationWitness {
@@ -478,7 +481,7 @@ pub(in super::super) fn split_deviation_candidates(
         source_numeric,
         successor_numeric,
     } = witness;
-    let target = &working.states()[target_state_id];
+    let target = &*view.region(target_state_id);
     let mut candidates = Vec::new();
     let mut rejected_numeric_splits = Vec::new();
     for (var_id, allowed) in target.propositions().iter().enumerate() {
@@ -542,7 +545,7 @@ pub(in super::super) fn split_deviation_candidates(
                 );
                 (preimage.upper, preimage.upper_closed)
             };
-        let parent = working.states()[source_state_id].numeric[var_id.index()];
+        let parent = view.region(source_state_id).numeric[var_id.index()];
         ensure!(
             parent.contains(source),
             "Cartesian source state {source_state_id} interval {parent:?} does not contain concrete numeric var {var_id}={source}"

@@ -17,7 +17,7 @@ pub struct CartesianAbstractionMetadata {
     pub refinements: usize,
     /// Set when the abstraction is a member of a goal-focused collection.
     pub collection_member: Option<CollectionMembership>,
-    pub refinement_direction: CartesianRefinementDirection,
+    pub split_kind: SplitKind,
     pub split_selection_rank: Option<usize>,
     pub concrete_plan_operator_ids: Option<Vec<OperatorIndex>>,
     /// Number of non-loop transitions built before optional standalone compaction.

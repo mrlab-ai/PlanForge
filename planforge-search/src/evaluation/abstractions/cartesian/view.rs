@@ -1,32 +1,61 @@
+//! The working abstraction as CEGAR's flaw search sees it.
+
+use std::borrow::Cow;
+
 use super::*;
 
-pub(super) fn numeric_split_choice_key(
-    variable_name: &str,
-    boundary: NumericValue,
-    lower_closed: bool,
-) -> u64 {
-    mix_seed(stable_text_seed(variable_name) ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
+pub(super) struct CartesianView<'a> {
+    pub(super) working: &'a WorkingAbstraction,
+    pub(super) semantics: &'a CartesianSemantics<'a>,
+    pub(super) shortest_paths: &'a ShortestPaths,
 }
 
-pub(super) fn split_choice_key(semantics: &CartesianSemantics<'_>, split: &Split) -> u64 {
-    match split {
-        Split::Propositional { var_id, wanted, .. } => {
-            wanted.iter().fold(var_id.index() as u64, |key, value| {
-                mix_seed(key ^ (value.index() as u64))
-            })
-        }
-        Split::Numeric {
-            var_id,
-            boundary,
-            lower_includes_boundary,
-            ..
-        } => {
-            let variable_name = semantics.task().numeric_variables()[var_id.index()].name();
-            numeric_split_choice_key(variable_name, *boundary, *lower_includes_boundary)
-        }
+impl AbstractionView for CartesianView<'_> {
+    /// The number of abstract transitions after the split.
+    type Growth = usize;
+
+    fn num_states(&self) -> usize {
+        self.working.states().len()
+    }
+
+    fn abstract_state(
+        &self,
+        propositions: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Result<usize> {
+        self.working.hierarchy().map_state(propositions, numeric)
+    }
+
+    fn region(&self, state: usize) -> Cow<'_, CartesianSet> {
+        Cow::Borrowed(&self.working.states()[state])
+    }
+
+    fn goal_distance(&self, state: usize) -> f64 {
+        self.shortest_paths.distance(state)
+    }
+
+    fn is_goal(&self, state: usize) -> bool {
+        self.shortest_paths.is_goal(state)
+    }
+
+    fn optimal_transition(&self, state: usize) -> Result<TransitionKey> {
+        let transition = self.shortest_paths.generating_transition(state).context(
+            "non-goal Cartesian state with finite distance has no generating transition",
+        )?;
+        ensure!(
+            self.working.contains_transition(transition),
+            "Cartesian shortest path references missing transition {transition:?}"
+        );
+        Ok(transition)
+    }
+
+    fn growth(&self, split: &Split) -> Result<usize> {
+        projected_transition_count(self.working, self.semantics, split)
     }
 }
 
+/// The number of abstract transitions after `split`, computed without
+/// applying it.
 fn projected_transition_count(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
@@ -131,87 +160,4 @@ fn projected_transition_count(
     unaffected
         .checked_add(replacements.len())
         .context("projected Cartesian transition count overflow")
-}
-
-pub(super) fn retain_min_growth_splits<T>(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    candidates: &mut Vec<T>,
-    split: impl Fn(&T) -> &Split,
-) -> Result<()> {
-    let projected_transition_counts = candidates
-        .iter()
-        .map(|candidate| projected_transition_count(working, semantics, split(candidate)))
-        .collect::<Result<Vec<_>>>()?;
-    let minimum = projected_transition_counts
-        .iter()
-        .copied()
-        .min()
-        .context("cannot rank an empty split candidate set by growth")?;
-    let mut index = 0;
-    candidates.retain(|_| {
-        let retain = projected_transition_counts[index] == minimum;
-        index += 1;
-        retain
-    });
-    Ok(())
-}
-
-fn select_min_growth_split(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    mut candidates: Vec<Split>,
-    tag: u64,
-) -> Result<Split> {
-    ensure!(
-        !candidates.is_empty(),
-        "cannot select a Cartesian refinement from an empty candidate set"
-    );
-    retain_min_growth_splits(working, semantics, &mut candidates, |split| split)?;
-    let index = semantics.choose_split_index(&candidates, tag);
-    Ok(candidates.swap_remove(index))
-}
-
-pub(super) fn select_refinement_split(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    mut candidates: Vec<Split>,
-    tag: u64,
-) -> Result<Split> {
-    match semantics.split_selection() {
-        CartesianSplitSelection::MinTransitionGrowth => {
-            select_min_growth_split(working, semantics, candidates, tag)
-        }
-        CartesianSplitSelection::Random => {
-            ensure!(
-                !candidates.is_empty(),
-                "cannot select a Cartesian refinement from an empty candidate set"
-            );
-            let index = semantics.choose_random_split_index(candidates.len());
-            Ok(candidates.swap_remove(index))
-        }
-    }
-}
-
-pub(super) fn select_refinement(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    candidates: Vec<Split>,
-) -> Result<PlanCheck> {
-    Ok(PlanCheck::Refine(select_refinement_split(
-        working,
-        semantics,
-        candidates,
-        0x454E_5449,
-    )?))
-}
-
-pub(super) fn push_unique_split(
-    candidates: &mut Vec<Split>,
-    identities: &mut HashSet<SplitIdentity>,
-    split: Split,
-) {
-    if identities.insert(SplitIdentity::from(&split)) {
-        candidates.push(split);
-    }
 }

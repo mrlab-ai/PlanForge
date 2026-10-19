@@ -316,6 +316,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&plus, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         plus_semantics
+            .cegar()
             .coordinates()
             .preimage(
                 Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
@@ -332,6 +333,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&times, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         times_semantics
+            .cegar()
             .coordinates()
             .preimage(
                 Interval::new(
@@ -353,6 +355,7 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&divide, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         divide_semantics
+            .cegar()
             .coordinates()
             .preimage(
                 Interval::new(
@@ -376,6 +379,7 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         semantics
+            .cegar()
             .coordinates()
             .preimage(
                 Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, true),
@@ -388,6 +392,7 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     );
     assert!(
         semantics
+            .cegar()
             .coordinates()
             .preimage(
                 Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, false),

@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSplitSelection,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
@@ -715,9 +715,9 @@ fn apply_cartesian_source_options(
             }
             "refinement_direction" => {
                 let value = String::from_option_value(arg.value())?;
-                config.abstraction.refinement_direction = match value.as_str() {
-                    "progression" => CartesianRefinementDirection::Progression,
-                    "regression" | "target_centered" => CartesianRefinementDirection::Regression,
+                config.abstraction.split_kind = match value.as_str() {
+                    "progression" => SplitKind::Concrete,
+                    "regression" | "target_centered" => SplitKind::Wanted,
                     _ => {
                         return Err(format!(
                             "invalid Cartesian refinement_direction `{value}`; expected progression or regression"
@@ -728,10 +728,8 @@ fn apply_cartesian_source_options(
             "split_selection" => {
                 let value = String::from_option_value(arg.value())?;
                 config.abstraction.split_selection = match value.as_str() {
-                    "min_transition_growth" | "min_growth" => {
-                        CartesianSplitSelection::MinTransitionGrowth
-                    }
-                    "random" => CartesianSplitSelection::Random,
+                    "min_transition_growth" | "min_growth" => SplitSelection::MinGrowth,
+                    "random" => SplitSelection::Random,
                     _ => {
                         return Err(format!(
                             "invalid Cartesian split_selection `{value}`; expected min_transition_growth or random"
@@ -801,7 +799,7 @@ mod tests {
         ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
         remaining_construction_time, require_only_component_sources, split_component_sources,
     };
-    use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
+    use crate::evaluation::abstractions::common::cegar::SplitSelection;
 
     #[test]
     fn separates_component_sources_from_combinator_options() {
@@ -945,11 +943,8 @@ mod tests {
     #[test]
     fn parses_native_cartesian_split_selection() {
         for (name, expected) in [
-            (
-                "min_transition_growth",
-                CartesianSplitSelection::MinTransitionGrowth,
-            ),
-            ("random", CartesianSplitSelection::Random),
+            ("min_transition_growth", SplitSelection::MinGrowth),
+            ("random", SplitSelection::Random),
         ] {
             let args = vec![ConfigArg::new(
                 Some("split_selection".to_string()),

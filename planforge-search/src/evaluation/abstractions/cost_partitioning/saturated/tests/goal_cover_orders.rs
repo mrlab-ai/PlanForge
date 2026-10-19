@@ -66,7 +66,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
     assert_ne!(goal(baseline[0]), goal(baseline[2]));
     let first = &abstractions[baseline[0]].metadata;
     let complement = &abstractions[baseline[1]].metadata;
-    assert_ne!(first.refinement_direction, complement.refinement_direction);
+    assert_ne!(first.split_kind, complement.split_kind);
     assert_eq!(first.split_selection_rank, complement.split_selection_rank);
 
     let other_goal = order(GoalCoverOrderVariant {

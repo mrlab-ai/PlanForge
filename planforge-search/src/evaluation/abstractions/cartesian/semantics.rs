@@ -1,26 +1,15 @@
-//! The task as a Cartesian abstraction sees it: operator costs, which
-//! operators each split can affect, the coordinates, and the refinement
-//! configuration. The child modules test regions and transitions against it.
+//! The task as a Cartesian abstraction sees it: the shared CEGAR semantics,
+//! and for every split dimension the operators whose transitions it can
+//! change, which lets a split update only the transitions it affects.
 
 use super::*;
 
-mod regions;
-mod split_choice;
 mod transitions;
 
 pub(super) struct CartesianSemantics<'task> {
-    pub(super) task: &'task dyn AbstractNumericTask,
-    pub(super) operator_costs: Vec<NumericValue>,
+    pub(super) cegar: CegarSemantics<'task>,
     pub(super) prop_split_dependent_operators: Vec<OperatorBitSet>,
     pub(super) numeric_split_dependent_operators: Vec<OperatorBitSet>,
-    pub(super) regions: RegionSemantics<'task>,
-    pub(super) numeric_integer_lattice: Vec<bool>,
-    pub(super) random_seed: Option<u64>,
-    pub(super) random_split_rng: Option<RefCell<SmallRng>>,
-    pub(super) refinement_direction: CartesianRefinementDirection,
-    pub(super) split_selection_rank: Option<usize>,
-    pub(super) split_selection: CartesianSplitSelection,
-    pub(super) target_split_boundaries: Vec<NumericValue>,
 }
 
 pub(super) fn mark_fact_split_dependencies(
@@ -72,74 +61,37 @@ pub(super) fn mark_fact_split_dependencies(
 }
 
 impl<'task> CartesianSemantics<'task> {
-    pub(super) fn task(&self) -> &dyn AbstractNumericTask {
-        self.task
+    pub(super) fn cegar(&self) -> &CegarSemantics<'task> {
+        &self.cegar
+    }
+
+    pub(super) fn task(&self) -> &'task dyn AbstractNumericTask {
+        self.cegar.task()
     }
 
     pub(super) fn regions(&self) -> &RegionSemantics<'task> {
-        &self.regions
-    }
-
-    pub(super) fn operator_costs(&self) -> &[NumericValue] {
-        &self.operator_costs
-    }
-
-    pub(super) fn coordinates(&self) -> &Coordinates<'task> {
-        self.regions.coordinates()
-    }
-
-    pub(super) fn numeric_integer_lattice(&self) -> &[bool] {
-        &self.numeric_integer_lattice
-    }
-
-    pub(super) fn refinement_direction(&self) -> CartesianRefinementDirection {
-        self.refinement_direction
-    }
-
-    pub(super) fn split_selection(&self) -> CartesianSplitSelection {
-        self.split_selection
-    }
-
-    pub(super) fn target_split_boundaries(&self) -> &[NumericValue] {
-        &self.target_split_boundaries
+        self.cegar.regions()
     }
 
     pub(super) fn new(
         task: &'task dyn AbstractNumericTask,
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
-        validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
-        let regions = RegionSemantics::new(task)?;
-        let coordinates = regions.coordinates();
+        let cegar = CegarSemantics::new(
+            task,
+            SplitOptions {
+                kind: config.split_kind,
+                selection: config.split_selection,
+                rank: config.split_selection_rank,
+                random_seed: config.random_seed,
+            },
+        )?;
         if config.flaw_kind == FlawKind::Regression {
-            ensure_regressable(task, coordinates)?;
+            ensure_regressable(task, cegar.coordinates())?;
         }
-        for (op_id, op) in task.get_operators().iter().enumerate() {
-            validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
-        }
-
-        let operator_costs = task
-            .get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
-            .collect();
+        let regions = cegar.regions();
+        let additive_numeric_views = cegar.coordinates().views();
         let operator_count = task.get_operators().len();
-        let additive_numeric_views = coordinates.views();
-        let mut target_split_boundaries = task
-            .numeric_variables()
-            .iter()
-            .enumerate()
-            .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
-            .filter_map(|(numeric_var_id, _)| {
-                task.get_initial_numeric_state_values()
-                    .get(numeric_var_id)
-                    .copied()
-                    .filter(|value| value.is_finite())
-            })
-            .map(float_tolerance::canonicalize)
-            .collect::<Vec<_>>();
-        target_split_boundaries.sort_by(NumericValue::total_cmp);
-        target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
         let mut prop_split_dependent_operators = (0..task.get_num_variables())
             .map(|_| OperatorBitSet::empty(operator_count))
             .collect::<Vec<_>>();
@@ -154,7 +106,7 @@ impl<'task> CartesianSemantics<'task> {
                 mark_fact_split_dependencies(
                     task,
                     precondition,
-                    &regions,
+                    regions,
                     &mut visiting,
                     &mut prop_dependencies,
                     &mut numeric_dependencies,
@@ -199,55 +151,10 @@ impl<'task> CartesianSemantics<'task> {
                 }
             }
         }
-        let random_split_rng = matches!(config.split_selection, CartesianSplitSelection::Random)
-            .then(|| RefCell::new(SmallRng::seed_from_u64(config.random_seed.unwrap_or(2011))));
-        let initial_numeric = task.get_initial_numeric_state_values();
-        let mut numeric_integer_lattice = initial_numeric
-            .iter()
-            .map(|&value| approximately_equal(value.value(), value.value().round()))
-            .collect::<Vec<_>>();
-        for op in task.get_operators() {
-            for effect in op.assignment_effects() {
-                let rhs = initial_numeric[effect.var_id().index()];
-                let preserves_integers = match effect.operation() {
-                    AssignmentOperation::Plus
-                    | AssignmentOperation::Minus
-                    | AssignmentOperation::Assign
-                    | AssignmentOperation::Times => {
-                        approximately_equal(rhs.value(), rhs.value().round())
-                    }
-                    AssignmentOperation::Divide => approximately_equal(rhs.value().abs(), 1.0),
-                };
-                numeric_integer_lattice[effect.affected_var_id().index()] &= preserves_integers;
-            }
-        }
-        for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
-            let Some(view) = view else {
-                continue;
-            };
-            let initial_value = view.evaluate(initial_numeric);
-            numeric_integer_lattice[numeric_var_id] =
-                approximately_equal(initial_value.value(), initial_value.value().round())
-                    && (0..operator_count).all(|op_id| {
-                        view.operator_delta(OperatorIndex::from_usize(op_id))
-                            .is_ok_and(|delta| {
-                                approximately_equal(delta.value(), delta.value().round())
-                            })
-                    });
-        }
         Ok(Self {
-            task,
-            operator_costs,
+            cegar,
             prop_split_dependent_operators,
             numeric_split_dependent_operators,
-            regions,
-            numeric_integer_lattice,
-            random_seed: config.random_seed,
-            random_split_rng,
-            refinement_direction: config.refinement_direction,
-            split_selection_rank: config.split_selection_rank,
-            split_selection: config.split_selection,
-            target_split_boundaries,
         })
     }
 }

@@ -1,34 +1,59 @@
-use super::super::*;
-use super::*;
+//! Progression flaws: replay a concrete state along an optimal abstract plan.
+//!
+//! The first-flaw search follows the plan until the concrete state violates
+//! an operator precondition, leaves the planned abstract successor, or ends
+//! in an abstract goal state that is not a concrete one. The whole-plan search
+//! collects every flaw of one replay: after a deviation it continues from the
+//! abstract state the concrete successor actually lies in.
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use anyhow::{Context, Result, ensure};
+use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::numeric_task::OperatorIndex;
+use planforge_sas::utils::state_packer::StatePacker;
+
+use super::fact_splits::{
+    DeviationWitness, split_deviation, split_deviation_candidates, split_failed_fact,
+};
+use super::progress_concrete_state;
+use super::selection::{push_unique_split, select_refinement, select_refinement_split};
+use super::semantics::CegarSemantics;
+use super::split::{Split, approximately_equal};
+use super::view::AbstractionView;
+use crate::evaluation::abstractions::common::concrete_state::{
+    ConcreteState, concrete_prop_values, fact_is_held,
+};
 
 #[derive(Debug)]
-pub(in super::super) struct ConcretePlan {
+pub(crate) struct ConcretePlan {
     operator_ids: Vec<OperatorIndex>,
     cost: f64,
 }
 
 impl ConcretePlan {
-    pub(in super::super) fn new(operator_ids: Vec<OperatorIndex>, cost: f64) -> Self {
+    pub(crate) fn new(operator_ids: Vec<OperatorIndex>, cost: f64) -> Self {
         Self { operator_ids, cost }
     }
 
-    pub(in super::super) fn cost(&self) -> f64 {
+    pub(crate) fn cost(&self) -> f64 {
         self.cost
     }
 
-    pub(in super::super) fn into_operator_ids(self) -> Vec<OperatorIndex> {
+    pub(crate) fn into_operator_ids(self) -> Vec<OperatorIndex> {
         self.operator_ids
     }
 }
 
-pub(in super::super) enum PlanCheck {
+pub(crate) enum PlanCheck {
     ConcretePlan(ConcretePlan),
     AbstractDeadEnd(usize),
     Refine(Split),
 }
 
 fn concrete_is_goal(
-    semantics: &CartesianSemantics<'_>,
+    semantics: &CegarSemantics<'_>,
     state_packer: &StatePacker,
     propositions: &[u64],
 ) -> bool {
@@ -41,10 +66,9 @@ fn concrete_is_goal(
     })
 }
 
-pub(in super::super) fn replay_optimal_abstract_trace(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    shortest_paths: &ShortestPaths,
+pub(crate) fn replay_optimal_abstract_trace(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &ConcreteState,
@@ -53,25 +77,35 @@ pub(in super::super) fn replay_optimal_abstract_trace(
     let mut numeric = refinement_root.numeric.clone();
     let mut prop_values = Vec::new();
     let mut successor_prop_values = Vec::new();
-    semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
-    let initial_abstract_state = working.hierarchy().map_state(&prop_values, &numeric)?;
-    if !shortest_paths.distance(initial_abstract_state).is_finite() {
+    concrete_prop_values(
+        semantics.task(),
+        state_packer,
+        &propositions,
+        &mut prop_values,
+    );
+    let initial_abstract_state = view.abstract_state(&prop_values, &numeric)?;
+    if !view.goal_distance(initial_abstract_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd(initial_abstract_state));
     }
-    let abstract_plan_cost = shortest_paths.distance(initial_abstract_state);
+    let abstract_plan_cost = view.goal_distance(initial_abstract_state);
     let mut operator_ids: Vec<OperatorIndex> = Vec::new();
     let mut concrete_cost = 0.0;
 
     loop {
-        semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
-        let abstract_state = working.hierarchy().map_state(&prop_values, &numeric)?;
-        let abstract_distance = shortest_paths.distance(abstract_state);
+        concrete_prop_values(
+            semantics.task(),
+            state_packer,
+            &propositions,
+            &mut prop_values,
+        );
+        let abstract_state = view.abstract_state(&prop_values, &numeric)?;
+        let abstract_distance = view.goal_distance(abstract_state);
         ensure!(
             approximately_equal(concrete_cost + abstract_distance, abstract_plan_cost),
             "concrete trace left optimal abstract path: g={concrete_cost} h={abstract_distance} initial_h={abstract_plan_cost}"
         );
 
-        if shortest_paths.is_goal(abstract_state) {
+        if view.is_goal(abstract_state) {
             if concrete_is_goal(semantics, state_packer, &propositions) {
                 return Ok(PlanCheck::ConcretePlan(ConcretePlan {
                     operator_ids,
@@ -90,7 +124,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
                 .iter()
                 .map(|goal| {
                     split_failed_fact(
-                        working,
+                        view,
                         semantics,
                         abstract_state,
                         goal,
@@ -101,7 +135,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             return Ok(PlanCheck::Refine(select_refinement_split(
-                working,
+                view,
                 semantics,
                 candidates,
                 0x474F_414C,
@@ -109,18 +143,10 @@ pub(in super::super) fn replay_optimal_abstract_trace(
         }
 
         ensure!(
-            operator_ids.len() <= working.states().len(),
-            "Cartesian generating transitions contain a cycle"
+            operator_ids.len() <= view.num_states(),
+            "optimal abstract transitions contain a cycle"
         );
-        let transition = shortest_paths
-            .generating_transition(abstract_state)
-            .context(
-                "non-goal Cartesian state with finite distance has no generating transition",
-            )?;
-        ensure!(
-            working.contains_transition(transition),
-            "Cartesian shortest path references missing transition {transition:?}"
-        );
+        let transition = view.optimal_transition(abstract_state)?;
         let op_id = transition.concrete_op_id;
         let op = &semantics.task().get_operators()[op_id.index()];
         let failed_preconditions = op
@@ -133,7 +159,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
                 .iter()
                 .map(|failed| {
                     split_failed_fact(
-                        working,
+                        view,
                         semantics,
                         abstract_state,
                         failed,
@@ -144,7 +170,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
                 })
                 .collect::<Result<Vec<_>>>()?;
             return Ok(PlanCheck::Refine(select_refinement_split(
-                working,
+                view,
                 semantics,
                 candidates,
                 0x5052_4543,
@@ -159,13 +185,16 @@ pub(in super::super) fn replay_optimal_abstract_trace(
             &mut propositions,
             &mut numeric,
         )?;
-        semantics.concrete_prop_values(state_packer, &propositions, &mut successor_prop_values);
-        let concrete_target = working
-            .hierarchy
-            .map_state(&successor_prop_values, &numeric)?;
+        concrete_prop_values(
+            semantics.task(),
+            state_packer,
+            &propositions,
+            &mut successor_prop_values,
+        );
+        let concrete_target = view.abstract_state(&successor_prop_values, &numeric)?;
         if concrete_target != transition.target {
             return Ok(PlanCheck::Refine(split_deviation(
-                working,
+                view,
                 semantics,
                 DeviationWitness::new(
                     abstract_state,
@@ -181,7 +210,7 @@ pub(in super::super) fn replay_optimal_abstract_trace(
         let op_cost = semantics.operator_costs()[op_id.index()];
         ensure!(
             approximately_equal(
-                op_cost.value() + shortest_paths.distance(transition.target),
+                op_cost.value() + view.goal_distance(transition.target),
                 abstract_distance
             ),
             "Cartesian generating transition is not distance preserving"
@@ -195,10 +224,9 @@ pub(in super::super) fn replay_optimal_abstract_trace(
 /// and ranks every witnessed flaw together. After a deviation, replay resumes
 /// from the abstract state containing the real concrete successor. This keeps
 /// every split tied to a concrete witness and avoids inventing projected states.
-pub(in super::super) fn replay_entire_optimal_abstract_trace(
-    working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
-    shortest_paths: &ShortestPaths,
+pub(crate) fn replay_entire_optimal_abstract_trace(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &ConcreteState,
@@ -214,25 +242,30 @@ pub(in super::super) fn replay_entire_optimal_abstract_trace(
     let mut visited_abstract_states = HashSet::new();
 
     loop {
-        semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
-        let abstract_state = working.hierarchy().map_state(&prop_values, &numeric)?;
+        concrete_prop_values(
+            semantics.task(),
+            state_packer,
+            &propositions,
+            &mut prop_values,
+        );
+        let abstract_state = view.abstract_state(&prop_values, &numeric)?;
         if !visited_abstract_states.insert(abstract_state) {
             ensure!(
                 !candidates.is_empty(),
                 "Cartesian whole-plan replay cycled without witnessing a flaw"
             );
-            return select_refinement(working, semantics, candidates);
+            return select_refinement(view, semantics, candidates);
         }
-        let abstract_distance = shortest_paths.distance(abstract_state);
+        let abstract_distance = view.goal_distance(abstract_state);
         if !abstract_distance.is_finite() {
             return if candidates.is_empty() {
                 Ok(PlanCheck::AbstractDeadEnd(abstract_state))
             } else {
-                select_refinement(working, semantics, candidates)
+                select_refinement(view, semantics, candidates)
             };
         }
 
-        if shortest_paths.is_goal(abstract_state) {
+        if view.is_goal(abstract_state) {
             if concrete_is_goal(semantics, state_packer, &propositions) {
                 return if candidates.is_empty() {
                     Ok(PlanCheck::ConcretePlan(ConcretePlan {
@@ -240,14 +273,14 @@ pub(in super::super) fn replay_entire_optimal_abstract_trace(
                         cost: concrete_cost,
                     }))
                 } else {
-                    select_refinement(working, semantics, candidates)
+                    select_refinement(view, semantics, candidates)
                 };
             }
             for goal_id in 0..semantics.task().get_num_goals() {
                 let goal = semantics.task().get_goal_fact(goal_id);
                 if !fact_is_held(goal, state_packer, &propositions) {
                     let split = split_failed_fact(
-                        working,
+                        view,
                         semantics,
                         abstract_state,
                         goal,
@@ -262,22 +295,14 @@ pub(in super::super) fn replay_entire_optimal_abstract_trace(
                 !candidates.is_empty(),
                 "abstract goal contains a concrete non-goal without a refinable failed goal fact"
             );
-            return select_refinement(working, semantics, candidates);
+            return select_refinement(view, semantics, candidates);
         }
 
-        let transition = shortest_paths
-            .generating_transition(abstract_state)
-            .context(
-                "non-goal Cartesian state with finite distance has no generating transition",
-            )?;
-        ensure!(
-            working.contains_transition(transition),
-            "Cartesian shortest path references missing transition {transition:?}"
-        );
+        let transition = view.optimal_transition(abstract_state)?;
         ensure!(
             approximately_equal(
                 semantics.operator_costs()[transition.concrete_op_id.index()].value()
-                    + shortest_paths.distance(transition.target),
+                    + view.goal_distance(transition.target),
                 abstract_distance
             ),
             "Cartesian generating transition is not distance preserving"
@@ -291,7 +316,7 @@ pub(in super::super) fn replay_entire_optimal_abstract_trace(
             .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
         {
             let split = split_failed_fact(
-                working,
+                view,
                 semantics,
                 abstract_state,
                 failed,
@@ -310,13 +335,16 @@ pub(in super::super) fn replay_entire_optimal_abstract_trace(
             &mut propositions,
             &mut numeric,
         )?;
-        semantics.concrete_prop_values(state_packer, &propositions, &mut successor_prop_values);
-        let concrete_target = working
-            .hierarchy
-            .map_state(&successor_prop_values, &numeric)?;
+        concrete_prop_values(
+            semantics.task(),
+            state_packer,
+            &propositions,
+            &mut successor_prop_values,
+        );
+        let concrete_target = view.abstract_state(&successor_prop_values, &numeric)?;
         if concrete_target != transition.target {
             for split in split_deviation_candidates(
-                working,
+                view,
                 semantics,
                 DeviationWitness::new(
                     abstract_state,
@@ -336,8 +364,8 @@ pub(in super::super) fn replay_entire_optimal_abstract_trace(
     }
 }
 
-pub(in super::super) fn validate_concrete_plan(
-    semantics: &CartesianSemantics<'_>,
+pub(crate) fn validate_concrete_plan(
+    semantics: &CegarSemantics<'_>,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &ConcreteState,

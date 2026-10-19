@@ -1,5 +1,10 @@
+pub(crate) mod fact_splits;
+pub(crate) mod progression;
 pub(crate) mod regression;
+pub(crate) mod selection;
+pub(crate) mod semantics;
 pub(crate) mod split;
+pub(crate) mod view;
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -40,6 +45,24 @@ impl crate::config::FromOptionValue for FlawKind {
             )),
         }
     }
+}
+
+/// Where a split cuts a numeric dimension when a concrete state violates a
+/// condition: next to the concrete value, or at the bound the condition
+/// wants (a constant of the task).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitKind {
+    Concrete,
+    Wanted,
+}
+
+/// How CEGAR chooses among the candidate splits of a flaw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitSelection {
+    /// The split that grows the abstraction least; ties by a seeded key.
+    MinGrowth,
+    /// A uniformly random split.
+    Random,
 }
 
 pub fn progress_concrete_state(

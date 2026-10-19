@@ -7,8 +7,8 @@
 
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
-    CartesianRefinementDirection, CartesianSplitSelection,
 };
+use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
@@ -354,9 +354,9 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
-        refinement_direction: CartesianRefinementDirection::Progression,
+        split_kind: SplitKind::Concrete,
         split_selection_rank: None,
-        split_selection: CartesianSplitSelection::MinTransitionGrowth,
+        split_selection: SplitSelection::MinGrowth,
         debug: config.debug,
     }
 }

@@ -107,7 +107,7 @@ impl WorkingAbstraction {
         working.states.push(new_child);
         working.outgoing.push(Vec::new());
         working.incoming.push(Vec::new());
-        let operator_count = semantics.task.get_operators().len();
+        let operator_count = semantics.task().get_operators().len();
         let old_self_loops = std::mem::replace(
             &mut working.self_loop_operator_ids[old_state_id],
             OperatorBitSet::empty(operator_count),

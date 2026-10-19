@@ -128,7 +128,7 @@ pub(super) fn finalize_abstraction(
             transition
                 .concrete_op_ids
                 .iter()
-                .map(|&op_id| semantics.operator_costs()[op_id.index()].value())
+                .map(|&op_id| semantics.cegar().operator_costs()[op_id.index()].value())
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();

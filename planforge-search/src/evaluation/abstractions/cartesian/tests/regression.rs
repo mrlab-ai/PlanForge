@@ -39,7 +39,7 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
     let first_numeric_boundary = |direction| {
         let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             max_states: 2,
-            refinement_direction: direction,
+            split_kind: direction,
             ..Default::default()
         })
         .unwrap()
@@ -57,11 +57,11 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
     };
 
     assert_eq!(
-        first_numeric_boundary(CartesianRefinementDirection::Progression),
+        first_numeric_boundary(SplitKind::Concrete),
         NumericValue::new(0.0)
     );
     assert_eq!(
-        first_numeric_boundary(CartesianRefinementDirection::Regression),
+        first_numeric_boundary(SplitKind::Wanted),
         NumericValue::new(3.0)
     );
 }
@@ -78,14 +78,11 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         ("linear goal", linear_goal_task(), 2.0),
         ("diagonal", diagonal_task(), 2.0),
     ] {
-        for refinement_direction in [
-            CartesianRefinementDirection::Progression,
-            CartesianRefinementDirection::Regression,
-        ] {
+        for refinement_direction in [SplitKind::Concrete, SplitKind::Wanted] {
             let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
                 max_states: 1_000,
                 flaw_kind: FlawKind::Regression,
-                refinement_direction,
+                split_kind: refinement_direction,
                 ..Default::default()
             })
             .unwrap()

@@ -190,20 +190,11 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             .map(|member| member.variant_id),
         Some(2)
     );
-    assert_eq!(
-        abstractions[0].metadata.refinement_direction,
-        CartesianRefinementDirection::Progression
-    );
+    assert_eq!(abstractions[0].metadata.split_kind, SplitKind::Concrete);
     assert_eq!(abstractions[0].metadata.split_selection_rank, Some(0));
-    assert_eq!(
-        abstractions[2].metadata.refinement_direction,
-        CartesianRefinementDirection::Regression
-    );
+    assert_eq!(abstractions[2].metadata.split_kind, SplitKind::Wanted);
     assert_eq!(abstractions[2].metadata.split_selection_rank, Some(0));
-    assert_eq!(
-        abstractions[4].metadata.refinement_direction,
-        CartesianRefinementDirection::Progression
-    );
+    assert_eq!(abstractions[4].metadata.split_kind, SplitKind::Concrete);
     assert_eq!(abstractions[4].metadata.split_selection_rank, Some(1));
 
     let standard =
@@ -224,7 +215,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         .generate(&task)
         .unwrap();
     assert!(standard.iter().all(|abstraction| {
-        abstraction.metadata.refinement_direction == CartesianRefinementDirection::Progression
+        abstraction.metadata.split_kind == SplitKind::Concrete
             && abstraction.metadata.split_selection_rank.is_none()
     }));
 

@@ -12,8 +12,8 @@ use super::*;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianRefinementDirection,
 };
+use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::abstractions::domain::abstraction::{
     DomainAbstractionMetadata, compute_hash_multipliers,
@@ -96,7 +96,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             })
             .map(|abstraction| {
                 (
-                    abstraction.metadata.refinement_direction,
+                    abstraction.metadata.split_kind,
                     abstraction.metadata.split_selection_rank,
                 )
             })
@@ -104,8 +104,8 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
         modes.sort_by_key(|(direction, rank)| {
             (
                 match direction {
-                    CartesianRefinementDirection::Progression => 0,
-                    CartesianRefinementDirection::Regression => 1,
+                    SplitKind::Concrete => 0,
+                    SplitKind::Wanted => 1,
                 },
                 *rank,
             )
@@ -113,10 +113,10 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
         assert_eq!(
             modes,
             vec![
-                (CartesianRefinementDirection::Progression, Some(0)),
-                (CartesianRefinementDirection::Progression, Some(1)),
-                (CartesianRefinementDirection::Regression, Some(0)),
-                (CartesianRefinementDirection::Regression, Some(1)),
+                (SplitKind::Concrete, Some(0)),
+                (SplitKind::Concrete, Some(1)),
+                (SplitKind::Wanted, Some(0)),
+                (SplitKind::Wanted, Some(1)),
             ]
         );
     }

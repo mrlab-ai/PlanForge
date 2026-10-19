@@ -55,7 +55,7 @@ impl CartesianSemantics<'_> {
         #[cfg(debug_assertions)]
         assert_eq!(
             result,
-            self.regions.may_transition(source, op_id, target)?,
+            self.cegar.regions().may_transition(source, op_id, target)?,
             "Cartesian split-dependency routing disagrees with full transition semantics for operator {op_id} and dimension {dimension:?}"
         );
         Ok(result)
@@ -70,9 +70,10 @@ impl CartesianSemantics<'_> {
     ) -> Result<bool> {
         Ok(match dimension {
             SplitDimension::Propositional(var_id) => self
-                .regions
+                .cegar
+                .regions()
                 .propositional_may_transition(source, op_id, target, var_id),
-            SplitDimension::Numeric(var_id) => self.regions.numeric_may_transition(
+            SplitDimension::Numeric(var_id) => self.cegar.regions().numeric_may_transition(
                 source.numeric[var_id.index()],
                 op_id,
                 target.numeric[var_id.index()],
@@ -88,7 +89,7 @@ impl CartesianSemantics<'_> {
         targets: [&CartesianSet; 2],
         dimension: SplitDimension,
     ) -> Result<[bool; 2]> {
-        let may_apply = self.regions.operator_may_apply(source, op_id)?;
+        let may_apply = self.cegar.regions().operator_may_apply(source, op_id)?;
         let mut result = [false; 2];
         if may_apply {
             for (index, target) in targets.into_iter().enumerate() {
@@ -100,7 +101,7 @@ impl CartesianSemantics<'_> {
         for (index, target) in targets.into_iter().enumerate() {
             assert_eq!(
                 result[index],
-                self.regions.may_transition(source, op_id, target)?,
+                self.cegar.regions().may_transition(source, op_id, target)?,
                 "split-dimension routing disagrees with full transition semantics for parent-loop operator {op_id} and dimension {dimension:?}"
             );
         }
