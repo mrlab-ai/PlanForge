@@ -1,100 +1,26 @@
-use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
-use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitValueIndex, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator, OperatorCost,
-};
+use planforge_sas::numeric_task::ExplicitValueIndex;
 
 use super::*;
+use crate::evaluation::cegar::FlawKind;
+use crate::evaluation::cegar::regression::test_tasks::{jump_task, linear_goal_task};
+use crate::evaluation::domain_abstractions::cegar::CegarConfig;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::get_progression_flaws;
 use crate::evaluation::domain_abstractions::cegar::flaw_search::single_switch_task;
 use crate::evaluation::domain_abstractions::domain_abstraction_factory::DomainAbstractionFactory;
+use crate::evaluation::domain_abstractions::domain_abstraction_generator::DomainAbstractionGenerator;
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
 
 const GOAL: usize = 0;
 const JUMP_PRECONDITION: usize = 1;
 
-/// `x` starts at 0 and the goal is `x >= 3`. `jump` increments `x` but
-/// requires `x >= 1`. The plan `<jump>` fails its precondition at the
-/// initial state, and its goal fails after `jump`, which regresses to
+/// The plan `<jump>` for [`jump_task`] in the trivial abstraction, whose
+/// partitions all have id 0. `jump` fails its precondition `x >= 1` at the
+/// initial state, and the goal `x >= 3` fails after it, which regresses to
 /// `x >= 2`.
-fn jump_task() -> NumericRootTask {
-    let comparison_variable = |name: &str| {
-        ExplicitVariable::new(
-            ConditionValue::DOMAIN_SIZE,
-            name.into(),
-            vec!["true".into(), "false".into()],
-            Some(0),
-            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
-        )
-    };
-    NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables: vec![
-            comparison_variable("x-at-least-three"),
-            comparison_variable("x-at-least-one"),
-        ],
-        numeric_variables: vec![
-            NumericVariable::new("x".into(), NumericType::Regular, None),
-            NumericVariable::new("one".into(), NumericType::Constant, None),
-            NumericVariable::new("three".into(), NumericType::Constant, None),
-        ],
-        goals: vec![ExplicitFact::propositional(
-            GOAL,
-            ConditionValue::True.as_usize(),
-        )],
-        mutexes: vec![],
-        state: vec![
-            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
-            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
-        ],
-        numeric_state: vec![
-            NumericValue::new(0.0),
-            NumericValue::new(1.0),
-            NumericValue::new(3.0),
-        ],
-        operators: vec![Operator::new(
-            "jump".into(),
-            vec![ExplicitFact::propositional(
-                JUMP_PRECONDITION,
-                ConditionValue::True.as_usize(),
-            )],
-            vec![],
-            vec![AssignmentEffect::new(
-                VariableIndex::from_usize(0),
-                AssignmentOperation::Plus,
-                VariableIndex::from_usize(1),
-                false,
-                vec![],
-            )],
-            OperatorCost::new(1),
-        )],
-        axioms: vec![],
-        comparison_axioms: vec![
-            ComparisonAxiom::new(
-                VariableIndex::from_usize(GOAL),
-                VariableIndex::from_usize(0),
-                VariableIndex::from_usize(2),
-                ComparisonOperator::GreaterThanOrEqual,
-            ),
-            ComparisonAxiom::new(
-                VariableIndex::from_usize(JUMP_PRECONDITION),
-                VariableIndex::from_usize(0),
-                VariableIndex::from_usize(1),
-                ComparisonOperator::GreaterThanOrEqual,
-            ),
-        ],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    })
-}
-
-/// The plan `<jump>` in the trivial abstraction, whose partitions all have
-/// id 0.
 fn jump_plan() -> WildcardPlanResult {
     WildcardPlanResult {
-        wildcard_plan: vec![vec![OperatorIndex::new(0)]],
+        wildcard_plan: vec![vec![OperatorIndex::new(1)]],
         abstract_state_hashes: vec![],
         abstract_prop_states: vec![],
         abstract_numeric_states: vec![vec![0; 3]; 2],
@@ -217,4 +143,33 @@ fn regression_equals_progression_when_only_the_goal_fails() {
         regression.flaws.as_slice(),
         [Flaw::Propositional(PropFlaw { fact, .. })] if *fact == ExplicitFact::propositional(0, 2)
     ));
+}
+
+#[test]
+fn regression_cegar_solves_the_regression_tasks_optimally() {
+    for (name, task, optimal_cost) in [
+        ("jump", jump_task(), 4.0),
+        ("linear goal", linear_goal_task(), 2.0),
+    ] {
+        for direction in [SplitDirection::Forward, SplitDirection::Backward] {
+            let abstraction = DomainAbstractionGenerator::new(CegarConfig {
+                max_abstraction_size: 10_000,
+                flaw_kind: FlawKind::Regression,
+                split_direction: Some(direction),
+                ..Default::default()
+            })
+            .unwrap()
+            .generate(&task)
+            .unwrap();
+            assert!(
+                abstraction.metadata.solved_by_self,
+                "{name}, {direction}: no concrete plan"
+            );
+            assert_eq!(
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+                optimal_cost,
+                "{name}, {direction}"
+            );
+        }
+    }
 }
