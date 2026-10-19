@@ -38,7 +38,7 @@ pub struct DistanceTableOptions<'a> {
     /// State whose distance bounds perimeter saturation.
     pub cap_state_id: Option<usize>,
     /// Materialize concrete regions for abstract states.
-    pub materialize_state_regions: bool,
+    pub materialize_cartesian_sets: bool,
     /// Retain abstract self loops in an explicit transition system.
     pub include_self_loops: bool,
     /// Bound concrete label transitions in an OCP transition system.
@@ -53,7 +53,7 @@ impl Default for DistanceTableOptions<'_> {
             prebuilt_match_tree: None,
             deadline: None,
             cap_state_id: None,
-            materialize_state_regions: true,
+            materialize_cartesian_sets: true,
             include_self_loops: false,
             max_concrete_label_transitions: None,
         }
@@ -76,8 +76,8 @@ impl<'a> DistanceTableOptions<'a> {
         self
     }
 
-    pub fn without_state_regions(mut self) -> Self {
-        self.materialize_state_regions = false;
+    pub fn without_cartesian_sets(mut self) -> Self {
+        self.materialize_cartesian_sets = false;
         self
     }
 

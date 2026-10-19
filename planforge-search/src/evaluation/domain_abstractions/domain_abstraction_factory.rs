@@ -33,23 +33,23 @@ use super::numeric_context::{
 use super::utils;
 
 mod distances;
-mod operator_regions;
 mod plan_extraction;
 mod saturation;
+mod source_sets;
 mod state_encoding;
 mod transition_system;
 
 use crate::evaluation::abstraction_collections::cost_partitioning::{
-    AbstractOperatorRegions, AbstractTransition, AbstractTransitionCostFunction,
-    AbstractTransitionSystem, OperatorRegion, RegionalCostAllocation, RegionalCostAllocationEntry,
-    StateRegion, TransitionResidualCosts, saturation_need, state_region_intersection,
+    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionCostFunction,
+    AbstractTransitionSystem, CartesianSet, LabelSourceSet, RemainingCosts, SourceSetCost,
+    SourceSetCostAllocation, cartesian_set_intersection, saturation_need,
 };
 pub use distances::*;
-use operator_regions::*;
 pub use plan_extraction::*;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 use saturation::*;
+use source_sets::*;
 use state_encoding::*;
 pub use transition_system::*;
 

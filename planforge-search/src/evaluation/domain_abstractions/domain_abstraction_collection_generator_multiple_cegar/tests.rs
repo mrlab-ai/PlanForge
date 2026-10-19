@@ -73,7 +73,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             max_collection_size: 100,
             abstraction_generation_max_time: 0.0,
             total_max_time: 0.0,
-            compute_operator_regions: false,
+            compute_source_sets: false,
             collection_strategy,
             ..Default::default()
         };
@@ -420,7 +420,7 @@ fn domain_goal_focused_config(
         variants_per_goal,
         progressive_goal_roots,
         random_seed: Some(1),
-        compute_operator_regions: false,
+        compute_source_sets: false,
         ..Default::default()
     }
 }

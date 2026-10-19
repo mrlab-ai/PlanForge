@@ -24,7 +24,7 @@ impl OcpTransitionSystemBuild {
 /// transitions it will record before reporting the cap exceeded.
 #[derive(Clone, Copy)]
 pub(super) struct TransitionSystemContents {
-    materialize_state_regions: bool,
+    materialize_cartesian_sets: bool,
     include_self_loops: bool,
     max_concrete_label_transitions: Option<usize>,
 }
@@ -43,7 +43,7 @@ impl DomainAbstractionFactory {
             &generator,
             &operators,
             TransitionSystemContents {
-                materialize_state_regions: options.materialize_state_regions,
+                materialize_cartesian_sets: options.materialize_cartesian_sets,
                 include_self_loops: options.include_self_loops,
                 max_concrete_label_transitions: options.max_concrete_label_transitions,
             },
@@ -65,7 +65,7 @@ impl DomainAbstractionFactory {
             &generator,
             operators,
             TransitionSystemContents {
-                materialize_state_regions: options.materialize_state_regions,
+                materialize_cartesian_sets: options.materialize_cartesian_sets,
                 include_self_loops: options.include_self_loops,
                 max_concrete_label_transitions: options.max_concrete_label_transitions,
             },
@@ -91,7 +91,7 @@ impl DomainAbstractionFactory {
             &generator,
             operators,
             TransitionSystemContents {
-                materialize_state_regions: false,
+                materialize_cartesian_sets: false,
                 include_self_loops: true,
                 max_concrete_label_transitions: options.max_concrete_label_transitions,
             },
@@ -119,7 +119,7 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<OcpTransitionSystemBuild> {
         let TransitionSystemContents {
-            materialize_state_regions,
+            materialize_cartesian_sets,
             include_self_loops,
             max_concrete_label_transitions,
         } = contents;
@@ -147,11 +147,11 @@ impl DomainAbstractionFactory {
         let mut concrete_label_transition_count = 0usize;
         let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
         let mut forward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
-        let mut state_regions = Vec::new();
-        if materialize_state_regions {
-            state_regions.reserve(num_states);
+        let mut cartesian_sets = Vec::new();
+        if materialize_cartesian_sets {
+            cartesian_sets.reserve(num_states);
             for state_hash in 0..num_states {
-                state_regions.push(self.state_region_from_hash(
+                cartesian_sets.push(self.cartesian_set_from_hash(
                     state_hash,
                     numeric_domain_sizes,
                     hash_multipliers,
@@ -321,20 +321,20 @@ impl DomainAbstractionFactory {
         // finite-support cost-partitioning gate decide stealability per abstract
         // op rather than per individual transition.
         #[cfg(debug_assertions)]
-        if materialize_state_regions {
+        if materialize_cartesian_sets {
             let mut representative_per_op: HashMap<usize, (usize, usize)> = HashMap::new();
             for transition in &transitions {
                 match representative_per_op.get(&transition.abstract_op_id) {
                     Some(&(rep_src_hash, rep_tgt_hash)) => {
                         debug_assert_eq!(
-                            state_regions[rep_src_hash].numeric,
-                            state_regions[transition.source_hash].numeric,
+                            cartesian_sets[rep_src_hash].numeric,
+                            cartesian_sets[transition.source_hash].numeric,
                             "abstract_op_id {} has transitions with differing numeric source regions",
                             transition.abstract_op_id
                         );
                         debug_assert_eq!(
-                            state_regions[rep_tgt_hash].numeric,
-                            state_regions[transition.target_hash].numeric,
+                            cartesian_sets[rep_tgt_hash].numeric,
+                            cartesian_sets[transition.target_hash].numeric,
                             "abstract_op_id {} has transitions with differing numeric target regions",
                             transition.abstract_op_id
                         );
@@ -392,7 +392,7 @@ impl DomainAbstractionFactory {
                 initial_state_hash: init_hash,
                 hash_multipliers: hash_multipliers.to_vec(),
                 numeric_domain_sizes: numeric_domain_sizes.to_vec(),
-                state_regions: state_regions.into_iter().map(Arc::new).collect(),
+                cartesian_sets: cartesian_sets.into_iter().map(Arc::new).collect(),
             },
         ))
     }

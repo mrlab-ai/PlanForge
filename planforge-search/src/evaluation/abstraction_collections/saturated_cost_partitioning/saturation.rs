@@ -25,7 +25,7 @@ pub(super) enum SaturatedCosts {
     /// One cost per abstract operator, valid on its source sets.
     AbstractOperator(AbstractOperatorCostFunction),
     /// One cost per source set of an abstract transition (interval SCP).
-    Interval(RegionalCostAllocation),
+    Interval(SourceSetCostAllocation),
 }
 
 /// Where remaining costs live while an order is saturated.
@@ -66,7 +66,7 @@ pub(super) struct ComponentStepContext<'a, 'task> {
 impl ComponentSaturation<'_, '_> {
     pub(super) fn saturate(
         &self,
-        residual: &TransitionResidualCosts,
+        residual: &RemainingCosts,
         component_id: usize,
         cap_state_id: Option<usize>,
         deadline: Option<Instant>,
@@ -118,7 +118,7 @@ impl ComponentSaturation<'_, '_> {
                 let abstraction = heuristic.abstraction();
                 let abstraction_task = abstraction.task_for_factory(self.task);
                 let transition_system = abstraction
-                    .regional_transition_system(abstraction_task, deadline)
+                    .interval_transition_system(abstraction_task, deadline)
                     .map_err(|error| {
                         SaturatedCostPartitioningHeuristic::construction_error(
                             "failed to build domain regional transition system",
@@ -127,9 +127,9 @@ impl ComponentSaturation<'_, '_> {
                     })?;
                 let (table, saturated) = abstraction
                     .factory
-                    .build_precise_regional_cost_partitioned_distance_table(
+                    .build_interval_cost_partitioned_distance_table(
                         &transition_system,
-                        &abstraction.abstract_operator_regions,
+                        &abstraction.abstract_source_sets,
                         residual,
                         component_id,
                         DistanceTableOptions::default()
@@ -167,7 +167,7 @@ impl ComponentSaturation<'_, '_> {
                 let abstraction = heuristic.abstraction();
                 let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
                     &abstraction.transition_system,
-                    &abstraction.abstract_operator_regions,
+                    &abstraction.abstract_source_sets,
                     residual,
                     component_id,
                     cap_state_id,
@@ -297,7 +297,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 step_prefix,
             },
             |costs, cap_state_id| {
-                let residual = TransitionResidualCosts::from_operator_costs(costs);
+                let residual = RemainingCosts::from_operator_costs(costs);
                 protocol.saturate(&residual, component_id, cap_state_id, deadline)
             },
             |costs, saturated| {
@@ -325,7 +325,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     pub(super) fn add_saturation_step(
         &self,
         cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut TransitionResidualCosts,
+        remaining_costs: &mut RemainingCosts,
         context: ComponentStepContext<'_, '_>,
     ) -> Result<bool, EvaluationError> {
         let ComponentStepContext {
@@ -345,12 +345,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             combine_labels: self.config.combine_labels,
             cost_space,
         };
-        let operator_regions = match component {
+        let source_sets = match component {
             AbstractionComponent::Domain(heuristic) => {
-                heuristic.abstraction().abstract_operator_regions.as_slice()
+                heuristic.abstraction().abstract_source_sets.as_slice()
             }
             AbstractionComponent::Cartesian(heuristic) => {
-                heuristic.abstraction().abstract_operator_regions.as_slice()
+                heuristic.abstraction().abstract_source_sets.as_slice()
             }
             AbstractionComponent::PatternDatabase(_) => &[],
         };
@@ -381,14 +381,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 SaturatedCosts::AbstractOperator(costs) => Self::reduce_abstract_operator_costs(
                     residual,
                     component_id,
-                    operator_regions,
+                    source_sets,
                     costs,
                     deadline,
                     &format!(
                         "failed to reduce abstract-operator residual costs for component {component_id}"
                     ),
                 ),
-                SaturatedCosts::Interval(allocation) => Self::reduce_regional_allocation(
+                SaturatedCosts::Interval(allocation) => Self::reduce_source_set_allocation(
                     residual,
                     allocation,
                     deadline,
@@ -440,16 +440,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 
     pub(super) fn reduce_abstract_operator_costs(
-        remaining_costs: &mut TransitionResidualCosts,
+        remaining_costs: &mut RemainingCosts,
         abstraction_id: usize,
-        operator_regions: &[AbstractOperatorRegions],
+        source_sets: &[AbstractOperatorSourceSets],
         tcf: &AbstractOperatorCostFunction,
         deadline: Option<Instant>,
         context: &str,
     ) -> Result<bool, EvaluationError> {
-        match remaining_costs.reduce_by_abstract_operator_regions_with_deadline(
+        match remaining_costs.reduce_by_abstract_source_sets_with_deadline(
             abstraction_id,
-            operator_regions,
+            source_sets,
             tcf,
             deadline,
         ) {
@@ -461,13 +461,13 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         }
     }
 
-    pub(super) fn reduce_regional_allocation(
-        remaining_costs: &mut TransitionResidualCosts,
-        allocation: &RegionalCostAllocation,
+    pub(super) fn reduce_source_set_allocation(
+        remaining_costs: &mut RemainingCosts,
+        allocation: &SourceSetCostAllocation,
         deadline: Option<Instant>,
         context: &str,
     ) -> Result<bool, EvaluationError> {
-        match remaining_costs.reduce_by_regional_allocation_with_deadline(allocation, deadline) {
+        match remaining_costs.reduce_by_source_set_allocation_with_deadline(allocation, deadline) {
             Ok(()) => Ok(true),
             Err(error) if Self::is_deadline_error(&error) => Ok(false),
             Err(error) => Err(EvaluationError::ComputationFailed(format!(
@@ -507,7 +507,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             original_costs,
         } = collection;
         let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs = TransitionResidualCosts::from_operator_costs(original_costs);
+        let mut remaining_costs = RemainingCosts::from_operator_costs(original_costs);
 
         for sweep in 0..=self.config.residual_sweeps {
             if sweep > 0 {
@@ -533,9 +533,9 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                         abstraction_h[component_id],
                         abstraction_metadata_summary(abstraction),
                     );
-                    log_abstract_operator_region_summary(
+                    log_abstract_source_set_summary(
                         component_id,
-                        &abstraction.abstract_operator_regions,
+                        &abstraction.abstract_source_sets,
                     );
                     self.log_abstract_operator_label_diagnostic(
                         abstraction,
@@ -772,7 +772,7 @@ pub(super) fn positive_cost_stats(costs: &[f64]) -> (usize, f64) {
         .fold((0, 0.0), |(count, total), cost| (count + 1, total + cost))
 }
 
-pub(super) fn allocation_amounts(allocation: &RegionalCostAllocation) -> Vec<f64> {
+pub(super) fn allocation_amounts(allocation: &SourceSetCostAllocation) -> Vec<f64> {
     allocation
         .entries()
         .iter()

@@ -49,8 +49,8 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::validate_abstractable_goal;
 
 use super::abstraction_collections::cost_partitioning::{
-    AbstractOperatorRegions, AbstractTransition, AbstractTransitionSystem, OperatorRegion,
-    StateRegion, build_explicit_goal_distances, sorted_value_sets_overlap,
+    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, CartesianSet,
+    LabelSourceSet, build_explicit_goal_distances, sorted_value_sets_overlap,
 };
 use super::abstraction_collections::goal_focused::{
     BuiltReport, CollectionMembership, ConcreteState, FULL_TASK_PROGRESSIVE_ROOTS_ERROR,
@@ -134,7 +134,7 @@ pub struct CartesianAbstractionConfig {
     pub max_states: usize,
     pub max_time: Option<Duration>,
     pub combine_labels: bool,
-    pub compute_operator_regions: bool,
+    pub compute_source_sets: bool,
     /// Retain the explicit graph required by cost partitioning.
     pub retain_transition_system: bool,
     pub random_seed: Option<u64>,
@@ -153,7 +153,7 @@ impl Default for CartesianAbstractionConfig {
             max_states: 10_000,
             max_time: None,
             combine_labels: false,
-            compute_operator_regions: true,
+            compute_source_sets: true,
             retain_transition_system: true,
             random_seed: None,
             flaw_kind: FlawKind::Progression,
@@ -397,7 +397,7 @@ pub struct CartesianAbstraction {
     pub distance_table: AbstractDistanceTable,
     pub transition_system: AbstractTransitionSystem,
     pub relevant_operator_ids: Vec<OperatorIndex>,
-    pub abstract_operator_regions: Vec<AbstractOperatorRegions>,
+    pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
     pub metadata: CartesianAbstractionMetadata,
 }
 
@@ -418,8 +418,8 @@ impl CartesianAbstraction {
         self.transition_system.transitions = Vec::new();
         self.transition_system.backward = Vec::new();
         self.transition_system.forward = Vec::new();
-        self.transition_system.state_regions = Vec::new();
-        self.abstract_operator_regions = Vec::new();
+        self.transition_system.cartesian_sets = Vec::new();
+        self.abstract_source_sets = Vec::new();
     }
 }
 
@@ -540,7 +540,7 @@ struct TransitionKey {
 
 #[derive(Debug, Clone)]
 struct WorkingAbstraction {
-    states: Vec<StateRegion>,
+    states: Vec<CartesianSet>,
     leaf_node_ids: Vec<usize>,
     hierarchy: CartesianRefinementHierarchy,
     transitions: Vec<Option<WorkingTransition>>,
@@ -555,7 +555,7 @@ struct WorkingAbstraction {
 }
 
 impl WorkingAbstraction {
-    fn states(&self) -> &[StateRegion] {
+    fn states(&self) -> &[CartesianSet] {
         &self.states
     }
 
@@ -583,16 +583,16 @@ impl WorkingAbstraction {
         &self.numeric_refinement_counts
     }
 
-    fn new(initial_region: StateRegion, operator_count: usize) -> Self {
+    fn new(initial_region: CartesianSet, operator_count: usize) -> Self {
         Self::new_with_transition_index(initial_region, operator_count, true)
     }
 
-    fn new_icaps26(initial_region: StateRegion, operator_count: usize) -> Self {
+    fn new_icaps26(initial_region: CartesianSet, operator_count: usize) -> Self {
         Self::new_with_transition_index(initial_region, operator_count, false)
     }
 
     fn new_with_transition_index(
-        initial_region: StateRegion,
+        initial_region: CartesianSet,
         operator_count: usize,
         index_transitions: bool,
     ) -> Self {
@@ -1239,8 +1239,8 @@ impl<'task> CartesianSemantics<'task> {
 
     fn invariant_split_dimension_overlaps(
         &self,
-        source: &StateRegion,
-        target: &StateRegion,
+        source: &CartesianSet,
+        target: &CartesianSet,
         dimension: SplitDimension,
     ) -> bool {
         match dimension {
@@ -1256,9 +1256,9 @@ impl<'task> CartesianSemantics<'task> {
 
     fn may_transition_after_independent_split(
         &self,
-        source: &StateRegion,
+        source: &CartesianSet,
         op_id: OperatorIndex,
-        target: &StateRegion,
+        target: &CartesianSet,
         dimension: SplitDimension,
     ) -> Result<bool> {
         debug_assert!(!self.operator_depends_on_split(op_id, dimension));
@@ -1272,7 +1272,7 @@ impl<'task> CartesianSemantics<'task> {
         Ok(result)
     }
 
-    fn trivial_region(&self) -> Result<StateRegion> {
+    fn trivial_region(&self) -> Result<CartesianSet> {
         let propositions = (0..self.task.get_num_variables())
             .map(|var_id| {
                 let size = self
@@ -1303,21 +1303,21 @@ impl<'task> CartesianSemantics<'task> {
             .collect();
         // Every dimension carries its whole domain, so nothing is constrained
         // yet; refinement splits add constraints one dimension at a time.
-        Ok(StateRegion::with_constrained_props(
+        Ok(CartesianSet::with_constrained_props(
             propositions,
             numeric,
             Arc::from([]),
         ))
     }
 
-    fn region_admits_fact(&self, region: &StateRegion, fact: &ExplicitFact) -> Result<bool> {
+    fn region_admits_fact(&self, region: &CartesianSet, fact: &ExplicitFact) -> Result<bool> {
         let mut visiting = vec![false; self.task.get_num_variables()];
         self.region_admits_fact_inner(region, fact, &mut visiting)
     }
 
     fn region_admits_fact_inner(
         &self,
-        region: &StateRegion,
+        region: &CartesianSet,
         fact: &ExplicitFact,
         visiting: &mut [bool],
     ) -> Result<bool> {
@@ -1368,14 +1368,14 @@ impl<'task> CartesianSemantics<'task> {
             .is_some_and(|values| values.binary_search(&(fact.value_index())).is_ok()))
     }
 
-    fn region_guarantees_fact(&self, region: &StateRegion, fact: &ExplicitFact) -> Result<bool> {
+    fn region_guarantees_fact(&self, region: &CartesianSet, fact: &ExplicitFact) -> Result<bool> {
         let mut visiting = vec![false; self.task.get_num_variables()];
         self.region_guarantees_fact_inner(region, fact, &mut visiting)
     }
 
     fn region_guarantees_fact_inner(
         &self,
-        region: &StateRegion,
+        region: &CartesianSet,
         fact: &ExplicitFact,
         visiting: &mut [bool],
     ) -> Result<bool> {
@@ -1428,7 +1428,7 @@ impl<'task> CartesianSemantics<'task> {
 
     fn all_conditions_admitted(
         &self,
-        region: &StateRegion,
+        region: &CartesianSet,
         conditions: &[ExplicitFact],
         visiting: &mut [bool],
     ) -> Result<bool> {
@@ -1442,7 +1442,7 @@ impl<'task> CartesianSemantics<'task> {
 
     fn all_conditions_guaranteed(
         &self,
-        region: &StateRegion,
+        region: &CartesianSet,
         conditions: &[ExplicitFact],
         visiting: &mut [bool],
     ) -> Result<bool> {
@@ -1472,7 +1472,7 @@ impl<'task> CartesianSemantics<'task> {
         Ok(default_value)
     }
 
-    fn comparison_truths(&self, region: &StateRegion, tree_id: usize) -> Result<(bool, bool)> {
+    fn comparison_truths(&self, region: &CartesianSet, tree_id: usize) -> Result<(bool, bool)> {
         let tree = self
             .task
             .numeric_conditions()
@@ -1489,7 +1489,7 @@ impl<'task> CartesianSemantics<'task> {
         })
     }
 
-    fn operator_may_apply(&self, source: &StateRegion, op_id: OperatorIndex) -> Result<bool> {
+    fn operator_may_apply(&self, source: &CartesianSet, op_id: OperatorIndex) -> Result<bool> {
         let op = self
             .task
             .get_operators()
@@ -1505,9 +1505,9 @@ impl<'task> CartesianSemantics<'task> {
 
     fn propositional_dimension_may_transition(
         &self,
-        source: &StateRegion,
+        source: &CartesianSet,
         op_id: OperatorIndex,
-        target: &StateRegion,
+        target: &CartesianSet,
         var_id: VariableIndex,
     ) -> bool {
         debug_assert!(
@@ -1543,9 +1543,9 @@ impl<'task> CartesianSemantics<'task> {
 
     fn split_dimension_may_transition(
         &self,
-        source: &StateRegion,
+        source: &CartesianSet,
         op_id: OperatorIndex,
-        target: &StateRegion,
+        target: &CartesianSet,
         dimension: SplitDimension,
     ) -> Result<bool> {
         Ok(match dimension {
@@ -1600,9 +1600,9 @@ impl<'task> CartesianSemantics<'task> {
 
     fn parent_loop_source_to_split_children(
         &self,
-        source: &StateRegion,
+        source: &CartesianSet,
         op_id: OperatorIndex,
-        targets: [&StateRegion; 2],
+        targets: [&CartesianSet; 2],
         dimension: SplitDimension,
     ) -> Result<[bool; 2]> {
         let may_apply = self.operator_may_apply(source, op_id)?;
@@ -1626,9 +1626,9 @@ impl<'task> CartesianSemantics<'task> {
 
     fn may_transition(
         &self,
-        source: &StateRegion,
+        source: &CartesianSet,
         op_id: OperatorIndex,
-        target: &StateRegion,
+        target: &CartesianSet,
     ) -> Result<bool> {
         if !self.operator_may_apply(source, op_id)? {
             return Ok(false);
@@ -1747,18 +1747,18 @@ impl<'task> CartesianSemantics<'task> {
         Ok(Some(preimage))
     }
 
-    fn operator_region_source_for_transition(
+    fn source_set_source_for_transition(
         &self,
-        source: &StateRegion,
+        source: &CartesianSet,
         op_id: OperatorIndex,
-        target: &StateRegion,
-    ) -> Result<Option<StateRegion>> {
+        target: &CartesianSet,
+    ) -> Result<Option<CartesianSet>> {
         debug_assert_eq!(
             source.numeric.len(),
             target.numeric.len(),
             "Cartesian transition source/target numeric dimension mismatch"
         );
-        let mut operator_region = source.clone();
+        let mut source_set = source.clone();
         for (numeric_var_id, variable) in self.task.numeric_variables().iter().enumerate() {
             match variable.get_type() {
                 NumericType::Constant => {
@@ -1780,7 +1780,7 @@ impl<'task> CartesianSemantics<'task> {
                         return Ok(None);
                     }
                     if regressed != source.numeric[numeric_var_id] {
-                        Arc::make_mut(&mut operator_region.numeric)[numeric_var_id] = regressed;
+                        Arc::make_mut(&mut source_set.numeric)[numeric_var_id] = regressed;
                     }
                 }
                 NumericType::Derived => {
@@ -1799,16 +1799,16 @@ impl<'task> CartesianSemantics<'task> {
                         return Ok(None);
                     }
                     if regressed != source.numeric[numeric_var_id] {
-                        Arc::make_mut(&mut operator_region.numeric)[numeric_var_id] = regressed;
+                        Arc::make_mut(&mut source_set.numeric)[numeric_var_id] = regressed;
                     }
                 }
                 NumericType::Cost => {}
             }
         }
-        Ok(Some(operator_region))
+        Ok(Some(source_set))
     }
 
-    fn region_is_goal(&self, region: &StateRegion) -> Result<bool> {
+    fn region_is_goal(&self, region: &CartesianSet) -> Result<bool> {
         for goal_id in 0..self.task.get_num_goals() {
             if !self.region_admits_fact(region, self.task.get_goal_fact(goal_id))? {
                 return Ok(false);
@@ -2051,14 +2051,14 @@ impl CartesianAbstractionGenerator {
         let initial_state_hash = working
             .hierarchy
             .map_state(&initial_prop_values, &initial_numeric)?;
-        let (transition_system, distance_table, relevant_operator_ids, operator_regions) =
+        let (transition_system, distance_table, relevant_operator_ids, source_sets) =
             if self.config.retain_transition_system {
                 finalize_abstraction(
                     &working,
                     &semantics,
                     initial_state_hash,
                     self.config.combine_labels,
-                    self.config.compute_operator_regions,
+                    self.config.compute_source_sets,
                 )?
             } else {
                 finalize_standalone_abstraction(
@@ -2110,7 +2110,7 @@ impl CartesianAbstractionGenerator {
             distance_table,
             transition_system,
             relevant_operator_ids,
-            abstract_operator_regions: operator_regions,
+            abstract_source_sets: source_sets,
             metadata: CartesianAbstractionMetadata {
                 solved_by_self: solved_plan.is_some(),
                 abstraction_use: AbstractionUse::Standalone,

@@ -107,8 +107,8 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         combine_labels: false,
         relevant_operator_ids: Vec::new(),
         abstract_operators: Vec::new(),
-        abstract_operator_regions: Vec::new(),
-        regional_transition_system: std::cell::RefCell::new(None),
+        abstract_source_sets: Vec::new(),
+        interval_transition_system: std::cell::RefCell::new(None),
         metadata: Default::default(),
     }
 }
@@ -162,7 +162,7 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
         max_states: 16,
         max_time: None,
         combine_labels: false,
-        compute_operator_regions: true,
+        compute_source_sets: true,
         random_seed: None,
         debug: false,
         ..Default::default()

@@ -2,13 +2,13 @@ use planforge_sas::numeric_task::{NumericValue, OperatorIndex, VariableIndex, ZE
 
 use super::*;
 
-pub(super) fn precise_operator_region_for_transition(
+pub(super) fn precise_source_set_for_transition(
     transition: &AbstractTransition,
     concrete_op_id: OperatorIndex,
-    source_state_region: &StateRegion,
-    abstract_operator_regions: &[AbstractOperatorRegions],
-) -> Result<OperatorRegion> {
-    let abstract_regions = abstract_operator_regions
+    source_cartesian_set: &CartesianSet,
+    abstract_source_sets: &[AbstractOperatorSourceSets],
+) -> Result<LabelSourceSet> {
+    let abstract_regions = abstract_source_sets
         .get(transition.abstract_op_id)
         .with_context(|| {
             format!(
@@ -16,19 +16,19 @@ pub(super) fn precise_operator_region_for_transition(
                 transition.transition_id, transition.abstract_op_id
             )
         })?;
-    let label_operator_region = abstract_regions
+    let label_source_set = abstract_regions
         .labels
         .iter()
-        .find(|operator_region| operator_region.concrete_op_id == concrete_op_id)
+        .find(|source_set| source_set.concrete_op_id == concrete_op_id)
         .with_context(|| {
             format!(
                 "transition {} abstract operator {} has no operator region for concrete operator {concrete_op_id}",
                 transition.transition_id, transition.abstract_op_id
             )
         })?;
-    let source_region = state_region_intersection(
-        source_state_region,
-        &label_operator_region.source,
+    let source_region = cartesian_set_intersection(
+        source_cartesian_set,
+        &label_source_set.source,
     )
     .with_context(|| {
         format!(
@@ -36,7 +36,7 @@ pub(super) fn precise_operator_region_for_transition(
             transition.transition_id
         )
     })?;
-    Ok(OperatorRegion {
+    Ok(LabelSourceSet {
         concrete_op_id,
         source: Arc::new(source_region),
     })
@@ -226,11 +226,11 @@ fn interval_is_singleton(interval: Interval) -> bool {
 }
 
 impl DomainAbstractionFactory {
-    pub fn build_abstract_operator_regions(
+    pub fn build_abstract_source_sets(
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
-    ) -> Result<Vec<AbstractOperatorRegions>> {
+    ) -> Result<Vec<AbstractOperatorSourceSets>> {
         operators
             .iter()
             .map(|operator| {
@@ -238,21 +238,19 @@ impl DomainAbstractionFactory {
                     .concrete_op_ids
                     .iter()
                     .copied()
-                    .map(|concrete_op_id| {
-                        self.build_operator_region(task, operator, concrete_op_id)
-                    })
+                    .map(|concrete_op_id| self.build_source_set(task, operator, concrete_op_id))
                     .collect::<Result<Vec<_>>>()?;
-                Ok(AbstractOperatorRegions { labels })
+                Ok(AbstractOperatorSourceSets { labels })
             })
             .collect()
     }
 
-    pub(super) fn build_operator_region(
+    pub(super) fn build_source_set(
         &self,
         task: &dyn AbstractNumericTask,
         abstract_operator: &AbstractOperator,
         concrete_op_id: OperatorIndex,
-    ) -> Result<OperatorRegion> {
+    ) -> Result<LabelSourceSet> {
         let concrete_operator = task
             .get_operators()
             .get(concrete_op_id.index())
@@ -260,8 +258,8 @@ impl DomainAbstractionFactory {
                 format!("abstract operator references missing concrete operator {concrete_op_id}")
             })?;
         let abstract_source_region =
-            self.state_region_from_facts(task, &abstract_operator.preconditions)?;
-        // `state_region_from_facts` already initializes numeric intervals to
+            self.cartesian_set_from_facts(task, &abstract_operator.preconditions)?;
+        // `cartesian_set_from_facts` already initializes numeric intervals to
         // `Interval::unbounded()` for variables that have no partition fact in
         // the operator's preconditions, and to the partition's interval for
         // variables that do (which includes affected vars and variables pulled
@@ -278,7 +276,7 @@ impl DomainAbstractionFactory {
         // hides per-region cost claims.
         let mut source_region = abstract_source_region.clone();
         let target_region =
-            self.state_region_from_facts(task, &abstract_operator.regression_preconditions)?;
+            self.cartesian_set_from_facts(task, &abstract_operator.regression_preconditions)?;
         let mut affected_numeric_dimensions =
             deterministic_affected_regular_numeric_vars(task, concrete_operator);
         for (numeric_var_id, view) in self.additive_numeric_views.iter() {
@@ -347,7 +345,7 @@ impl DomainAbstractionFactory {
             }
         }
 
-        Ok(OperatorRegion {
+        Ok(LabelSourceSet {
             concrete_op_id,
             source: Arc::new(source_region),
         })

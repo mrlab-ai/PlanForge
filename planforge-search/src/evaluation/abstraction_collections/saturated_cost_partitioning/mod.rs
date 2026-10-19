@@ -18,8 +18,8 @@ use crate::successor_generator::SuccessorTree;
 
 use super::component::AbstractionComponent;
 use super::cost_partitioning::{
-    AbstractOperatorCostFunction, AbstractOperatorRegions, RegionalCostAllocation, StateRegion,
-    TransitionResidualCosts, build_explicit_label_cost_partitioning_table,
+    AbstractOperatorCostFunction, AbstractOperatorSourceSets, CartesianSet, RemainingCosts,
+    SourceSetCostAllocation, build_explicit_label_cost_partitioning_table,
     build_explicit_regional_cost_partitioning_table,
 };
 use super::goal_focused::MemberDirection;

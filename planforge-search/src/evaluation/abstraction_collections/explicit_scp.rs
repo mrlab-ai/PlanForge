@@ -8,8 +8,8 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::{ExplicitFact, OperatorIndex};
 use planforge_sas::utils::float_tolerance;
 
-use super::TransitionResidualCosts;
-use super::region::StateRegion;
+use super::RemainingCosts;
+use super::cartesian_set::CartesianSet;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransition {
@@ -21,14 +21,14 @@ pub struct AbstractTransition {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AbstractOperatorRegions {
-    pub labels: Vec<OperatorRegion>,
+pub struct AbstractOperatorSourceSets {
+    pub labels: Vec<LabelSourceSet>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct OperatorRegion {
+pub struct LabelSourceSet {
     pub concrete_op_id: OperatorIndex,
-    pub source: Arc<StateRegion>,
+    pub source: Arc<CartesianSet>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,7 +42,7 @@ pub struct AbstractTransitionSystem {
     pub initial_state_hash: usize,
     pub hash_multipliers: Vec<usize>,
     pub numeric_domain_sizes: Vec<usize>,
-    pub state_regions: Vec<Arc<StateRegion>>,
+    pub cartesian_sets: Vec<Arc<CartesianSet>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,22 +56,22 @@ pub struct AbstractOperatorCostFunction {
 }
 
 #[derive(Debug, Clone)]
-pub struct RegionalCostAllocation {
-    entries: Vec<RegionalCostAllocationEntry>,
+pub struct SourceSetCostAllocation {
+    entries: Vec<SourceSetCost>,
 }
 
 #[derive(Debug, Clone)]
-pub struct RegionalCostAllocationEntry {
-    pub operator_region: OperatorRegion,
+pub struct SourceSetCost {
+    pub source_set: LabelSourceSet,
     pub amount: f64,
 }
 
-impl RegionalCostAllocation {
-    pub fn new(entries: Vec<RegionalCostAllocationEntry>) -> Self {
+impl SourceSetCostAllocation {
+    pub fn new(entries: Vec<SourceSetCost>) -> Self {
         Self { entries }
     }
 
-    pub fn entries(&self) -> &[RegionalCostAllocationEntry] {
+    pub fn entries(&self) -> &[SourceSetCost] {
         &self.entries
     }
 }
@@ -142,15 +142,15 @@ pub fn build_explicit_label_cost_partitioning_table(
 
 pub fn build_explicit_regional_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
-    operator_regions: &[AbstractOperatorRegions],
-    residual_costs: &TransitionResidualCosts,
+    source_sets: &[AbstractOperatorSourceSets],
+    residual_costs: &RemainingCosts,
     abstraction_id: usize,
     cap_state_id: Option<usize>,
     deadline: Option<Instant>,
 ) -> Result<(Vec<f64>, AbstractOperatorCostFunction)> {
-    let operator_costs = abstract_operator_costs_from_operator_regions(
-        operator_regions.len(),
-        operator_regions,
+    let operator_costs = abstract_operator_costs_from_source_sets(
+        source_sets.len(),
+        source_sets,
         residual_costs,
         abstraction_id,
         deadline,
@@ -456,17 +456,17 @@ pub(crate) fn saturation_need(
     Ok(Some(needed))
 }
 
-fn abstract_operator_costs_from_operator_regions(
+fn abstract_operator_costs_from_source_sets(
     num_operators: usize,
-    operator_regions: &[AbstractOperatorRegions],
-    residual_costs: &TransitionResidualCosts,
+    source_sets: &[AbstractOperatorSourceSets],
+    residual_costs: &RemainingCosts,
     abstraction_id: usize,
     deadline: Option<Instant>,
 ) -> Result<Vec<f64>> {
     ensure!(
-        operator_regions.len() >= num_operators,
-        "abstract-operator region/operator size mismatch: operator_regions={} operators={num_operators}",
-        operator_regions.len()
+        source_sets.len() >= num_operators,
+        "abstract-operator region/operator size mismatch: source_sets={} operators={num_operators}",
+        source_sets.len()
     );
     let has_reductions = residual_costs.has_reductions();
     let mut operator_costs = vec![f64::INFINITY; num_operators];
@@ -474,17 +474,17 @@ fn abstract_operator_costs_from_operator_regions(
         if abstract_op_id.is_multiple_of(64) {
             ensure_scp_table_deadline(deadline)?;
         }
-        let operator_region = &operator_regions[abstract_op_id];
+        let source_set = &source_sets[abstract_op_id];
         ensure!(
-            !operator_region.labels.is_empty(),
+            !source_set.labels.is_empty(),
             "abstract operator {abstract_op_id} has no concrete operator-region labels"
         );
-        operator_costs[abstract_op_id] = operator_region
+        operator_costs[abstract_op_id] = source_set
             .labels
             .iter()
             .map(|label| {
                 let residual = if has_reductions {
-                    residual_costs.cost_for_operator_region(abstraction_id, abstract_op_id, label)
+                    residual_costs.cost_for_source_set(abstraction_id, abstract_op_id, label)
                 } else {
                     residual_costs.base_cost(label.concrete_op_id)
                 };

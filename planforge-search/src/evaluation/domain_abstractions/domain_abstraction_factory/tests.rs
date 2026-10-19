@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use crate::evaluation::abstraction_collections::cost_partitioning::{
-    AbstractOperatorRegions, OperatorRegion, StateRegion, TransitionResidualCosts,
+    AbstractOperatorSourceSets, CartesianSet, LabelSourceSet, RemainingCosts,
     build_explicit_label_cost_partitioning_table,
 };
 use crate::evaluation::domain_abstractions::utils::identity_domain_mapping_and_sizes;
@@ -231,7 +231,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
             &task,
             false,
             &abstract_operators,
-            DistanceTableOptions::default().without_state_regions(),
+            DistanceTableOptions::default().without_cartesian_sets(),
         )
         .unwrap();
     let (explicit, _) =
@@ -393,25 +393,25 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
             &task,
             false,
             &abstract_operators,
-            DistanceTableOptions::default().without_state_regions(),
+            DistanceTableOptions::default().without_cartesian_sets(),
         )
         .unwrap();
-    let operator_regions = vec![AbstractOperatorRegions {
-        labels: vec![OperatorRegion {
+    let source_sets = vec![AbstractOperatorSourceSets {
+        labels: vec![LabelSourceSet {
             concrete_op_id: OperatorIndex::new(0),
-            source: StateRegion::with_all_props_constrained(
+            source: CartesianSet::with_all_props_constrained(
                 vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]],
                 Vec::new(),
             )
             .into(),
         }],
     }];
-    let mut residuals = TransitionResidualCosts::from_operator_costs(&[1.0]);
+    let mut residuals = RemainingCosts::from_operator_costs(&[1.0]);
 
     let (table, allocation) = factory
-        .build_precise_regional_cost_partitioned_distance_table(
+        .build_interval_cost_partitioned_distance_table(
             &transition_system,
-            &operator_regions,
+            &source_sets,
             &residuals,
             0,
             DistanceTableOptions::default(),
@@ -421,28 +421,22 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     assert_eq!(table.distances[table.initial_state_hash], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
-        allocation.entries()[0]
-            .operator_region
-            .source
-            .propositions()[0],
+        allocation.entries()[0].source_set.source.propositions()[0],
         vec![ExplicitValueIndex::new(0)]
     );
     residuals
-        .reduce_by_regional_allocation_with_deadline(&allocation, None)
+        .reduce_by_source_set_allocation_with_deadline(&allocation, None)
         .unwrap();
 
-    let disjoint_source = OperatorRegion {
+    let disjoint_source = LabelSourceSet {
         concrete_op_id: OperatorIndex::new(0),
-        source: StateRegion::with_all_props_constrained(
+        source: CartesianSet::with_all_props_constrained(
             vec![vec![ExplicitValueIndex::new(1)]],
             Vec::new(),
         )
         .into(),
     };
-    assert_eq!(
-        residuals.cost_for_operator_region(1, 0, &disjoint_source),
-        1.0
-    );
+    assert_eq!(residuals.cost_for_source_set(1, 0, &disjoint_source), 1.0);
 }
 
 #[test]
@@ -1272,7 +1266,7 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
     );
 }
 
-fn additive_numeric_operator_region_task() -> (NumericRootTask, DomainAbstractionFactory) {
+fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFactory) {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -1333,7 +1327,7 @@ fn additive_numeric_operator_region_task() -> (NumericRootTask, DomainAbstractio
     (task, factory)
 }
 
-fn additive_numeric_operator_region_task_with_partitions(
+fn additive_numeric_source_set_task_with_partitions(
     x_partitions: Vec<Interval>,
 ) -> (NumericRootTask, DomainAbstractionFactory) {
     let variables = vec![ExplicitVariable::new(
@@ -1394,8 +1388,8 @@ fn additive_numeric_operator_region_task_with_partitions(
 }
 
 #[test]
-fn abstract_operator_region_keeps_finite_source_when_target_reaches_tail() {
-    let (task, factory) = additive_numeric_operator_region_task();
+fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
+    let (task, factory) = additive_numeric_source_set_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operator_generator::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
@@ -1406,10 +1400,8 @@ fn abstract_operator_region_keeps_finite_source_when_target_reaches_tail() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
     assert_eq!(
@@ -1423,8 +1415,8 @@ fn abstract_operator_region_keeps_finite_source_when_target_reaches_tail() {
 }
 
 #[test]
-fn abstract_operator_region_tightens_source_by_inverse_target_image() {
-    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
+fn abstract_source_set_tightens_source_by_inverse_target_image() {
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
     ]);
@@ -1438,10 +1430,8 @@ fn abstract_operator_region_tightens_source_by_inverse_target_image() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
     assert_eq!(
@@ -1451,8 +1441,8 @@ fn abstract_operator_region_tightens_source_by_inverse_target_image() {
 }
 
 #[test]
-fn operator_region_active_preimage_allows_boundary_charge() {
-    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
+fn source_set_active_preimage_allows_boundary_charge() {
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(6.0), false, true),
     ]);
@@ -1466,10 +1456,8 @@ fn operator_region_active_preimage_allows_boundary_charge() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
         concrete.source.numeric[0],
@@ -1478,8 +1466,8 @@ fn operator_region_active_preimage_allows_boundary_charge() {
 }
 
 #[test]
-fn abstract_operator_region_rejects_empty_inverse_target_image() {
-    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
+fn abstract_source_set_rejects_empty_inverse_target_image() {
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(7.0), NumericValue::new(10.0), false, true),
     ]);
@@ -1494,7 +1482,7 @@ fn abstract_operator_region_rejects_empty_inverse_target_image() {
     };
 
     let error = factory
-        .build_abstract_operator_regions(&task, &[op])
+        .build_abstract_source_sets(&task, &[op])
         .unwrap_err();
     assert!(
         error
@@ -1504,8 +1492,8 @@ fn abstract_operator_region_rejects_empty_inverse_target_image() {
 }
 
 #[test]
-fn abstract_operator_region_allocates_unbounded_changed_tail() {
-    let (task, factory) = additive_numeric_operator_region_task();
+fn abstract_source_set_allocates_unbounded_changed_tail() {
+    let (task, factory) = additive_numeric_source_set_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operator_generator::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
@@ -1516,10 +1504,8 @@ fn abstract_operator_region_allocates_unbounded_changed_tail() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
     assert_eq!(
@@ -1529,7 +1515,7 @@ fn abstract_operator_region_allocates_unbounded_changed_tail() {
 }
 
 #[test]
-fn abstract_operator_region_allocates_operator_without_numeric_effects() {
+fn abstract_source_set_allocates_operator_without_numeric_effects() {
     let variables = vec![ExplicitVariable::new(
         2,
         "saved".into(),
@@ -1582,10 +1568,8 @@ fn abstract_operator_region_allocates_operator_without_numeric_effects() {
         changed_numeric_vars: vec![],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
         concrete.source.propositions()[0],
@@ -1594,7 +1578,7 @@ fn abstract_operator_region_allocates_operator_without_numeric_effects() {
 }
 
 #[test]
-fn abstract_operator_region_allows_one_finite_changed_source() {
+fn abstract_source_set_allows_one_finite_changed_source() {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -1686,10 +1670,8 @@ fn abstract_operator_region_allows_one_finite_changed_source() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
         concrete.source.numeric[0],
@@ -1702,7 +1684,7 @@ fn abstract_operator_region_allows_one_finite_changed_source() {
 }
 
 #[test]
-fn operator_region_one_finite_dim_suffices() {
+fn source_set_one_finite_dim_suffices() {
     let variables = vec![
         condition_variable("x_gt_zero"),
         ExplicitVariable::new(
@@ -1814,10 +1796,8 @@ fn operator_region_one_finite_dim_suffices() {
         ],
         changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
     assert_eq!(
         concrete.source.numeric[0],
         Interval::singleton(NumericValue::new(0.0))
@@ -1831,7 +1811,7 @@ fn operator_region_one_finite_dim_suffices() {
 }
 
 #[test]
-fn abstract_operator_region_ignores_zero_additive_effect_dimension() {
+fn abstract_source_set_ignores_zero_additive_effect_dimension() {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -1926,10 +1906,8 @@ fn abstract_operator_region_ignores_zero_additive_effect_dimension() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
         concrete.source.numeric[0],
@@ -1948,10 +1926,10 @@ fn abstract_operator_region_ignores_zero_additive_effect_dimension() {
 }
 
 #[test]
-fn operator_region_width_does_not_change_valid_preimage() {
-    // Same fixture as `abstract_operator_region_tightens_source_by_inverse_target_image`:
+fn source_set_width_does_not_change_valid_preimage() {
+    // Same fixture as `abstract_source_set_tightens_source_by_inverse_target_image`:
     // the preimage source for the operator is `(4.0, 5.0]`, width 1.0.
-    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
     ]);
@@ -1965,11 +1943,9 @@ fn operator_region_width_does_not_change_valid_preimage() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
     assert_eq!(
-        operator_regions[0].labels[0].source.numeric[0],
+        source_sets[0].labels[0].source.numeric[0],
         Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
     );
 }
@@ -1979,7 +1955,7 @@ fn singleton_preimage_is_preserved_exactly() {
     // Partition `x` so that the operator `x += 1` maps singleton `{4.0}` to
     // singleton `{5.0}`. The preimage `{4.0} ∩ shift({5.0}, -1) = {4.0}` is a
     // singleton of width 0.
-    let (task, factory) = additive_numeric_operator_region_task_with_partitions(vec![
+    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::singleton(NumericValue::new(4.0)),
         Interval::singleton(NumericValue::new(5.0)),
     ]);
@@ -1993,10 +1969,8 @@ fn singleton_preimage_is_preserved_exactly() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let operator_regions = factory
-        .build_abstract_operator_regions(&task, &[op])
-        .unwrap();
-    let concrete = &operator_regions[0].labels[0];
+    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let concrete = &source_sets[0].labels[0];
     assert_eq!(
         concrete.source.numeric[0],
         Interval::singleton(NumericValue::new(4.0))
@@ -2013,7 +1987,7 @@ fn singleton_preimage_is_preserved_exactly() {
 /// dimension that had genuinely been narrowed, reported two disjoint regions as
 /// overlapping, and let one operator's cost be claimed twice.
 #[test]
-fn refinement_updates_the_variables_a_state_region_can_constrain() {
+fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
         metric: Metric::new(true, None),
@@ -2058,7 +2032,7 @@ fn refinement_updates_the_variables_a_state_region_can_constrain() {
     )
     .unwrap();
 
-    let coarse = factory.state_region_from_hash(0, &[], &[1]).unwrap();
+    let coarse = factory.cartesian_set_from_hash(0, &[], &[1]).unwrap();
     assert!(
         coarse.constrained_props().is_empty(),
         "a one-class variable constrains nothing, got {:?}",
@@ -2080,7 +2054,7 @@ fn refinement_updates_the_variables_a_state_region_can_constrain() {
         (1usize, vec![ExplicitValueIndex::new(1u32)]),
     ] {
         let refined = factory
-            .state_region_from_hash(state_hash, &[], &[1])
+            .cartesian_set_from_hash(state_hash, &[], &[1])
             .unwrap();
         assert_eq!(
             refined.propositions()[0],
@@ -2096,7 +2070,7 @@ fn refinement_updates_the_variables_a_state_region_can_constrain() {
 
     // The two classes are disjoint, so the regions must not overlap. This is the
     // comparison the stale list got wrong.
-    let zero = factory.state_region_from_hash(0, &[], &[1]).unwrap();
-    let one = factory.state_region_from_hash(1, &[], &[1]).unwrap();
+    let zero = factory.cartesian_set_from_hash(0, &[], &[1]).unwrap();
+    let one = factory.cartesian_set_from_hash(1, &[], &[1]).unwrap();
     assert!(!zero.overlaps(&one));
 }

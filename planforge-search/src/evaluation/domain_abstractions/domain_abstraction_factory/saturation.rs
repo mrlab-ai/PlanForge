@@ -138,17 +138,17 @@ impl DomainAbstractionFactory {
     }
 
     /// The state region for `state_hash`, materializing it on first use.
-    fn cached_state_region<'cache>(
+    fn cached_cartesian_set<'cache>(
         &self,
-        cache: &'cache mut [Option<StateRegion>],
+        cache: &'cache mut [Option<CartesianSet>],
         state_hash: usize,
         transition_system: &AbstractTransitionSystem,
-    ) -> Result<&'cache StateRegion> {
+    ) -> Result<&'cache CartesianSet> {
         let slot = cache
             .get_mut(state_hash)
             .with_context(|| format!("state hash {state_hash} out of range for region cache"))?;
         if slot.is_none() {
-            *slot = Some(self.state_region_from_hash(
+            *slot = Some(self.cartesian_set_from_hash(
                 state_hash,
                 &transition_system.numeric_domain_sizes,
                 &transition_system.hash_multipliers,
@@ -157,19 +157,19 @@ impl DomainAbstractionFactory {
         Ok(slot.as_ref().expect("region was just materialized"))
     }
 
-    pub fn build_precise_regional_cost_partitioned_distance_table(
+    pub fn build_interval_cost_partitioned_distance_table(
         &self,
         transition_system: &AbstractTransitionSystem,
-        abstract_operator_regions: &[AbstractOperatorRegions],
-        residual_costs: &TransitionResidualCosts,
+        abstract_source_sets: &[AbstractOperatorSourceSets],
+        residual_costs: &RemainingCosts,
         abstraction_id: usize,
         options: DistanceTableOptions<'_>,
-    ) -> Result<(AbstractDistanceTable, RegionalCostAllocation)> {
+    ) -> Result<(AbstractDistanceTable, SourceSetCostAllocation)> {
         let deadline = options.deadline;
         let cap_state_id = options.cap_state_id;
         ensure_online_scp_deadline(deadline)?;
         ensure!(
-            transition_system.state_regions.is_empty(),
+            transition_system.cartesian_sets.is_empty(),
             "precise domain regional SCP expects lazy state regions"
         );
 
@@ -188,14 +188,14 @@ impl DomainAbstractionFactory {
             .map(|transition| transition.source_hash)
             .max()
             .map_or(0, |max_hash| max_hash + 1);
-        let mut source_regions: Vec<Option<StateRegion>> = vec![None; num_states];
+        let mut source_regions: Vec<Option<CartesianSet>> = vec![None; num_states];
 
         let mut transition_costs = Vec::with_capacity(transition_system.transitions.len());
         for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
             if transition_id.is_multiple_of(1024) {
                 ensure_online_scp_deadline(deadline)?;
             }
-            let source_region = self.cached_state_region(
+            let source_region = self.cached_cartesian_set(
                 &mut source_regions,
                 transition.source_hash,
                 transition_system,
@@ -203,16 +203,16 @@ impl DomainAbstractionFactory {
             operator_pairs += transition.concrete_op_ids.len();
             let mut cost = f64::INFINITY;
             for &concrete_op_id in &transition.concrete_op_ids {
-                let operator_region = precise_operator_region_for_transition(
+                let source_set = precise_source_set_for_transition(
                     transition,
                     concrete_op_id,
                     source_region,
-                    abstract_operator_regions,
+                    abstract_source_sets,
                 )?;
-                cost = cost.min(residual_costs.cost_for_operator_region(
+                cost = cost.min(residual_costs.cost_for_source_set(
                     abstraction_id,
                     transition_id,
-                    &operator_region,
+                    &source_set,
                 ));
             }
             transition_costs.push(cost);
@@ -279,29 +279,26 @@ impl DomainAbstractionFactory {
             if !saturated.is_finite() || saturated <= 1e-9 {
                 continue;
             }
-            let source_region = self.cached_state_region(
+            let source_region = self.cached_cartesian_set(
                 &mut source_regions,
                 transition.source_hash,
                 transition_system,
             )?;
             for &concrete_op_id in &transition.concrete_op_ids {
-                let operator_region = precise_operator_region_for_transition(
+                let source_set = precise_source_set_for_transition(
                     transition,
                     concrete_op_id,
                     source_region,
-                    abstract_operator_regions,
+                    abstract_source_sets,
                 )?;
-                let current_residual = residual_costs.cost_for_operator_region(
-                    abstraction_id,
-                    transition_id,
-                    &operator_region,
-                );
+                let current_residual =
+                    residual_costs.cost_for_source_set(abstraction_id, transition_id, &source_set);
                 ensure!(
                     saturated <= current_residual + 1e-7,
                     "regional transition allocation {saturated} exceeds residual {current_residual} for transition {transition_id}, operator {concrete_op_id}"
                 );
-                entries.push(RegionalCostAllocationEntry {
-                    operator_region,
+                entries.push(SourceSetCost {
+                    source_set,
                     amount: saturated,
                 });
             }
@@ -315,7 +312,7 @@ impl DomainAbstractionFactory {
             entries.len(),
         );
 
-        Ok((lookup_table, RegionalCostAllocation::new(entries)))
+        Ok((lookup_table, SourceSetCostAllocation::new(entries)))
     }
     pub(super) fn compute_saturated_transition_costs(
         &self,

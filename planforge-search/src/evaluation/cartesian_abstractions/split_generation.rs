@@ -30,7 +30,7 @@ pub(super) fn splits_for_desired_facts(
 
 fn constrain_desired_region(
     semantics: &CartesianSemantics<'_>,
-    desired: &mut StateRegion,
+    desired: &mut CartesianSet,
     fact: &ExplicitFact,
 ) -> Result<()> {
     if let Some(comparison_axiom_id) = semantics
@@ -173,7 +173,7 @@ fn splits_for_desired_region(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     state_id: usize,
-    desired: &StateRegion,
+    desired: &CartesianSet,
     prop_values: &[ExplicitValueIndex],
     numeric_values: &[NumericValue],
     description: &str,

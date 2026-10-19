@@ -54,18 +54,18 @@ pub(super) fn interval_stolen_costs(
 ) -> Result<Vec<Option<f64>>, EvaluationError> {
     let mut regions_by_component = Vec::with_capacity(components.len());
     for (component_id, component) in components.iter().enumerate() {
-        let (operator_regions, expected_operator_regions) = match component {
+        let (source_sets, expected_source_sets) = match component {
             AbstractionComponent::Domain(heuristic) => {
                 let abstraction = heuristic.abstraction();
                 (
-                    abstraction.abstract_operator_regions.as_slice(),
+                    abstraction.abstract_source_sets.as_slice(),
                     abstraction.abstract_operators.len(),
                 )
             }
             AbstractionComponent::Cartesian(heuristic) => {
                 let abstraction = heuristic.abstraction();
                 (
-                    abstraction.abstract_operator_regions.as_slice(),
+                    abstraction.abstract_source_sets.as_slice(),
                     abstraction.transition_system.transitions.len(),
                 )
             }
@@ -74,15 +74,15 @@ pub(super) fn interval_stolen_costs(
                 continue;
             }
         };
-        if operator_regions.len() != expected_operator_regions {
+        if source_sets.len() != expected_source_sets {
             return Err(EvaluationError::ComputationFailed(format!(
-                "region SCP component {component_id} has {} operator regions for {expected_operator_regions} retained abstract transitions/operators",
-                operator_regions.len()
+                "region SCP component {component_id} has {} operator regions for {expected_source_sets} retained abstract transitions/operators",
+                source_sets.len()
             )));
         }
-        let mut by_operator = HashMap::<usize, Vec<&StateRegion>>::new();
-        for operator_region in operator_regions {
-            for label in &operator_region.labels {
+        let mut by_operator = HashMap::<usize, Vec<&CartesianSet>>::new();
+        for source_set in source_sets {
+            for label in &source_set.labels {
                 if label.concrete_op_id.index() >= operator_costs.len() {
                     return Err(EvaluationError::ComputationFailed(format!(
                         "region SCP component {component_id} operator region references missing operator {}",
@@ -150,9 +150,9 @@ pub(super) fn interval_stolen_costs(
 }
 
 pub(super) fn pairwise_interval_stolen_cost(
-    left_regions: &[&StateRegion],
+    left_regions: &[&CartesianSet],
     left_amount: f64,
-    right_regions: &[&StateRegion],
+    right_regions: &[&CartesianSet],
     right_amount: f64,
     base_cost: f64,
 ) -> f64 {

@@ -317,7 +317,7 @@ impl DomainAbstractionFactory {
     /// overlapping, so an operator's cost can be claimed twice -- a wrong
     /// heuristic rather than a slow one.
     #[cfg(debug_assertions)]
-    fn debug_assert_constrained_props_cover_narrowings(&self, region: &StateRegion) {
+    fn debug_assert_constrained_props_cover_narrowings(&self, region: &CartesianSet) {
         for (var_id, values) in region.propositions().iter().enumerate() {
             let concrete_size = self.domain_mapping[var_id].len();
             let listed = region
@@ -334,13 +334,13 @@ impl DomainAbstractionFactory {
         }
     }
 
-    pub(super) fn state_region_from_hash(
+    pub(super) fn cartesian_set_from_hash(
         &self,
         state_hash: usize,
         numeric_domain_sizes: &[usize],
         hash_multipliers: &[usize],
-    ) -> Result<StateRegion> {
-        let region = StateRegion::with_constrained_props(
+    ) -> Result<CartesianSet> {
+        let region = CartesianSet::with_constrained_props(
             self.propositional_region_from_hash(state_hash, hash_multipliers)?,
             self.numeric_region_from_hash(state_hash, numeric_domain_sizes, hash_multipliers)?,
             Arc::clone(&self.state_constrained_props),
@@ -350,11 +350,11 @@ impl DomainAbstractionFactory {
         Ok(region)
     }
 
-    pub(super) fn state_region_from_facts(
+    pub(super) fn cartesian_set_from_facts(
         &self,
         task: &dyn AbstractNumericTask,
         facts: &[ExplicitFact],
-    ) -> Result<StateRegion> {
+    ) -> Result<CartesianSet> {
         let num_props = self.domain_sizes.len();
         let mut propositions = self.full_propositional_region()?;
         let mut numeric = vec![Interval::unbounded(); task.numeric_variables().len()];
@@ -392,7 +392,7 @@ impl DomainAbstractionFactory {
         constrained_props.sort_unstable();
         constrained_props.dedup();
         let region =
-            StateRegion::with_constrained_props(propositions, numeric, constrained_props.into());
+            CartesianSet::with_constrained_props(propositions, numeric, constrained_props.into());
         #[cfg(debug_assertions)]
         self.debug_assert_constrained_props_cover_narrowings(&region);
         Ok(region)

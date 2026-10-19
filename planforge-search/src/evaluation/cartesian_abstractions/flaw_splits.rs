@@ -413,7 +413,7 @@ fn conditions_hold_concretely(
 
 fn all_conditions_admitted(
     semantics: &CartesianSemantics<'_>,
-    region: &StateRegion,
+    region: &CartesianSet,
     conditions: &[ExplicitFact],
 ) -> Result<bool> {
     for condition in conditions {

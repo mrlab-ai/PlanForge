@@ -204,7 +204,7 @@ impl PdbSourceConfig {
 }
 
 impl ComponentUse {
-    fn needs_operator_regions(self) -> bool {
+    fn needs_source_sets(self) -> bool {
         matches!(self, Self::RegionalCostPartitioning)
     }
 
@@ -428,7 +428,7 @@ pub(crate) fn build_components<'task>(
                 }
                 // Operator regions do not influence CEGAR. Build them after the collection so
                 // canonical, label SCP, and region SCP receive the same generation budget.
-                config.set_compute_operator_regions(false);
+                config.set_compute_source_sets(false);
                 info!("Building domain abstraction source {source_index}...");
                 let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
                     config,
@@ -437,10 +437,10 @@ pub(crate) fn build_components<'task>(
                 .map_err(|error| {
                     format!("failed to build domain abstraction source {source_index}: {error:#}")
                 })?;
-                if component_use.needs_operator_regions() {
+                if component_use.needs_source_sets() {
                     for (component_index, abstraction) in abstractions.iter_mut().enumerate() {
                         abstraction
-                            .ensure_abstract_operator_regions(task)
+                            .ensure_abstract_source_sets(task)
                             .map_err(|error| {
                                 format!(
                                     "failed to build regional operator regions for domain abstraction source {source_index}, component {component_index}: {error:#}"
@@ -640,7 +640,7 @@ pub(crate) fn apply_icaps26_cartesian_options(
         max_states: usize::MAX,
         max_time: Some(Duration::from_secs(900)),
         combine_labels: false,
-        compute_operator_regions: component_use.needs_operator_regions(),
+        compute_source_sets: component_use.needs_source_sets(),
         retain_transition_system: component_use.needs_transition_system(),
         random_seed: Some(2011),
         flaw_kind: FlawKind::Progression,
@@ -882,7 +882,7 @@ fn apply_cartesian_source_options(
             }
         }
     }
-    config.abstraction.compute_operator_regions = component_use.needs_operator_regions();
+    config.abstraction.compute_source_sets = component_use.needs_source_sets();
     config.abstraction.retain_transition_system = component_use.needs_transition_system();
     Ok(config)
 }
