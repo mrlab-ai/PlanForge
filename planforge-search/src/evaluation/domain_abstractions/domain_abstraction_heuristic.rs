@@ -177,17 +177,6 @@ impl DomainAbstractionHeuristic {
             )));
         }
         let partitions = self.abstraction.factory.partitions();
-        // NOTE: the equispaced fast path is intentionally disabled because
-        // its `(value - base) / step` cast does not respect partition
-        // boundary closed/open flags. For values exactly on a partition
-        // boundary (which happens for every CEGAR-induced split since
-        // splits land at concrete state values), the equispaced lookup can
-        // return a different partition than the tolerant `partition_for_value`
-        // used by `compute_initial_state_hash_determined`. That mismatch
-        // makes the heuristic's α(init_concrete) differ from CEGAR's
-        // init_state_hash, so `distances[α(init)]` returns a value that
-        // CEGAR never tightened — producing h(init) < plan_cost even when
-        // CEGAR converged with no flaws.
         let parts = partitions.partitions(num_var_id).ok_or_else(|| {
             EvaluationError::InvalidState(format!(
                 "missing partitions for numeric var {num_var_id}"

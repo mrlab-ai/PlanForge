@@ -6,19 +6,13 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::utils::EquispacedPartitioning;
+use super::utils::partition_for_value;
 use planforge_sas::numeric_conditions::ArithOp;
 use planforge_sas::utils::interval::Interval;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
     partitions_by_numeric_var: Vec<Vec<Interval>>,
-    /// Per-var cached descriptor for O(1) `partition_for_value` lookup.
-    /// `Some` when the layout is contiguous + uniform-width + at most one
-    /// unbounded tail on each side; otherwise `None` and callers fall back to
-    /// the tolerant binary search. Rebuilt whenever the partitions mutate
-    /// (`split_at`, `merge_at`, …) — keep this in sync with the `Vec<Interval>`.
-    equispaced_by_numeric_var: Vec<Option<EquispacedPartitioning>>,
 }
 
 impl NumericPartitions {
@@ -42,18 +36,14 @@ impl NumericPartitions {
                 _ => vec![Interval::unbounded()],
             })
             .collect();
-        let equispaced_by_numeric_var = compute_equispaced(&partitions_by_numeric_var);
         Self {
             partitions_by_numeric_var,
-            equispaced_by_numeric_var,
         }
     }
 
     pub fn with_partitions(partitions_by_numeric_var: Vec<Vec<Interval>>) -> Self {
-        let equispaced_by_numeric_var = compute_equispaced(&partitions_by_numeric_var);
         Self {
             partitions_by_numeric_var,
-            equispaced_by_numeric_var,
         }
     }
 
@@ -61,27 +51,6 @@ impl NumericPartitions {
         self.partitions_by_numeric_var
             .get(numeric_var_id.index())
             .map(|v| v.as_slice())
-    }
-
-    /// Equispaced-partition descriptor for `numeric_var_id`, if its current
-    /// layout fits the `EquispacedPartitioning` shape.
-    ///
-    /// Currently unused: the previous fast-path consumer was the heuristic's
-    /// `numeric_partition_for_projected_value`, which fell out of sync with
-    /// the tolerant `partition_for_value` on values that lie *exactly* on a
-    /// partition boundary (the cast-based lookup ignores the per-interval
-    /// closed/open flags, so boundary-aligned values — i.e., every CEGAR
-    /// split point — could land in the wrong partition). Kept because the
-    /// descriptor is still maintained on `split_at`; a future fix that makes
-    /// `EquispacedPartitioning::lookup` boundary-aware can re-enable it.
-    #[allow(dead_code)]
-    pub(crate) fn equispaced(
-        &self,
-        numeric_var_id: VariableIndex,
-    ) -> Option<&EquispacedPartitioning> {
-        self.equispaced_by_numeric_var
-            .get(numeric_var_id.index())
-            .and_then(Option::as_ref)
     }
 
     pub fn partition_interval(
@@ -150,7 +119,7 @@ impl NumericPartitions {
         else {
             return false;
         };
-        let Some(part_id) = parts.iter().position(|iv| iv.contains(value)) else {
+        let Some(part_id) = partition_for_value(parts, value) else {
             return false;
         };
 
@@ -167,18 +136,6 @@ impl NumericPartitions {
 
         parts[part_id] = lower;
         parts.insert(part_id + 1, upper);
-        // Cache is per-var; recompute only the affected entry.
-        self.equispaced_by_numeric_var[numeric_var_id.index()] =
-            EquispacedPartitioning::detect(&self.partitions_by_numeric_var[numeric_var_id.index()]);
         true
     }
-}
-
-fn compute_equispaced(
-    partitions_by_numeric_var: &[Vec<Interval>],
-) -> Vec<Option<EquispacedPartitioning>> {
-    partitions_by_numeric_var
-        .iter()
-        .map(|parts| EquispacedPartitioning::detect(parts))
-        .collect()
 }

@@ -103,9 +103,8 @@ pub(super) fn log_abstraction_candidate_report(
         let score = compute_score(h, stolen, scoring_function);
         let stats = abstract_operator_region_stats(&abstraction.abstract_operator_regions);
         let metadata = &abstraction.metadata;
-        let seeds = truncate_for_log(&metadata.initial_seed_splits.join("|"), 220);
         info!(
-            "scp_online: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, operator_region_labels={}, bounded_operator_region_labels={}, bounded_numeric_dimensions={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}, seeds={seeds}",
+            "scp_online: candidate rank={rank}, id={abstraction_id}, score={score:.6}, h={h}, stolen={stolen:.6}, states={}, abstract_ops={}, operator_region_labels={}, bounded_operator_region_labels={}, bounded_numeric_dimensions={}, iteration={:?}, flaw_kind={:?}, full_goal_task={:?}",
             abstraction_state_count(abstraction),
             abstraction.abstract_operators.len(),
             stats.total_labels,
@@ -236,22 +235,12 @@ pub(super) fn log_positive_label_operator_region_diagnostics(
 pub(super) fn abstraction_metadata_summary(abstraction: &DomainAbstraction) -> String {
     let metadata = &abstraction.metadata;
     format!(
-        "iteration={:?},strategy={:?},flaw_kind={:?},full_goal_task={:?},seeds={}",
+        "iteration={:?},strategy={:?},flaw_kind={:?},full_goal_task={:?}",
         metadata.collection_iteration,
         metadata.collection_strategy,
         metadata.flaw_kind,
         metadata.full_goal_task,
-        metadata.initial_seed_splits.join("|"),
     )
-}
-
-fn truncate_for_log(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut truncated = value.chars().take(max_chars).collect::<String>();
-    truncated.push_str("...");
-    truncated
 }
 
 pub(super) fn log_transition_residual_summary(remaining_costs: &TransitionResidualCosts) {

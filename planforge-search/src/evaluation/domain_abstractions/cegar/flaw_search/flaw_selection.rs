@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -64,13 +65,15 @@ pub trait FlawTreatment {
     /// Return the ordered chosen flaws. The two domain-size vectors are what
     /// the scoring criteria read: how far each variable has already been
     /// refined, and therefore what a further split would cost.
+    ///
+    /// `tie_break` decides between equally good flaws; see [`TieBreak`].
     fn choose_flaws(
         &self,
         task: &dyn AbstractNumericTask,
         flaws: &[Flaw],
         domain_sizes: &[usize],
         numeric_domain_sizes: &[usize],
-        rng: &mut SmallRng,
+        tie_break: TieBreak<'_>,
         plan_length: usize,
     ) -> ChosenFlaws;
 
@@ -83,6 +86,15 @@ pub trait FlawTreatment {
     /// to discriminate whether it should be refined to avoid refining multiple
     /// flaws for which this function return `false`.
     fn should_be_refined(&self, flaw: &Flaw, last_refined: &Flaw) -> bool;
+}
+
+/// How a flaw treatment decides between equally good flaws.
+pub enum TieBreak<'rng> {
+    /// Shuffle them with the seeded generator.
+    Random(&'rng mut SmallRng),
+    /// Order them by a deterministic key and take the one at `rank % ties`.
+    /// Treatments that refine every flaw have nothing to choose.
+    Rank(usize),
 }
 
 fn flaw_atom_key(flaw: &Flaw) -> (u8, usize, usize, u64, bool) {
@@ -171,10 +183,23 @@ impl FlawTreatment for FlawTreatmentVariants {
         flaws: &[Flaw],
         domain_sizes: &[usize],
         numeric_domain_sizes: &[usize],
-        rng: &mut SmallRng,
+        tie_break: TieBreak<'_>,
         plan_length: usize,
     ) -> ChosenFlaws {
         let conditions = task.numeric_conditions();
+        let rng = match tie_break {
+            TieBreak::Rank(rank) => {
+                return self.choose_ranked_flaws(
+                    flaws,
+                    conditions,
+                    domain_sizes,
+                    numeric_domain_sizes,
+                    plan_length,
+                    rank,
+                );
+            }
+            TieBreak::Random(rng) => rng,
+        };
         match self {
             FlawTreatmentVariants::RandomSingleAtom => choose_single_random_flaw(flaws, rng),
             FlawTreatmentVariants::OneSplitPerAtom => choose_flaws_per_atom(flaws),
@@ -262,6 +287,140 @@ impl FlawTreatment for FlawTreatmentVariants {
     }
 }
 
+impl FlawTreatmentVariants {
+    /// [`FlawTreatment::choose_flaws`] with [`TieBreak::Rank`]: the
+    /// treatment's preference order, ties broken by [`flaw_tie_key`], and the
+    /// best tier rotated so the flaw at `rank % ties` comes first.
+    fn choose_ranked_flaws(
+        &self,
+        flaws: &[Flaw],
+        conditions: &NumericConditions,
+        domain_sizes: &[usize],
+        numeric_domain_sizes: &[usize],
+        plan_length: usize,
+        rank: usize,
+    ) -> ChosenFlaws {
+        let max_refined = |prop_multiplier| {
+            compute_max_refined(
+                flaws,
+                conditions,
+                domain_sizes,
+                numeric_domain_sizes,
+                prop_multiplier,
+            )
+        };
+        let higher_first = |left: &usize, right: &usize| right.cmp(left);
+        match self {
+            Self::RandomSingleAtom => rank_tied_best(
+                flaws,
+                unscored_candidates(flaws)
+                    .map(|candidate| (candidate, ()))
+                    .collect(),
+                rank,
+                |_, _| Ordering::Equal,
+            ),
+            Self::MaxRefinedSingleAtom | Self::MaxRefinedPreferringProp => {
+                let prop_multiplier = if *self == Self::MaxRefinedSingleAtom {
+                    1
+                } else {
+                    100
+                };
+                let (candidates, _) = max_refined(prop_multiplier);
+                rank_tied_best(
+                    flaws,
+                    candidates
+                        .into_iter()
+                        .map(|candidate| {
+                            let score = candidate.score;
+                            (candidate, score)
+                        })
+                        .collect(),
+                    rank,
+                    higher_first,
+                )
+            }
+            Self::MinGrowthSingleAtom => rank_tied_best(
+                flaws,
+                min_growth_candidates(flaws, conditions, domain_sizes, numeric_domain_sizes),
+                rank,
+                |left, right| compare_growth_keys(*left, *right),
+            ),
+            Self::ClosestToGoal => rank_tied_best(
+                flaws,
+                unscored_candidates(flaws)
+                    .map(|candidate| {
+                        let step = flaws[candidate.idx].step();
+                        (candidate, step)
+                    })
+                    .collect(),
+                rank,
+                higher_first,
+            ),
+            Self::BalanceMaxRefinedAndClosestToGoal
+            | Self::BalanceMaxRefinedPreferringPropAndClosestToGoal => {
+                let prop_multiplier = if *self == Self::BalanceMaxRefinedAndClosestToGoal {
+                    1
+                } else {
+                    100
+                };
+                let (candidates, max_score) = max_refined(prop_multiplier);
+                rank_tied_best(
+                    flaws,
+                    candidates
+                        .into_iter()
+                        .map(|candidate| {
+                            let balance = balance_score(flaws, &candidate, max_score, plan_length);
+                            (candidate, balance)
+                        })
+                        .collect(),
+                    rank,
+                    |left: &f64, right: &f64| right.total_cmp(left),
+                )
+            }
+            Self::OneSplitPerAtom => choose_flaws_per_atom(flaws),
+            Self::OneSplitPerVariable => fix_flaws_per_variable(flaws),
+        }
+    }
+}
+
+/// A key that orders flaws independently of the order the flaw search emitted
+/// them in.
+fn flaw_tie_key(flaw: &Flaw) -> ((u8, usize, usize, u64, bool), usize) {
+    (flaw_atom_key(flaw), flaw.step())
+}
+
+fn unscored_candidates(flaws: &[Flaw]) -> impl Iterator<Item = FlawCandidate> + '_ {
+    (0..flaws.len()).map(|idx| FlawCandidate {
+        idx,
+        score: 0,
+        restricted_dep: None,
+    })
+}
+
+/// Order `scored` best first by `prefer`, break ties by [`flaw_tie_key`] and
+/// flaw index, and rotate the best tier so that its candidate at
+/// `rank % tier size` comes first. The other candidates keep their order.
+fn rank_tied_best<S>(
+    flaws: &[Flaw],
+    mut scored: Vec<(FlawCandidate, S)>,
+    rank: usize,
+    prefer: impl Fn(&S, &S) -> Ordering,
+) -> ChosenFlaws {
+    scored.sort_by(|(left, left_score), (right, right_score)| {
+        prefer(left_score, right_score)
+            .then_with(|| flaw_tie_key(&flaws[left.idx]).cmp(&flaw_tie_key(&flaws[right.idx])))
+            .then_with(|| left.idx.cmp(&right.idx))
+    });
+    if let Some((_, best)) = scored.first() {
+        let tier_size = scored
+            .iter()
+            .take_while(|(_, score)| prefer(score, best).is_eq())
+            .count();
+        scored[..tier_size].rotate_left(rank % tier_size);
+    }
+    scored.into_iter().map(|(candidate, _)| candidate).collect()
+}
+
 pub(super) fn choose_single_random_flaw(flaws: &[Flaw], rng: &mut SmallRng) -> ChosenFlaws {
     if flaws.is_empty() {
         return vec![];
@@ -317,21 +476,14 @@ fn compute_max_refined(
     for (idx, flaw) in flaws.iter().enumerate() {
         let mut restricted_dep: Option<Vec<NumericFlaw>> = None;
         let score: usize = match flaw {
-            Flaw::Numeric(nf) => numeric_domain_sizes
-                .get(nf.numeric_var_id.index())
-                .copied()
-                .unwrap_or(0),
+            Flaw::Numeric(nf) => numeric_domain_sizes[nf.numeric_var_id.index()],
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var_index();
-                let base: usize =
-                    domain_sizes.get(var_id.index()).copied().unwrap_or(0) * prop_multiplier;
+                let base: usize = domain_sizes[var_id.index()] * prop_multiplier;
                 if conditions.is_condition_var(var_id) && !pf.dependent_numeric_flaws.is_empty() {
                     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
                     for nf in pf.dependent_numeric_flaws.iter().cloned() {
-                        let partitions = numeric_domain_sizes
-                            .get(nf.numeric_var_id.index())
-                            .copied()
-                            .unwrap_or(0);
+                        let partitions = numeric_domain_sizes[nf.numeric_var_id.index()];
                         by_partition_count.entry(partitions).or_default().push(nf);
                     }
                     if let Some((&max_partitions, vec)) = by_partition_count.iter().next_back() {
@@ -396,7 +548,7 @@ pub(super) fn fix_single_flaw_max_refined(
 }
 
 fn growth_key_for_domain_size(current_size: usize) -> (usize, usize) {
-    let current_size = current_size.max(1);
+    assert!(current_size > 0, "abstract domain sizes are positive");
     (current_size + 1, current_size)
 }
 
@@ -412,41 +564,31 @@ fn best_min_growth_dependent_flaws(
 ) -> Option<(Vec<NumericFlaw>, (usize, usize))> {
     let mut by_partition_count: BTreeMap<usize, Vec<NumericFlaw>> = BTreeMap::new();
     for nf in dependent_numeric_flaws.iter().cloned() {
-        let partitions = numeric_domain_sizes
-            .get(nf.numeric_var_id.index())
-            .copied()
-            .unwrap_or(1)
-            .max(1);
+        let partitions = numeric_domain_sizes[nf.numeric_var_id.index()];
         by_partition_count.entry(partitions).or_default().push(nf);
     }
     let (&max_partitions, flaws) = by_partition_count.iter().next_back()?;
     Some((flaws.clone(), growth_key_for_domain_size(max_partitions)))
 }
 
-pub(super) fn fix_single_flaw_min_growth(
+/// Every flaw with the growth (as a ratio `new / old` abstraction size) its
+/// refinement causes.
+fn min_growth_candidates(
     flaws: &[Flaw],
     conditions: &NumericConditions,
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
-    rng: &mut SmallRng,
-) -> ChosenFlaws {
+) -> Vec<(FlawCandidate, (usize, usize))> {
     let mut candidates: Vec<(FlawCandidate, (usize, usize))> = Vec::with_capacity(flaws.len());
     for (idx, flaw) in flaws.iter().enumerate() {
         let mut restricted_dep = None;
         let growth = match flaw {
-            Flaw::Numeric(nf) => growth_key_for_domain_size(
-                numeric_domain_sizes
-                    .get(nf.numeric_var_id.index())
-                    .copied()
-                    .unwrap_or(1),
-            ),
+            Flaw::Numeric(nf) => {
+                growth_key_for_domain_size(numeric_domain_sizes[nf.numeric_var_id.index()])
+            }
             Flaw::Propositional(pf) => {
                 let var_id = pf.fact.var_index();
-                let prop_size = domain_sizes
-                    .get(var_id.index())
-                    .copied()
-                    .unwrap_or(1)
-                    .max(1);
+                let prop_size = domain_sizes[var_id.index()];
                 let prop_growth = if conditions.is_condition_var(var_id) && prop_size >= 2 {
                     (1, 1)
                 } else {
@@ -478,6 +620,18 @@ pub(super) fn fix_single_flaw_min_growth(
             growth,
         ));
     }
+    candidates
+}
+
+pub(super) fn fix_single_flaw_min_growth(
+    flaws: &[Flaw],
+    conditions: &NumericConditions,
+    domain_sizes: &[usize],
+    numeric_domain_sizes: &[usize],
+    rng: &mut SmallRng,
+) -> ChosenFlaws {
+    let mut candidates =
+        min_growth_candidates(flaws, conditions, domain_sizes, numeric_domain_sizes);
     candidates.shuffle(rng);
     // `sort_by` is stable, so equal-growth candidates retain their seeded
     // shuffled order. Breaking ties by the original flaw index here would
@@ -521,17 +675,27 @@ pub(super) fn fix_balance_max_refined_closest_to_goal(
         numeric_domain_sizes,
         prop_multiplier,
     );
-    let max_score = max_score as f64;
+    candidates.sort_unstable_by(|a, b| {
+        balance_score(flaws, b, max_score, plan_length)
+            .partial_cmp(&balance_score(flaws, a, max_score, plan_length))
+            .unwrap()
+    });
+
+    candidates
+}
+
+/// How refined a flaw's variable already is, relative to the most refined one,
+/// minus how far along the plan the flaw sits.
+fn balance_score(
+    flaws: &[Flaw],
+    candidate: &FlawCandidate,
+    max_score: usize,
+    plan_length: usize,
+) -> f64 {
     let max_length = if plan_length > 0 {
         plan_length as f64
     } else {
         1.0
     };
-    candidates.sort_unstable_by(|a, b| {
-        (b.score as f64 / max_score - flaws[b.idx].step() as f64 / max_length)
-            .partial_cmp(&(a.score as f64 / max_score - flaws[a.idx].step() as f64 / max_length))
-            .unwrap()
-    });
-
-    candidates
+    candidate.score as f64 / max_score as f64 - flaws[candidate.idx].step() as f64 / max_length
 }

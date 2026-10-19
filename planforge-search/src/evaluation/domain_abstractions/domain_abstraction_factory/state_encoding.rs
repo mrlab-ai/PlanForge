@@ -2,34 +2,43 @@ use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
 
 use super::*;
 
-/// What one comparison-enumeration loop remembers across calls: the resolved
-/// successor sets, how many states they hold, and the buffer that serves a
-/// result too large to keep.
-#[derive(Default)]
-pub(super) struct ComparisonEnumerationMemo {
-    pub(super) cache: ComparisonEnumerationCache,
-    pub(super) cached_state_count: usize,
-    pub(super) overflow: Vec<usize>,
+/// What one comparison-enumeration loop remembers across calls: the successor
+/// sets it already resolved.
+///
+/// A memo serves the one layout it is created with (hash multipliers, numeric
+/// domain sizes, refined comparison variables), so an entry is determined by
+/// its base state and its fixed comparison facts. Entries are found through a
+/// 64-bit signature of that key, and a hit compares the stored key with the
+/// requested one, so a signature collision costs a comparison, never a wrong
+/// answer. The memo holds every set its loop resolves; only the run's memory
+/// limit bounds it.
+pub(super) struct ComparisonEnumerationMemo<'layout> {
+    layout: ComparisonBranchingLayout<'layout>,
+    entries_by_signature: ComparisonEnumerationCache,
 }
 
-const COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES: usize = 2_000_000;
-const COMPARISON_ENUMERATION_CACHE_MAX_STATES: usize = 10_000_000;
+impl<'layout> ComparisonEnumerationMemo<'layout> {
+    pub(super) fn new(layout: ComparisonBranchingLayout<'layout>) -> Self {
+        Self {
+            layout,
+            entries_by_signature: ComparisonEnumerationCache::default(),
+        }
+    }
+}
 
-/// Cache used by `enumerate_states_with_evaluated_comparisons_cached`. Keyed
-/// by a precomputed 64-bit signature of `(base_state_hash, fixed_comparisons)`
-/// — `comparison_var_ids` is intentionally omitted because every call site
-/// in this factory passes the same slice (`self.comparison_var_ids()`), so it
-/// doesn't disambiguate.
-///
-/// The previous design hashed a `(usize, Vec<usize>, Vec<(usize, usize)>)`
-/// struct via SipHash on every cache lookup; on a 200k-state minecraft build
-/// `sip::Hasher::write` reached 11% of total CPU and the per-lookup
-/// `Vec::to_vec`/`collect` allocations dominated `_int_malloc`. The new
-/// table is a `HashMap<u64, Vec<usize>>` with an identity hasher: lookup is
-/// a single load + probe, no allocation, no hash function.
+/// One resolved successor set and the exact key it was resolved for.
+struct ComparisonEnumerationEntry {
+    base_state_hash: usize,
+    fixed_comparisons: Box<[ExplicitFact]>,
+    states: Vec<usize>,
+}
+
+/// Entries by the signature of their key. The signature is already mixed, so
+/// the table uses an identity hasher: a lookup is a load and a probe, with no
+/// hash function and no allocation.
 type ComparisonEnumerationCache = HashMap<
     u64,
-    Vec<usize>,
+    Vec<ComparisonEnumerationEntry>,
     std::hash::BuildHasherDefault<planforge_sas::utils::hashing::IdentityU64Hasher>,
 >;
 
@@ -821,44 +830,46 @@ impl DomainAbstractionFactory {
         Ok(states)
     }
 
-    pub(super) fn enumerate_states_with_evaluated_comparisons_cached<'a>(
+    pub(super) fn enumerate_states_with_evaluated_comparisons_cached<'memo>(
         &self,
         base_state_hash: usize,
         task: &dyn AbstractNumericTask,
-        layout: ComparisonBranchingLayout<'_>,
         fixed_comparisons: &[ExplicitFact],
-        memo: &'a mut ComparisonEnumerationMemo,
-    ) -> Result<&'a [usize]> {
-        let key = comparison_enumeration_signature(base_state_hash, fixed_comparisons);
-        if memo.cache.contains_key(&key) {
-            let states = memo
-                .cache
-                .get(&key)
-                .expect("comparison enumeration cache key disappeared");
-            return Ok(states.as_slice());
-        }
-
-        let states = self.enumerate_states_with_evaluated_comparisons(
-            base_state_hash,
-            task,
-            layout.numeric_domain_sizes,
-            layout.hash_multipliers,
-            layout.comparison_var_ids,
-            fixed_comparisons,
-        )?;
-        if memo.cache.len() < COMPARISON_ENUMERATION_CACHE_MAX_ENTRIES
-            && memo.cached_state_count + states.len() <= COMPARISON_ENUMERATION_CACHE_MAX_STATES
-        {
-            memo.cached_state_count += states.len();
-            memo.cache.insert(key, states);
-            let states = memo
-                .cache
-                .get(&key)
-                .expect("inserted comparison enumeration cache entry missing");
-            return Ok(states.as_slice());
-        }
-        memo.overflow.clear();
-        memo.overflow.extend_from_slice(&states);
-        Ok(memo.overflow.as_slice())
+        memo: &'memo mut ComparisonEnumerationMemo<'_>,
+    ) -> Result<&'memo [usize]> {
+        let layout = memo.layout;
+        let entries = memo
+            .entries_by_signature
+            .entry(comparison_enumeration_signature(
+                base_state_hash,
+                fixed_comparisons,
+            ))
+            .or_default();
+        let index = match entries.iter().position(|entry| {
+            entry.base_state_hash == base_state_hash
+                && *entry.fixed_comparisons == *fixed_comparisons
+        }) {
+            Some(index) => index,
+            None => {
+                let states = self.enumerate_states_with_evaluated_comparisons(
+                    base_state_hash,
+                    task,
+                    layout.numeric_domain_sizes,
+                    layout.hash_multipliers,
+                    layout.comparison_var_ids,
+                    fixed_comparisons,
+                )?;
+                entries.push(ComparisonEnumerationEntry {
+                    base_state_hash,
+                    fixed_comparisons: fixed_comparisons.into(),
+                    states,
+                });
+                entries.len() - 1
+            }
+        };
+        Ok(&entries[index].states)
     }
 }
+
+#[cfg(test)]
+mod tests;

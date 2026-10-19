@@ -35,7 +35,8 @@
 //! generator already has -- a collection-size limit and "stop at the first
 //! duplicate" -- reproduces every asserted value from a 2-to-6-member
 //! collection instead of a 2-to-71-member one, and takes the module from 116.7s
-//! to 6.4s. See [`standard_round7_collection_config`].
+//! to 6.4s. The domain collections are now goal-focused and bounded by
+//! abstract states only; see [`goal_focused_collection_config`].
 //!
 //! What is left that genuinely needs the time is blind A* on the three biggest
 //! instances: an optimum can only be confirmed by searching for it, and those
@@ -61,9 +62,6 @@ use planforge_search::evaluation::domain_abstractions::domain_abstraction_collec
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     FlawTreatmentVariants,
-    InitSplitMethod,
-    InitSplitQuantity,
-    NumericSplitStrategy,
 };
 use planforge_search::evaluation::domain_abstractions::domain_abstraction_generator::{
     DomainAbstraction, DomainAbstractionGenerator,
@@ -286,70 +284,30 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     );
 }
 
-/// The collection configuration every cost-partitioning test below shares.
+/// The collection configuration every cost-partitioning test below shares:
+/// the goal-focused (`complementary`) collection, two variants per goal with
+/// progressive goal roots.
 ///
-/// This used to stop the generator on `total_max_time = 15s` with
-/// `stagnation_limit` at 30s -- which is to say it could never stagnate, so it
-/// ran the clock out on every instance, however small. Worse, what it handed
-/// back was not a function of its inputs: the CEGAR seed is derived from the
-/// iteration counter and an abstraction cut off by
-/// `abstraction_generation_max_time` is a distinct abstraction, so every extra
-/// iteration the machine squeezed into the window added a member. The same
-/// binary on the same instance produced 3 members in one run and 32 in the next,
-/// and region-CP table construction then paid for all of them -- 63s of it on
-/// `prob_2b2p_x`.
-///
-/// The generator already has two stopping rules that do not read a clock, and
-/// they are what bound it now:
-///
-/// * `max_collection_size` -- an abstract-state budget, decremented by each new
-///   member. Kept equal to `max_abstraction_size` so the first member still gets
-///   the full per-abstraction cap and is unaffected.
-/// * `stagnation_limit = 0.0` with `enable_blacklist_on_stagnation = false` --
-///   an iteration that produces an abstraction already in the collection ends
-///   it. `time_point_of_last_new_abstraction` is assigned the same `f64` that is
-///   compared against it, so a productive iteration compares `0.0 > 0.0` and a
-///   duplicate compares a positive elapsed difference: the rule is "stop at the
-///   first duplicate", not a duration.
-///
-/// `total_max_time` and `abstraction_generation_max_time` stay only as hang
-/// guards, raised rather than lowered so that they cannot truncate an
-/// abstraction and put the clock back into the result. Collection generation now
-/// measures 0.06-0.25s against those 30s and 10s.
-///
-/// Every value the tests below assert is reproduced, from collections one order
-/// of magnitude smaller. Measured (unoptimized, members `n`, initial h, and the
-/// whole test):
-///
-/// | instance | n | h | before | after |
-/// |---|---|---|---|---|
-/// | `prob_1b1p_x` | 2 | 11 | 15.2s | 0.14s |
-/// | `prob_1b2p_x` | 4 | 17 | 21.2s | 1.09s |
-/// | `prob_2b1p` | 6 | 11 | 25.1s | 3.3s |
-/// | `prob_2b2p_x` | 3 | 12 | 91.3s | 5.9s |
-/// | `prob_2b2p_assign` | 2 | 7 | 55.0s | 5.9s |
-///
-/// and the h column is the same one the 2-to-71-member time-bounded collections
-/// produced, so this is the identical claim bought for a fiftieth of the price.
-fn standard_round7_collection_config(
+/// No clock bounds it. The schedule builds a fixed member sequence, each
+/// member capped at 1_000 abstract states and the collection at 10_000, and
+/// every member's CEGAR seed is derived from the configured seed, the goal, and
+/// the variant -- so the collection, and every value asserted below, is a
+/// function of the instance and the seed alone.
+fn goal_focused_collection_config(
     seed: u64,
 ) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        max_abstraction_size: 10_000,
+        max_abstraction_size: 1_000,
         max_collection_size: 10_000,
-        abstraction_generation_max_time: 10.0,
-        total_max_time: 30.0,
-        stagnation_limit: 0.0,
-        enable_blacklist_on_stagnation: false,
-        blacklist_trigger_percentage: 1.0,
-        init_split_quantity: InitSplitQuantity::All,
-        init_split_method: InitSplitMethod::RandomValue,
+        abstraction_generation_max_time: f64::INFINITY,
+        total_max_time: f64::INFINITY,
         flaw_treatment: FlawTreatmentVariants::MaxRefinedSingleAtom,
-        numeric_split_strategy: NumericSplitStrategy::Standard,
         use_wildcard_plans: true,
         combine_labels: false,
-        flaw_kind: FlawKind::SequenceBidirectional,
+        flaw_kind: FlawKind::ExecuteEntirePlan,
         collection_strategy: CollectionStrategy::Complementary,
+        variants_per_goal: 2,
+        progressive_goal_roots: true,
         random_seed: Some(seed),
         ..Default::default()
     }
@@ -421,9 +379,8 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
         .expect("sailing-simple restricted task construction must not fail")
         .expect("sailing-simple instances have promotable derived roots")
         .into_task();
-    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-        standard_round7_collection_config(1),
-    );
+    let generator =
+        DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
     let abstractions = generator
         .generate_collection(&task)
         .expect("scp_online domain abstractions should build");
@@ -446,7 +403,7 @@ fn scp_online_search_cost(instance: &str) -> Option<f64> {
 }
 
 fn scp_online_initial_h(instance: &str) -> f64 {
-    scp_online_initial_h_with_config(instance, standard_round7_collection_config(1))
+    scp_online_initial_h_with_config(instance, goal_focused_collection_config(1))
 }
 
 fn numeric_var_id_by_name_parts(
@@ -465,32 +422,20 @@ fn numeric_var_id_by_name_parts(
 /// additive 22 that disjoint near boats should give, pinned so a change in
 /// either direction is visible.
 ///
-/// This was the most expensive test in the workspace at 91.3s, and none of it
-/// was needed: with the time-bounded collection, region-CP table construction
-/// took 63s over 6 members to reach 12, and truncating *that* moved the pinned
-/// value rather than merely costing precision (measured h = 12 at construction
-/// budgets of 30s and 100s, 11 at 10s and below -- pinning 11 would be pinning a
-/// truncation artifact that a faster machine crosses back over). The clock-free
-/// bound on [`standard_round7_collection_config`] reaches the same 12 from 3
-/// members in 5.9s, with no construction deadline in sight.
+/// The value is the one the clock-free [`goal_focused_collection_config`]
+/// collection reaches (11; the retired root-group collection reached 12).
 #[test]
 fn sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum() {
     let optimum = optimum_of("prob_2b2p_x");
     let h = scp_online_initial_h("prob_2b2p_x");
     assert!(h <= optimum, "prob_2b2p_x: h={h} must be admissible");
-    assert_eq!(h, 12.0);
+    assert_eq!(h, 11.0);
 }
 
 /// Both persons' nearest boat is b0. Per-person abstractions cannot encode that
 /// one boat must perform the 10-move transfer between targets; with the current
-/// residual saturation they retain 7 units at the initial state.
-///
-/// Same story as
-/// [`sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum`], and
-/// sharper because the b1 decoy sits at x=100 and its chain is ~190 layers:
-/// construction over the time-bounded collection took 78s to converge on 7 and
-/// every budget of 10s or less yielded 6, while the clock-free bound reaches 7
-/// from 2 members in 5.9s.
+/// residual saturation the goal-focused collection retains 6 units at the
+/// initial state (the retired root-group collection retained 7).
 #[test]
 fn sailing_simple_assignment_gap() {
     let optimum = optimum_of("prob_2b2p_assign");
@@ -499,15 +444,14 @@ fn sailing_simple_assignment_gap() {
         h <= optimum,
         "prob_2b2p_assign: h={h} must be admissible against h*={optimum}"
     );
-    assert_eq!(h, 7.0);
+    assert_eq!(h, 6.0);
 }
 
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
     let (task, _scratch) = sailing_task("prob_2b1p");
-    let mut config = standard_round7_collection_config(1);
-    config.max_abstraction_size = 1_000;
-    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config.clone());
+    let generator =
+        DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
     let abstractions = generator
         .generate_collection(&task)
         .expect("complementary collection should build on prob_2b1p");
@@ -549,13 +493,7 @@ fn sailing_simple_ratchet_equilibrium() {
     // result proves both roots are refined together.
     //
     // Note: we deliberately do NOT bound far-boat layers relative to near-boat
-    // layers here. An earlier "ratchet" hypothesis (seed only the nearest
-    // achiever's full chain, let CEGAR lay rival layers on demand) predicted
-    // far <= ~near; measurement falsified it — on-demand refinement costs a
-    // full CEGAR iteration per layer and collapsed initial h on prob_2_2
-    // (72 -> 36) and prob_1_11 (101 -> 59), so upfront full-chain seeding was
-    // restored. Under full-chain seeding the far boat is sized by its own
-    // distance to the target (here ~182 vs ~22), which is expected, not a bug.
+    // layers here; the far boat is sized by its own distance to the target.
     assert!(
         !saved_p0_group_counts.is_empty(),
         "expected at least one saved(p0) abstraction refining both boat x roots"
@@ -602,34 +540,25 @@ fn sailing_simple_scp_online_solves_rather_than_reporting_dead_ends() {
 #[test]
 fn sailing_simple_complementary_collection_keeps_single_goal_solved_abstractions() {
     let (task, _scratch) = sailing_task("prob_1b4p_axes");
-    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        collection_strategy: CollectionStrategy::Complementary,
-        random_seed: Some(1),
-        max_abstraction_size: 10_000,
-        // Bounded by abstract states rather than by the clock, for the reason
-        // spelled out on `standard_round7_collection_config`: at 100_000 nothing
-        // but `total_max_time` ever stopped this, so it ran the full 30s. This
-        // test wants breadth rather than a heuristic value, so it keeps the
-        // default stagnation behaviour instead of stopping at the first
-        // duplicate -- that would stop at 3 members, and 8 are asserted.
-        // Measured member counts: 11-13 at a 5_000 budget, 21-26 at 10_000,
-        // 31-35 at 20_000. 10_000 keeps a factor of two and a half over the
-        // assertion for 2.1s instead of 18.9s.
-        max_collection_size: 10_000,
-        abstraction_generation_max_time: 10.0,
-        total_max_time: 30.0,
-        ..Default::default()
-    };
-    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+    let generator =
+        DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
     let abstractions = generator
         .generate_collection(&task)
         .expect("complementary collection should build on prob_1b4p_axes");
 
-    assert!(
-        abstractions.len() >= 8,
-        "expected at least regression and progression single-goal abstractions per goal, got {}",
-        abstractions.len()
-    );
+    for goal_id in 0..task.get_num_goals() {
+        let variants = abstractions
+            .iter()
+            .filter_map(|abstraction| abstraction.metadata.collection_member)
+            .filter(|member| member.goal_id == goal_id && member.variant_id < 2)
+            .map(|member| member.variant_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            variants,
+            std::collections::BTreeSet::from([0, 1]),
+            "expected a progression and a regression variant of goal {goal_id}"
+        );
+    }
     assert!(
         abstractions
             .iter()
