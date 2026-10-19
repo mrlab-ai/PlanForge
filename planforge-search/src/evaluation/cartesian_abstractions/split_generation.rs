@@ -28,7 +28,7 @@ pub(super) fn splits_for_desired_facts(
     .with_context(|| format!("failed to split desired region for {description}"))
 }
 
-fn constrain_desired_region(
+pub(super) fn constrain_desired_region(
     semantics: &CartesianSemantics<'_>,
     desired: &mut StateRegion,
     fact: &ExplicitFact,
@@ -169,7 +169,7 @@ fn negate_comparison_operator(operator: &ComparisonOperator) -> Result<Compariso
     })
 }
 
-fn splits_for_desired_region(
+pub(super) fn splits_for_desired_region(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     state_id: usize,

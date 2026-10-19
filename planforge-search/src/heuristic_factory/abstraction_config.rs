@@ -821,14 +821,7 @@ fn apply_cartesian_source_options(
             }
             "flaw_kind" => {
                 let flaw_kind = FlawKind::from_option_value(arg.value())?;
-                if !matches!(
-                    flaw_kind,
-                    FlawKind::Progression | FlawKind::ExecuteEntirePlan
-                ) {
-                    return Err(format!(
-                        "Cartesian abstractions do not support flaw_kind={flaw_kind}; expected progression or execute_entire_plan"
-                    ));
-                }
+                crate::evaluation::cartesian_abstractions::validate_cartesian_flaw_kind(flaw_kind)?;
                 config.abstraction.flaw_kind = flaw_kind;
             }
             "refinement_direction" => {

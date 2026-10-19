@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::cegar::regression::progress_numeric_box;
 
 pub(super) fn split_failed_fact(
     working: &WorkingAbstraction,
@@ -267,13 +268,169 @@ fn comparison_refinement(
     goal: ComparisonRefinementGoal,
     description: String,
 ) -> Result<Split> {
+    let tree = semantics
+        .task
+        .numeric_conditions()
+        .get(tree_id)
+        .with_context(|| format!("missing comparison tree {tree_id}"))?;
+    let mut candidates = comparison_split_candidates(
+        working,
+        semantics,
+        ComparisonSplitQuery {
+            state_id,
+            tree_id,
+            witness: numeric_values,
+            concrete_truth: tree.evaluate_point(numeric_values),
+            goal,
+            regressed_through: &[],
+        },
+        &description,
+    )?;
+    ensure!(
+        !candidates.is_empty(),
+        "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
+    );
+    if semantics.split_selection() == CartesianSplitSelection::MinTransitionGrowth {
+        retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
+    }
+    retain_target_centered_splits(semantics, &mut candidates);
+    let has_achieving_candidate = candidates.iter().any(|(_, achieved, _)| *achieved);
+    if has_achieving_candidate {
+        candidates.retain(|(_, achieved, _)| *achieved);
+    }
+    select_refinement_split(
+        working,
+        semantics,
+        candidates.into_iter().map(|(_, _, split)| split).collect(),
+        0x434F_4D50,
+    )
+}
+
+/// The split of Cartesian state `state_id` that decides the comparison
+/// `tree_id`, regressed through `ops`, as violated on the side of `witness`,
+/// or `None` when no single split decides it.
+///
+/// `witness` is the concrete state the split keeps; the comparison fails on
+/// its progression through `ops`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn regressed_comparison_refinement(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    state_id: usize,
+    tree_id: usize,
+    witness: &[NumericValue],
+    ops: &[OperatorIndex],
+    desired_value: ExplicitValueIndex,
+    description: &str,
+) -> Result<Option<Split>> {
+    ensure!(
+        !ops.is_empty(),
+        "a regressed comparison is regressed through at least one operator"
+    );
+    let goal = ComparisonRefinementGoal::exclude(desired_value)?;
+    let tree = semantics
+        .task()
+        .numeric_conditions()
+        .get(tree_id)
+        .with_context(|| format!("missing comparison tree {tree_id}"))?;
+    let mut progressed = working.states()[state_id].numeric.to_vec();
+    for &op_id in ops {
+        progress_numeric_box(
+            semantics.task(),
+            semantics.additive_numeric_views(),
+            op_id,
+            &mut progressed,
+        )?;
+    }
+    if tree.evaluate_interval(&progressed) == Some(!goal.desired_truth()) {
+        // The abstract state already violates the regressed comparison
+        // everywhere, so no split of it can decide anything.
+        return Ok(None);
+    }
+    let mut candidates = comparison_split_candidates(
+        working,
+        semantics,
+        ComparisonSplitQuery {
+            state_id,
+            tree_id,
+            witness,
+            concrete_truth: !goal.desired_truth(),
+            goal,
+            regressed_through: ops,
+        },
+        description,
+    )?;
+    candidates.retain(|(_, achieved, _)| *achieved);
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    if semantics.split_selection() == CartesianSplitSelection::MinTransitionGrowth {
+        retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
+    }
+    retain_target_centered_splits(semantics, &mut candidates);
+    select_refinement_split(
+        working,
+        semantics,
+        candidates.into_iter().map(|(_, _, split)| split).collect(),
+        0x5245_4743,
+    )
+    .map(Some)
+}
+
+/// What a comparison split has to achieve, and where.
+struct ComparisonSplitQuery<'a> {
+    state_id: usize,
+    tree_id: usize,
+    /// The concrete state the split keeps in one child.
+    witness: &'a [NumericValue],
+    /// Truth of the comparison on `witness` progressed through
+    /// `regressed_through`.
+    concrete_truth: bool,
+    goal: ComparisonRefinementGoal,
+    /// Operators the comparison is regressed through; empty for a comparison
+    /// that `witness` itself must satisfy.
+    regressed_through: &'a [OperatorIndex],
+}
+
+/// A candidate comparison split, with whether it separates the two truth
+/// values and whether it achieves the query's goal in the witness child.
+type ComparisonSplitCandidate = (bool, bool, Split);
+
+/// Keeps only the splits that separate the two truth values when refining
+/// towards comparison targets and at least one does.
+fn retain_target_centered_splits(
+    semantics: &CartesianSemantics<'_>,
+    candidates: &mut Vec<ComparisonSplitCandidate>,
+) {
+    if semantics.refinement_direction() == CartesianRefinementDirection::Regression
+        && candidates
+            .iter()
+            .any(|(separates_truth, _, _)| *separates_truth)
+    {
+        candidates.retain(|(separates_truth, _, _)| *separates_truth);
+    }
+}
+
+fn comparison_split_candidates(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    query: ComparisonSplitQuery<'_>,
+    description: &str,
+) -> Result<Vec<ComparisonSplitCandidate>> {
+    let ComparisonSplitQuery {
+        state_id,
+        tree_id,
+        witness,
+        concrete_truth,
+        goal,
+        regressed_through,
+    } = query;
     let desired_truth = goal.desired_truth();
     let tree = semantics
         .task
         .numeric_conditions()
         .get(tree_id)
         .with_context(|| format!("missing comparison tree {tree_id}"))?;
-    let concrete_truth = tree.evaluate_point(numeric_values);
     ensure!(
         matches!(goal, ComparisonRefinementGoal::ExcludeDesired(_))
             == (concrete_truth != desired_truth),
@@ -283,10 +440,27 @@ fn comparison_refinement(
         .states
         .get(state_id)
         .with_context(|| format!("missing Cartesian state {state_id}"))?;
+    let mut progressed = Vec::new();
+    let mut evaluate = |numeric: &[Interval]| -> Result<Option<bool>> {
+        if regressed_through.is_empty() {
+            return Ok(tree.evaluate_interval(numeric));
+        }
+        progressed.clear();
+        progressed.extend_from_slice(numeric);
+        for &op_id in regressed_through {
+            progress_numeric_box(
+                semantics.task(),
+                semantics.additive_numeric_views(),
+                op_id,
+                &mut progressed,
+            )?;
+        }
+        Ok(tree.evaluate_interval(&progressed))
+    };
     let mut candidates = Vec::new();
     for var_id in tree.regular_numeric_var_dependencies().iter().copied() {
         let witness_value = float_tolerance::canonicalize(
-            *numeric_values
+            *witness
                 .get(var_id.index())
                 .with_context(|| format!("missing concrete numeric var {var_id}"))?,
         );
@@ -328,13 +502,13 @@ fn comparison_refinement(
                 };
                 let mut child_numeric = state.numeric.clone();
                 Arc::make_mut(&mut child_numeric)[var_id.index()] = witness_child;
-                let witness_result = tree.evaluate_interval(&child_numeric);
+                let witness_result = evaluate(&child_numeric)?;
                 ensure!(
                     witness_result != Some(!concrete_truth),
                     "comparison interval for tree {tree_id} excludes its concrete witness after splitting numeric var {var_id}"
                 );
                 Arc::make_mut(&mut child_numeric)[var_id.index()] = other_child;
-                let other_result = tree.evaluate_interval(&child_numeric);
+                let other_result = evaluate(&child_numeric)?;
                 let achieved = match goal {
                     ComparisonRefinementGoal::ExcludeDesired(_) => {
                         witness_result == Some(!desired_truth)
@@ -355,37 +529,13 @@ fn comparison_refinement(
                         ComparisonRefinementGoal::GuaranteeDesired(_)
                     ),
                     integer_lattice,
-                    description: description.clone(),
+                    description: description.to_string(),
                 };
                 candidates.push((separates_truth, achieved, candidate));
             }
         }
     }
-    ensure!(
-        !candidates.is_empty(),
-        "comparison tree {tree_id} has no strict regular-variable split in Cartesian state {state_id}"
-    );
-    if semantics.split_selection() == CartesianSplitSelection::MinTransitionGrowth {
-        retain_min_growth_splits(working, semantics, &mut candidates, |(_, _, split)| split)?;
-    }
-    let has_target_centered_candidate = semantics.refinement_direction()
-        == CartesianRefinementDirection::Regression
-        && candidates
-            .iter()
-            .any(|(separates_truth, _, _)| *separates_truth);
-    if has_target_centered_candidate {
-        candidates.retain(|(separates_truth, _, _)| *separates_truth);
-    }
-    let has_achieving_candidate = candidates.iter().any(|(_, achieved, _)| *achieved);
-    if has_achieving_candidate {
-        candidates.retain(|(_, achieved, _)| *achieved);
-    }
-    select_refinement_split(
-        working,
-        semantics,
-        candidates.into_iter().map(|(_, _, split)| split).collect(),
-        0x434F_4D50,
-    )
+    Ok(candidates)
 }
 
 pub(super) fn comparison_truth(prop_value: ExplicitValueIndex) -> Result<bool> {

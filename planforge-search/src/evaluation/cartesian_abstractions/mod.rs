@@ -11,6 +11,7 @@ mod finalize;
 mod flaw_splits;
 pub mod icaps26;
 mod plan_replay;
+mod regression;
 mod shortest_paths;
 mod split_generation;
 mod split_selector;
@@ -20,6 +21,7 @@ mod tests;
 use finalize::*;
 use flaw_splits::*;
 use plan_replay::*;
+use regression::*;
 use shortest_paths::*;
 use split_generation::*;
 use split_selector::*;
@@ -59,6 +61,7 @@ use super::abstraction_collections::goal_focused::{
 };
 use super::abstraction_collections::portfolio::{CollectionStrategy, mix_seed, stable_text_seed};
 use super::abstraction_task::{AbstractionUse, validate_abstraction_operator};
+use super::cegar::regression::ensure_conditions_are_regressable;
 use super::cegar::{
     CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, progress_concrete_state,
 };
@@ -100,6 +103,19 @@ pub struct CartesianAbstractionMetadata {
     pub concrete_plan_operator_ids: Option<Vec<OperatorIndex>>,
     /// Number of non-loop transitions built before optional standalone compaction.
     pub transition_count: usize,
+}
+
+/// Rejects the flaw kinds Cartesian CEGAR does not implement.
+pub fn validate_cartesian_flaw_kind(flaw_kind: FlawKind) -> Result<(), String> {
+    match flaw_kind {
+        FlawKind::Progression | FlawKind::Regression | FlawKind::ExecuteEntirePlan => Ok(()),
+        FlawKind::SequenceProgression
+        | FlawKind::SequenceRegression
+        | FlawKind::SequenceBidirectional
+        | FlawKind::TargetCentered => Err(format!(
+            "Cartesian abstractions do not support flaw_kind={flaw_kind}; expected progression, regression or execute_entire_plan"
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -974,6 +990,9 @@ impl<'task> CartesianSemantics<'task> {
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
         validate_abstractable_goal(task).map_err(anyhow::Error::msg)?;
+        if config.flaw_kind == FlawKind::Regression {
+            ensure_conditions_are_regressable(task)?;
+        }
         for (op_id, op) in task.get_operators().iter().enumerate() {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
@@ -1838,13 +1857,11 @@ pub struct CartesianAbstractionGenerator {
 impl CartesianAbstractionGenerator {
     pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
+        validate_cartesian_flaw_kind(config.flaw_kind).map_err(anyhow::Error::msg)?;
         ensure!(
-            matches!(
-                config.flaw_kind,
-                FlawKind::Progression | FlawKind::ExecuteEntirePlan
-            ),
-            "Cartesian abstractions support flaw_kind=progression and flaw_kind=execute_entire_plan, not flaw_kind={}",
-            config.flaw_kind
+            config.flaw_kind != FlawKind::Regression
+                || !matches!(config.split_selection, CartesianSplitSelection::Icaps26(_)),
+            "Cartesian regression flaws are not defined for the ICAPS 2026 artifact transition semantics"
         );
         Ok(Self { config })
     }
@@ -1961,7 +1978,16 @@ impl CartesianAbstractionGenerator {
                     None
                 };
                 let check = match self.config.flaw_kind {
-                    FlawKind::Progression => replay_optimal_abstract_trace(
+                    FlawKind::Progression => find_progression_flaw(
+                        &working,
+                        &semantics,
+                        &shortest_paths,
+                        &state_packer,
+                        &axiom_evaluator,
+                        &refinement_root,
+                        selected_plan.as_deref(),
+                    )?,
+                    FlawKind::Regression => find_regression_flaw(
                         &working,
                         &semantics,
                         &shortest_paths,

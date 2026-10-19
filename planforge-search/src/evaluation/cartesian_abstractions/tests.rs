@@ -925,12 +925,21 @@ fn native_random_and_least_refined_selectors_are_independent() {
 #[test]
 fn unsupported_cartesian_flaw_kinds_are_rejected() {
     let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        flaw_kind: FlawKind::Regression,
+        flaw_kind: FlawKind::SequenceRegression,
         ..Default::default()
     })
     .err()
     .expect("unsupported flaw kind must fail");
-    assert!(error.to_string().contains("flaw_kind=regression"));
+    assert!(error.to_string().contains("flaw_kind=sequence_regression"));
+
+    let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        flaw_kind: FlawKind::Regression,
+        split_selection: CartesianSplitSelection::Icaps26(Icaps26SplitSelection::MinUnwanted),
+        ..Default::default()
+    })
+    .err()
+    .expect("regression flaws under the ICAPS 2026 artifact semantics must fail");
+    assert!(error.to_string().contains("regression flaws"));
 }
 
 #[test]
@@ -2890,7 +2899,11 @@ fn numeric_goal_task(
 }
 
 fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
-    for flaw_kind in [FlawKind::Progression, FlawKind::ExecuteEntirePlan] {
+    for flaw_kind in [
+        FlawKind::Progression,
+        FlawKind::Regression,
+        FlawKind::ExecuteEntirePlan,
+    ] {
         let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             max_states: 64,
             flaw_kind,
@@ -2917,4 +2930,259 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             abstraction.transition_system.transitions.len()
         );
     }
+}
+
+/// `x` starts at 0 and the goal is `x >= 3`. `jump` increments `x` but
+/// requires `x >= 1`; `inc` increments it unconditionally at cost 2. After
+/// the initial goal split at 3, the abstract plan `<jump>` fails its
+/// precondition at the initial state, and its goal `x >= 3` fails after
+/// `jump`, which regresses to `x >= 2`.
+fn jump_task() -> NumericRootTask {
+    let increment_x = || {
+        AssignmentEffect::new(
+            VariableIndex::from_usize(0),
+            AssignmentOperation::Plus,
+            VariableIndex::from_usize(1),
+            false,
+            vec![],
+        )
+    };
+    NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
+            comparison_variable("x-at-least-three"),
+            comparison_variable("x-at-least-one"),
+        ],
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+            NumericVariable::new("three".into(), NumericType::Constant, None),
+        ],
+        goals: vec![ExplicitFact::propositional(
+            0,
+            ConditionValue::True.as_usize(),
+        )],
+        mutexes: vec![],
+        state: vec![
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+        ],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+            NumericValue::new(3.0),
+        ],
+        operators: vec![
+            Operator::new(
+                "inc".into(),
+                vec![],
+                vec![],
+                vec![increment_x()],
+                OperatorCost::new(2),
+            ),
+            Operator::new(
+                "jump".into(),
+                vec![ExplicitFact::propositional(
+                    1,
+                    ConditionValue::True.as_usize(),
+                )],
+                vec![],
+                vec![increment_x()],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![
+            ComparisonAxiom::new(
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(2),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::from_usize(1),
+                VariableIndex::from_usize(0),
+                VariableIndex::from_usize(1),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+        ],
+        assignment_axioms: vec![],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    })
+}
+
+#[test]
+fn regression_flaws_split_the_initial_state_at_the_regressed_goal() {
+    let task = jump_task();
+    let numeric_boundaries = |flaw_kind| {
+        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+            max_states: 3,
+            flaw_kind,
+            flaw_candidate_generation: super::CartesianFlawCandidateGeneration::DesiredRegion,
+            ..Default::default()
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+        abstraction
+            .hierarchy
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                RefinementNode::Numeric { boundary, .. } => Some(boundary.value()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        numeric_boundaries(FlawKind::Progression),
+        [3.0, 1.0],
+        "progression separates the initial state from jump's precondition x >= 1"
+    );
+    assert_eq!(
+        numeric_boundaries(FlawKind::Regression),
+        [3.0, 2.0],
+        "regression separates it from the goal x >= 3 regressed through jump"
+    );
+}
+
+#[test]
+fn regression_flaws_solve_the_jump_task_optimally() {
+    let task = jump_task();
+    for flaw_candidate_generation in [
+        super::CartesianFlawCandidateGeneration::General,
+        super::CartesianFlawCandidateGeneration::DesiredRegion,
+    ] {
+        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+            max_states: 64,
+            flaw_kind: FlawKind::Regression,
+            flaw_candidate_generation,
+            ..Default::default()
+        })
+        .unwrap()
+        .generate(&task)
+        .unwrap();
+        assert_eq!(
+            abstraction.metadata.stop_reason,
+            CartesianStopReason::ConcretePlan,
+            "{flaw_candidate_generation:?}"
+        );
+        assert_eq!(
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+            4.0,
+            "{flaw_candidate_generation:?}"
+        );
+    }
+}
+
+/// The task on which box-witness regression does not terminate: `o`
+/// requires `x + y <= 0` and sets the flag, `inc` increments `x`, and the
+/// goal is the flag and `x + y >= 1`. No finite Cartesian partition of the
+/// plane separates `x + y <= 0` from `x + y >= 1`, but anchored regression
+/// flaws only split abstract states of concrete trace states.
+#[test]
+fn regression_flaws_terminate_on_a_linear_goal_that_no_finite_partition_decides() {
+    let sum = VariableIndex::from_usize(2);
+    let task = NumericRootTask::new(NumericRootTaskParts {
+        version: 1,
+        metric: Metric::new(true, None),
+        variables: vec![
+            comparison_variable("sum-at-most-zero"),
+            comparison_variable("sum-at-least-one"),
+            ExplicitVariable::new(
+                2,
+                "flag".into(),
+                vec!["unset".into(), "set".into()],
+                None,
+                ExplicitValueIndex::new(0),
+            ),
+        ],
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("y".into(), NumericType::Regular, None),
+            NumericVariable::new("sum".into(), NumericType::Derived, None),
+            NumericVariable::new("zero".into(), NumericType::Constant, None),
+            NumericVariable::new("one".into(), NumericType::Constant, None),
+        ],
+        goals: vec![
+            ExplicitFact::propositional(1, ConditionValue::True.as_usize()),
+            ExplicitFact::propositional(2, 1),
+        ],
+        mutexes: vec![],
+        state: vec![
+            ExplicitValueIndex::from_usize(ConditionValue::True.as_usize()),
+            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
+            ExplicitValueIndex::new(0),
+        ],
+        numeric_state: vec![ZERO_VALUE, ZERO_VALUE, ZERO_VALUE, ZERO_VALUE, ONE_VALUE],
+        operators: vec![
+            Operator::new(
+                "o".into(),
+                vec![ExplicitFact::propositional(
+                    0,
+                    ConditionValue::True.as_usize(),
+                )],
+                vec![Effect::new(
+                    vec![],
+                    VariableIndex::from_usize(2),
+                    None,
+                    ExplicitValueIndex::new(1),
+                )],
+                vec![],
+                OperatorCost::new(1),
+            ),
+            Operator::new(
+                "inc".into(),
+                vec![],
+                vec![],
+                vec![AssignmentEffect::new(
+                    VariableIndex::from_usize(0),
+                    AssignmentOperation::Plus,
+                    VariableIndex::from_usize(4),
+                    false,
+                    vec![],
+                )],
+                OperatorCost::new(1),
+            ),
+        ],
+        axioms: vec![],
+        comparison_axioms: vec![
+            ComparisonAxiom::new(
+                VariableIndex::from_usize(0),
+                sum,
+                VariableIndex::from_usize(3),
+                ComparisonOperator::LessThanOrEqual,
+            ),
+            ComparisonAxiom::new(
+                VariableIndex::from_usize(1),
+                sum,
+                VariableIndex::from_usize(4),
+                ComparisonOperator::GreaterThanOrEqual,
+            ),
+        ],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            sum,
+            CalOperator::Sum,
+            VariableIndex::from_usize(0),
+            VariableIndex::from_usize(1),
+        )],
+        global_constraint: ExplicitFact::propositional(0, 0),
+    });
+
+    assert_solved_with_h(&task, 2.0);
+    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 64,
+        flaw_kind: FlawKind::Regression,
+        flaw_candidate_generation: super::CartesianFlawCandidateGeneration::DesiredRegion,
+        ..Default::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    assert_eq!(
+        abstraction.metadata.stop_reason,
+        CartesianStopReason::ConcretePlan
+    );
 }

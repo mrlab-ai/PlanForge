@@ -383,16 +383,7 @@ fn cartesian_config_from_collection(
     } else {
         None
     };
-    if !matches!(
-        config.flaw_kind,
-        crate::evaluation::cegar::FlawKind::Progression
-            | crate::evaluation::cegar::FlawKind::ExecuteEntirePlan
-    ) {
-        return Err(format!(
-            "Cartesian abstractions do not support flaw_kind={}; expected progression or execute_entire_plan",
-            config.flaw_kind
-        ));
-    }
+    crate::evaluation::cartesian_abstractions::validate_cartesian_flaw_kind(config.flaw_kind)?;
     Ok(CartesianAbstractionConfig {
         max_states: config.max_abstraction_size,
         max_time,

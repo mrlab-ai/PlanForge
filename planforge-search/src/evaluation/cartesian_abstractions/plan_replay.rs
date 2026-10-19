@@ -40,27 +40,71 @@ fn concrete_is_goal(
     })
 }
 
-pub(super) fn replay_optimal_abstract_trace(
+/// A state `s_i` of the concrete trace of an abstract plan, together with the
+/// abstract state `α(s_i)` it maps to.
+pub(super) struct TraceState {
+    pub(super) abstract_state: usize,
+    pub(super) propositions: Vec<u64>,
+    pub(super) prop_values: Vec<ExplicitValueIndex>,
+    pub(super) numeric: Vec<NumericValue>,
+}
+
+/// The first flaw of a concrete trace, exposed by its last state `s_k`.
+pub(super) enum TraceFlaw<'task> {
+    /// `α(s_k)` is an abstract goal state, but `s_k` violates these goal facts.
+    Goal(Vec<&'task ExplicitFact>),
+    /// `s_k` violates these preconditions of the plan's next transition.
+    Precondition {
+        transition: TransitionKey,
+        failed: Vec<&'task ExplicitFact>,
+    },
+    /// The plan's next transition leads `s_k` outside its target state.
+    Deviation {
+        transition: TransitionKey,
+        successor_prop_values: Vec<ExplicitValueIndex>,
+        successor_numeric: Vec<NumericValue>,
+    },
+}
+
+/// A concrete trace `s_0, ..., s_k` that fails at its last state.
+pub(super) struct FailedTrace<'task> {
+    /// The operators `o_1, ..., o_k` leading to `s_k`.
+    pub(super) operator_ids: Vec<OperatorIndex>,
+    /// The state `s_k`.
+    pub(super) last: TraceState,
+    pub(super) flaw: TraceFlaw<'task>,
+}
+
+pub(super) enum Trace<'task> {
+    ConcretePlan(ConcretePlan),
+    AbstractDeadEnd(usize),
+    Failed(FailedTrace<'task>),
+}
+
+/// Replays the optimal abstract plan from `refinement_root` until its first
+/// flaw. When `prefix` is given, it receives the states `s_0, ..., s_{k-1}`
+/// that precede the failing state `s_k`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn trace_abstract_plan<'s>(
     working: &WorkingAbstraction,
-    semantics: &CartesianSemantics<'_>,
+    semantics: &'s CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
     state_packer: &Arc<StatePacker>,
     axiom_evaluator: &AxiomEvaluator<'_>,
     refinement_root: &ConcreteState,
     selected_plan: Option<&[TransitionKey]>,
-) -> Result<PlanCheck> {
-    let use_desired_region_candidates = matches!(
-        semantics.flaw_candidate_generation(),
-        CartesianFlawCandidateGeneration::DesiredRegion
-    );
+    mut prefix: Option<&mut Vec<TraceState>>,
+) -> Result<Trace<'s>> {
     let mut propositions = refinement_root.propositions.clone();
     let mut numeric = refinement_root.numeric.clone();
     let mut prop_values = Vec::new();
+    let mut successor_propositions = Vec::new();
+    let mut successor_numeric = Vec::new();
     let mut successor_prop_values = Vec::new();
     semantics.concrete_prop_values(state_packer, &propositions, &mut prop_values);
     let initial_abstract_state = working.hierarchy().map_state(&prop_values, &numeric)?;
     if !shortest_paths.distance(initial_abstract_state).is_finite() {
-        return Ok(PlanCheck::AbstractDeadEnd(initial_abstract_state));
+        return Ok(Trace::AbstractDeadEnd(initial_abstract_state));
     }
     let abstract_plan_cost = shortest_paths.distance(initial_abstract_state);
     let mut operator_ids: Vec<OperatorIndex> = Vec::new();
@@ -82,7 +126,7 @@ pub(super) fn replay_optimal_abstract_trace(
                 "selected Cartesian plan reaches an abstract goal before its final transition"
             );
             if concrete_is_goal(semantics, state_packer, &propositions) {
-                return Ok(PlanCheck::ConcretePlan(ConcretePlan {
+                return Ok(Trace::ConcretePlan(ConcretePlan {
                     operator_ids,
                     cost: concrete_cost,
                 }));
@@ -95,38 +139,16 @@ pub(super) fn replay_optimal_abstract_trace(
                 !failed_goals.is_empty(),
                 "abstract goal contains a concrete non-goal without a failed goal fact"
             );
-            let candidates = if use_desired_region_candidates {
-                splits_for_desired_facts(
-                    working,
-                    semantics,
+            return Ok(Trace::Failed(FailedTrace {
+                operator_ids,
+                last: TraceState {
                     abstract_state,
-                    &failed_goals,
-                    &prop_values,
-                    &numeric,
-                    "failed goal",
-                )?
-            } else {
-                failed_goals
-                    .iter()
-                    .map(|goal| {
-                        split_failed_fact(
-                            working,
-                            semantics,
-                            abstract_state,
-                            goal,
-                            &prop_values,
-                            &numeric,
-                            format!("goal {goal:?}"),
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?
-            };
-            return Ok(PlanCheck::Refine(select_refinement_split(
-                working,
-                semantics,
-                candidates,
-                0x474F_414C,
-            )?));
+                    propositions,
+                    prop_values,
+                    numeric,
+                },
+                flaw: TraceFlaw::Goal(failed_goals),
+            }));
         }
 
         ensure!(
@@ -162,68 +184,53 @@ pub(super) fn replay_optimal_abstract_trace(
             .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
             .collect::<Vec<_>>();
         if !failed_preconditions.is_empty() {
-            let candidates = if use_desired_region_candidates {
-                splits_for_desired_facts(
-                    working,
-                    semantics,
+            return Ok(Trace::Failed(FailedTrace {
+                operator_ids,
+                last: TraceState {
                     abstract_state,
-                    &failed_preconditions,
-                    &prop_values,
-                    &numeric,
-                    &format!(
-                        "operator {op_id} ({}) preconditions {failed_preconditions:?}",
-                        op.name()
-                    ),
-                )?
-            } else {
-                failed_preconditions
-                    .iter()
-                    .map(|failed| {
-                        split_failed_fact(
-                            working,
-                            semantics,
-                            abstract_state,
-                            failed,
-                            &prop_values,
-                            &numeric,
-                            format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
-                        )
-                    })
-                    .collect::<Result<Vec<_>>>()?
-            };
-            return Ok(PlanCheck::Refine(select_refinement_split(
-                working,
-                semantics,
-                candidates,
-                0x5052_4543,
-            )?));
+                    propositions,
+                    prop_values,
+                    numeric,
+                },
+                flaw: TraceFlaw::Precondition {
+                    transition,
+                    failed: failed_preconditions,
+                },
+            }));
         }
 
-        let source_numeric = numeric.clone();
+        successor_propositions.clone_from(&propositions);
+        successor_numeric.clone_from(&numeric);
         progress_concrete_state(
             op,
             axiom_evaluator,
             state_packer,
-            &mut propositions,
-            &mut numeric,
+            &mut successor_propositions,
+            &mut successor_numeric,
         )?;
-        semantics.concrete_prop_values(state_packer, &propositions, &mut successor_prop_values);
+        semantics.concrete_prop_values(
+            state_packer,
+            &successor_propositions,
+            &mut successor_prop_values,
+        );
         let concrete_target = working
             .hierarchy
-            .map_state(&successor_prop_values, &numeric)?;
+            .map_state(&successor_prop_values, &successor_numeric)?;
         if concrete_target != transition.target {
-            return Ok(PlanCheck::Refine(split_deviation(
-                working,
-                semantics,
-                DeviationWitness::new(
+            return Ok(Trace::Failed(FailedTrace {
+                operator_ids,
+                last: TraceState {
                     abstract_state,
-                    transition.target,
-                    op_id,
-                    &successor_prop_values,
-                    &source_numeric,
-                    &numeric,
-                ),
-            )?));
+                    propositions,
+                    prop_values,
+                    numeric,
+                },
+                flaw: TraceFlaw::Deviation {
+                    transition,
+                    successor_prop_values,
+                    successor_numeric,
+                },
+            }));
         }
 
         let op_cost = semantics.operator_costs()[op_id.index()];
@@ -234,10 +241,150 @@ pub(super) fn replay_optimal_abstract_trace(
             ),
             "Cartesian generating transition is not distance preserving"
         );
+        if let Some(prefix) = prefix.as_deref_mut() {
+            prefix.push(TraceState {
+                abstract_state,
+                propositions: std::mem::take(&mut propositions),
+                prop_values: prop_values.clone(),
+                numeric: std::mem::take(&mut numeric),
+            });
+        }
+        std::mem::swap(&mut propositions, &mut successor_propositions);
+        std::mem::swap(&mut numeric, &mut successor_numeric);
         concrete_cost += op_cost.value();
         operator_ids.push(op_id);
         selected_plan_pos += usize::from(selected_plan.is_some());
     }
+}
+
+/// The split that refines the first flaw of a failed trace, as progression
+/// CEGAR chooses it.
+pub(super) fn progression_split(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    failed: &FailedTrace<'_>,
+) -> Result<Split> {
+    let TraceState {
+        abstract_state,
+        prop_values,
+        numeric,
+        ..
+    } = &failed.last;
+    let abstract_state = *abstract_state;
+    let use_desired_region_candidates = matches!(
+        semantics.flaw_candidate_generation(),
+        CartesianFlawCandidateGeneration::DesiredRegion
+    );
+    match &failed.flaw {
+        TraceFlaw::Goal(failed_goals) => {
+            let candidates = if use_desired_region_candidates {
+                splits_for_desired_facts(
+                    working,
+                    semantics,
+                    abstract_state,
+                    failed_goals,
+                    prop_values,
+                    numeric,
+                    "failed goal",
+                )?
+            } else {
+                failed_goals
+                    .iter()
+                    .map(|goal| {
+                        split_failed_fact(
+                            working,
+                            semantics,
+                            abstract_state,
+                            goal,
+                            prop_values,
+                            numeric,
+                            format!("goal {goal:?}"),
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            select_refinement_split(working, semantics, candidates, 0x474F_414C)
+        }
+        TraceFlaw::Precondition { transition, failed } => {
+            let op_id = transition.concrete_op_id;
+            let op = &semantics.task().get_operators()[op_id.index()];
+            let candidates = if use_desired_region_candidates {
+                splits_for_desired_facts(
+                    working,
+                    semantics,
+                    abstract_state,
+                    failed,
+                    prop_values,
+                    numeric,
+                    &format!("operator {op_id} ({}) preconditions {failed:?}", op.name()),
+                )?
+            } else {
+                failed
+                    .iter()
+                    .map(|fact| {
+                        split_failed_fact(
+                            working,
+                            semantics,
+                            abstract_state,
+                            fact,
+                            prop_values,
+                            numeric,
+                            format!("operator {op_id} ({}) precondition {fact:?}", op.name()),
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            select_refinement_split(working, semantics, candidates, 0x5052_4543)
+        }
+        TraceFlaw::Deviation {
+            transition,
+            successor_prop_values,
+            successor_numeric,
+        } => split_deviation(
+            working,
+            semantics,
+            DeviationWitness::new(
+                abstract_state,
+                transition.target,
+                transition.concrete_op_id,
+                successor_prop_values,
+                numeric,
+                successor_numeric,
+            ),
+        ),
+    }
+}
+
+/// Progression flaw search: the first flaw of the optimal abstract plan's
+/// concrete trace.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn find_progression_flaw(
+    working: &WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
+    shortest_paths: &ShortestPaths,
+    state_packer: &Arc<StatePacker>,
+    axiom_evaluator: &AxiomEvaluator<'_>,
+    refinement_root: &ConcreteState,
+    selected_plan: Option<&[TransitionKey]>,
+) -> Result<PlanCheck> {
+    Ok(
+        match trace_abstract_plan(
+            working,
+            semantics,
+            shortest_paths,
+            state_packer,
+            axiom_evaluator,
+            refinement_root,
+            selected_plan,
+            None,
+        )? {
+            Trace::ConcretePlan(plan) => PlanCheck::ConcretePlan(plan),
+            Trace::AbstractDeadEnd(state_id) => PlanCheck::AbstractDeadEnd(state_id),
+            Trace::Failed(failed) => {
+                PlanCheck::Refine(progression_split(working, semantics, &failed)?)
+            }
+        },
+    )
 }
 
 /// Replays the current optimal abstract policy against one concrete execution
