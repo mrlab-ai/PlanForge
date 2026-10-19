@@ -25,7 +25,7 @@ use crate::evaluation::abstractions::cost_partitioning::costs::{
     RemainingCosts, SourceSetCostAllocation, build_explicit_label_cost_partitioning_table,
     build_explicit_regional_cost_partitioning_table,
 };
-use crate::evaluation::abstractions::domain::abstract_operator_generator::AbstractOperator;
+use crate::evaluation::abstractions::domain::abstract_operators::AbstractOperator;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
 use crate::evaluation::abstractions::domain::generator::DomainAbstraction;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionLookupScratch;

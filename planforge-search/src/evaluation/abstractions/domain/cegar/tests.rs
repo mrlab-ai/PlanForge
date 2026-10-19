@@ -1,6 +1,4 @@
-use crate::evaluation::abstractions::domain::cegar::flaw_search::{
-    Flaw, NumericFlaw, PropFlaw, get_flaws,
-};
+use crate::evaluation::abstractions::domain::flaws::{Flaw, NumericFlaw, PropFlaw, get_flaws};
 
 use super::*;
 use rand::{SeedableRng, rngs::SmallRng};
@@ -9,8 +7,8 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
-    Operator, OperatorCost, OperatorIndex,
+    ExplicitVariable, INF_VALUE, Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts,
+    NumericType, NumericValue, NumericVariable, Operator, OperatorCost, OperatorIndex,
 };
 
 fn one_dimensional_sailing_like_task() -> NumericRootTask {

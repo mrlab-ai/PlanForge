@@ -18,8 +18,8 @@ use planforge_sas::utils::float_tolerance;
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 
 use super::abstraction_numeric_var;
-use super::numeric_context::fill_derived_numeric_intervals_from_comparison_trees;
-use super::numeric_partitions::NumericPartitions;
+use super::comparison_inputs::fill_derived_numeric_intervals_from_comparison_trees;
+use super::partitions::NumericPartitions;
 use super::utils;
 use crate::evaluation::abstractions::common::coordinates::{
     AdditiveNumericViews, active_comparison_dimensions,

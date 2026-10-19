@@ -15,13 +15,13 @@ use crate::evaluation::abstractions::common::concrete_state::make_prop_state_pac
 use crate::evaluation::abstractions::common::coordinates::numeric_dimension_delta_for_operator;
 use crate::evaluation::abstractions::common::coordinates::numeric_requirement_for_comparison_fact;
 use crate::evaluation::abstractions::domain::{
-    abstract_operator_generator::DomainMapping,
-    cegar::flaw_search::{
+    abstract_operators::DomainMapping,
+    factory::WildcardPlanResult,
+    flaws::{
         dependent_numeric_flaws_in_interval_for_comparison_prop_var,
         state::{FlawSearchState, get_initial_flaw_search_state},
     },
-    factory::WildcardPlanResult,
-    numeric_partitions::NumericPartitions,
+    partitions::NumericPartitions,
     utils::partitions_for_interval,
 };
 

@@ -288,24 +288,22 @@ fn early_goal_distance_matches_exhaustive_walk_when_comparisons_are_cleared() {
     let hash_multipliers = generator.hash_multipliers();
     let x_abs_var = task.variables().len();
     let source_hash = 0;
-    let operators = vec![
-        super::super::abstract_operator_generator::AbstractOperator {
-            concrete_op_ids: vec![],
-            cost: NumericValue::new(1.0),
-            hash_effect: -((hash_multipliers[0] + hash_multipliers[1]) as i32),
-            regression_preconditions: vec![
-                ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
-                ExplicitFact::propositional(1, 1),
-                ExplicitFact::numeric_variable(x_abs_var, 0),
-            ],
-            preconditions: vec![
-                ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
-                ExplicitFact::propositional(1, 0),
-                ExplicitFact::numeric_variable(x_abs_var, 0),
-            ],
-            changed_numeric_vars: vec![],
-        },
-    ];
+    let operators = vec![super::super::abstract_operators::AbstractOperator {
+        concrete_op_ids: vec![],
+        cost: NumericValue::new(1.0),
+        hash_effect: -((hash_multipliers[0] + hash_multipliers[1]) as i32),
+        regression_preconditions: vec![
+            ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
+            ExplicitFact::propositional(1, 1),
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+        ],
+        preconditions: vec![
+            ExplicitFact::propositional(0, ConditionValue::True.as_usize()),
+            ExplicitFact::propositional(1, 0),
+            ExplicitFact::numeric_variable(x_abs_var, 0),
+        ],
+        changed_numeric_vars: vec![],
+    }];
     let goal_facts = factory.compute_abstract_goals(&task);
     let comparison_var_ids = factory.comparison_var_ids();
     let numeric_domain_sizes = generator.numeric_domain_sizes();
@@ -647,7 +645,7 @@ fn initial_state_hash_evaluates_derived_numeric_comparison_via_tree_inputs() {
 #[test]
 fn comparison_preconditions_are_the_ones_on_comparison_variables() {
     let comparison_precondition = ExplicitFact::propositional(0, ConditionValue::True.as_usize());
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -921,7 +919,7 @@ fn singleton_plan_selection_uses_seeded_rng() {
 #[test]
 fn match_tree_indexes_comparison_variables() {
     let operators = vec![
-        super::super::abstract_operator_generator::AbstractOperator {
+        super::super::abstract_operators::AbstractOperator {
             concrete_op_ids: vec![OperatorIndex::new(0)],
             cost: NumericValue::new(1.0),
             hash_effect: 0,
@@ -935,7 +933,7 @@ fn match_tree_indexes_comparison_variables() {
             )],
             changed_numeric_vars: vec![],
         },
-        super::super::abstract_operator_generator::AbstractOperator {
+        super::super::abstract_operators::AbstractOperator {
             concrete_op_ids: vec![OperatorIndex::new(1)],
             cost: NumericValue::new(1.0),
             hash_effect: 0,
@@ -1394,7 +1392,7 @@ fn additive_numeric_source_set_task_with_partitions(
 fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
     let (task, factory) = additive_numeric_source_set_task();
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1424,7 +1422,7 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
     ]);
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1450,7 +1448,7 @@ fn source_set_active_preimage_allows_boundary_charge() {
         Interval::new(NumericValue::new(5.0), NumericValue::new(6.0), false, true),
     ]);
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1475,7 +1473,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
         Interval::new(NumericValue::new(7.0), NumericValue::new(10.0), false, true),
     ]);
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1498,7 +1496,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
 fn abstract_source_set_allocates_unbounded_changed_tail() {
     let (task, factory) = additive_numeric_source_set_task();
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1562,7 +1560,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         vec![],
     )
     .unwrap();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1658,7 +1656,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
     .unwrap();
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1785,7 +1783,7 @@ fn source_set_one_finite_dim_suffices() {
 
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1894,7 +1892,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
     .unwrap();
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1937,7 +1935,7 @@ fn source_set_width_does_not_change_valid_preimage() {
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
     ]);
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,
@@ -1963,7 +1961,7 @@ fn singleton_preimage_is_preserved_exactly() {
         Interval::singleton(NumericValue::new(5.0)),
     ]);
     let x_abs_var = task.variables().len();
-    let op = super::super::abstract_operator_generator::AbstractOperator {
+    let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
         hash_effect: 0,

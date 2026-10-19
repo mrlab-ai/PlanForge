@@ -18,11 +18,11 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionHeuristic,
 };
 use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstractions::common::cegar::FlawKind;
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
-use planforge_search::evaluation::abstractions::domain::cegar::FlawKind;
-use planforge_search::evaluation::abstractions::domain::collection_generator::{
+use planforge_search::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };

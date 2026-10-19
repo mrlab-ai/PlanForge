@@ -10,9 +10,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::interval::Interval;
 
 use super::*;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::{
-    SplitDirection, single_switch_task,
-};
+use crate::evaluation::abstractions::domain::flaws::{SplitDirection, single_switch_task};
 
 #[test]
 fn progression_flaws_find_precondition_violation() {

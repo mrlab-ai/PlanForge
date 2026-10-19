@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{
 use rand::SeedableRng;
 
 use super::*;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::PropFlaw;
+use crate::evaluation::abstractions::domain::flaws::PropFlaw;
 
 /// One numeric condition `x0 = x0` writing propositional variable
 /// `prop_var_id`; only the "is this a condition variable?" answer matters

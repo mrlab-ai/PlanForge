@@ -10,14 +10,14 @@ use planforge_sas::state_registry::ConcreteStateView;
 use planforge_sas::utils::state_packer::StatePacker;
 use tracing::debug;
 
-use super::cegar::flaw_search::Flaw;
 use super::factory::{DomainAbstractionFactory, WildcardPlanResult};
-use super::numeric_partitions::NumericPartitions;
+use super::flaws::Flaw;
+use super::partitions::NumericPartitions;
 use crate::evaluation::abstractions::common::cegar::progress_concrete_state;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
-use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::SplitDirection;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::progression::{
+use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
+use crate::evaluation::abstractions::domain::flaws::SplitDirection;
+use crate::evaluation::abstractions::domain::flaws::progression::{
     NumericTransitionStates, PartitionedTask, get_progression_numeric_deviation_flaws,
     get_progression_precondition_flaws,
 };

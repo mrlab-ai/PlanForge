@@ -1,18 +1,15 @@
 use planforge_sas::numeric_task::VariableIndex;
 
-pub mod abstract_operator_generator;
-pub mod collection_generator;
-pub mod numeric_context;
-pub mod numeric_partitions;
-// Only compiled with the `cplex` feature. Requesting the heuristic in another
-// build produces an explicit configuration error in planforge-searcher.
-#[cfg(feature = "cplex")]
-pub mod posthoc_optimization_heuristic;
-
+pub mod abstract_operators;
 pub mod cegar;
+pub mod collection;
+pub mod comparison_inputs;
 pub mod factory;
+pub mod flaws;
 pub mod generator;
 pub mod heuristic;
+pub mod partitions;
+pub mod split_selection;
 pub mod utils;
 
 /// The id a domain abstraction gives numeric variable `numeric_var_id`.

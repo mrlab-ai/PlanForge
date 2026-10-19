@@ -7,7 +7,7 @@ use planforge_sas::numeric_task::{
     OperatorCost, VariableIndex,
 };
 
-use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
+use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use planforge_sas::utils::interval::Interval;
 
 /// What identifies an abstract operator for a determinism comparison: its hash

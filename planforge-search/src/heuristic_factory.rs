@@ -13,15 +13,15 @@ use crate::evaluation::abstractions::cartesian::{
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
+#[cfg(feature = "cplex")]
+use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::PostHocOptimizationHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
 use crate::evaluation::abstractions::domain::cegar::CegarConfig;
-use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegar;
+use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegar;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
-#[cfg(feature = "cplex")]
-use crate::evaluation::abstractions::domain::posthoc_optimization_heuristic::PostHocOptimizationHeuristic;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
@@ -637,7 +637,7 @@ heuristic_registry! {
         requirements: abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             // Canonical never consumes operator regions — skip ~12 GB of
@@ -674,7 +674,7 @@ heuristic_registry! {
         requirements: abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+            use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
             let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
             ApplyOptions::apply_options(&mut cfg, &spec.args)?;
             cfg.set_compute_source_sets(false);
@@ -710,7 +710,7 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-                use crate::evaluation::abstractions::domain::collection_generator::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+                use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
                 let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 ApplyOptions::apply_options(&mut cfg, &spec.args)?;
                 cfg.set_compute_source_sets(false);

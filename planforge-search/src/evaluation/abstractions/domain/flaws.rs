@@ -12,7 +12,6 @@
 //! `SplitDirection` controls refinement only. Transition cost partitioning
 //! separately tracks exact source regions, including unbounded regions.
 
-pub mod flaw_selection;
 pub mod progression;
 pub mod regression;
 pub mod sequence;
@@ -25,31 +24,32 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 use std::fmt;
 
+use planforge_sas::numeric_conditions::NumericCondition;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, NumericValue, OperatorIndex, VariableIndex,
 };
 #[cfg(test)]
 use planforge_sas::numeric_task::{ExplicitValueIndex, OperatorCost};
+use planforge_sas::numeric_task::{INF_VALUE, NEG_INF_VALUE};
 use planforge_sas::utils::float_tolerance;
+use planforge_sas::utils::interval::Interval;
 
 use serde::{Deserialize, Serialize};
 
-use super::determine_include_in_lower;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
 use crate::evaluation::abstractions::common::coordinates::numeric_requirement_for_comparison_fact;
-use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
-use crate::evaluation::abstractions::domain::cegar::determine_include_in_lower_for_flaw_search_state;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::progression::{
+use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
+use crate::evaluation::abstractions::domain::factory::WildcardPlanResult;
+use crate::evaluation::abstractions::domain::flaws::progression::{
     get_execute_entire_plan_flaws, get_progression_flaws,
 };
-use crate::evaluation::abstractions::domain::cegar::flaw_search::regression::get_regression_flaws;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::sequence::{
+use crate::evaluation::abstractions::domain::flaws::regression::get_regression_flaws;
+use crate::evaluation::abstractions::domain::flaws::sequence::{
     SequenceDirection, get_sequence_flaws,
 };
-use crate::evaluation::abstractions::domain::cegar::flaw_search::state::FlawSearchState;
-use crate::evaluation::abstractions::domain::factory::WildcardPlanResult;
-use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
+use crate::evaluation::abstractions::domain::flaws::state::FlawSearchState;
+use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::evaluation::abstractions::domain::utils::partition_for_value;
 
 /// Mirrors numeric-FD's `NumericFlaw = tuple<int, ap_float, bool>`.
@@ -434,4 +434,79 @@ pub(crate) fn single_switch_task(
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     })
+}
+
+/// Which side of a split the boundary value belongs to, given the verdict each
+/// half's interval evaluation reaches — `None` where the half straddles the
+/// comparison and no verdict follows from it.
+///
+/// The split point goes to whichever half is further from establishing the
+/// condition, so that the half that does establish it stays as small as the
+/// split can make it: a decided `false` beats an undecided half, which beats a
+/// decided `true`. Two halves at the same rank leave the boundary in the upper
+/// one, as numeric-FD does.
+///
+/// Indeterminacy lives here and nowhere else. It is a property of evaluating a
+/// comparison over a box of numeric values, answered per call, not a value a
+/// state can hold — which is why the abstract domain of a condition variable is
+/// [`ConditionValue::DOMAIN_SIZE`] wide and not one wider.
+#[inline]
+fn prefers_lower_half(eval_lower: Option<bool>, eval_upper: Option<bool>) -> bool {
+    match (eval_lower, eval_upper) {
+        (Some(false), Some(false)) => false,
+        (Some(false), _) => true,
+        (None, Some(true)) => true,
+        _ => false,
+    }
+}
+
+fn determine_include_in_lower(
+    tree: &NumericCondition,
+    split_var_id: VariableIndex,
+    split_value: NumericValue,
+    concrete_values: &[NumericValue],
+) -> bool {
+    let mut lower_inputs: Vec<Interval> = concrete_values
+        .iter()
+        .copied()
+        .map(Interval::singleton)
+        .collect();
+    let mut upper_inputs = lower_inputs.clone();
+
+    if split_var_id.index() < lower_inputs.len() {
+        // If the split point is included in the lower interval, the current concrete
+        // value belongs to (-inf, split_value].
+        lower_inputs[split_var_id.index()] = Interval::new(NEG_INF_VALUE, split_value, false, true);
+    }
+    if split_var_id.index() < upper_inputs.len() {
+        // If the split point is included in the upper interval, the current concrete
+        // value belongs to [split_value, inf).
+        upper_inputs[split_var_id.index()] = Interval::new(split_value, INF_VALUE, true, false);
+    }
+
+    prefers_lower_half(
+        tree.evaluate_interval(&lower_inputs),
+        tree.evaluate_interval(&upper_inputs),
+    )
+}
+
+fn determine_include_in_lower_for_flaw_search_state(
+    tree: &NumericCondition,
+    state: &FlawSearchState,
+) -> bool {
+    let lower_inputs: Vec<Interval> = state
+        .numeric
+        .iter()
+        .map(|v| Interval::singleton(v.lower))
+        .collect();
+    let upper_inputs: Vec<Interval> = state
+        .numeric
+        .iter()
+        .map(|v| Interval::singleton(v.upper))
+        .collect();
+
+    prefers_lower_half(
+        tree.evaluate_interval(&lower_inputs),
+        tree.evaluate_interval(&upper_inputs),
+    )
 }

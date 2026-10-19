@@ -26,7 +26,7 @@ use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
-use planforge_search::evaluation::abstractions::domain::collection_generator::{
+use planforge_search::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };

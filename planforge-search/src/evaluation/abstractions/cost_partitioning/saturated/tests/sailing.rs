@@ -19,7 +19,7 @@ use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::generator::{
     DomainAbstractionMetadata, compute_hash_multipliers,
 };
-use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
+use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
 use planforge_sas::utils::interval::Interval;
 

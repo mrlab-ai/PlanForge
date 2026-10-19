@@ -3,7 +3,7 @@ use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableInde
 use planforge_sas::utils::float_tolerance;
 
 use super::abstraction_numeric_var;
-use super::numeric_partitions::NumericPartitions;
+use super::partitions::NumericPartitions;
 use planforge_sas::numeric_conditions::NumericCondition;
 use planforge_sas::utils::interval::Interval;
 

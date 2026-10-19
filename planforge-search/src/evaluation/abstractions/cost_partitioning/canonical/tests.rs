@@ -19,7 +19,7 @@ use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::generator::{
     DomainAbstraction, compute_hash_multipliers,
 };
-use crate::evaluation::abstractions::domain::numeric_partitions::NumericPartitions;
+use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 
 fn simple_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(

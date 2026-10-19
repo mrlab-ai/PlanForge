@@ -10,7 +10,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::interval::Interval;
 
 use super::*;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::single_switch_task;
+use crate::evaluation::abstractions::domain::flaws::single_switch_task;
 
 // TODO: Test also sequence flaws beyond the first flaw.
 

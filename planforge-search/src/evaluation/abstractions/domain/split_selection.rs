@@ -12,8 +12,17 @@ use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 
-use super::{Flaw, NumericFlaw};
-use crate::evaluation::abstractions::domain::cegar::{ChosenFlaws, FlawCandidate};
+use super::flaws::{Flaw, NumericFlaw};
+
+/// A flaw chosen for refinement: its index in the flaw list, its score, and
+/// the dependent numeric flaws a propositional flaw is restricted to.
+#[derive(Clone)]
+pub struct FlawCandidate {
+    pub(super) idx: usize,
+    score: usize,
+    pub(super) restricted_dep: Option<Vec<NumericFlaw>>,
+}
+pub type ChosenFlaws = Vec<FlawCandidate>;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

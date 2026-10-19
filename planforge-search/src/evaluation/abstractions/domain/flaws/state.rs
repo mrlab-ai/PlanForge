@@ -10,8 +10,8 @@ use planforge_sas::{
 };
 
 use crate::evaluation::abstractions::common::concrete_state::get_initial_state;
-use crate::evaluation::abstractions::domain::abstract_operator_generator::DomainMapping;
-use crate::evaluation::abstractions::domain::cegar::flaw_search::goal_facts;
+use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
+use crate::evaluation::abstractions::domain::flaws::goal_facts;
 use planforge_sas::utils::interval::{Interval, UNBOUNDED_INTERVAL};
 
 /// States used during the search of flaws.

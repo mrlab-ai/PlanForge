@@ -20,15 +20,13 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::abstract_operator_generator::{
-    AbstractOperator, AbstractOperatorGenerator, DomainMapping,
-};
+use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator, DomainMapping};
 use super::abstraction_numeric_var;
-use super::numeric_context::{
+use super::comparison_inputs::{
     AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
     prepare_comparison_tree_inputs_from_abstract_state_into,
 };
-use super::numeric_partitions::NumericPartitions;
+use super::partitions::NumericPartitions;
 use super::utils;
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 

@@ -22,8 +22,7 @@ use crate::evaluation::abstractions::common::concrete_state::{
 };
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::domain::{
-    abstract_operator_generator::DomainMapping, factory::WildcardPlanResult,
-    numeric_partitions::NumericPartitions,
+    abstract_operators::DomainMapping, factory::WildcardPlanResult, partitions::NumericPartitions,
 };
 
 /// Regression flaw search on the wildcard plan, regressing through the first

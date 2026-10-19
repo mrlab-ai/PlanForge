@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-pub mod flaw_search;
-
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -15,42 +13,39 @@ use rand::{SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue,
-    Operator, OperatorIndex, VariableIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, Operator, OperatorIndex, VariableIndex,
 };
 use planforge_sas::state_registry::ConcreteStateView;
 
-use flaw_search::{
+use super::flaws::{
     DependentNumericRefinement, Flaw, FlawSearchOutcome, NumericFlaw, PropFlaw,
     can_split_numeric_var,
 };
 
-pub use flaw_search::SplitDirection;
-pub use flaw_search::flaw_selection::{
-    FlawTreatment, FlawTreatmentVariants, InitSplitMethod, TieBreak,
+use super::flaws::SplitDirection;
+use super::split_selection::{
+    ChosenFlaws, FlawTreatment, FlawTreatmentVariants, InitSplitMethod, TieBreak,
 };
 
 use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
 use crate::evaluation::abstractions::common::cegar::{
     CegarDriver, CegarIterationResult, progress_concrete_state,
 };
-pub use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::concrete_state::{
     get_initial_state, make_prop_state_packer,
 };
-use crate::evaluation::abstractions::domain::cegar::flaw_search::state::FlawSearchState;
 use crate::evaluation::validate_abstractable_goal;
 
-use super::abstract_operator_generator::DomainMapping;
+use super::abstract_operators::DomainMapping;
 use crate::evaluation::abstractions::common::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
     is_refinable_numeric_dimension,
 };
-use planforge_sas::numeric_conditions::{ConditionValue, NumericCondition, NumericConditions};
-use planforge_sas::utils::interval::Interval;
+use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory, WildcardPlanResult};
-use super::numeric_partitions::NumericPartitions;
+use super::partitions::NumericPartitions;
 use super::utils::{compute_abstraction_size_u128, debug_print_refinement_summary};
 
 /// The only abstract domain a refined condition variable ever has: the value
@@ -196,14 +191,6 @@ impl crate::config::ApplyOptions for CegarConfig {
         })
     }
 }
-
-#[derive(Clone)]
-pub struct FlawCandidate {
-    idx: usize,
-    score: usize,
-    restricted_dep: Option<Vec<NumericFlaw>>,
-}
-pub type ChosenFlaws = Vec<FlawCandidate>;
 
 #[derive(Debug, Clone)]
 pub struct CegarState {
@@ -1522,79 +1509,4 @@ fn trivial_domain_mapping_and_sizes(
     }
 
     Ok((domain_mapping, domain_sizes))
-}
-
-/// Which side of a split the boundary value belongs to, given the verdict each
-/// half's interval evaluation reaches — `None` where the half straddles the
-/// comparison and no verdict follows from it.
-///
-/// The split point goes to whichever half is further from establishing the
-/// condition, so that the half that does establish it stays as small as the
-/// split can make it: a decided `false` beats an undecided half, which beats a
-/// decided `true`. Two halves at the same rank leave the boundary in the upper
-/// one, as numeric-FD does.
-///
-/// Indeterminacy lives here and nowhere else. It is a property of evaluating a
-/// comparison over a box of numeric values, answered per call, not a value a
-/// state can hold — which is why the abstract domain of a condition variable is
-/// [`ConditionValue::DOMAIN_SIZE`] wide and not one wider.
-#[inline]
-fn prefers_lower_half(eval_lower: Option<bool>, eval_upper: Option<bool>) -> bool {
-    match (eval_lower, eval_upper) {
-        (Some(false), Some(false)) => false,
-        (Some(false), _) => true,
-        (None, Some(true)) => true,
-        _ => false,
-    }
-}
-
-fn determine_include_in_lower(
-    tree: &NumericCondition,
-    split_var_id: VariableIndex,
-    split_value: NumericValue,
-    concrete_values: &[NumericValue],
-) -> bool {
-    let mut lower_inputs: Vec<Interval> = concrete_values
-        .iter()
-        .copied()
-        .map(Interval::singleton)
-        .collect();
-    let mut upper_inputs = lower_inputs.clone();
-
-    if split_var_id.index() < lower_inputs.len() {
-        // If the split point is included in the lower interval, the current concrete
-        // value belongs to (-inf, split_value].
-        lower_inputs[split_var_id.index()] = Interval::new(NEG_INF_VALUE, split_value, false, true);
-    }
-    if split_var_id.index() < upper_inputs.len() {
-        // If the split point is included in the upper interval, the current concrete
-        // value belongs to [split_value, inf).
-        upper_inputs[split_var_id.index()] = Interval::new(split_value, INF_VALUE, true, false);
-    }
-
-    prefers_lower_half(
-        tree.evaluate_interval(&lower_inputs),
-        tree.evaluate_interval(&upper_inputs),
-    )
-}
-
-fn determine_include_in_lower_for_flaw_search_state(
-    tree: &NumericCondition,
-    state: &FlawSearchState,
-) -> bool {
-    let lower_inputs: Vec<Interval> = state
-        .numeric
-        .iter()
-        .map(|v| Interval::singleton(v.lower))
-        .collect();
-    let upper_inputs: Vec<Interval> = state
-        .numeric
-        .iter()
-        .map(|v| Interval::singleton(v.upper))
-        .collect();
-
-    prefers_lower_half(
-        tree.evaluate_interval(&lower_inputs),
-        tree.evaluate_interval(&upper_inputs),
-    )
 }

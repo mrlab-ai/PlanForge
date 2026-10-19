@@ -5,10 +5,12 @@ use anyhow::{Context, Result, ensure};
 
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
-use super::abstract_operator_generator::AbstractOperator;
-use super::cegar::{Cegar, CegarConfig, CegarStopReason, SplitDirection};
+use super::abstract_operators::AbstractOperator;
+use super::cegar::{Cegar, CegarConfig};
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
+use super::flaws::SplitDirection;
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
