@@ -14,6 +14,8 @@ use crate::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
+use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
@@ -33,11 +35,9 @@ use super::HeuristicBuildError;
 
 pub(crate) const COMPONENT_SOURCE_NAMES: &[&str] = &[
     "domain",
-    "domain_abstractions",
+    "domain_collection",
     "cartesian",
-    "cartesian_abstraction",
     "cartesian_collection",
-    "cartesian_abstraction_collection",
     "icaps26_cartesian",
     "pdb",
     "numeric_pdb",
@@ -411,7 +411,26 @@ pub(crate) fn build_components<'task>(
         let remaining = remaining_construction_time(construction_deadline)?;
         let before = components.len();
         match source.name() {
-            "domain" | "domain_abstractions" => {
+            "domain" => {
+                let mut config = CegarConfig::default();
+                config.apply_options(source.args())?;
+                cap_duration(&mut config.max_time, remaining);
+                config.compute_source_sets = component_use.needs_source_sets();
+                info!("Building domain abstraction source {source_index}...");
+                let abstraction = DomainAbstractionGenerator::new(config)
+                    .and_then(|generator| generator.generate(task))
+                    .map_err(|error| {
+                        HeuristicBuildError::from_source(
+                            error,
+                            format!("failed to build domain abstraction source {source_index}"),
+                        )
+                    })?;
+                components.push(AbstractionComponent::domain(
+                    Some(format!("domain_{source_index}")),
+                    abstraction,
+                ));
+            }
+            "domain_collection" => {
                 let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
                 config.apply_options(source.args())?;
                 if let Some(remaining) = remaining {
@@ -420,16 +439,19 @@ pub(crate) fn build_components<'task>(
                 // Operator regions do not influence CEGAR. Build them after the collection so
                 // canonical, label SCP, and region SCP receive the same generation budget.
                 config.set_compute_source_sets(false);
-                info!("Building domain abstraction source {source_index}...");
-                let mut abstractions =
-                    DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
-                        .generate_collection(task)
-                        .map_err(|error| {
-                            HeuristicBuildError::from_source(
-                                error,
-                                format!("failed to build domain abstraction source {source_index}"),
-                            )
-                        })?;
+                info!("Building domain abstraction collection source {source_index}...");
+                let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                    config,
+                )
+                .generate_collection(task)
+                .map_err(|error| {
+                    HeuristicBuildError::from_source(
+                        error,
+                        format!(
+                            "failed to build domain abstraction collection source {source_index}"
+                        ),
+                    )
+                })?;
                 if component_use.needs_source_sets() {
                     for (component_index, abstraction) in abstractions.iter_mut().enumerate() {
                         abstraction
@@ -448,7 +470,7 @@ pub(crate) fn build_components<'task>(
                     },
                 ));
             }
-            "cartesian" | "cartesian_abstraction" => {
+            "cartesian" => {
                 let mut config = apply_cartesian_options(source.args(), component_use)?;
                 cap_duration(&mut config.max_time, remaining);
                 info!("Building Cartesian abstraction source {source_index}...");
@@ -473,7 +495,7 @@ pub(crate) fn build_components<'task>(
                     abstraction,
                 ));
             }
-            "cartesian_collection" | "cartesian_abstraction_collection" => {
+            "cartesian_collection" => {
                 let mut config = apply_cartesian_collection_options(source.args(), component_use)?;
                 cap_duration(&mut config.total_max_time, remaining);
                 cap_duration(&mut config.abstraction.max_time, remaining);
@@ -638,7 +660,7 @@ pub(crate) fn apply_icaps26_cartesian_options(
     Ok(config)
 }
 
-fn apply_cartesian_options(
+pub(crate) fn apply_cartesian_options(
     args: &[ConfigArg],
     component_use: ComponentUse,
 ) -> Result<CartesianAbstractionConfig, String> {
@@ -808,11 +830,11 @@ mod tests {
     #[test]
     fn flat_and_list_sources_split_identically() {
         let flat = crate::config::parse_heuristic_spec(
-            "scp(domain(max_collection_size=1000),cartesian(max_states=100),partitioning=region)",
+            "scp(domain_collection(max_collection_size=1000),cartesian(max_states=100),partitioning=region)",
         )
         .unwrap();
         let listed = crate::config::parse_heuristic_spec(
-            "scp([domain(max_collection_size=1000),cartesian(max_states=100)],partitioning=region)",
+            "scp([domain_collection(max_collection_size=1000),cartesian(max_states=100)],partitioning=region)",
         )
         .unwrap();
         assert_eq!(
@@ -836,7 +858,7 @@ mod tests {
             )
         );
         assert_eq!(
-            split("scp([domain(), partitioning=region])").unwrap_err(),
+            split("scp([domain_collection(), partitioning=region])").unwrap_err(),
             "`partitioning=region` is a collection option and cannot appear inside the source list; move it after `]`"
         );
         assert_eq!(
@@ -844,11 +866,11 @@ mod tests {
             "`scp` requires at least one abstraction source inside `[...]`"
         );
         assert_eq!(
-            split("scp([domain()], cartesian())").unwrap_err(),
+            split("scp([domain_collection()], cartesian())").unwrap_err(),
             "abstraction sources must all appear inside the `[...]` list; found stray source `cartesian`"
         );
         assert_eq!(
-            split("scp([domain()], [cartesian()])").unwrap_err(),
+            split("scp([domain_collection()], [cartesian()])").unwrap_err(),
             "duplicate source list for `scp`"
         );
     }
@@ -857,13 +879,13 @@ mod tests {
     fn all_collection_combinators_accept_a_leading_source_list() {
         for combinator in ["max", "canonical", "scp"] {
             let spec = crate::config::parse_heuristic_spec(&format!(
-                "{combinator}([domain(),cartesian()])"
+                "{combinator}([domain_collection(),cartesian()])"
             ))
             .unwrap();
             let (sources, options) = split_component_sources(combinator, &spec.args).unwrap();
             assert_eq!(
                 sources.iter().map(ConfigCall::name).collect::<Vec<_>>(),
-                ["domain", "cartesian"]
+                ["domain_collection", "cartesian"]
             );
             assert!(options.is_empty());
         }

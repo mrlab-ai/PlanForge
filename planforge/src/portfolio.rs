@@ -3,7 +3,7 @@
 //! Stage 1 runs `astar(lmcutnumeric())` under a tight budget. LM-cut is
 //! admissible and often finds optimal plans quickly on small-to-medium tasks.
 //!
-//! Stage 2 runs `astar(canonical_domain_abstractions(...))` with the user's
+//! Stage 2 runs `astar(canonical(domain_collection(...)))` with the user's
 //! preferred CEGAR construction budget and, by default, *no* search-side time
 //! limit -- canonical's stronger abstractions handle the cases LM-cut struggles
 //! with, and they need the time.
@@ -92,11 +92,11 @@ pub fn run_portfolio(cli: &PlannersCli) -> std::io::Result<()> {
     );
 
     let canonical_spec = format!(
-        "astar(canonical_domain_abstractions(blacklist_trigger_percentage=0.6,total_max_time={},flaw_kind=progression,flaw_scope=whole_plan,use_wildcard_plans=true,combine_labels=true,max_states=100000,max_collection_size=1000000))",
+        "astar(canonical(domain_collection(blacklist_trigger_percentage=0.6,total_max_time={},flaw_kind=progression,flaw_scope=whole_plan,use_wildcard_plans=true,combine_labels=true,max_states=100000,max_collection_size=1000000)))",
         options.canonical_construction_time,
     );
     tracing::info!(
-        "[portfolio] stage 2: canonical_domain_abstractions(...)  --max-memory {}  {}",
+        "[portfolio] stage 2: canonical(domain_collection(...))  --max-memory {}  {}",
         options.canonical_memory,
         match options.canonical_time.as_deref() {
             Some(limit) => format!("--max-time {limit}"),

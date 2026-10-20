@@ -49,13 +49,33 @@ fn parses_astar_domain_abstraction_with_named_options() {
     assert_eq!(cfg.random_seed, Some(7));
 }
 
+/// The domain collection options of a combinator's single source.
+fn domain_collection_source(spec: &str) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let h = astar_heuristic(spec);
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].name(), "domain_collection");
+    let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    ApplyOptions::apply_options(&mut config, sources[0].args()).unwrap();
+    config
+}
+
+/// The error the domain collection options of a combinator's single source give.
+fn domain_collection_source_error(spec: &str) -> String {
+    let h = astar_heuristic(spec);
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
+    ApplyOptions::apply_options(
+        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
+        sources[0].args(),
+    )
+    .unwrap_err()
+}
+
 #[test]
-fn parses_astar_canonical_domain_abstractions_with_named_options() {
-    let h = astar_heuristic(
-        "astar(canonical_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, random_seed=7))",
+fn parses_canonical_domain_collection_with_named_options() {
+    let cfg = domain_collection_source(
+        "astar(canonical(domain_collection(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, random_seed=7)))",
     );
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
 
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(cfg.total_max_time, 4.5);
@@ -68,7 +88,7 @@ fn parses_astar_canonical_domain_abstractions_with_named_options() {
 #[test]
 fn parses_hierarchical_scp_options_and_sources() {
     let h = astar_heuristic(
-        "astar(scp(domain(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, partitioning=region))",
+        "astar(scp(domain_collection(max_collection_size=1000), cartesian(max_states=100), pdb(max_pdb_states=100), diversify=true, samples=123, max_orders=17, orders=diverse_orders, initial_order_generation_max_time=9, saturator=perimstar, partitioning=region))",
     );
     assert_eq!(h.name, "scp");
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
@@ -86,7 +106,7 @@ fn parses_hierarchical_scp_options_and_sources() {
 
 #[test]
 fn hierarchical_scp_rejects_legacy_pdb_switches() {
-    let h = astar_heuristic("astar(scp([domain()], use_numeric_pdbs=true))");
+    let h = astar_heuristic("astar(scp([domain_collection()], use_numeric_pdbs=true))");
     let error = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap_err();
     assert!(error.contains("unknown `scp` combinator option `use_numeric_pdbs`"));
     assert!(error.contains("pdb(...)"));
@@ -94,13 +114,13 @@ fn hierarchical_scp_rejects_legacy_pdb_switches() {
 
 #[test]
 fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
-    let h = astar_heuristic("astar(scp([domain()], max_time=[5]))");
+    let h = astar_heuristic("astar(scp([domain_collection()], max_time=[5]))");
     let source_config = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap();
     let error =
         ApplyOptions::apply_options(&mut ScpConfig::default(), &source_config.options).unwrap_err();
     assert_eq!(error, "expected scalar value, got a list");
 
-    let wrapper = astar_heuristic("astar(check_admissible([domain()]))");
+    let wrapper = astar_heuristic("astar(check_admissible([domain_collection()]))");
     let error =
         super::single_wrapped_heuristic_spec("check_admissible", &wrapper.args).unwrap_err();
     assert_eq!(error, "expected heuristic, got a list");
@@ -248,7 +268,11 @@ fn cartesian_sources_reject_unknown_flaw_kinds() {
     );
 
     let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
-    let error = CegarConfig::default().apply_options(&h.args).unwrap_err();
+    let error = abstraction_config::apply_cartesian_options(
+        &h.args,
+        abstraction_config::ComponentUse::Standalone,
+    )
+    .unwrap_err();
     assert!(
         error.contains("invalid flaw_kind `sequence_regression`"),
         "got `{error}`"
@@ -256,30 +280,27 @@ fn cartesian_sources_reject_unknown_flaw_kinds() {
 }
 
 #[test]
-fn direct_cartesian_abstraction_rejects_cegar_only_options() {
-    for option in [
-        "max_iterations=10",
-        "use_wildcard_plans=true",
-        "split_selection=first",
-    ] {
+fn cartesian_abstraction_rejects_domain_abstraction_options() {
+    for option in ["max_iterations=10", "use_wildcard_plans=true"] {
         let h = astar_heuristic(&format!("astar(cartesian_abstraction({option}))"));
-        let error = super::validate_cartesian_cegar_options(&h.args).unwrap_err();
-        assert!(
-            error.contains("not supported for Cartesian"),
-            "got `{error}`"
-        );
+        let error = abstraction_config::apply_cartesian_options(
+            &h.args,
+            abstraction_config::ComponentUse::Standalone,
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown option"), "got `{error}`");
     }
 }
 
 #[test]
 fn rejects_boolean_cost_partitioning_mode() {
-    let h = astar_heuristic("astar(scp(domain(), partitioning=label))");
+    let h = astar_heuristic("astar(scp(domain_collection(), partitioning=label))");
     let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let mut config = ScpConfig::default();
     ApplyOptions::apply_options(&mut config, &options).unwrap();
     assert_eq!(config.partitioning, CostPartitioningMethod::Label);
 
-    let h = astar_heuristic("astar(scp(domain(), partitioning=true))");
+    let h = astar_heuristic("astar(scp(domain_collection(), partitioning=true))");
     let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let mut config = ScpConfig::default();
     assert!(ApplyOptions::apply_options(&mut config, &options).is_err());
@@ -287,11 +308,9 @@ fn rejects_boolean_cost_partitioning_mode() {
 
 #[test]
 fn parses_whole_plan_regression_flaws() {
-    let h = astar_heuristic(
-        "astar(canonical_domain_abstractions(flaw_kind=regression, flaw_scope=whole_plan))",
+    let cfg = domain_collection_source(
+        "astar(canonical(domain_collection(flaw_kind=regression, flaw_scope=whole_plan)))",
     );
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.flaw_kind, FlawKind::Regression);
     assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
 }
@@ -315,7 +334,7 @@ fn parses_single_domain_abstraction_time_limit() {
 #[test]
 fn parses_full_task_interleaved_domain_collection() {
     let h = astar_heuristic(
-        "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_scope=whole_plan,split_selection=min_growth)))",
+        "astar(canonical(domain_collection(collection_strategy=standard,interleave_split_directions=true,flaw_scope=whole_plan,split_selection=min_growth)))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -429,12 +448,10 @@ fn parses_astar_lmcutnumeric_with_named_options() {
 }
 
 #[test]
-fn parses_astar_multi_domain_abstractions_with_named_options() {
-    let h = astar_heuristic(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, flaw_scope=whole_plan, collection_strategy=goal_focused, random_seed=7, debug=true))",
+fn parses_max_domain_collection_with_named_options() {
+    let cfg = domain_collection_source(
+        "astar(max(domain_collection(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, flaw_scope=whole_plan, collection_strategy=goal_focused, random_seed=7, debug=true)))",
     );
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(cfg.total_max_time, 4.5);
     assert!(!cfg.use_wildcard_plans);
@@ -449,7 +466,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
 #[test]
 fn parses_full_task_goal_focused_options() {
     let h = astar_heuristic(
-        "astar(scp(domain(collection_strategy=goal_focused, single_goal_tasks=false), cartesian_collection(collection_strategy=goal_focused, single_goal_tasks=false)))",
+        "astar(scp(domain_collection(collection_strategy=goal_focused, single_goal_tasks=false), cartesian_collection(collection_strategy=goal_focused, single_goal_tasks=false)))",
     );
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let mut domain = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
@@ -466,7 +483,7 @@ fn parses_full_task_goal_focused_options() {
 #[test]
 fn parses_goal_focused_domain_collection_options() {
     let h = astar_heuristic(
-        "astar(domain(collection_strategy=goal_focused, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
+        "astar(domain_collection(collection_strategy=goal_focused, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -479,21 +496,15 @@ fn parses_goal_focused_domain_collection_options() {
 }
 
 #[test]
-fn parses_astar_multi_domain_abstractions_with_trailing_comma() {
-    let h = astar_heuristic("astar(multi_domain_abstractions(max_collection_size=123,))");
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
+fn parses_domain_collection_with_trailing_comma() {
+    let cfg = domain_collection_source("astar(max(domain_collection(max_collection_size=123,)))");
     assert_eq!(cfg.max_collection_size, 123);
 }
 
 #[test]
 fn rejects_removed_exec_entire_plan_randomize_option() {
-    let h = astar_heuristic("astar(multi_domain_abstractions(exec_entire_plan=randomize))");
-    let err = ApplyOptions::apply_options(
-        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
-        &h.args,
-    )
-    .unwrap_err();
+    let err =
+        domain_collection_source_error("astar(max(domain_collection(exec_entire_plan=randomize)))");
     assert!(err.contains("exec_entire_plan"));
 }
 
@@ -552,16 +563,38 @@ fn external_registration_rejects_duplicate_external_names() {
 
 #[test]
 fn rejects_unknown_options_inside_known_heuristics() {
-    let h = astar_heuristic("astar(scp(domain(), deviation_flaws=false))");
+    let h = astar_heuristic("astar(scp(domain_collection(), deviation_flaws=false))");
     let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let err = abstraction_config::validate_scp_combinator_options(&options).unwrap_err();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
-    let h = astar_heuristic("astar(canonical_domain_abstractions(deviation_flaws=false))");
-    let err = ApplyOptions::apply_options(
-        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
-        &h.args,
-    )
-    .unwrap_err();
+    let err = domain_collection_source_error(
+        "astar(canonical(domain_collection(deviation_flaws=false)))",
+    );
     assert!(err.contains("deviation_flaws"), "got `{err}`");
+}
+
+#[test]
+fn domain_source_is_one_domain_abstraction_with_its_own_options() {
+    let h = astar_heuristic(
+        "astar(canonical(domain(max_states=500, flaw_kind=regression, flaw_scope=whole_plan, split_kind=wanted)))",
+    );
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
+    assert_eq!(sources[0].name(), "domain");
+    let mut config = CegarConfig::default();
+    config.apply_options(sources[0].args()).unwrap();
+    assert_eq!(config.max_states, 500);
+    assert_eq!(config.flaw_kind, FlawKind::Regression);
+    assert_eq!(config.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(config.split_kind, SplitKind::Wanted);
+
+    let h = astar_heuristic("astar(canonical(domain(max_collection_size=10)))");
+    let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
+    let error = CegarConfig::default()
+        .apply_options(sources[0].args())
+        .unwrap_err();
+    assert!(
+        error.contains("unknown option `max_collection_size`"),
+        "{error}"
+    );
 }

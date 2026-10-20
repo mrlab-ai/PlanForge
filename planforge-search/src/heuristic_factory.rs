@@ -6,10 +6,8 @@
 //! CLI help are generated from that declaration.
 
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+    CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
-use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
-use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 #[cfg(feature = "cplex")]
@@ -17,6 +15,7 @@ use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::Po
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
+#[cfg(feature = "cplex")]
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegar;
 use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
@@ -363,48 +362,6 @@ impl From<String> for HeuristicBuildError {
     }
 }
 
-fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConfig {
-    CartesianAbstractionConfig {
-        max_states: config.max_states,
-        max_time: config.max_time,
-        combine_labels: config.combine_labels,
-        compute_source_sets: false,
-        retain_transition_system: true,
-        random_seed: config.random_seed,
-        flaw_kind: config.flaw_kind,
-        flaw_scope: config.flaw_scope,
-        split_kind: SplitKind::Concrete,
-        split_selection_rank: None,
-        split_selection: SplitSelection::MinGrowth,
-        debug: config.debug,
-    }
-}
-
-fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
-    const ORDER: &[&str] = &[
-        "max_states",
-        "max_iterations",
-        "max_time",
-        "use_wildcard_plans",
-        "combine_labels",
-        "random_seed",
-        "flaw_kind",
-        "flaw_scope",
-        "split_kind",
-        "split_selection",
-    ];
-    crate::config::for_each_option(args, ORDER, |key, _| match key {
-        "max_states" | "max_time" | "combine_labels" | "random_seed" | "flaw_kind"
-        | "flaw_scope" => Ok(()),
-        "max_iterations" | "use_wildcard_plans" | "split_kind" | "split_selection" => Err(format!(
-            "option `{key}` is not supported for Cartesian abstractions"
-        )),
-        other => Err(format!(
-            "unknown option `{other}` for `cartesian_abstraction`"
-        )),
-    })
-}
-
 fn build_max_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[crate::config::ConfigCall],
@@ -597,10 +554,10 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             info!("Building Cartesian abstraction (CEGAR)...");
-            validate_cartesian_cegar_options(&spec.args)?;
-            let mut cegar_cfg = CegarConfig::default();
-            cegar_cfg.apply_options(&spec.args)?;
-            let cfg = cartesian_config_from_cegar(&cegar_cfg);
+            let cfg = abstraction_config::apply_cartesian_options(
+                &spec.args,
+                abstraction_config::ComponentUse::Standalone,
+            )?;
             let generator = CartesianAbstractionGenerator::new(cfg)
                 .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
             let abstraction = generator
@@ -610,111 +567,6 @@ heuristic_registry! {
                 Box::new(CartesianAbstractionHeuristic::new(None, abstraction))
                     as Box<dyn Heuristic + 'a>,
             ))
-        }
-    }
-
-    SingleCartesianCollection {
-        names: ["max_cartesian_abstraction", "canonical_cartesian_abstraction"],
-        backend: RequiredBackend::None,
-        requirements: abstractable_task,
-        nested: no_nested_heuristics,
-        build: {
-            validate_cartesian_cegar_options(&spec.args)?;
-            let mut cegar_cfg = CegarConfig::default();
-            cegar_cfg.apply_options(&spec.args)?;
-            let generator = CartesianAbstractionGenerator::new(cartesian_config_from_cegar(
-                &cegar_cfg,
-            ))
-            .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
-            let abstraction = generator
-                .generate(task)
-                .map_err(|error| format!("failed to build Cartesian abstraction: {error:#}"))?;
-            let components = vec![AbstractionComponent::cartesian(None, abstraction)];
-            if spec.name == "max_cartesian_abstraction" {
-                let heuristic = MaxAbstractionHeuristic::new(
-                    Some("max_cartesian_abstraction".to_string()),
-                    components,
-                )?;
-                Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
-            } else {
-                let heuristic = CanonicalAbstractionHeuristic::new(
-                    Some("canonical_cartesian_abstraction".to_string()),
-                    task,
-                    components,
-                )?;
-                Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
-            }
-        }
-    }
-
-    CanonicalDomainAbstractions {
-        names: ["canonical_domain_abstractions"],
-        backend: RequiredBackend::None,
-        requirements: abstractable_task,
-        nested: no_nested_heuristics,
-        build: {
-            use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            // Canonical never consumes operator regions — skip ~12 GB of
-            // per-concrete-op CartesianSet storage on big tasks.
-            cfg.set_compute_source_sets(false);
-            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
-            info!("Building canonical domain abstractions (CEGAR)...");
-            let abstractions = generator
-                .generate_collection(task)
-                .map_err(|e| format!("failed to build canonical domain abstractions: {e:#}"))?;
-            let components = abstractions
-                .into_iter()
-                .enumerate()
-                .map(|(index, abstraction)| {
-                    AbstractionComponent::domain(
-                        Some(format!("canonical_domain_abstraction_{index}")),
-                        abstraction,
-                    )
-                })
-                .collect();
-            let h = CanonicalAbstractionHeuristic::new(
-                Some("canonical_domain_abstractions".to_string()),
-                task,
-                components,
-            )
-            .map_err(|e| format!("failed to construct canonical abstraction heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
-        }
-    }
-
-    MultiDomainAbstractions {
-        names: ["multi_domain_abstractions"],
-        backend: RequiredBackend::None,
-        requirements: abstractable_task,
-        nested: no_nested_heuristics,
-        build: {
-            use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-            let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-            cfg.set_compute_source_sets(false);
-            let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
-            info!("Building multiple domain abstractions (CEGAR)...");
-            let abstractions = generator
-                .generate_collection(task)
-                .map_err(|e| format!("failed to build multi domain abstractions: {e:#}"))?;
-            let components = abstractions
-                .into_iter()
-                .enumerate()
-                .map(|(index, abstraction)| {
-                    AbstractionComponent::domain(
-                        Some(format!("multi_domain_abstraction_{index}")),
-                        abstraction,
-                    )
-                })
-                .collect();
-            let h = MaxAbstractionHeuristic::new(
-                Some("multi_domain_abstractions".to_string()),
-                components,
-            )
-            .map_err(|e| format!("failed to construct max abstraction heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
         }
     }
 
