@@ -418,3 +418,15 @@ fn precondition_is_contradicted_only_for_condition_vars() {
     let ordinary = ExplicitFact::propositional(3, ConditionValue::True.as_usize());
     assert!(!conditions.precondition_is_contradicted(&ordinary, &intervals));
 }
+
+#[test]
+fn arithmetic_lands_on_the_canonical_lattice_for_points_and_intervals() {
+    let sum = NumericValue::new(0.1) + NumericValue::new(0.2);
+    let third = NumericValue::new(0.3);
+
+    assert_eq!(ArithOp::Sub.apply(sum, third), ZERO_VALUE);
+    assert_eq!(
+        ArithOp::Sub.apply_interval(Interval::singleton(sum), Interval::singleton(third)),
+        Interval::singleton(ZERO_VALUE)
+    );
+}

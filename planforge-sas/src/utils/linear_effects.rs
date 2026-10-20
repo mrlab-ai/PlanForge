@@ -9,6 +9,7 @@ use crate::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
     NumericTaskExt, NumericType, NumericValue, OperatorIndex, VariableIndex,
 };
+use crate::utils::float_tolerance;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinearExpression {
@@ -73,8 +74,9 @@ impl LinearExpression {
         result
     }
 
+    /// The expression's value on the canonical lattice.
     pub fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
-        NumericValue::new(
+        float_tolerance::canonicalize(NumericValue::new(
             self.constant
                 + self
                     .coefficients
@@ -82,7 +84,7 @@ impl LinearExpression {
                     .zip(numeric_values.iter())
                     .map(|(coefficient, value)| coefficient * value.value())
                     .sum::<f64>(),
-        )
+        ))
     }
 }
 

@@ -10,6 +10,7 @@ use crate::numeric_task::{
     ZERO_VALUE,
 };
 use crate::utils::errors::{AssignmentAxiomError, AxiomEvalError, InvalidIndex, WrongAxiomLayer};
+use crate::utils::float_tolerance;
 use crate::utils::state_packer::StatePacker;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,7 +114,7 @@ impl AssignmentAxiom {
                 index: affected.index(),
             }));
         }
-        let result = match self.operator {
+        let result = float_tolerance::canonicalize(match self.operator {
             CalOperator::Sum => numeric_state[left.index()] + numeric_state[right.index()],
             CalOperator::Difference => numeric_state[left.index()] - numeric_state[right.index()],
             CalOperator::Product => numeric_state[left.index()] * numeric_state[right.index()],
@@ -125,7 +126,7 @@ impl AssignmentAxiom {
                 }
                 numeric_state[left.index()] / numeric_state[right.index()]
             }
-        };
+        });
         numeric_state[affected.index()] = result;
         Ok(result)
     }

@@ -24,6 +24,7 @@ mod tests;
 use crate::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use crate::numeric_task::value_types::{ExplicitFact, FactNamespace, NumericType, NumericVariable};
 use crate::numeric_task::{AxiomIndex, NumericValue, VariableIndex};
+use crate::utils::float_tolerance;
 use crate::utils::interval::{EMPTY_INTERVAL, Interval};
 
 /// The two values a propositional variable carrying a numeric condition's
@@ -111,16 +112,19 @@ pub enum ArithOp {
 }
 
 impl ArithOp {
+    /// `lhs op rhs` on the canonical lattice, so that comparing it is exact.
     #[inline]
     pub fn apply(self, lhs: NumericValue, rhs: NumericValue) -> NumericValue {
-        match self {
+        float_tolerance::canonicalize(match self {
             ArithOp::Add => lhs + rhs,
             ArithOp::Sub => lhs - rhs,
             ArithOp::Mul => lhs * rhs,
             ArithOp::Div => lhs / rhs,
-        }
+        })
     }
 
+    /// [`Self::apply`] over intervals. Canonicalization is monotone, so the
+    /// canonical result of every point pair stays inside the canonical image.
     #[inline]
     pub fn apply_interval(self, lhs: Interval, rhs: Interval) -> Interval {
         if lhs.is_empty() || rhs.is_empty() {
@@ -132,6 +136,7 @@ impl ArithOp {
             ArithOp::Mul => lhs * rhs,
             ArithOp::Div => lhs / rhs,
         }
+        .canonicalized()
     }
 }
 
