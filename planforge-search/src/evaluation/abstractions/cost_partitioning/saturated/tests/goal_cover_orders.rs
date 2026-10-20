@@ -11,7 +11,7 @@ fn label_candidates_always_include_max_heuristic_greedy_order() {
 }
 
 #[test]
-fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
+fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let task = independent_goals_task();
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
@@ -24,7 +24,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
                 debug: false,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             max_collection_states: 128,
             total_max_time: None,
@@ -92,7 +92,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
     assert_ne!(other_representative[2], baseline[2]);
 
     let other_complement = order(GoalCoverOrderVariant {
-        complementary_round: 1,
+        second_anchor_round: 1,
         compact: true,
         ..Default::default()
     });

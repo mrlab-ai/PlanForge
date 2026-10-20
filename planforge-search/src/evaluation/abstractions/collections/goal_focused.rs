@@ -141,11 +141,11 @@ pub(crate) struct GoalFocusedSchedule {
     pub(crate) max_collection_states: usize,
     pub(crate) total_max_time: Option<Duration>,
     pub(crate) progress_states: bool,
-    /// Complementary collections: alternate progression and regression by
+    /// Goal-focused collections: alternate progression and regression by
     /// variant parity. When false, every variant keeps the backend's
     /// configured direction; ranks and seeds are unaffected.
     pub(crate) alternate_split_kinds: bool,
-    /// Complementary collections: build every member on its goal's
+    /// Goal-focused collections: build every member on its goal's
     /// single-goal task. When false, every member is built on the full task;
     /// goals are then only labels that schedule the `G * V` members
     /// round-robin and derive their seeds and ranks, and members carry no
@@ -158,7 +158,7 @@ pub(crate) struct GoalFocusedSchedule {
 impl GoalFocusedSchedule {
     /// How member `member` of a task with `goal_count` goals is constructed.
     ///
-    /// A complementary collection alternates progression and regression by
+    /// A goal-focused collection alternates progression and regression by
     /// variant parity (unless `alternate_split_kinds` is off), ranks ties by
     /// `variant / 2`, and derives a seed for every variant but the first;
     /// otherwise only the seed varies, and only when more than one variant
@@ -184,10 +184,10 @@ impl GoalFocusedSchedule {
         let derived_seed =
             || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
         assert!(
-            self.alternate_split_kinds || self.strategy.is_complementary(),
-            "only complementary collections choose split kinds per variant"
+            self.alternate_split_kinds || self.strategy.is_goal_focused(),
+            "only goal-focused collections choose split kinds per variant"
         );
-        let (split_kind, tie_rank, seed) = if self.strategy.is_complementary() {
+        let (split_kind, tie_rank, seed) = if self.strategy.is_goal_focused() {
             let split_kind = self.alternate_split_kinds.then(|| {
                 if construction_variant.is_multiple_of(2) {
                     SplitKind::Concrete
@@ -233,8 +233,8 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     );
     assert!(
         schedule.single_goal_tasks
-            || (schedule.strategy.is_complementary() && !schedule.progress_states),
-        "full-task members require a complementary collection without progress states"
+            || (schedule.strategy.is_goal_focused() && !schedule.progress_states),
+        "full-task members require a goal-focused collection without progress states"
     );
     let goal_count = task.get_num_goals();
     let variants_per_goal = if goal_count == 0 {

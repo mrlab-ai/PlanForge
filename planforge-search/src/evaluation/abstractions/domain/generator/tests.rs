@@ -163,7 +163,7 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
 fn cegar_default_config_matches_numeric_fd_defaults() {
     let config = CegarConfig::default();
 
-    assert_eq!(config.max_abstraction_size, 100_000);
+    assert_eq!(config.max_states, 100_000);
     assert_eq!(config.max_iterations, usize::MAX);
     assert!(!config.use_wildcard_plans);
     assert_eq!(config.random_seed, Some(2011));
@@ -197,7 +197,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
 
     let outcome = refine_domain_abstraction(
         &CegarConfig {
-            max_abstraction_size: 1,
+            max_states: 1,
             ..Default::default()
         },
         &task,
@@ -430,7 +430,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
     for initial in [0.0, 7.0, 15.0] {
         let task = counter_to_twenty(initial);
         let abstraction = DomainAbstractionGenerator::new(CegarConfig {
-            max_abstraction_size: 10_000,
+            max_states: 10_000,
             flaw_kind: FlawKind::Progression,
             init_split_var_ids: Some(HashSet::new()),
             ..Default::default()
@@ -491,7 +491,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
             for split_kind in [SplitKind::Concrete, SplitKind::Wanted] {
                 let abstraction = DomainAbstractionGenerator::new(CegarConfig {
-                    max_abstraction_size: 1_000,
+                    max_states: 1_000,
                     flaw_kind: FlawKind::Regression,
                     flaw_scope,
                     split_kind,

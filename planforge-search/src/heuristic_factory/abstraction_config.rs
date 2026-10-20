@@ -668,7 +668,7 @@ fn apply_cartesian_source_options(
     let mut seen = HashSet::new();
     let mut next_positional = 0;
     for arg in args {
-        let raw_key = match arg.key() {
+        let key = match arg.key() {
             Some(key) => key,
             None => {
                 let key = POSITIONAL_ORDER.get(next_positional).ok_or_else(|| {
@@ -680,11 +680,6 @@ fn apply_cartesian_source_options(
                 next_positional += 1;
                 key
             }
-        };
-        let key = match raw_key {
-            "max_abstraction_size" => "max_states",
-            "abstraction_generation_max_time" => "max_time",
-            other => other,
         };
         if !seen.insert(key.to_string()) {
             return Err(format!("duplicate option `{key}` for `{source}`"));

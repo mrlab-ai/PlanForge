@@ -12,7 +12,7 @@ use crate::evaluation::abstractions::common::cegar::{
 
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
-    pub max_abstraction_size: usize,
+    pub max_states: usize,
     pub max_iterations: usize,
     pub max_time: Option<Duration>,
     pub use_wildcard_plans: bool,
@@ -55,7 +55,7 @@ pub struct CegarConfig {
 impl Default for CegarConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: 100_000,
+            max_states: 100_000,
             max_iterations: usize::MAX,
             max_time: None,
             use_wildcard_plans: false,
@@ -89,7 +89,7 @@ impl crate::config::ApplyOptions for CegarConfig {
         }
 
         const ORDER: &[&str] = &[
-            "max_abstraction_size",
+            "max_states",
             "max_iterations",
             "max_time",
             "use_wildcard_plans",
@@ -102,7 +102,7 @@ impl crate::config::ApplyOptions for CegarConfig {
         ];
         for_each_option(args, ORDER, |key, value| {
             match key {
-                "max_abstraction_size" => self.max_abstraction_size = parse(value)?,
+                "max_states" => self.max_states = parse(value)?,
                 "max_iterations" => self.max_iterations = parse(value)?,
                 "max_time" => {
                     let seconds = f64::from_option_value(value)?;

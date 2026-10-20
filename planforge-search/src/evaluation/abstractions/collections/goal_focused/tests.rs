@@ -289,7 +289,7 @@ fn goals_round_robin_before_focusing_the_strongest() {
 }
 
 #[test]
-fn complementary_variants_alternate_direction_and_rank_ties_by_pairs() {
+fn goal_focused_variants_alternate_split_kinds_and_rank_ties_by_pairs() {
     let bounds = [
         Bound::AtLeast(1.0),
         Bound::AtLeast(1.0),
@@ -300,7 +300,7 @@ fn complementary_variants_alternate_direction_and_rank_ties_by_pairs() {
     backend.initial_h = Some(vec![2.0, 5.0, 3.0]);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Complementary, 4, false),
+        &schedule(CollectionStrategy::GoalFocused, 4, false),
         &backend,
     )
     .unwrap();
@@ -376,7 +376,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
     let backend = ScriptedBackend::new(&[]);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Complementary, 3, true),
+        &schedule(CollectionStrategy::GoalFocused, 3, true),
         &backend,
     )
     .unwrap();
@@ -579,7 +579,7 @@ fn members_share_the_collection_state_budget() {
         &task,
         &GoalFocusedSchedule {
             max_collection_states: 8,
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -604,7 +604,7 @@ fn an_exhausted_time_budget_still_builds_the_first_member() {
         &task,
         &GoalFocusedSchedule {
             total_max_time: Some(Duration::ZERO),
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -650,7 +650,7 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
         &task,
         &GoalFocusedSchedule {
             alternate_split_kinds: false,
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -695,7 +695,7 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
         &task,
         &GoalFocusedSchedule {
             single_goal_tasks: false,
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -739,7 +739,7 @@ fn full_task_members_reject_progress_states() {
         &task,
         &GoalFocusedSchedule {
             single_goal_tasks: false,
-            ..schedule(CollectionStrategy::Complementary, 2, true)
+            ..schedule(CollectionStrategy::GoalFocused, 2, true)
         },
         &ScriptedBackend::new(&bounds),
     );

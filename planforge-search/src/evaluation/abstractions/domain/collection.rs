@@ -37,9 +37,9 @@ use planforge_sas::utils::interval::Interval;
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
 pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-    pub max_abstraction_size: usize,
+    pub max_states: usize,
     pub max_collection_size: usize,
-    pub abstraction_generation_max_time: f64,
+    pub max_time: f64,
     pub total_max_time: f64,
     pub stagnation_limit: f64,
     pub blacklist_trigger_percentage: f64,
@@ -53,7 +53,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub split_selection: SplitSelection,
     /// `standard` refines full-task abstractions with random restarts,
     /// blacklisting, stagnation detection, and deduplication.
-    /// `complementary` builds the goal-focused collection shared with
+    /// `goal_focused` builds the goal-focused collection shared with
     /// Cartesian abstractions (see
     /// [`goal_focused`](crate::evaluation::abstractions::collections::goal_focused)):
     /// `variants_per_goal` members per goal, each refined from the trivial
@@ -62,19 +62,19 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// `alternate_split_kinds` is off), flaw ties ranked by `variant / 2`. The
     /// init-split, blacklist, and stagnation options only apply to `standard`.
     pub collection_strategy: CollectionStrategy,
-    /// Members per goal of a `complementary` collection. Must be 1 for
+    /// Members per goal of a `goal_focused` collection. Must be 1 for
     /// `standard`.
     pub variants_per_goal: usize,
-    /// Let every variant of a `complementary` collection refine from the
+    /// Let every variant of a `goal_focused` collection refine from the
     /// concrete states its earlier members' plans reached. Must be false for
     /// `standard`.
     pub progress_states: bool,
     /// Alternate concrete and wanted splits by variant parity in a
-    /// `complementary` collection. When false, every variant uses the
+    /// `goal_focused` collection. When false, every variant uses the
     /// configured `split_kind` (concrete splits when unset).
     /// Must be true for `standard`.
     pub alternate_split_kinds: bool,
-    /// Build every member of a `complementary` collection on its goal's
+    /// Build every member of a `goal_focused` collection on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
     /// and carry no collection membership. Must be true for `standard` and
@@ -114,9 +114,9 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
 impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     fn default() -> Self {
         Self {
-            max_abstraction_size: 1_000_000,
+            max_states: 1_000_000,
             max_collection_size: 10_000_000,
-            abstraction_generation_max_time: f64::INFINITY,
+            max_time: f64::INFINITY,
             total_max_time: 10.0,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -146,8 +146,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// time remaining to the caller.
     pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
         self.total_max_time = self.total_max_time.min(max_seconds);
-        self.abstraction_generation_max_time =
-            self.abstraction_generation_max_time.min(max_seconds);
+        self.max_time = self.max_time.min(max_seconds);
     }
 
     /// Select whether generated abstractions retain operator regions.
@@ -189,9 +188,9 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         write!(
             f,
             concat!(
-                "max_abstraction_size={}, ",
+                "max_states={}, ",
                 "max_collection_size={}, ",
-                "abstraction_generation_max_time={}, ",
+                "max_time={}, ",
                 "total_max_time={}, ",
                 "stagnation_limit={}, ",
                 "blacklist_trigger_percentage={}, ",
@@ -210,9 +209,9 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "single_goal_tasks={}, ",
                 "interleave_split_directions={}, ",
             ),
-            self.max_abstraction_size,
+            self.max_states,
             self.max_collection_size,
-            fmt_f64(self.abstraction_generation_max_time),
+            fmt_f64(self.max_time),
             fmt_f64(self.total_max_time),
             fmt_f64(self.stagnation_limit),
             fmt_f64(self.blacklist_trigger_percentage),
@@ -264,19 +263,19 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             CollectionStrategy::Standard => {
                 ensure!(
                     self.config.variants_per_goal == 1,
-                    "`variants_per_goal` requires `collection_strategy=complementary`"
+                    "`variants_per_goal` requires `collection_strategy=goal_focused`"
                 );
                 ensure!(
                     !self.config.progress_states,
-                    "`progress_states=true` requires `collection_strategy=complementary`"
+                    "`progress_states=true` requires `collection_strategy=goal_focused`"
                 );
                 ensure!(
                     self.config.alternate_split_kinds,
-                    "`alternate_split_kinds=false` requires `collection_strategy=complementary`"
+                    "`alternate_split_kinds=false` requires `collection_strategy=goal_focused`"
                 );
                 ensure!(
                     self.config.single_goal_tasks,
-                    "`single_goal_tasks=false` requires `collection_strategy=complementary`"
+                    "`single_goal_tasks=false` requires `collection_strategy=goal_focused`"
                 );
                 if self.config.interleave_split_directions && self.config.split_kind.is_some() {
                     bail!(
@@ -284,7 +283,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     );
                 }
             }
-            CollectionStrategy::Complementary => {
+            CollectionStrategy::GoalFocused => {
                 ensure!(
                     !self.config.interleave_split_directions,
                     "`interleave_split_directions=true` requires `collection_strategy=standard`"
@@ -295,7 +294,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 );
                 ensure!(
                     self.config.flaw_kind == FlawKind::Progression,
-                    "`collection_strategy=complementary` refines along executed concrete plans and supports flaw_kind=progression, not flaw_kind={}",
+                    "`collection_strategy=goal_focused` refines along executed concrete plans and supports flaw_kind=progression, not flaw_kind={}",
                     self.config.flaw_kind
                 );
                 ensure!(
@@ -321,7 +320,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
     fn build_cegar_config(
         &self,
-        max_abstraction_size: usize,
+        max_states: usize,
         remaining_time: f64,
         variable_choice: MemberVariableChoice,
         random_seed: u64,
@@ -333,7 +332,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             blacklisted_numeric_var_ids,
         } = variable_choice;
         CegarConfig {
-            max_abstraction_size,
+            max_states,
             max_iterations: CegarConfig::default().max_iterations,
             max_time: if remaining_time.is_finite() {
                 Some(Duration::from_secs_f64(remaining_time.max(0.0)))
@@ -366,7 +365,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         self.validate_supported_options()?;
         let abstractions = match self.config.collection_strategy {
             CollectionStrategy::Standard => self.generate_standard_collection(task)?,
-            CollectionStrategy::Complementary => self.generate_goal_focused_collection(task)?,
+            CollectionStrategy::GoalFocused => self.generate_goal_focused_collection(task)?,
         };
         if self.config.debug {
             log_collection_debug_summary(&abstractions);
@@ -381,10 +380,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     ) -> Result<Vec<DomainAbstraction>> {
         let backend = GoalFocusedDomainBackend {
             config: &self.config,
-            member_max_time: optional_duration(
-                "abstraction_generation_max_time",
-                self.config.abstraction_generation_max_time,
-            )?,
+            member_max_time: optional_duration("max_time", self.config.max_time)?,
         };
         let mut abstractions = build_goal_focused_collection(
             task,
@@ -443,12 +439,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             } else {
                 f64::INFINITY
             };
-            let remaining_generation_time = self
-                .config
-                .abstraction_generation_max_time
-                .min(remaining_total_time);
-            let remaining_abstraction_size =
-                remaining_collection_size.min(self.config.max_abstraction_size);
+            let remaining_generation_time = self.config.max_time.min(remaining_total_time);
+            let remaining_abstraction_size = remaining_collection_size.min(self.config.max_states);
 
             if remaining_abstraction_size == 0 {
                 stop_reason = "collection size limit";
@@ -523,7 +515,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 flaw_scope: Some(self.config.flaw_scope),
                 full_goal_task: Some(true),
                 abstraction_use: AbstractionUse::CollectionMember,
-                max_abstraction_size: Some(remaining_abstraction_size),
+                max_states: Some(remaining_abstraction_size),
                 ..std::mem::take(&mut abstraction.metadata)
             };
 
@@ -560,7 +552,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     abstraction_size,
                     start.elapsed().as_secs_f64(),
                     remaining_collection_size,
-                    remaining_collection_size.min(self.config.max_abstraction_size),
+                    remaining_collection_size.min(self.config.max_states),
                     remaining_generation_time,
                     blacklisting
                 );
@@ -662,7 +654,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 }
 
-/// Builds the members of a goal-focused (`complementary`) domain collection.
+/// Builds the members of a goal-focused domain collection.
 struct GoalFocusedDomainBackend<'config> {
     config: &'config DomainAbstractionCollectionGeneratorMultipleCegarConfig,
     member_max_time: Option<Duration>,
@@ -675,10 +667,7 @@ impl GoalFocusedDomainBackend<'_> {
     /// and no blacklisted variables.
     fn member_cegar_config(&self, variant: &GoalVariant, budget: MemberBudget) -> CegarConfig {
         CegarConfig {
-            max_abstraction_size: self
-                .config
-                .max_abstraction_size
-                .min(budget.remaining_states),
+            max_states: self.config.max_states.min(budget.remaining_states),
             max_iterations: CegarConfig::default().max_iterations,
             // Whichever of the two budgets exist bind; the tighter one wins.
             max_time: self
@@ -722,7 +711,7 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
         budget: MemberBudget,
     ) -> Result<(DomainAbstraction, BuiltReport)> {
         let cegar_config = self.member_cegar_config(variant, budget);
-        let max_abstraction_size = cegar_config.max_abstraction_size;
+        let max_states = cegar_config.max_states;
         let mut abstraction = DomainAbstractionGenerator::new(cegar_config)
             .context("failed to construct single-abstraction CEGAR generator")?
             .generate_from_root(task, root)?;
@@ -731,7 +720,7 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
         metadata.flaw_kind = Some(self.config.flaw_kind);
         metadata.flaw_scope = Some(self.config.flaw_scope);
         metadata.full_goal_task = Some(variant.full_task);
-        metadata.max_abstraction_size = Some(max_abstraction_size);
+        metadata.max_states = Some(max_states);
         let report = BuiltReport {
             initial_h: abstraction.distance_table.distances
                 [abstraction.distance_table.initial_state_hash],
@@ -772,7 +761,7 @@ fn log_collection_abstraction_debug(
         metadata.flaw_kind,
         metadata.full_goal_task,
         metadata.collection_member,
-        metadata.max_abstraction_size,
+        metadata.max_states,
         compute_abstraction_size_u128(
             abstraction.factory.domain_sizes(),
             abstraction.factory.numeric_domain_sizes()

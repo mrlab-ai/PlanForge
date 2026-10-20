@@ -147,7 +147,7 @@ pub struct DomainAbstractionMetadata {
     pub full_goal_task: Option<bool>,
     pub abstraction_use: AbstractionUse,
     pub stop_reason: Option<CegarStopReason>,
-    pub max_abstraction_size: Option<usize>,
+    pub max_states: Option<usize>,
     /// CEGAR exited because the wildcard plan has no flaws. This proves
     /// `h(init)` optimal only when `abstraction_use` is `Standalone`;
     /// collection combinators deliberately do not expose that search shortcut.

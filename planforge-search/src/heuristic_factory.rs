@@ -365,7 +365,7 @@ impl From<String> for HeuristicBuildError {
 
 fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConfig {
     CartesianAbstractionConfig {
-        max_states: config.max_abstraction_size,
+        max_states: config.max_states,
         max_time: config.max_time,
         combine_labels: config.combine_labels,
         compute_source_sets: false,
@@ -382,7 +382,7 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
 
 fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
     const ORDER: &[&str] = &[
-        "max_abstraction_size",
+        "max_states",
         "max_iterations",
         "max_time",
         "use_wildcard_plans",
@@ -394,11 +394,7 @@ fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
         "split_selection",
     ];
     crate::config::for_each_option(args, ORDER, |key, _| match key {
-        "max_abstraction_size"
-        | "max_time"
-        | "combine_labels"
-        | "random_seed"
-        | "flaw_kind"
+        "max_states" | "max_time" | "combine_labels" | "random_seed" | "flaw_kind"
         | "flaw_scope" => Ok(()),
         "max_iterations" | "use_wildcard_plans" | "split_kind" | "split_selection" => Err(format!(
             "option `{key}` is not supported for Cartesian abstractions"

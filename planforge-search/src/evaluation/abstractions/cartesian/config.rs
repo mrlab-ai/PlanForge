@@ -44,11 +44,11 @@ pub struct CartesianAbstractionCollectionConfig {
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
     pub progress_states: bool,
-    /// Complementary collections only: alternate concrete and wanted splits
+    /// Goal-focused collections only: alternate concrete and wanted splits
     /// by variant parity. When false, every variant uses the configured
     /// `split_kind`.
     pub alternate_split_kinds: bool,
-    /// Complementary collections only: build every member on its goal's
+    /// Goal-focused collections only: build every member on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
     /// and carry no collection membership. Excludes `progress_states`.

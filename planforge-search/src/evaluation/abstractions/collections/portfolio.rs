@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum CollectionStrategy {
     Standard,
-    Complementary,
+    GoalFocused,
 }
 
 impl CollectionStrategy {
-    pub fn is_complementary(self) -> bool {
-        matches!(self, Self::Complementary)
+    pub fn is_goal_focused(self) -> bool {
+        matches!(self, Self::GoalFocused)
     }
 }
 
@@ -19,7 +19,7 @@ impl fmt::Display for CollectionStrategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Standard => write!(f, "standard"),
-            Self::Complementary => write!(f, "complementary"),
+            Self::GoalFocused => write!(f, "goal_focused"),
         }
     }
 }
@@ -28,8 +28,10 @@ impl crate::config::FromOptionValue for CollectionStrategy {
     fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
         match crate::config::atom(value)? {
             "standard" => Ok(Self::Standard),
-            "complementary" => Ok(Self::Complementary),
-            other => Err(format!("invalid CollectionStrategy `{other}`")),
+            "goal_focused" => Ok(Self::GoalFocused),
+            other => Err(format!(
+                "invalid collection_strategy `{other}`; expected one of standard, goal_focused"
+            )),
         }
     }
 }

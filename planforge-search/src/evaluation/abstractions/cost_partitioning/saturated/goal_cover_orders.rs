@@ -4,7 +4,7 @@ use super::*;
 pub(super) struct GoalCoverOrderVariant {
     pub(super) anchor_goal_offset: usize,
     pub(super) anchor_offset: usize,
-    pub(super) complementary_round: usize,
+    pub(super) second_anchor_round: usize,
     pub(super) representative_round: usize,
     pub(super) non_goal_prefix: bool,
     pub(super) compact: bool,
@@ -146,7 +146,7 @@ pub(super) fn compact_goal_cover_variants(
             GoalCoverOrderVariant {
                 anchor_goal_offset,
                 anchor_offset,
-                complementary_round: anchor_offset.wrapping_add(representative_round),
+                second_anchor_round: anchor_offset.wrapping_add(representative_round),
                 representative_round,
                 compact: true,
                 ..Default::default()
@@ -235,21 +235,21 @@ pub(super) fn goal_cover_order(
         .get(variant.anchor_offset % sorted_anchor_components.len())
         .copied()?;
     let first_member = member(first_anchor);
-    let mut complementary_anchors = anchor_components
+    let mut second_anchors = anchor_components
         .iter()
         .copied()
         .filter(|&component_id| component_id != first_anchor)
         .collect::<Vec<_>>();
-    complementary_anchors.sort_by(|&left, &right| {
-        let complement_score = |component_id: usize| {
+    second_anchors.sort_by(|&left, &right| {
+        let opposite_split_score = |component_id: usize| {
             let candidate = member(component_id);
             (
                 candidate.split_kind != first_member.split_kind,
                 candidate.tie_rank == first_member.tie_rank,
             )
         };
-        complement_score(right)
-            .cmp(&complement_score(left))
+        opposite_split_score(right)
+            .cmp(&opposite_split_score(left))
             .then_with(|| current_h(right).total_cmp(&current_h(left)))
             .then_with(|| {
                 member(left)
@@ -258,8 +258,8 @@ pub(super) fn goal_cover_order(
             })
             .then_with(|| left.cmp(&right))
     });
-    let complementary_anchor = (!complementary_anchors.is_empty())
-        .then(|| complementary_anchors[variant.complementary_round % complementary_anchors.len()]);
+    let second_anchor = (!second_anchors.is_empty())
+        .then(|| second_anchors[variant.second_anchor_round % second_anchors.len()]);
 
     let mut order = Vec::with_capacity(base_order.len());
     let mut selected = HashSet::with_capacity(base_order.len());
@@ -273,7 +273,7 @@ pub(super) fn goal_cover_order(
     }
     order.push(first_anchor);
     selected.insert(first_anchor);
-    if let Some(component_id) = complementary_anchor {
+    if let Some(component_id) = second_anchor {
         order.push(component_id);
         selected.insert(component_id);
     }

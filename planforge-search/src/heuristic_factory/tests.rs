@@ -37,13 +37,13 @@ fn astar_heuristic(input: &str) -> HeuristicSpec {
 #[test]
 fn parses_astar_domain_abstraction_with_named_options() {
     let h = astar_heuristic(
-        "astar(domain_abstraction(max_abstraction_size=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
+        "astar(domain_abstraction(max_states=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
     );
     assert_eq!(h.name, "domain_abstraction");
 
     let mut cfg = CegarConfig::default();
     cfg.apply_options(&h.args).unwrap();
-    assert_eq!(cfg.max_abstraction_size, 10_000);
+    assert_eq!(cfg.max_states, 10_000);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
     assert_eq!(cfg.random_seed, Some(7));
@@ -109,7 +109,7 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, flaw_scope=whole_plan, collection_strategy=complementary, variants_per_goal=8, progress_states=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
+        "astar(scp(cartesian_collection(max_states=1000, flaw_scope=whole_plan, collection_strategy=goal_focused, variants_per_goal=8, progress_states=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -120,10 +120,7 @@ fn parses_hierarchical_cartesian_collection_source() {
         abstraction_config::ComponentUse::RegionalCostPartitioning,
     )
     .unwrap();
-    assert_eq!(
-        config.collection_strategy,
-        CollectionStrategy::Complementary
-    );
+    assert_eq!(config.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(config.variants_per_goal, 8);
     assert!(config.progress_states);
     assert!(!config.alternate_split_kinds);
@@ -302,11 +299,11 @@ fn parses_whole_plan_regression_flaws() {
 #[test]
 fn parses_single_domain_abstraction_time_limit() {
     let h = astar_heuristic(
-        "astar(domain_abstraction(max_abstraction_size=1000,max_time=900,flaw_scope=whole_plan))",
+        "astar(domain_abstraction(max_states=1000,max_time=900,flaw_scope=whole_plan))",
     );
     let mut cfg = CegarConfig::default();
     cfg.apply_options(&h.args).unwrap();
-    assert_eq!(cfg.max_abstraction_size, 1000);
+    assert_eq!(cfg.max_states, 1000);
     assert_eq!(cfg.max_time, Some(std::time::Duration::from_secs(900)));
     assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
 
@@ -434,7 +431,7 @@ fn parses_astar_lmcutnumeric_with_named_options() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, flaw_scope=whole_plan, collection_strategy=complementary, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, flaw_scope=whole_plan, collection_strategy=goal_focused, random_seed=7, debug=true))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -444,7 +441,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert!(cfg.combine_labels);
     assert_eq!(cfg.flaw_kind, FlawKind::Progression);
     assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
-    assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
+    assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(cfg.random_seed, Some(7));
     assert!(cfg.debug);
 }
@@ -452,7 +449,7 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
 #[test]
 fn parses_full_task_goal_focused_options() {
     let h = astar_heuristic(
-        "astar(scp(domain(collection_strategy=complementary, single_goal_tasks=false), cartesian_collection(collection_strategy=complementary, single_goal_tasks=false)))",
+        "astar(scp(domain(collection_strategy=goal_focused, single_goal_tasks=false), cartesian_collection(collection_strategy=goal_focused, single_goal_tasks=false)))",
     );
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     let mut domain = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
@@ -469,11 +466,11 @@ fn parses_full_task_goal_focused_options() {
 #[test]
 fn parses_goal_focused_domain_collection_options() {
     let h = astar_heuristic(
-        "astar(domain(collection_strategy=complementary, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
+        "astar(domain(collection_strategy=goal_focused, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
+    assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(cfg.variants_per_goal, 10);
     assert!(cfg.progress_states);
     assert!(!cfg.alternate_split_kinds);

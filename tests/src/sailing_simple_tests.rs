@@ -22,7 +22,7 @@
 //! | `sailing_simple_assignment_gap` | 55.0s | 5.9s |
 //! | `sailing_simple_scp_admissible` | 37.2s | 1.3s |
 //! | `sailing_simple_ratchet_equilibrium` | 25.1s | 3.3s |
-//! | `..._complementary_collection_keeps_single_goal_solved_abstractions` | 18.9s | 2.1s |
+//! | `..._goal_focused_collection_keeps_single_goal_solved_abstractions` | 18.9s | 2.1s |
 //!
 //! and almost none of it was the assertions. The collection generator was
 //! stopped by a wall-clock budget it could never stagnate out of, so it ran the
@@ -286,7 +286,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 }
 
 /// The collection configuration every cost-partitioning test below shares:
-/// the goal-focused (`complementary`) collection, two variants per goal with
+/// the goal-focused collection, two variants per goal with
 /// progress states.
 ///
 /// No clock bounds it. The schedule builds a fixed member sequence, each
@@ -298,16 +298,16 @@ fn goal_focused_collection_config(
     seed: u64,
 ) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        max_abstraction_size: 1_000,
+        max_states: 1_000,
         max_collection_size: 10_000,
-        abstraction_generation_max_time: f64::INFINITY,
+        max_time: f64::INFINITY,
         total_max_time: f64::INFINITY,
         split_selection: SplitSelection::MinGrowth,
         use_wildcard_plans: true,
         combine_labels: false,
         flaw_kind: FlawKind::Progression,
         flaw_scope: FlawScope::WholePlan,
-        collection_strategy: CollectionStrategy::Complementary,
+        collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 2,
         progress_states: true,
         random_seed: Some(seed),
@@ -454,7 +454,7 @@ fn sailing_simple_ratchet_equilibrium() {
         DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
     let abstractions = generator
         .generate_collection(&task)
-        .expect("complementary collection should build on prob_2b1p");
+        .expect("goal-focused collection should build on prob_2b1p");
 
     let saved_p0_group_counts = abstractions
         .iter()
@@ -538,13 +538,13 @@ fn sailing_simple_scp_solves_rather_than_reporting_dead_ends() {
 }
 
 #[test]
-fn sailing_simple_complementary_collection_keeps_single_goal_solved_abstractions() {
+fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions() {
     let (task, _scratch) = sailing_task("prob_1b4p_axes");
     let generator =
         DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
     let abstractions = generator
         .generate_collection(&task)
-        .expect("complementary collection should build on prob_1b4p_axes");
+        .expect("goal-focused collection should build on prob_1b4p_axes");
 
     for goal_id in 0..task.get_num_goals() {
         let variants = abstractions
@@ -563,6 +563,6 @@ fn sailing_simple_complementary_collection_keeps_single_goal_solved_abstractions
         abstractions
             .iter()
             .all(|abstraction| abstraction.metadata.full_goal_task == Some(false)),
-        "multi-goal complementary collection must not generate full-goal abstractions"
+        "multi-goal goal-focused collection must not generate full-goal abstractions"
     );
 }

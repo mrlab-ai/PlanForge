@@ -86,7 +86,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 compute_source_sets: true,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_states: 384,
             total_max_time: None,
@@ -225,7 +225,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_states: 4,
             total_max_time: None,
@@ -883,7 +883,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_states: 192,
             total_max_time: Some(Duration::ZERO),

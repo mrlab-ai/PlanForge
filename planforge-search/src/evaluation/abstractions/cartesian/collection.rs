@@ -15,12 +15,12 @@ impl CartesianAbstractionCollectionGenerator {
             "Cartesian variants_per_goal must be > 0"
         );
         ensure!(
-            config.alternate_split_kinds || config.collection_strategy.is_complementary(),
-            "`alternate_split_kinds=false` requires `collection_strategy=complementary`"
+            config.alternate_split_kinds || config.collection_strategy.is_goal_focused(),
+            "`alternate_split_kinds=false` requires `collection_strategy=goal_focused`"
         );
         ensure!(
-            config.single_goal_tasks || config.collection_strategy.is_complementary(),
-            "`single_goal_tasks=false` requires `collection_strategy=complementary`"
+            config.single_goal_tasks || config.collection_strategy.is_goal_focused(),
+            "`single_goal_tasks=false` requires `collection_strategy=goal_focused`"
         );
         ensure!(
             config.single_goal_tasks || !config.progress_states,

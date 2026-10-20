@@ -520,7 +520,7 @@ fn ocp_retains_stuttering_action_constraints() {
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
     let cegar_config = CegarConfig {
-        max_abstraction_size: 1,
+        max_states: 1,
         max_iterations: 1,
         compute_source_sets: false,
         ..CegarConfig::default()

@@ -102,13 +102,13 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
 fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
     DomainAbstractionCollectionGeneratorMultipleCegar::new(
         DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            max_abstraction_size: 300,
+            max_states: 300,
             max_collection_size: 3_000,
-            abstraction_generation_max_time: f64::INFINITY,
+            max_time: f64::INFINITY,
             total_max_time: f64::INFINITY,
             flaw_kind: FlawKind::Progression,
             flaw_scope: FlawScope::WholePlan,
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             progress_states: true,
             random_seed: Some(1),
@@ -126,7 +126,7 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
             random_seed: Some(1),
             ..Default::default()
         },
-        collection_strategy: CollectionStrategy::Complementary,
+        collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         max_collection_states: 3_000,
         total_max_time: None,

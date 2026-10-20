@@ -355,7 +355,7 @@ fn label_cp_steals_shared_operator_cost() {
 }
 
 #[test]
-fn region_cp_preserves_residual_for_complementary_abstraction() {
+fn region_cp_preserves_residual_for_a_disjoint_abstraction() {
     let mut residuals = RemainingCosts::from_operator_costs(&[1.0]);
     residuals
         .reduce_by_abstract_source_sets(
@@ -368,10 +368,10 @@ fn region_cp_preserves_residual_for_complementary_abstraction() {
         )
         .unwrap();
 
-    // The complementary abstraction starts after the first one's active
+    // The disjoint abstraction starts after the first one's active
     // source region, so region CP preserves the unit residual there.
-    let complementary = source_set(NumericValue::new(5.0 + 1e-6), NumericValue::new(10.0));
-    let region_residual = residuals.cost_for_source_set(1, 0, &complementary);
+    let disjoint = source_set(NumericValue::new(5.0 + 1e-6), NumericValue::new(10.0));
+    let region_residual = residuals.cost_for_source_set(1, 0, &disjoint);
     assert_eq!(region_residual, 1.0);
     assert!(region_residual > residuals.operator_costs_for_label_cp()[0]);
     assert!(region_residual <= 11.0);

@@ -138,7 +138,7 @@ fn rooted_task_rejects_a_root_that_changes_a_constant() {
 
 fn cegar_config() -> CegarConfig {
     CegarConfig {
-        max_abstraction_size: 1_000,
+        max_states: 1_000,
         flaw_kind: FlawKind::Progression,
         init_split_var_ids: Some(Default::default()),
         ..Default::default()

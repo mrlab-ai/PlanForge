@@ -77,7 +77,7 @@ fn parses_astar_canonical_domain_abstractions_with_or_without_parens() {
 #[test]
 fn parses_hierarchical_canonical_abstraction_sources() {
     let h = astar_heuristic(
-        "astar(canonical(domain(max_abstraction_size=100), cartesian(max_states=100), pdb(max_pdb_states=100)))",
+        "astar(canonical(domain(max_states=100), cartesian(max_states=100), pdb(max_pdb_states=100)))",
     );
     assert_eq!(h.name, "canonical");
     let source_names: Vec<_> = h
@@ -91,7 +91,7 @@ fn parses_hierarchical_canonical_abstraction_sources() {
 #[test]
 fn parses_and_round_trips_collection_source_lists() {
     let spec = parse_search_spec(
-        "astar(scp([domain(max_abstraction_size=100), cartesian(), pdb(),], partitioning=region))",
+        "astar(scp([domain(max_states=100), cartesian(), pdb(),], partitioning=region))",
     )
     .unwrap();
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
@@ -163,20 +163,18 @@ fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
 
 #[test]
 fn display_round_trips_multi_domain_abstractions() {
-    let parsed = parse_search_spec(
-        "astar(multi_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
-    )
-    .unwrap();
+    let parsed =
+        parse_search_spec("astar(multi_domain_abstractions(max_states=42, max_time=infinity))")
+            .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
     assert_eq!(parsed, reparsed);
 }
 
 #[test]
 fn display_round_trips_canonical_domain_abstractions() {
-    let parsed = parse_search_spec(
-        "astar(canonical_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
-    )
-    .unwrap();
+    let parsed =
+        parse_search_spec("astar(canonical_domain_abstractions(max_states=42, max_time=infinity))")
+            .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
     assert_eq!(parsed, reparsed);
 }
@@ -184,7 +182,7 @@ fn display_round_trips_canonical_domain_abstractions() {
 #[test]
 fn display_round_trips_hierarchical_abstraction_collection() {
     let parsed = parse_search_spec(
-        "astar(canonical(domain(max_abstraction_size=42), cartesian(max_states=42), pdb(max_pdb_states=42)))",
+        "astar(canonical(domain(max_states=42), cartesian(max_states=42), pdb(max_pdb_states=42)))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -194,7 +192,7 @@ fn display_round_trips_hierarchical_abstraction_collection() {
 #[test]
 fn display_round_trips_scp_options() {
     let parsed = parse_search_spec(
-        "astar(scp([domain(max_abstraction_size=42, abstraction_generation_max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, max_orders=3))",
+        "astar(scp([domain(max_states=42, max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, max_orders=3))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();

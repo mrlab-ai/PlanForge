@@ -103,7 +103,7 @@ pub(super) fn refine_domain_abstraction(
     let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
     let root = ConcreteState::initial(task)?;
     let limits = RefinementLimits {
-        max_states: config.max_abstraction_size,
+        max_states: config.max_states,
         blacklisted_prop_var_ids: &blacklisted_prop_var_ids,
         blacklisted_numeric_var_ids: &blacklisted_numeric_var_ids,
     };
@@ -140,10 +140,7 @@ pub struct DomainAbstractionGenerator {
 
 impl DomainAbstractionGenerator {
     pub fn new(config: CegarConfig) -> Result<Self> {
-        ensure!(
-            config.max_abstraction_size > 0,
-            "max_abstraction_size must be > 0"
-        );
+        ensure!(config.max_states > 0, "max_states must be > 0");
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
         Ok(Self { config })
     }
