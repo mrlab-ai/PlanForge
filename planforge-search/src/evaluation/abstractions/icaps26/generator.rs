@@ -126,18 +126,18 @@ impl Icaps26CartesianGenerator {
                 }
             },
         )?;
-        let stop_reason = match run.stop_reason {
-            CegarStopReason::ConcretePlan => CartesianStopReason::ConcretePlan,
-            CegarStopReason::SizeLimit => CartesianStopReason::StateLimit,
-            CegarStopReason::TimeLimit => CartesianStopReason::TimeLimit,
-            CegarStopReason::MemoryLimit => CartesianStopReason::MemoryLimit,
+        let stop_reason = run.stop_reason;
+        assert!(
+            matches!(
+                stop_reason,
+                CegarStopReason::ConcretePlan
+                    | CegarStopReason::SizeLimit
+                    | CegarStopReason::TimeLimit
+                    | CegarStopReason::MemoryLimit
+            ),
             // The ICAPS26 loop reports a dead root as an error.
-            CegarStopReason::IterationLimit
-            | CegarStopReason::NoRefinableFlaw
-            | CegarStopReason::DeadEnd => {
-                unreachable!("Cartesian CEGAR driver returned unsupported stop reason")
-            }
-        };
+            "Cartesian CEGAR driver returned unsupported stop reason {stop_reason:?}"
+        );
 
         let working_transition_count = working.active_transition_ids().count();
         let mut initial_prop_values = Vec::new();

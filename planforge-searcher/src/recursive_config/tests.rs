@@ -64,20 +64,9 @@ fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
 }
 
 #[test]
-fn parses_astar_canonical_domain_abstractions_with_or_without_parens() {
-    let h = astar_heuristic("astar(canonical_domain_abstractions)");
-    assert_eq!(h.name, "canonical_domain_abstractions");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(canonical_domain_abstractions())");
-    assert_eq!(h.name, "canonical_domain_abstractions");
-    assert!(h.args.is_empty());
-}
-
-#[test]
 fn parses_hierarchical_canonical_abstraction_sources() {
     let h = astar_heuristic(
-        "astar(canonical(domain(max_abstraction_size=100), cartesian(max_states=100), pdb(max_pdb_states=100)))",
+        "astar(canonical(domain_collection(max_states=100), cartesian(max_states=100), pdb(max_pdb_states=100)))",
     );
     assert_eq!(h.name, "canonical");
     let source_names: Vec<_> = h
@@ -85,13 +74,13 @@ fn parses_hierarchical_canonical_abstraction_sources() {
         .iter()
         .map(|arg| arg.value().as_call().unwrap().name())
         .collect();
-    assert_eq!(source_names, ["domain", "cartesian", "pdb"]);
+    assert_eq!(source_names, ["domain_collection", "cartesian", "pdb"]);
 }
 
 #[test]
 fn parses_and_round_trips_collection_source_lists() {
     let spec = parse_search_spec(
-        "astar(scp([domain(max_abstraction_size=100), cartesian(), pdb(),], partitioning=region))",
+        "astar(scp([domain_collection(max_states=100), cartesian(), pdb(),], partitioning=region))",
     )
     .unwrap();
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
@@ -99,7 +88,7 @@ fn parses_and_round_trips_collection_source_lists() {
 
 #[test]
 fn rejects_nested_collection_source_lists() {
-    let error = parse_search_spec("astar(scp([[domain()]]))").unwrap_err();
+    let error = parse_search_spec("astar(scp([[domain_collection()]]))").unwrap_err();
     assert!(
         error.contains("nested lists are not supported"),
         "got `{error}`"
@@ -151,32 +140,19 @@ fn parses_astar_lmcutnumeric_with_or_without_unit_parens() {
 }
 
 #[test]
-fn parses_astar_multi_domain_abstractions_with_or_without_parens() {
-    let h = astar_heuristic("astar(multi_domain_abstractions)");
-    assert_eq!(h.name, "multi_domain_abstractions");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(multi_domain_abstractions())");
-    assert_eq!(h.name, "multi_domain_abstractions");
-    assert!(h.args.is_empty());
-}
-
-#[test]
-fn display_round_trips_multi_domain_abstractions() {
-    let parsed = parse_search_spec(
-        "astar(multi_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
-    )
-    .unwrap();
+fn display_round_trips_max_domain_collection() {
+    let parsed =
+        parse_search_spec("astar(max(domain_collection(max_states=42, max_time=infinity)))")
+            .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
     assert_eq!(parsed, reparsed);
 }
 
 #[test]
-fn display_round_trips_canonical_domain_abstractions() {
-    let parsed = parse_search_spec(
-        "astar(canonical_domain_abstractions(max_abstraction_size=42, abstraction_generation_max_time=infinity))",
-    )
-    .unwrap();
+fn display_round_trips_canonical_domain_collection() {
+    let parsed =
+        parse_search_spec("astar(canonical(domain_collection(max_states=42, max_time=infinity)))")
+            .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
     assert_eq!(parsed, reparsed);
 }
@@ -184,7 +160,7 @@ fn display_round_trips_canonical_domain_abstractions() {
 #[test]
 fn display_round_trips_hierarchical_abstraction_collection() {
     let parsed = parse_search_spec(
-        "astar(canonical(domain(max_abstraction_size=42), cartesian(max_states=42), pdb(max_pdb_states=42)))",
+        "astar(canonical(domain_collection(max_states=42), cartesian(max_states=42), pdb(max_pdb_states=42)))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -194,7 +170,7 @@ fn display_round_trips_hierarchical_abstraction_collection() {
 #[test]
 fn display_round_trips_scp_options() {
     let parsed = parse_search_spec(
-        "astar(scp([domain(max_abstraction_size=42, abstraction_generation_max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, max_orders=3))",
+        "astar(scp([domain_collection(max_states=42, max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, max_orders=3))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -204,7 +180,7 @@ fn display_round_trips_scp_options() {
 #[test]
 fn display_round_trips_scp_with_nested_collection() {
     let parsed = parse_search_spec(
-        "astar(scp(multi_domain_abstractions(max_collection_size=99, total_max_time=2.5), saturator=perimstar))",
+        "astar(scp(max(domain_collection(max_collection_size=99, total_max_time=2.5)), saturator=perimstar))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -268,12 +244,12 @@ fn trims_trailing_punctuation() {
         "lmcutnumeric"
     );
     assert_eq!(
-        astar_heuristic("astar(multi_domain_abstractions());").name,
-        "multi_domain_abstractions"
+        astar_heuristic("astar(max(domain_collection()));").name,
+        "max"
     );
     assert_eq!(
-        astar_heuristic("astar(canonical_domain_abstractions());").name,
-        "canonical_domain_abstractions"
+        astar_heuristic("astar(canonical(domain_collection()));").name,
+        "canonical"
     );
 }
 
@@ -345,7 +321,7 @@ fn contains_call_finds_only_nested_icaps_cartesian_sources() {
 
 #[test]
 fn contains_call_recurses_into_source_lists() {
-    let spec = parse_search_spec("astar(scp([domain(), pdb()]))").unwrap();
+    let spec = parse_search_spec("astar(scp([domain_collection(), pdb()]))").unwrap();
     assert!(spec.contains_call("pdb"));
     assert!(!spec.contains_call("numeric_pdb"));
 }
@@ -356,68 +332,11 @@ fn lists_are_typed_errors_where_heuristics_are_expected() {
     assert_eq!(error, "expected heuristic, got a list");
 }
 
-// =============================================================================
-// `sgd(...)`
-// =============================================================================
-
-/// The spec must survive a round trip through `Display`, because `planforge`
-/// re-execs itself and passes `--search` back as a string. A variant that
-/// printed its own name twice would silently produce `sgd(sgd(...))` and fail
-/// only in the child process.
-#[test]
-fn sgd_spec_round_trips_through_display() {
-    for raw in [
-        "sgd()",
-        "sgd(horizon=12)",
-        "sgd(horizon=dovetail)",
-        "sgd(horizon=dovetail(8, 2.0, 512))",
-        "sgd(horizon=12, particles=8, seed=7, refresh=true)",
-    ] {
-        let spec = parse_search_spec(raw).expect("spec parses");
-        let printed = spec.to_string();
-        let reparsed = parse_search_spec(&printed).expect("printed spec re-parses");
-        assert_eq!(
-            spec, reparsed,
-            "round trip changed the spec: {raw} -> {printed}"
-        );
-        assert!(
-            printed.starts_with("sgd("),
-            "printed spec should start with `sgd(`, got {printed}"
-        );
-        assert!(
-            !printed.contains("sgd(sgd("),
-            "the spec printed its name twice: {printed}"
-        );
-    }
-}
-
-#[test]
-fn sgd_keeps_its_arguments_in_order() {
-    let spec = parse_search_spec("sgd(horizon=12, particles=4)").expect("parses");
-    match spec {
-        SearchSpec::Sgd(args) => {
-            assert_eq!(args.len(), 2);
-            assert_eq!(args[0].key(), Some("horizon"));
-            assert_eq!(args[1].key(), Some("particles"));
-        }
-        other => panic!("expected an sgd spec, got {other:?}"),
-    }
-}
-
-#[test]
-fn sgd_never_reports_a_nested_heuristic() {
-    // The engine is not allowed a heuristic, so `contains_call` must not claim
-    // one however the arguments are written.
-    let spec = parse_search_spec("sgd(horizon=12)").expect("parses");
-    assert!(!spec.contains_call("ff"));
-    assert!(!spec.contains_call("icaps26_cartesian"));
-}
-
 #[test]
 fn display_round_trips_enum_valued_options() {
     for spec in [
-        "astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))",
-        "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
+        "astar(canonical(domain_collection(flaw_scope=whole_plan)))",
+        "astar(canonical(domain_collection(split_kind=wanted)))",
     ] {
         let parsed = parse_search_spec(spec).unwrap();
         assert_eq!(parse_search_spec(&parsed.to_string()).unwrap(), parsed);

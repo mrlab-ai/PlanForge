@@ -7,7 +7,6 @@ The crates.io release consists of these packages:
 - `planforge-translate`
 - `planforge-cplex`
 - `planforge-search`
-- `planforge-sgd`
 - `planforge-searcher`
 - `planforge`
 
@@ -19,15 +18,13 @@ crates.io index before continuing:
 3. `planforge-translate`
 4. `planforge-cplex`
 5. `planforge-search`
-6. `planforge-sgd`
-7. `planforge-searcher`
-8. `planforge`
+6. `planforge-searcher`
+7. `planforge`
 
 The primary pipeline order is `planforge-config-derive` → `planforge-sas` →
 `planforge-translate` → `planforge-search` → `planforge-searcher` →
-`planforge`. The two additional placements are dependencies too:
-`planforge-search` optionally depends on `planforge-cplex`, and
-`planforge-searcher` optionally depends on `planforge-sgd`.
+`planforge`. `planforge-cplex` precedes `planforge-search`, which optionally
+depends on it.
 
 `planforge-cplex` is safe to package and document without a local CPLEX
 installation because its native API is disabled by default. Enabling its
@@ -62,7 +59,6 @@ crates.io index yet:
 | --- | --- |
 | `planforge-translate` | `planforge-sas` |
 | `planforge-search` | `planforge-config-derive` |
-| `planforge-sgd` | `planforge-sas` |
 | `planforge-searcher` | `planforge-sas` |
 | `planforge` | `planforge-sas` |
 

@@ -86,13 +86,17 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 compute_source_sets: true,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_states: 384,
             total_max_time: None,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -203,13 +207,17 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Standard,
+            collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 3,
             max_collection_states: 384,
             total_max_time: None,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -225,13 +233,17 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_states: 4,
             total_max_time: None,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -306,13 +318,17 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Standard,
+            collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
             max_collection_states: 128,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -464,13 +480,17 @@ fn progress_states_complete_after_reaching_the_full_goal() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Standard,
+            collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
             max_collection_states: 192,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -577,13 +597,17 @@ fn progress_states_complete_after_a_dead_progress_state() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Standard,
+            collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
             max_collection_states: 192,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -711,13 +735,17 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
                 max_states: 3,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Standard,
+            collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
             max_collection_states: 9,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -883,13 +911,17 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
                 max_states: 64,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_states: 192,
             total_max_time: Some(Duration::ZERO),
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -898,7 +930,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
     assert_eq!(abstractions.len(), 1);
     assert_eq!(
         abstractions[0].metadata.stop_reason,
-        CartesianStopReason::TimeLimit
+        CegarStopReason::TimeLimit
     );
     assert_eq!(
         abstractions[0]

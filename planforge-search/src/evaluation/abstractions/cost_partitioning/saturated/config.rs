@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
+use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionConfig;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -136,8 +136,7 @@ pub struct ScpConfig {
 
 impl Default for ScpConfig {
     fn default() -> Self {
-        let random_seed =
-            DomainAbstractionCollectionGeneratorMultipleCegarConfig::default().random_seed;
+        let random_seed = DomainAbstractionCollectionConfig::default().random_seed;
         Self {
             max_time: 200.0,
             table_construction_max_time: 30.0,

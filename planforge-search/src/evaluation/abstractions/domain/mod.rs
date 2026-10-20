@@ -10,7 +10,6 @@ use planforge_sas::numeric_task::VariableIndex;
 
 pub mod abstract_operators;
 pub mod abstraction;
-pub mod cegar;
 pub mod collection;
 pub mod comparison_inputs;
 pub mod config;

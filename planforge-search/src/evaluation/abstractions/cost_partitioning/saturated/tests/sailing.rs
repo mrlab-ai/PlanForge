@@ -64,13 +64,15 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
                 debug: false,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             max_collection_states: 10_000,
             total_max_time: Some(Duration::from_secs(15)),
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            ..Default::default()
         })
         .expect("valid oracle Cartesian collection config")
         .generate(&restricted_task)
@@ -145,7 +147,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
         true,
         GoalCoverOrderVariant::default(),
     )
-    .expect("the complementary sailing collection must have a goal-cover order");
+    .expect("the goal-focused sailing collection must have a goal-cover order");
     assert_eq!(&goal_cover_order[..3], &[5, 0, 1]);
     let regional_h = initial_cartesian_scp_value(&restricted_task, abstractions, true);
 
@@ -227,7 +229,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
             collection_strategy: Some("handcrafted_full_task_sailing".to_string()),
             flaw_kind: None,
             full_goal_task: Some(false),
-            max_abstraction_size: Some(10_000),
+            max_states: Some(10_000),
             ..DomainAbstractionMetadata::default()
         };
         let states = abstraction_state_count(&abstraction);

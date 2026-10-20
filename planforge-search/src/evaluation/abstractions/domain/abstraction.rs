@@ -10,10 +10,11 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use super::abstract_operators::AbstractOperator;
-use super::config::SplitDirection;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
-use crate::evaluation::abstractions::common::cegar::CegarStopReason;
+use crate::evaluation::abstractions::common::cegar::{
+    CegarStopReason, FlawKind, FlawScope, SplitKind,
+};
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::evaluation::abstractions::common::transition_system::{
@@ -141,17 +142,18 @@ impl DomainAbstraction {
 pub struct DomainAbstractionMetadata {
     pub collection_iteration: Option<usize>,
     pub collection_strategy: Option<String>,
-    pub flaw_kind: Option<String>,
+    pub flaw_kind: Option<FlawKind>,
+    pub flaw_scope: Option<FlawScope>,
     pub full_goal_task: Option<bool>,
     pub abstraction_use: AbstractionUse,
     pub stop_reason: Option<CegarStopReason>,
-    pub max_abstraction_size: Option<usize>,
+    pub max_states: Option<usize>,
     /// CEGAR exited because the wildcard plan has no flaws. This proves
     /// `h(init)` optimal only when `abstraction_use` is `Standalone`;
     /// collection combinators deliberately do not expose that search shortcut.
     pub solved_by_self: bool,
-    /// The split direction CEGAR refined with.
-    pub split_direction: SplitDirection,
+    /// The split kind CEGAR refined with.
+    pub split_kind: SplitKind,
     /// The rank CEGAR used among tied best flaws, if any.
     pub flaw_selection_rank: Option<usize>,
     /// Operator ids of the concrete plan CEGAR executed when it solved the task

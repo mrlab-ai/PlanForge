@@ -8,7 +8,7 @@ use planforge_sas::numeric_task::{
 use super::*;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
-use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 
 const X: VariableIndex = VariableIndex::new(0);
@@ -136,9 +136,9 @@ fn rooted_task_rejects_a_root_that_changes_a_constant() {
     );
 }
 
-fn cegar_config() -> CegarConfig {
-    CegarConfig {
-        max_abstraction_size: 1_000,
+fn cegar_config() -> DomainAbstractionConfig {
+    DomainAbstractionConfig {
+        max_states: 1_000,
         flaw_kind: FlawKind::Progression,
         init_split_var_ids: Some(Default::default()),
         ..Default::default()

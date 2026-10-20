@@ -12,7 +12,7 @@ use rand::rngs::SmallRng;
 
 use super::abstract_operators::DomainMapping;
 use super::abstraction::compute_abstraction_size_u128;
-use super::config::CegarConfig;
+use super::config::DomainAbstractionConfig;
 use super::partitions::NumericPartitions;
 
 use crate::evaluation::abstractions::common::coordinates::{
@@ -71,7 +71,7 @@ pub(super) fn initial_split_mapping(
 /// split at their initial values, so an operator can change the condition.
 pub(super) fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
-    config: &CegarConfig,
+    config: &DomainAbstractionConfig,
     numeric_integer_lattice: &[bool],
     rng: &mut SmallRng,
     state: RefinementState<'_>,
@@ -97,9 +97,9 @@ pub(super) fn apply_initial_goal_splits(
     });
     candidate_var_ids.dedup();
     let initial_max_abstraction_size = if config.init_split_var_ids.is_some() {
-        (config.max_abstraction_size / 2).max(1)
+        (config.max_states / 2).max(1)
     } else {
-        config.max_abstraction_size
+        config.max_states
     };
 
     for var_id in candidate_var_ids {
@@ -235,7 +235,7 @@ pub struct RefinementState<'a> {
 }
 
 /// Whether growing one variable's abstract domain from `old_size` to
-/// `new_size` keeps the abstraction within `max_abstraction_size`.
+/// `new_size` keeps the abstraction within `max_states`.
 ///
 /// Sizes are compared exactly in `u128`. A size that does not fit `u128` is
 /// above every `usize` limit, so the refinement does not fit: that is the
@@ -245,7 +245,7 @@ fn refined_size_fits(
     numeric_domain_sizes: &[usize],
     old_size: usize,
     new_size: usize,
-    max_abstraction_size: usize,
+    max_states: usize,
 ) -> bool {
     assert!(
         old_size > 0 && new_size > 0,
@@ -258,7 +258,7 @@ fn refined_size_fits(
     };
     (total_size / old_size as u128)
         .checked_mul(new_size as u128)
-        .is_some_and(|candidate| candidate <= max_abstraction_size as u128)
+        .is_some_and(|candidate| candidate <= max_states as u128)
 }
 
 pub(super) fn can_refine_propositional_variable(
@@ -266,14 +266,14 @@ pub(super) fn can_refine_propositional_variable(
     numeric_domain_sizes: &[usize],
     var_id: VariableIndex,
     new_domain_size: usize,
-    max_abstraction_size: usize,
+    max_states: usize,
 ) -> bool {
     refined_size_fits(
         domain_sizes,
         numeric_domain_sizes,
         domain_sizes[var_id.index()],
         new_domain_size,
-        max_abstraction_size,
+        max_states,
     )
 }
 
@@ -281,7 +281,7 @@ pub(super) fn can_refine_numeric_variable(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
     numeric_var_id: VariableIndex,
-    max_abstraction_size: usize,
+    max_states: usize,
 ) -> bool {
     let old_partition_count = numeric_domain_sizes[numeric_var_id.index()];
     refined_size_fits(
@@ -289,6 +289,6 @@ pub(super) fn can_refine_numeric_variable(
         numeric_domain_sizes,
         old_partition_count,
         old_partition_count + 1,
-        max_abstraction_size,
+        max_states,
     )
 }

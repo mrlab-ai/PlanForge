@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use anyhow::Result;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
 
+use super::CegarStopReason;
 use super::split::Split;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 
@@ -52,9 +53,15 @@ pub(crate) trait AbstractionView {
         vec![transition.concrete_op_id]
     }
 
-    /// Whether the abstraction can take `split` within its limits. Split
-    /// selection prefers such splits; CEGAR stops when the chosen one is not.
-    fn refinable(&self, _split: &Split) -> bool {
-        true
+    /// The limit that keeps the abstraction from taking `split`, if any:
+    /// [`CegarStopReason::SizeLimit`] or, for a variable it may not refine,
+    /// [`CegarStopReason::NoRefinableFlaw`]. CEGAR stops with it when the
+    /// chosen split has one.
+    fn refinement_limit(&self, split: &Split) -> Option<CegarStopReason>;
+
+    /// Whether the abstraction can take `split` within its limits; split
+    /// selection prefers such splits.
+    fn refinable(&self, split: &Split) -> bool {
+        self.refinement_limit(split).is_none()
     }
 }

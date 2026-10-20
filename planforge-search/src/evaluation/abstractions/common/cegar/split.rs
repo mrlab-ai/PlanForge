@@ -1,4 +1,4 @@
-//! Splits: the refinement steps of CEGAR. A split cuts one abstract state on
+//! Splits: the refinement steps of CEGAR. A split divides one abstract state on
 //! one dimension; a Cartesian abstraction splits exactly that state, a domain
 //! abstraction the dimension in every state.
 
@@ -206,7 +206,7 @@ pub(crate) fn split_child_regions(
     }
 }
 
-/// The lower and upper child of `parent` when it is cut at `boundary`. On an
+/// The lower and upper child of `parent` when it is split at `boundary`. On an
 /// integer lattice the children are closed at the neighbouring integers.
 pub(crate) fn numeric_split_intervals(
     parent: Interval,

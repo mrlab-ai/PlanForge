@@ -83,8 +83,8 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
 #[test]
 fn interval_scp_combines_all_representations() {
     let task = independent_goals_task();
-    let domain_config = CegarConfig {
-        max_abstraction_size: 16,
+    let domain_config = DomainAbstractionConfig {
+        max_states: 16,
         combine_labels: false,
         compute_source_sets: true,
         ..Default::default()

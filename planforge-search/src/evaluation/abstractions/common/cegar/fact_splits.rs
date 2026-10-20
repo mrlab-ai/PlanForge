@@ -315,7 +315,7 @@ fn comparison_refinement(
             .with_context(|| format!("missing numeric var {var_id} in the abstract state"))?;
         let mut boundaries = Vec::new();
         if semantics.split_kind() == SplitKind::Wanted {
-            boundaries.extend(semantics.target_split_boundaries().iter().copied());
+            boundaries.extend(semantics.wanted_split_boundaries().iter().copied());
         }
         boundaries.push(witness_value);
         boundaries.sort_by(NumericValue::total_cmp);
@@ -381,11 +381,11 @@ fn comparison_refinement(
     if semantics.split_selection() == SplitSelection::MinGrowth {
         retain_min_growth_splits(view, &mut candidates, |(_, _, split)| split)?;
     }
-    let has_target_centered_candidate = semantics.split_kind() == SplitKind::Wanted
+    let has_wanted_candidate = semantics.split_kind() == SplitKind::Wanted
         && candidates
             .iter()
             .any(|(separates_truth, _, _)| *separates_truth);
-    if has_target_centered_candidate {
+    if has_wanted_candidate {
         candidates.retain(|(separates_truth, _, _)| *separates_truth);
     }
     let has_achieving_candidate = candidates.iter().any(|(_, achieved, _)| *achieved);

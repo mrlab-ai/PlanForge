@@ -24,10 +24,6 @@ mod numeric_corpus_tests;
 #[cfg(test)]
 mod sailing_simple_tests;
 #[cfg(test)]
-mod sgd_engine_tests;
-#[cfg(test)]
-mod sgd_transcription_tests;
-#[cfg(test)]
 mod strips_corpus_tests;
 #[cfg(test)]
 mod task_equivalence_tests;

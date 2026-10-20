@@ -6,7 +6,6 @@ default-members = [
     "planforge-searcher",
     "planforge",
     "planforge-config-derive",
-    "planforge-sgd",
     "tests",
 ]
 
@@ -19,7 +18,6 @@ members = [
     "planforge-py",
     "planforge-config-derive",
     "planforge-cplex",
-    "planforge-sgd",
     "tutorials/rust-goal-count",
     "tutorials/rust-custom-search",
     "tutorials/rust-plugin-binary",

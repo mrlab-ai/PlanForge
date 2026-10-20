@@ -6,7 +6,7 @@ use super::sampling::*;
 
 use super::*;
 
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
@@ -20,7 +20,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 
-use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 
@@ -124,7 +124,7 @@ pub(super) fn evaluate_initial(
     heuristic.compute_heuristic(&eval_state)
 }
 
-/// Offline diversified SCP over a complementary Cartesian collection of `task`,
+/// Offline diversified SCP over a goal-focused Cartesian collection of `task`,
 /// with the goals its abstractions specialize in.
 pub(super) fn goal_cover_scp<'task>(
     task: &'task std::sync::Arc<NumericRootTask>,
@@ -141,13 +141,15 @@ pub(super) fn goal_cover_scp<'task>(
                 debug: false,
                 ..Default::default()
             },
-            collection_strategy: CollectionStrategy::Complementary,
+            collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             max_collection_states: 128,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
+            ..Default::default()
         })
         .unwrap()
         .generate(&**task)

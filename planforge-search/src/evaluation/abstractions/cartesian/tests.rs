@@ -14,11 +14,11 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
-    CartesianStopReason, CartesianView, FlawKind, OperatorBitSet, RefinementNode, ShortestPaths,
-    Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianLimits, CartesianSemantics,
+    CartesianSet, CartesianView, CegarStopReason, FlawKind, FlawScope, OperatorBitSet,
+    RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
 };
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::selection::{
     push_unique_split, retain_min_growth_splits, select_refinement_split,
 };
@@ -69,10 +69,11 @@ fn numeric_goal_task(
 }
 
 fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
-    for flaw_kind in [FlawKind::Progression, FlawKind::ExecuteEntirePlan] {
+    for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
         let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             max_states: 64,
-            flaw_kind,
+            flaw_kind: FlawKind::Progression,
+            flaw_scope,
             ..Default::default()
         })
         .unwrap()
@@ -81,15 +82,15 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
         assert_eq!(
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
             expected_h,
-            "unexpected initial h for {flaw_kind}"
+            "unexpected initial h for {flaw_scope}"
         );
         assert!(
             abstraction.metadata.solved_by_self,
-            "{flaw_kind} failed to produce a concrete plan"
+            "{flaw_scope} progression failed to produce a concrete plan"
         );
         assert_eq!(
             abstraction.metadata.stop_reason,
-            CartesianStopReason::ConcretePlan
+            CegarStopReason::ConcretePlan
         );
         assert_eq!(
             abstraction.abstract_source_sets.len(),

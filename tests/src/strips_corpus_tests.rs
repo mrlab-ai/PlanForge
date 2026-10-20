@@ -198,11 +198,11 @@ fn truncated_blocks_plan_is_rejected_for_missing_goals() {
     assert_eq!(replay.applied, 4, "all four operators are applicable");
 }
 
-/// Pins the task shape the `sgd` engine's supported-task check relies on. If the
-/// translator ever changes what a pure `:strips` task looks like, this fails
-/// here rather than as a confusing rejection inside the engine.
+/// Pins what a pure `:strips` task translates to: no numeric conditions or
+/// arithmetic, only constants and the total cost, which every operator
+/// increments.
 #[test]
-fn pure_strips_task_shape_is_as_the_sgd_engine_expects() {
+fn a_pure_strips_task_translates_without_numeric_planning() {
     let task = blocks_4_0();
 
     // Only Constant and Cost numeric variables: no real numeric planning.

@@ -17,15 +17,14 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
     CartesianAbstractionHeuristic,
 };
-use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstractions::common::cegar::FlawKind;
+use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use planforge_search::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
 };
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
@@ -100,21 +99,20 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
 }
 
 fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
-    DomainAbstractionCollectionGeneratorMultipleCegar::new(
-        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            max_abstraction_size: 300,
-            max_collection_size: 3_000,
-            abstraction_generation_max_time: f64::INFINITY,
-            total_max_time: f64::INFINITY,
-            flaw_kind: FlawKind::ExecuteEntirePlan,
-            collection_strategy: CollectionStrategy::Complementary,
-            variants_per_goal: 4,
-            progress_states: true,
-            random_seed: Some(1),
-            ..Default::default()
-        },
-    )
-    .generate_collection(task)
+    DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
+        max_states: 300,
+        max_collection_size: 3_000,
+        max_time: f64::INFINITY,
+        total_max_time: f64::INFINITY,
+        flaw_kind: FlawKind::Progression,
+        flaw_scope: FlawScope::WholePlan,
+        collection_strategy: CollectionStrategy::GoalFocused,
+        variants_per_goal: 4,
+        progress_states: true,
+        random_seed: Some(1),
+        ..Default::default()
+    })
+    .generate(task)
     .expect("the goal-focused domain collection must build")
 }
 
@@ -125,13 +123,17 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
             random_seed: Some(1),
             ..Default::default()
         },
-        collection_strategy: CollectionStrategy::Complementary,
+        collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         max_collection_states: 3_000,
         total_max_time: None,
         progress_states: true,
-        alternate_split_kinds: true,
+        alternate_split_kinds: None,
+        fixed_split_kind: false,
         single_goal_tasks: true,
+        stagnation_limit: 20.0,
+        blacklist_trigger_percentage: 0.75,
+        enable_blacklist_on_stagnation: true,
     })
     .expect("the Cartesian collection configuration is valid")
     .generate(task)

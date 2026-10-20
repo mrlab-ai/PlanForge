@@ -7,12 +7,9 @@ use planforge_sas::numeric_task::{
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionHeuristic,
 };
-use crate::evaluation::abstractions::collections::goal_focused::{
-    CollectionMembership, MemberDirection,
-};
+use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use crate::evaluation::abstractions::domain::config::SplitDirection;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
@@ -41,7 +38,7 @@ impl std::fmt::Display for AbstractionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GoalFocusedMember {
     pub membership: CollectionMembership,
-    pub direction: MemberDirection,
+    pub split_kind: SplitKind,
     pub tie_rank: Option<usize>,
     /// Retained abstract transitions (Cartesian) or abstract operators
     /// (domain): the units operator regions are attached to.
@@ -280,10 +277,7 @@ impl<'task> AbstractionComponent<'task> {
                     .collection_member
                     .map(|membership| GoalFocusedMember {
                         membership,
-                        direction: match metadata.split_direction {
-                            SplitDirection::Forward => MemberDirection::Progression,
-                            SplitDirection::Backward => MemberDirection::Regression,
-                        },
+                        split_kind: metadata.split_kind,
                         tie_rank: metadata.flaw_selection_rank,
                         retained_transitions: abstraction.abstract_operators.len(),
                     })
@@ -295,10 +289,7 @@ impl<'task> AbstractionComponent<'task> {
                     .collection_member
                     .map(|membership| GoalFocusedMember {
                         membership,
-                        direction: match metadata.split_kind {
-                            SplitKind::Concrete => MemberDirection::Progression,
-                            SplitKind::Wanted => MemberDirection::Regression,
-                        },
+                        split_kind: metadata.split_kind,
                         tie_rank: metadata.split_selection_rank,
                         retained_transitions: abstraction.transition_system.transitions.len(),
                     })

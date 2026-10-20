@@ -100,7 +100,7 @@ struct Call {
     goal_id: Option<usize>,
     variant_id: usize,
     kind: MemberKind,
-    direction: Option<MemberDirection>,
+    split_kind: Option<SplitKind>,
     tie_rank: Option<usize>,
     seed: Option<u64>,
     /// `x` at the refinement root, `None` for the task initial state.
@@ -163,7 +163,7 @@ impl GoalFocusedBackend for ScriptedBackend {
             goal_id: variant.goal_id,
             variant_id: variant.variant_id,
             kind: variant.kind,
-            direction: variant.direction,
+            split_kind: variant.split_kind,
             tie_rank: variant.tie_rank,
             seed: variant.seed,
             root_x: root.map(|root| root.numeric[0].value()),
@@ -248,7 +248,7 @@ fn schedule(
         max_collection_states: 1_000,
         total_max_time: None,
         progress_states,
-        alternate_split_kinds: true,
+        alternate_split_kinds: strategy.is_goal_focused(),
         single_goal_tasks: true,
     }
 }
@@ -289,7 +289,7 @@ fn goals_round_robin_before_focusing_the_strongest() {
 }
 
 #[test]
-fn complementary_variants_alternate_direction_and_rank_ties_by_pairs() {
+fn goal_focused_variants_alternate_split_kinds_and_rank_ties_by_pairs() {
     let bounds = [
         Bound::AtLeast(1.0),
         Bound::AtLeast(1.0),
@@ -300,7 +300,7 @@ fn complementary_variants_alternate_direction_and_rank_ties_by_pairs() {
     backend.initial_h = Some(vec![2.0, 5.0, 3.0]);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Complementary, 4, false),
+        &schedule(CollectionStrategy::GoalFocused, 4, false),
         &backend,
     )
     .unwrap();
@@ -311,42 +311,42 @@ fn complementary_variants_alternate_direction_and_rank_ties_by_pairs() {
             (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.direction.unwrap(),
+                member.call.split_kind.unwrap(),
                 member.call.tie_rank.unwrap(),
                 member.call.seed,
             )
         })
         .collect::<Vec<_>>();
     let seed = |goal_id, variant_id: usize| Some(derive_variant_seed(5, goal_id, variant_id - 1));
-    use MemberDirection::{Progression, Regression};
+    use SplitKind::{Concrete, Wanted};
     assert_eq!(
         calls,
         vec![
-            (0, 0, Progression, 0, None),
-            (1, 0, Progression, 0, None),
-            (2, 0, Progression, 0, None),
-            (0, 1, Regression, 0, seed(0, 1)),
-            (1, 1, Regression, 0, seed(1, 1)),
-            (2, 1, Regression, 0, seed(2, 1)),
-            (1, 2, Progression, 1, seed(1, 2)),
-            (1, 3, Regression, 1, seed(1, 3)),
-            (2, 2, Progression, 1, seed(2, 2)),
-            (2, 3, Regression, 1, seed(2, 3)),
-            (0, 2, Progression, 1, seed(0, 2)),
-            (0, 3, Regression, 1, seed(0, 3)),
+            (0, 0, Concrete, 0, None),
+            (1, 0, Concrete, 0, None),
+            (2, 0, Concrete, 0, None),
+            (0, 1, Wanted, 0, seed(0, 1)),
+            (1, 1, Wanted, 0, seed(1, 1)),
+            (2, 1, Wanted, 0, seed(2, 1)),
+            (1, 2, Concrete, 1, seed(1, 2)),
+            (1, 3, Wanted, 1, seed(1, 3)),
+            (2, 2, Concrete, 1, seed(2, 2)),
+            (2, 3, Wanted, 1, seed(2, 3)),
+            (0, 2, Concrete, 1, seed(0, 2)),
+            (0, 3, Wanted, 1, seed(0, 3)),
         ]
     );
     assert!(members.iter().all(|member| member.call.root_x.is_none()));
 }
 
 #[test]
-fn standard_variants_vary_only_the_seed() {
+fn per_goal_variants_vary_only_the_seed() {
     let bounds = [Bound::AtLeast(1.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 2, false),
+        &schedule(CollectionStrategy::PerGoal, 2, false),
         &backend,
     )
     .unwrap();
@@ -355,7 +355,7 @@ fn standard_variants_vary_only_the_seed() {
         members
             .iter()
             .map(|member| (
-                member.call.direction,
+                member.call.split_kind,
                 member.call.tie_rank,
                 member.call.seed
             ))
@@ -376,7 +376,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
     let backend = ScriptedBackend::new(&[]);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Complementary, 3, true),
+        &schedule(CollectionStrategy::GoalFocused, 3, true),
         &backend,
     )
     .unwrap();
@@ -388,7 +388,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
                 goal_id: None,
                 variant_id: 0,
                 kind: MemberKind::Scheduled,
-                direction: None,
+                split_kind: None,
                 tie_rank: None,
                 seed: Some(5),
                 root_x: None,
@@ -406,7 +406,7 @@ fn progress_states_advance_through_concrete_plans_and_add_initial_root_specialis
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -428,7 +428,7 @@ fn a_progress_state_reaching_the_full_goal_completes_its_variant() {
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -449,7 +449,7 @@ fn a_dead_progress_state_is_rebuilt_from_the_initial_state_and_completes_its_var
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -489,7 +489,7 @@ fn a_member_whose_initial_state_is_dead_is_kept() {
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, false),
+        &schedule(CollectionStrategy::PerGoal, 1, false),
         &backend,
     )
     .unwrap();
@@ -516,7 +516,7 @@ fn an_advanced_progress_state_retries_goals_it_reopened() {
     backend.unsolved_calls = vec![0];
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -559,7 +559,7 @@ fn an_invalid_concrete_plan_is_an_error() {
 
     let error = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &ShortPlans(ScriptedBackend::new(&bounds)),
     )
     .unwrap_err();
@@ -579,7 +579,7 @@ fn members_share_the_collection_state_budget() {
         &task,
         &GoalFocusedSchedule {
             max_collection_states: 8,
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -604,7 +604,7 @@ fn an_exhausted_time_budget_still_builds_the_first_member() {
         &task,
         &GoalFocusedSchedule {
             total_max_time: Some(Duration::ZERO),
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -650,7 +650,7 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
         &task,
         &GoalFocusedSchedule {
             alternate_split_kinds: false,
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
@@ -663,7 +663,7 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
             .map(|member| (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.direction,
+                member.call.split_kind,
                 member.call.tie_rank,
                 member.call.seed
             ))
@@ -695,36 +695,36 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
         &task,
         &GoalFocusedSchedule {
             single_goal_tasks: false,
-            ..schedule(CollectionStrategy::Complementary, 3, false)
+            ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
     )
     .unwrap();
 
     let seed = |goal_id, variant_id: usize| Some(derive_variant_seed(5, goal_id, variant_id - 1));
-    use MemberDirection::{Progression, Regression};
+    use SplitKind::{Concrete, Wanted};
     assert_eq!(
         members
             .iter()
             .map(|member| (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.direction.unwrap(),
+                member.call.split_kind.unwrap(),
                 member.call.tie_rank.unwrap(),
                 member.call.seed,
                 member.membership,
             ))
             .collect::<Vec<_>>(),
         vec![
-            (0, 0, Progression, 0, None, None),
-            (1, 0, Progression, 0, None, None),
-            (2, 0, Progression, 0, None, None),
-            (0, 1, Regression, 0, seed(0, 1), None),
-            (1, 1, Regression, 0, seed(1, 1), None),
-            (2, 1, Regression, 0, seed(2, 1), None),
-            (0, 2, Progression, 1, seed(0, 2), None),
-            (1, 2, Progression, 1, seed(1, 2), None),
-            (2, 2, Progression, 1, seed(2, 2), None),
+            (0, 0, Concrete, 0, None, None),
+            (1, 0, Concrete, 0, None, None),
+            (2, 0, Concrete, 0, None, None),
+            (0, 1, Wanted, 0, seed(0, 1), None),
+            (1, 1, Wanted, 0, seed(1, 1), None),
+            (2, 1, Wanted, 0, seed(2, 1), None),
+            (0, 2, Concrete, 1, seed(0, 2), None),
+            (1, 2, Concrete, 1, seed(1, 2), None),
+            (2, 2, Concrete, 1, seed(2, 2), None),
         ]
     );
     assert!(members.iter().all(|member| member.call.root_x.is_none()));
@@ -739,7 +739,7 @@ fn full_task_members_reject_progress_states() {
         &task,
         &GoalFocusedSchedule {
             single_goal_tasks: false,
-            ..schedule(CollectionStrategy::Complementary, 2, true)
+            ..schedule(CollectionStrategy::GoalFocused, 2, true)
         },
         &ScriptedBackend::new(&bounds),
     );
