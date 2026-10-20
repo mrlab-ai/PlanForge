@@ -15,11 +15,11 @@ use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::state_packer::StatePacker;
 
 use super::fact_splits::{DeviationWitness, split_deviation_candidates, split_failed_fact};
-use super::progress_concrete_state;
 use super::selection::{push_unique_split, select_refinement, select_refinement_split};
 use super::semantics::CegarSemantics;
 use super::split::{Split, approximately_equal};
 use super::view::AbstractionView;
+use super::{FlawScope, progress_concrete_state};
 use crate::evaluation::abstractions::common::concrete_state::{
     ConcreteState, concrete_prop_values, fact_is_held,
 };
@@ -70,7 +70,7 @@ fn concrete_is_goal(
     })
 }
 
-pub(crate) fn replay_optimal_abstract_trace(
+pub(crate) fn replay_plan(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
     state_packer: &Arc<StatePacker>,
@@ -237,11 +237,40 @@ pub(crate) fn replay_optimal_abstract_trace(
     }
 }
 
+/// Progression flaw search in `scope` on the optimal abstract plan from the
+/// abstract state of `refinement_root`. Without a flaw, the executed operators
+/// are a concrete plan; with several, the split is selected among them.
+pub(crate) fn progression_plan_check(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
+    state_packer: &Arc<StatePacker>,
+    axiom_evaluator: &AxiomEvaluator<'_>,
+    refinement_root: &ConcreteState,
+    scope: FlawScope,
+) -> Result<PlanCheck> {
+    match scope {
+        FlawScope::First => replay_plan(
+            view,
+            semantics,
+            state_packer,
+            axiom_evaluator,
+            refinement_root,
+        ),
+        FlawScope::WholePlan => replay_whole_plan(
+            view,
+            semantics,
+            state_packer,
+            axiom_evaluator,
+            refinement_root,
+        ),
+    }
+}
+
 /// Replays the current optimal abstract policy against one concrete execution
 /// and ranks every witnessed flaw together. After a deviation, replay resumes
 /// from the abstract state containing the real concrete successor. This keeps
 /// every split tied to a concrete witness and avoids inventing projected states.
-pub(crate) fn replay_entire_optimal_abstract_trace(
+fn replay_whole_plan(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
     state_packer: &Arc<StatePacker>,

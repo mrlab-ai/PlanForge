@@ -10,6 +10,7 @@ pub struct CartesianAbstractionConfig {
     pub retain_transition_system: bool,
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
+    pub flaw_scope: FlawScope,
     pub split_kind: SplitKind,
     pub split_selection_rank: Option<usize>,
     pub split_selection: SplitSelection,
@@ -26,6 +27,7 @@ impl Default for CartesianAbstractionConfig {
             retain_transition_system: true,
             random_seed: None,
             flaw_kind: FlawKind::Progression,
+            flaw_scope: FlawScope::First,
             split_kind: SplitKind::Concrete,
             split_selection_rank: None,
             split_selection: SplitSelection::MinGrowth,
@@ -42,9 +44,9 @@ pub struct CartesianAbstractionCollectionConfig {
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
     pub progress_states: bool,
-    /// Complementary collections only: alternate progression and regression
-    /// by variant parity. When false, every variant refines in the configured
-    /// `refinement_direction`.
+    /// Complementary collections only: alternate concrete and wanted splits
+    /// by variant parity. When false, every variant uses the configured
+    /// `split_kind`.
     pub alternate_split_kinds: bool,
     /// Complementary collections only: build every member on its goal's
     /// single-goal task. When false, every member abstracts the full task and

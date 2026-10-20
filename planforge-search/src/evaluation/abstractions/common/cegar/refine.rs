@@ -9,14 +9,12 @@ use anyhow::Result;
 use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::utils::state_packer::StatePacker;
 
-use super::progression::{
-    ConcretePlan, PlanCheck, replay_entire_optimal_abstract_trace, replay_optimal_abstract_trace,
-};
-use super::regression::{FlawScope, regression_plan_check};
+use super::progression::{ConcretePlan, PlanCheck, progression_plan_check};
+use super::regression::regression_plan_check;
 use super::semantics::CegarSemantics;
 use super::split::Split;
 use super::view::AbstractionView;
-use super::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind};
+use super::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 
 /// An abstraction that CEGAR refines.
@@ -38,6 +36,7 @@ pub(crate) trait Refinable {
 pub(crate) struct CegarRun<'a> {
     pub(crate) semantics: &'a CegarSemantics<'a>,
     pub(crate) flaw_kind: FlawKind,
+    pub(crate) flaw_scope: FlawScope,
     pub(crate) state_packer: &'a Arc<StatePacker>,
     pub(crate) axiom_evaluator: &'a AxiomEvaluator<'a>,
     pub(crate) refinement_root: &'a ConcreteState,
@@ -57,46 +56,26 @@ pub(crate) struct CegarOutcome {
 }
 
 /// The flaws of the optimal abstract plan from the abstract state of
-/// `refinement_root` that `flaw_kind` asks for.
+/// `refinement_root` that the run's flaw kind and scope ask for.
 pub(crate) fn check_abstract_plan(
     view: &impl AbstractionView,
     run: &CegarRun<'_>,
 ) -> Result<PlanCheck> {
-    let CegarRun {
-        semantics,
-        state_packer,
-        axiom_evaluator,
-        refinement_root,
-        ..
-    } = *run;
     match run.flaw_kind {
-        FlawKind::Progression => replay_optimal_abstract_trace(
+        FlawKind::Progression => progression_plan_check(
             view,
-            semantics,
-            state_packer,
-            axiom_evaluator,
-            refinement_root,
-        ),
-        FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
-            view,
-            semantics,
-            state_packer,
-            axiom_evaluator,
-            refinement_root,
+            run.semantics,
+            run.state_packer,
+            run.axiom_evaluator,
+            run.refinement_root,
+            run.flaw_scope,
         ),
         FlawKind::Regression => regression_plan_check(
             view,
-            semantics,
-            state_packer,
-            refinement_root,
-            FlawScope::First,
-        ),
-        FlawKind::RegressEntirePlan => regression_plan_check(
-            view,
-            semantics,
-            state_packer,
-            refinement_root,
-            FlawScope::EntirePlan,
+            run.semantics,
+            run.state_packer,
+            run.refinement_root,
+            run.flaw_scope,
         ),
     }
 }

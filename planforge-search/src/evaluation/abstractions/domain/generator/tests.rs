@@ -5,9 +5,9 @@ use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::utils::float_tolerance;
 
 use super::*;
-use crate::evaluation::abstractions::common::cegar::FlawKind;
-use crate::evaluation::abstractions::domain::config::FlawTreatmentVariants;
-use crate::evaluation::abstractions::domain::config::SplitDirection;
+use crate::evaluation::abstractions::common::cegar::{
+    FlawKind, FlawScope, SplitKind, SplitSelection,
+};
 use crate::evaluation::abstractions::domain::initial_splits::initial_split_mapping;
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
@@ -167,10 +167,7 @@ fn cegar_default_config_matches_numeric_fd_defaults() {
     assert_eq!(config.max_iterations, usize::MAX);
     assert!(!config.use_wildcard_plans);
     assert_eq!(config.random_seed, Some(2011));
-    assert_eq!(
-        config.flaw_treatment,
-        FlawTreatmentVariants::RandomSingleAtom
-    );
+    assert_eq!(config.split_selection, SplitSelection::Random);
 }
 
 #[test]
@@ -287,8 +284,8 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
     let task = one_dimensional_sailing_like_task();
     let config = CegarConfig {
         flaw_kind: FlawKind::Progression,
-        split_direction: Some(SplitDirection::Backward),
-        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+        split_kind: SplitKind::Wanted,
+        split_selection: SplitSelection::MinGrowth,
         max_iterations: 64,
         random_seed: Some(7),
         ..Default::default()
@@ -331,8 +328,8 @@ fn backward_splits_build_goal_side_partitions() {
     let backward = refine_domain_abstraction(
         &CegarConfig {
             flaw_kind: FlawKind::Progression,
-            split_direction: Some(SplitDirection::Backward),
-            flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+            split_kind: SplitKind::Wanted,
+            split_selection: SplitSelection::MinGrowth,
             max_iterations: 5,
             random_seed: Some(7),
             ..Default::default()
@@ -343,7 +340,7 @@ fn backward_splits_build_goal_side_partitions() {
     let progression = refine_domain_abstraction(
         &CegarConfig {
             flaw_kind: FlawKind::Progression,
-            flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+            split_selection: SplitSelection::MinGrowth,
             max_iterations: 5,
             random_seed: Some(7),
             ..Default::default()
@@ -478,7 +475,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
 
 /// Domain-abstraction CEGAR with regression flaws alone, first or whole-plan,
 /// reaches a concrete optimal plan on the tasks where regression and
-/// progression differ, with both split directions.
+/// progression differ, with both split kinds.
 #[test]
 fn regression_cegar_solves_the_regression_tasks_optimally() {
     use crate::evaluation::abstractions::common::cegar::regression::test_tasks::{
@@ -491,12 +488,13 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         ("linear goal", linear_goal_task(), 2.0),
         ("diagonal", diagonal_task(), 2.0),
     ] {
-        for flaw_kind in [FlawKind::Regression, FlawKind::RegressEntirePlan] {
-            for split_direction in [SplitDirection::Forward, SplitDirection::Backward] {
+        for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
+            for split_kind in [SplitKind::Concrete, SplitKind::Wanted] {
                 let abstraction = DomainAbstractionGenerator::new(CegarConfig {
                     max_abstraction_size: 1_000,
-                    flaw_kind,
-                    split_direction: Some(split_direction),
+                    flaw_kind: FlawKind::Regression,
+                    flaw_scope,
+                    split_kind,
                     random_seed: Some(1),
                     ..Default::default()
                 })
@@ -505,13 +503,13 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 .unwrap();
                 assert!(
                     abstraction.metadata.solved_by_self,
-                    "{name}, {flaw_kind}, {split_direction}"
+                    "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
                     abstraction.distance_table.distances
                         [abstraction.distance_table.initial_state_hash],
                     optimal_cost,
-                    "{name}, {flaw_kind}, {split_direction}"
+                    "{name}, {flaw_scope}, {split_kind}"
                 );
             }
         }

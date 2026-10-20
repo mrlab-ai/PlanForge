@@ -17,72 +17,102 @@ use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use serde::{Deserialize, Serialize};
 
-/// Which flaws of an abstract plan CEGAR refines.
+/// Generates the option-value parsing and display of a CEGAR option enum
+/// from its `(variant, name)` pairs.
+macro_rules! option_enum {
+    ($option:literal, $type:ident { $($variant:ident => $name:literal),+ $(,)? }) => {
+        impl fmt::Display for $type {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(match self {
+                    $(Self::$variant => $name),+
+                })
+            }
+        }
+
+        impl crate::config::FromOptionValue for $type {
+            fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+                match crate::config::atom(value)? {
+                    $($name => Ok(Self::$variant),)+
+                    other => Err(format!(
+                        "invalid {} `{other}`; expected one of {}",
+                        $option,
+                        [$($name),+].join(", ")
+                    )),
+                }
+            }
+        }
+    };
+}
+
+/// How CEGAR finds the flaws of an abstract plan.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlawKind {
-    /// The first flaw of executing the plan from the refinement root.
+    /// By executing the plan from the refinement root.
     Progression,
-    /// The first flaw of regressing the goal through the plan.
+    /// By regressing the goal through the plan (Pozo et al. 2024).
     Regression,
-    /// Every flaw of executing the plan, which continues past a flaw by
-    /// applying the effects anyway.
-    ExecuteEntirePlan,
-    /// Every flaw of regressing the goal through the plan, which continues
-    /// past a flaw by ignoring the contradicted condition and regressing the
+}
+
+option_enum!("flaw_kind", FlawKind {
+    Progression => "progression",
+    Regression => "regression",
+});
+
+/// Which flaws of an abstract plan CEGAR collects.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FlawScope {
+    /// The first flaw.
+    First,
+    /// Every flaw of the whole plan; split selection chooses among them.
+    /// Progression continues past a flaw by applying the effects anyway,
+    /// regression by ignoring the contradicted condition and regressing the
     /// effects anyway.
-    RegressEntirePlan,
+    WholePlan,
 }
 
-impl FlawKind {
-    /// Whether flaws are found by regressing the goal.
-    pub fn regresses(self) -> bool {
-        matches!(self, Self::Regression | Self::RegressEntirePlan)
-    }
-}
+option_enum!("flaw_scope", FlawScope {
+    First => "first",
+    WholePlan => "whole_plan",
+});
 
-impl fmt::Display for FlawKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Progression => write!(f, "progression"),
-            Self::Regression => write!(f, "regression"),
-            Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
-            Self::RegressEntirePlan => write!(f, "regress_entire_plan"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for FlawKind {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "progression" => Ok(Self::Progression),
-            "regression" => Ok(Self::Regression),
-            "execute_entire_plan" => Ok(Self::ExecuteEntirePlan),
-            "regress_entire_plan" => Ok(Self::RegressEntirePlan),
-            other => Err(format!(
-                "invalid flaw_kind `{other}`; expected progression, regression, execute_entire_plan or regress_entire_plan"
-            )),
-        }
-    }
-}
-
-/// Where a split cuts a numeric dimension when a concrete state violates a
-/// condition: next to the concrete value, or at the bound the condition
-/// wants (a constant of the task).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where a split separates a flawed value from the values the abstract plan
+/// wants: next to the concrete value, or at the bound of the wanted values.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SplitKind {
+    #[default]
     Concrete,
     Wanted,
 }
 
+impl crate::config::FromOptionValue for Option<SplitKind> {
+    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
+        SplitKind::from_option_value(value).map(Some)
+    }
+}
+
+option_enum!("split_kind", SplitKind {
+    Concrete => "concrete",
+    Wanted => "wanted",
+});
+
 /// How CEGAR chooses among the candidate splits of a flaw.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SplitSelection {
-    /// The split that grows the abstraction least; ties by a seeded key.
+    /// The split that grows the abstraction least (Kreft et al. 2023); ties
+    /// by a seeded key.
     MinGrowth,
     /// A uniformly random split.
     Random,
 }
+
+option_enum!("split_selection", SplitSelection {
+    MinGrowth => "min_growth",
+    Random => "random",
+});
 
 pub fn progress_concrete_state(
     op: &Operator,

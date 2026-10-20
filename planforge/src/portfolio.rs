@@ -92,7 +92,7 @@ pub fn run_portfolio(cli: &PlannersCli) -> std::io::Result<()> {
     );
 
     let canonical_spec = format!(
-        "astar(canonical_domain_abstractions(blacklist_trigger_percentage=0.6,total_max_time={},flaw_treatment=max_refined_single_atom,numeric_split_strategy=standard,flaw_kind=execute_entire_plan,use_wildcard_plans=true,combine_labels=true,max_abstraction_size=100000,max_collection_size=1000000))",
+        "astar(canonical_domain_abstractions(blacklist_trigger_percentage=0.6,total_max_time={},flaw_kind=progression,flaw_scope=whole_plan,use_wildcard_plans=true,combine_labels=true,max_abstraction_size=100000,max_collection_size=1000000))",
         options.canonical_construction_time,
     );
     tracing::info!(

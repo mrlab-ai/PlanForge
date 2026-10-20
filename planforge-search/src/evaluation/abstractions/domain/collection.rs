@@ -15,10 +15,12 @@ use tracing::{debug, info};
 
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, FULL_TASK_PROGRESS_STATES_ERROR, GoalFocusedBackend,
-    GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
+    GoalFocusedSchedule, GoalVariant, MemberBudget, build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
+use crate::evaluation::abstractions::common::cegar::{
+    CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
+};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
@@ -26,8 +28,6 @@ use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
 use super::abstraction::compute_abstraction_size_u128;
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
 use super::config::CegarConfig;
-use super::config::FlawTreatmentVariants;
-use super::config::SplitDirection;
 use super::generator::DomainAbstractionGenerator;
 use crate::resource_limits;
 use planforge_sas::utils::float_tolerance;
@@ -49,7 +49,8 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub use_wildcard_plans: bool,
     pub combine_labels: bool,
     pub flaw_kind: FlawKind,
-    pub flaw_treatment: FlawTreatmentVariants,
+    pub flaw_scope: FlawScope,
+    pub split_selection: SplitSelection,
     /// `standard` refines full-task abstractions with random restarts,
     /// blacklisting, stagnation detection, and deduplication.
     /// `complementary` builds the goal-focused collection shared with
@@ -57,7 +58,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// [`goal_focused`](crate::evaluation::abstractions::collections::goal_focused)):
     /// `variants_per_goal` members per goal, each refined from the trivial
     /// abstraction of its single-goal task with the configured `flaw_kind`,
-    /// forward splits for even and backward splits for odd variants (unless
+    /// concrete splits for even and wanted splits for odd variants (unless
     /// `alternate_split_kinds` is off), flaw ties ranked by `variant / 2`. The
     /// init-split, blacklist, and stagnation options only apply to `standard`.
     pub collection_strategy: CollectionStrategy,
@@ -68,9 +69,9 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// concrete states its earlier members' plans reached. Must be false for
     /// `standard`.
     pub progress_states: bool,
-    /// Alternate forward and backward splits by variant parity in a
+    /// Alternate concrete and wanted splits by variant parity in a
     /// `complementary` collection. When false, every variant uses the
-    /// configured `split_direction` (`Forward` when unset).
+    /// configured `split_kind` (concrete splits when unset).
     /// Must be true for `standard`.
     pub alternate_split_kinds: bool,
     /// Build every member of a `complementary` collection on its goal's
@@ -79,13 +80,11 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// and carry no collection membership. Must be true for `standard` and
     /// with `progress_states`.
     pub single_goal_tasks: bool,
-    /// Alternate forward and backward split-value selection between full-task
-    /// collection members. This is orthogonal to flaw collection: in
-    /// particular, `execute_entire_plan` still collects every flaw along the
-    /// abstract plan in both directions.
+    /// Alternate concrete and wanted splits between the members of a
+    /// `standard` collection, independently of the flaw kind and scope.
     pub interleave_split_directions: bool,
-    /// The fixed split direction; `Forward` when unset.
-    pub split_direction: Option<SplitDirection>,
+    /// The fixed split kind; concrete splits when unset.
+    pub split_kind: Option<SplitKind>,
     /// Pass-through for `CegarConfig::compute_source_sets`. Default
     /// `true`. Hierarchical combinators disable it during CEGAR and construct
     /// operator regions after collection generation when region SCP needs them.
@@ -126,19 +125,16 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             debug: false,
             use_wildcard_plans: false,
             combine_labels: true,
-            // The Numeric-FD canonical configuration executes the complete
-            // abstract plan and refines from all observed flaws. Collection
-            // callers may still request progression explicitly, while the
-            // complementary portfolio selects its direction per variant.
-            flaw_kind: FlawKind::ExecuteEntirePlan,
-            flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
+            flaw_kind: FlawKind::Progression,
+            flaw_scope: FlawScope::First,
+            split_selection: SplitSelection::Random,
             collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
             progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
             interleave_split_directions: false,
-            split_direction: None,
+            split_kind: None,
             compute_source_sets: true,
             max_refined_comparison_vars_per_abstraction: None,
         }
@@ -204,7 +200,9 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "debug={}, ",
                 "use_wildcard_plans={}, ",
                 "combine_labels={}, ",
-                "flaw_treatment={}, ",
+                "flaw_kind={}, ",
+                "flaw_scope={}, ",
+                "split_selection={}, ",
                 "collection_strategy={}, ",
                 "variants_per_goal={}, ",
                 "progress_states={}, ",
@@ -223,7 +221,9 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.debug,
             self.use_wildcard_plans,
             self.combine_labels,
-            self.flaw_treatment,
+            self.flaw_kind,
+            self.flaw_scope,
+            self.split_selection,
             self.collection_strategy,
             self.variants_per_goal,
             self.progress_states,
@@ -278,10 +278,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     self.config.single_goal_tasks,
                     "`single_goal_tasks=false` requires `collection_strategy=complementary`"
                 );
-                if self.config.interleave_split_directions && self.config.split_direction.is_some()
-                {
+                if self.config.interleave_split_directions && self.config.split_kind.is_some() {
                     bail!(
-                        "`interleave_split_directions=true` cannot be combined with a fixed `split_direction`"
+                        "`interleave_split_directions=true` cannot be combined with a fixed `split_kind`"
                     );
                 }
             }
@@ -291,15 +290,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     "`interleave_split_directions=true` requires `collection_strategy=standard`"
                 );
                 ensure!(
-                    !self.config.alternate_split_kinds || self.config.split_direction.is_none(),
-                    "`alternate_split_kinds=true` chooses the split direction per variant; it cannot be combined with a fixed `split_direction`"
+                    !self.config.alternate_split_kinds || self.config.split_kind.is_none(),
+                    "`alternate_split_kinds=true` chooses the split kind per variant; it cannot be combined with a fixed `split_kind`"
                 );
                 ensure!(
-                    matches!(
-                        self.config.flaw_kind,
-                        FlawKind::Progression | FlawKind::ExecuteEntirePlan
-                    ),
-                    "`collection_strategy=complementary` refines along executed concrete plans and supports flaw_kind=progression and flaw_kind=execute_entire_plan, not flaw_kind={}",
+                    self.config.flaw_kind == FlawKind::Progression,
+                    "`collection_strategy=complementary` refines along executed concrete plans and supports flaw_kind=progression, not flaw_kind={}",
                     self.config.flaw_kind
                 );
                 ensure!(
@@ -329,7 +325,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         remaining_time: f64,
         variable_choice: MemberVariableChoice,
         random_seed: u64,
-        split_direction: Option<SplitDirection>,
+        split_kind: Option<SplitKind>,
     ) -> CegarConfig {
         let MemberVariableChoice {
             init_split_var_ids,
@@ -349,11 +345,12 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             debug: self.config.debug,
             random_seed: Some(random_seed),
             flaw_kind: self.config.flaw_kind,
-            flaw_treatment: self.config.flaw_treatment,
+            flaw_scope: self.config.flaw_scope,
+            split_kind: split_kind.unwrap_or(SplitKind::Concrete),
+            split_selection: self.config.split_selection,
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
-            split_direction,
             compute_source_sets: self.config.compute_source_sets,
             max_refined_comparison_vars_per_abstraction: self
                 .config
@@ -472,7 +469,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             };
             let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
                 split_blacklisted_variables(task, blacklisted_var_ids);
-            let split_direction = self.split_direction_for_iteration(iteration);
+            let split_kind = self.split_kind_for_iteration(iteration);
             let cegar_config = self.build_cegar_config(
                 remaining_abstraction_size,
                 remaining_generation_time,
@@ -482,14 +479,18 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     blacklisted_numeric_var_ids,
                 },
                 rng.next_u64(),
-                split_direction,
+                split_kind,
             );
             let generator = DomainAbstractionGenerator::new(cegar_config)
                 .context("failed to construct single-abstraction CEGAR generator")?;
             let generation_start = Instant::now();
             debug!(
-                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, flaw_kind={}, split_direction={:?}",
-                iteration, remaining_generation_time, self.config.flaw_kind, split_direction,
+                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, flaw_kind={}, flaw_scope={}, split_kind={:?}",
+                iteration,
+                remaining_generation_time,
+                self.config.flaw_kind,
+                self.config.flaw_scope,
+                split_kind,
             );
             let mut abstraction = match generator.generate(task) {
                 Ok(abstraction) => abstraction,
@@ -518,7 +519,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             abstraction.metadata = DomainAbstractionMetadata {
                 collection_iteration: Some(iteration),
                 collection_strategy: Some(self.config.collection_strategy.to_string()),
-                flaw_kind: Some(self.config.flaw_kind.to_string()),
+                flaw_kind: Some(self.config.flaw_kind),
+                flaw_scope: Some(self.config.flaw_scope),
                 full_goal_task: Some(true),
                 abstraction_use: AbstractionUse::CollectionMember,
                 max_abstraction_size: Some(remaining_abstraction_size),
@@ -647,15 +649,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         )
     }
 
-    fn split_direction_for_iteration(&self, iteration: usize) -> Option<SplitDirection> {
+    fn split_kind_for_iteration(&self, iteration: usize) -> Option<SplitKind> {
         if !self.config.interleave_split_directions {
-            return self.config.split_direction;
+            return self.config.split_kind;
         }
         assert!(iteration > 0, "collection iterations are one-based");
         Some(if iteration % 2 == 1 {
-            SplitDirection::Forward
+            SplitKind::Concrete
         } else {
-            SplitDirection::Backward
+            SplitKind::Wanted
         })
     }
 }
@@ -672,11 +674,6 @@ impl GoalFocusedDomainBackend<'_> {
     /// variant. Members start from the trivial abstraction: no initial splits
     /// and no blacklisted variables.
     fn member_cegar_config(&self, variant: &GoalVariant, budget: MemberBudget) -> CegarConfig {
-        let split_direction = match variant.direction {
-            Some(MemberDirection::Progression) => Some(SplitDirection::Forward),
-            Some(MemberDirection::Regression) => Some(SplitDirection::Backward),
-            None => self.config.split_direction,
-        };
         CegarConfig {
             max_abstraction_size: self
                 .config
@@ -694,11 +691,15 @@ impl GoalFocusedDomainBackend<'_> {
             debug: self.config.debug,
             random_seed: variant.seed,
             flaw_kind: self.config.flaw_kind,
-            flaw_treatment: self.config.flaw_treatment,
+            flaw_scope: self.config.flaw_scope,
+            split_kind: variant
+                .split_kind
+                .or(self.config.split_kind)
+                .unwrap_or(SplitKind::Concrete),
+            split_selection: self.config.split_selection,
             init_split_var_ids: Some(HashSet::new()),
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
-            split_direction,
             compute_source_sets: self.config.compute_source_sets,
             max_refined_comparison_vars_per_abstraction: self
                 .config
@@ -727,7 +728,8 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
             .generate_from_root(task, root)?;
         let metadata = &mut abstraction.metadata;
         metadata.collection_strategy = Some(self.config.collection_strategy.to_string());
-        metadata.flaw_kind = Some(self.config.flaw_kind.to_string());
+        metadata.flaw_kind = Some(self.config.flaw_kind);
+        metadata.flaw_scope = Some(self.config.flaw_scope);
         metadata.full_goal_task = Some(variant.full_task);
         metadata.max_abstraction_size = Some(max_abstraction_size);
         let report = BuiltReport {

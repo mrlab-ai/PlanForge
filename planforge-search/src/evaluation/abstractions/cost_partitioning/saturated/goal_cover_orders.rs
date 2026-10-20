@@ -224,8 +224,8 @@ pub(super) fn goal_cover_order(
             .total_cmp(&current_h(left))
             .then_with(|| right_member.tie_rank.cmp(&left_member.tie_rank))
             .then_with(|| {
-                (right_member.direction == MemberDirection::Regression)
-                    .cmp(&(left_member.direction == MemberDirection::Regression))
+                (right_member.split_kind == SplitKind::Wanted)
+                    .cmp(&(left_member.split_kind == SplitKind::Wanted))
             })
             .then_with(|| left.cmp(&right))
     };
@@ -244,7 +244,7 @@ pub(super) fn goal_cover_order(
         let complement_score = |component_id: usize| {
             let candidate = member(component_id);
             (
-                candidate.direction != first_member.direction,
+                candidate.split_kind != first_member.split_kind,
                 candidate.tie_rank == first_member.tie_rank,
             )
         };
@@ -300,7 +300,7 @@ pub(super) fn goal_cover_order(
             let variant_score = |component_id: usize| {
                 let candidate = member(component_id);
                 (
-                    candidate.direction == first_member.direction,
+                    candidate.split_kind == first_member.split_kind,
                     candidate.tie_rank == first_member.tie_rank,
                 )
             };

@@ -71,6 +71,7 @@ impl CartesianAbstractionGenerator {
             &CegarRun {
                 semantics: semantics.cegar(),
                 flaw_kind: self.config.flaw_kind,
+                flaw_scope: self.config.flaw_scope,
                 state_packer: &state_packer,
                 axiom_evaluator: &axiom_evaluator,
                 refinement_root: &refinement_root,

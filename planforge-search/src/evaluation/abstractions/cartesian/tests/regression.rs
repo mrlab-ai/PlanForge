@@ -79,11 +79,12 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         ("linear goal", linear_goal_task(), 2.0),
         ("diagonal", diagonal_task(), 2.0),
     ] {
-        for flaw_kind in [FlawKind::Regression, FlawKind::RegressEntirePlan] {
+        for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
             for split_kind in [SplitKind::Concrete, SplitKind::Wanted] {
                 let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
                     max_states: 1_000,
-                    flaw_kind,
+                    flaw_kind: FlawKind::Regression,
+                    flaw_scope,
                     split_kind,
                     ..Default::default()
                 })
@@ -93,13 +94,13 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 assert_eq!(
                     abstraction.metadata.stop_reason,
                     CegarStopReason::ConcretePlan,
-                    "{name}, {flaw_kind}, {split_kind:?}"
+                    "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
                     abstraction.distance_table.distances
                         [abstraction.distance_table.initial_state_hash],
                     optimal_cost,
-                    "{name}, {flaw_kind}, {split_kind:?}"
+                    "{name}, {flaw_scope}, {split_kind}"
                 );
             }
         }

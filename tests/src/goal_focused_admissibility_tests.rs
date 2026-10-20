@@ -18,7 +18,7 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionHeuristic,
 };
 use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstractions::common::cegar::FlawKind;
+use planforge_search::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
@@ -106,7 +106,8 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
             max_collection_size: 3_000,
             abstraction_generation_max_time: f64::INFINITY,
             total_max_time: f64::INFINITY,
-            flaw_kind: FlawKind::ExecuteEntirePlan,
+            flaw_kind: FlawKind::Progression,
+            flaw_scope: FlawScope::WholePlan,
             collection_strategy: CollectionStrategy::Complementary,
             variants_per_goal: 4,
             progress_states: true,

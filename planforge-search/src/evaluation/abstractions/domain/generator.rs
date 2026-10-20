@@ -23,7 +23,7 @@ use crate::evaluation::abstractions::common::cegar::progression::ConcretePlan;
 use crate::evaluation::abstractions::common::cegar::refine::{CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
 use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
-use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason};
+use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::concrete_state::{
     ConcreteState, make_prop_state_packer,
 };
@@ -52,13 +52,13 @@ pub(super) fn refine_domain_abstraction(
     let semantics = CegarSemantics::new(
         task,
         SplitOptions {
-            kind: config.split_kind(),
-            selection: config.flaw_treatment.split_selection(),
+            kind: config.split_kind,
+            selection: config.split_selection,
             rank: config.flaw_selection_rank,
             random_seed: config.random_seed,
         },
     )?;
-    if config.flaw_kind.regresses() {
+    if config.flaw_kind == FlawKind::Regression {
         ensure_regressable(task, semantics.coordinates())?;
     }
 
@@ -113,6 +113,7 @@ pub(super) fn refine_domain_abstraction(
         &CegarRun {
             semantics: &semantics,
             flaw_kind: config.flaw_kind,
+            flaw_scope: config.flaw_scope,
             state_packer: &state_packer,
             axiom_evaluator: &axiom_evaluator,
             refinement_root: &root,
@@ -252,7 +253,7 @@ impl DomainAbstractionGenerator {
                 solved_by_self,
                 abstraction_use: AbstractionUse::Standalone,
                 stop_reason: Some(stop_reason),
-                split_direction: self.config.effective_split_direction(),
+                split_kind: self.config.split_kind,
                 flaw_selection_rank: self.config.flaw_selection_rank,
                 concrete_plan_operator_ids,
                 ..DomainAbstractionMetadata::default()

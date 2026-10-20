@@ -86,7 +86,7 @@ impl<'task> CartesianSemantics<'task> {
                 random_seed: config.random_seed,
             },
         )?;
-        if config.flaw_kind.regresses() {
+        if config.flaw_kind == FlawKind::Regression {
             ensure_regressable(task, cegar.coordinates())?;
         }
         let regions = cegar.regions();

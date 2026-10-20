@@ -16,14 +16,15 @@ use crate::evaluation::abstractions::collections::goal_focused::MemberKind;
 use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocusedMember};
 
 #[test]
-fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
+fn standard_collection_defaults() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     assert_eq!(config.collection_strategy, CollectionStrategy::Standard);
     assert_eq!(config.max_abstraction_size, 1_000_000);
     assert_eq!(config.max_collection_size, 10_000_000);
     assert!(!config.use_wildcard_plans);
     assert_eq!(config.random_seed, Some(2011));
-    assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(config.flaw_kind, FlawKind::Progression);
+    assert_eq!(config.flaw_scope, FlawScope::First);
     assert!(!config.interleave_split_directions);
     assert_eq!(config.variants_per_goal, 1);
     assert!(!config.progress_states);
@@ -115,23 +116,24 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 fn standard_can_interleave_split_directions_on_the_full_task() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         collection_strategy: CollectionStrategy::Standard,
-        flaw_kind: FlawKind::ExecuteEntirePlan,
+        flaw_kind: FlawKind::Progression,
+        flaw_scope: FlawScope::WholePlan,
         interleave_split_directions: true,
         ..Default::default()
     };
     let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
 
     assert_eq!(
-        generator.split_direction_for_iteration(1),
-        Some(SplitDirection::Forward)
+        generator.split_kind_for_iteration(1),
+        Some(SplitKind::Concrete)
     );
     assert_eq!(
-        generator.split_direction_for_iteration(2),
-        Some(SplitDirection::Backward)
+        generator.split_kind_for_iteration(2),
+        Some(SplitKind::Wanted)
     );
     assert_eq!(
-        generator.split_direction_for_iteration(3),
-        Some(SplitDirection::Forward)
+        generator.split_kind_for_iteration(3),
+        Some(SplitKind::Concrete)
     );
 }
 
@@ -146,7 +148,7 @@ fn validation_error(config: DomainAbstractionCollectionGeneratorMultipleCegarCon
 fn interleaving_rejects_ambiguous_direction_configuration() {
     let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         interleave_split_directions: true,
-        split_direction: Some(SplitDirection::Forward),
+        split_kind: Some(SplitKind::Concrete),
         ..Default::default()
     });
 
@@ -171,12 +173,12 @@ fn complementary_rejects_options_the_schedule_decides_or_cannot_follow() {
         ..Default::default()
     };
     let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        split_direction: Some(SplitDirection::Backward),
+        split_kind: Some(SplitKind::Wanted),
         ..complementary.clone()
     });
-    assert!(error.contains("split direction per variant"), "{error}");
+    assert!(error.contains("split kind per variant"), "{error}");
     let without_alternation = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        split_direction: Some(SplitDirection::Backward),
+        split_kind: Some(SplitKind::Wanted),
         alternate_split_kinds: false,
         single_goal_tasks: true,
         ..complementary.clone()
@@ -185,17 +187,18 @@ fn complementary_rejects_options_the_schedule_decides_or_cannot_follow() {
         DomainAbstractionCollectionGeneratorMultipleCegar::new(without_alternation)
             .validate_supported_options()
             .is_ok(),
-        "without alternation the configured split direction applies to every variant"
+        "without alternation the configured split kind applies to every variant"
     );
 
-    for flaw_kind in [FlawKind::Regression, FlawKind::RegressEntirePlan] {
+    for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
         let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            flaw_kind,
+            flaw_kind: FlawKind::Regression,
+            flaw_scope,
             ..complementary.clone()
         });
         assert!(
             error.contains("flaw_kind=progression"),
-            "{flaw_kind}: {error}"
+            "{flaw_scope}: {error}"
         );
     }
 
@@ -242,7 +245,7 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         collection_strategy: CollectionStrategy::Complementary,
         flaw_kind: FlawKind::Progression,
-        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+        split_selection: SplitSelection::MinGrowth,
         max_abstraction_size: 50,
         ..Default::default()
     };
@@ -255,7 +258,7 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
         full_task: false,
         variant_id: 3,
         kind: MemberKind::Scheduled,
-        direction: Some(direction),
+        split_kind: Some(direction),
         tie_rank: Some(tie_rank),
         seed,
     };
@@ -264,10 +267,9 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
         remaining_time: Some(Duration::from_secs(5)),
     };
 
-    let forward =
-        backend.member_cegar_config(&variant(MemberDirection::Progression, 1, None), budget);
+    let forward = backend.member_cegar_config(&variant(SplitKind::Concrete, 1, None), budget);
     assert_eq!(forward.flaw_kind, FlawKind::Progression);
-    assert_eq!(forward.split_direction, Some(SplitDirection::Forward));
+    assert_eq!(forward.split_kind, SplitKind::Concrete);
     assert_eq!(forward.flaw_selection_rank, Some(1));
     assert_eq!(forward.random_seed, None);
     assert_eq!(forward.max_abstraction_size, 30);
@@ -276,14 +278,13 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
     assert!(forward.blacklisted_prop_var_ids.is_empty());
     assert!(forward.blacklisted_numeric_var_ids.is_empty());
 
-    let backward =
-        backend.member_cegar_config(&variant(MemberDirection::Regression, 2, Some(9)), budget);
+    let backward = backend.member_cegar_config(&variant(SplitKind::Wanted, 2, Some(9)), budget);
     assert_eq!(
         backward.flaw_kind,
         FlawKind::Progression,
         "regression variants keep the configured flaw kind"
     );
-    assert_eq!(backward.split_direction, Some(SplitDirection::Backward));
+    assert_eq!(backward.split_kind, SplitKind::Wanted);
     assert_eq!(backward.flaw_selection_rank, Some(2));
     assert_eq!(backward.random_seed, Some(9));
 }
@@ -520,18 +521,18 @@ fn complementary_domain_collection_follows_the_cartesian_member_sequence() {
             .map(|(member, initial_h, _)| (
                 member.membership.goal_id,
                 member.membership.variant_id,
-                member.direction,
+                member.split_kind,
                 member.tie_rank,
                 *initial_h
             ))
             .collect::<Vec<_>>(),
         vec![
-            (0, 0, MemberDirection::Progression, Some(0), 2.0),
-            (1, 0, MemberDirection::Progression, Some(0), 3.0),
-            (0, 1, MemberDirection::Regression, Some(0), 2.0),
-            (1, 1, MemberDirection::Regression, Some(0), 3.0),
-            (1, 2, MemberDirection::Progression, Some(1), 3.0),
-            (0, 2, MemberDirection::Progression, Some(1), 2.0),
+            (0, 0, SplitKind::Concrete, Some(0), 2.0),
+            (1, 0, SplitKind::Concrete, Some(0), 3.0),
+            (0, 1, SplitKind::Wanted, Some(0), 2.0),
+            (1, 1, SplitKind::Wanted, Some(0), 3.0),
+            (1, 2, SplitKind::Concrete, Some(1), 3.0),
+            (0, 2, SplitKind::Concrete, Some(1), 2.0),
         ]
     );
 }
@@ -581,7 +582,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
         DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             alternate_split_kinds: false,
             single_goal_tasks: true,
-            split_direction: Some(SplitDirection::Backward),
+            split_kind: Some(SplitKind::Wanted),
             ..domain_goal_focused_config(3, true)
         },
     );
@@ -608,7 +609,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
     assert!(
         schedule_view(&domain)
             .iter()
-            .all(|(member, _, _)| member.direction == MemberDirection::Regression)
+            .all(|(member, _, _)| member.split_kind == SplitKind::Wanted)
     );
     assert_eq!(
         schedule_view(&domain)
@@ -676,11 +677,11 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
         assert_eq!(cartesian.metadata.collection_member, None);
         let expected_backward = index >= 2;
         assert_eq!(
-            domain.metadata.split_direction,
+            domain.metadata.split_kind,
             if expected_backward {
-                SplitDirection::Backward
+                SplitKind::Wanted
             } else {
-                SplitDirection::Forward
+                SplitKind::Concrete
             }
         );
         assert_eq!(

@@ -7,7 +7,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::{
@@ -715,29 +715,15 @@ fn apply_cartesian_source_options(
             "flaw_kind" => {
                 config.abstraction.flaw_kind = FlawKind::from_option_value(arg.value())?;
             }
-            "refinement_direction" => {
-                let value = String::from_option_value(arg.value())?;
-                config.abstraction.split_kind = match value.as_str() {
-                    "progression" => SplitKind::Concrete,
-                    "regression" => SplitKind::Wanted,
-                    _ => {
-                        return Err(format!(
-                            "invalid Cartesian refinement_direction `{value}`; expected progression or regression"
-                        ));
-                    }
-                };
+            "flaw_scope" => {
+                config.abstraction.flaw_scope = FlawScope::from_option_value(arg.value())?;
+            }
+            "split_kind" => {
+                config.abstraction.split_kind = SplitKind::from_option_value(arg.value())?;
             }
             "split_selection" => {
-                let value = String::from_option_value(arg.value())?;
-                config.abstraction.split_selection = match value.as_str() {
-                    "min_transition_growth" | "min_growth" => SplitSelection::MinGrowth,
-                    "random" => SplitSelection::Random,
-                    _ => {
-                        return Err(format!(
-                            "invalid Cartesian split_selection `{value}`; expected min_transition_growth or random"
-                        ));
-                    }
-                };
+                config.abstraction.split_selection =
+                    SplitSelection::from_option_value(arg.value())?;
             }
             "split_selection_rank" => {
                 config.abstraction.split_selection_rank =
@@ -945,7 +931,7 @@ mod tests {
     #[test]
     fn parses_native_cartesian_split_selection() {
         for (name, expected) in [
-            ("min_transition_growth", SplitSelection::MinGrowth),
+            ("min_growth", SplitSelection::MinGrowth),
             ("random", SplitSelection::Random),
         ] {
             let args = vec![ConfigArg::new(
@@ -964,6 +950,6 @@ mod tests {
             ConfigValue::Atom("magic".to_string()),
         )];
         let error = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap_err();
-        assert!(error.contains("invalid Cartesian split_selection"));
+        assert!(error.contains("invalid split_selection `magic`"), "{error}");
     }
 }

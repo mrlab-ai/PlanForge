@@ -73,11 +73,8 @@ impl CartesianAbstractionCollectionGenerator {
         config.max_states = config.max_states.min(remaining_states);
         // Whichever of the two budgets exist bind; the tighter one wins.
         config.max_time = config.max_time.into_iter().chain(remaining_time).min();
-        if let Some(direction) = variant.direction {
-            config.split_kind = match direction {
-                MemberDirection::Progression => SplitKind::Concrete,
-                MemberDirection::Regression => SplitKind::Wanted,
-            };
+        if let Some(split_kind) = variant.split_kind {
+            config.split_kind = split_kind;
         }
         if let Some(rank) = variant.tie_rank {
             config.split_selection_rank = Some(rank);

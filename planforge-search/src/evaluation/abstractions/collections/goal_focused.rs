@@ -33,17 +33,9 @@ use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
 use super::portfolio::{CollectionStrategy, derive_variant_seed};
+use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-
-/// The direction a member refines in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemberDirection {
-    /// Split at the concrete witness of a flaw.
-    Progression,
-    /// Split at the boundary of the wanted values.
-    Regression,
-}
 
 /// Why the collection is building a member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,8 +59,8 @@ pub(crate) struct GoalVariant {
     pub(crate) full_task: bool,
     pub(crate) variant_id: usize,
     pub(crate) kind: MemberKind,
-    /// `None` keeps the backend's configured direction.
-    pub(crate) direction: Option<MemberDirection>,
+    /// `None` keeps the backend's configured split kind.
+    pub(crate) split_kind: Option<SplitKind>,
     /// Which of the tied best refinement candidates to take; `None` keeps the
     /// backend's configured choice.
     pub(crate) tie_rank: Option<usize>,
@@ -179,7 +171,7 @@ impl GoalFocusedSchedule {
                 full_task: true,
                 variant_id: member.variant_id,
                 kind: member.kind,
-                direction: None,
+                split_kind: None,
                 tie_rank: None,
                 seed: self.random_seed,
             };
@@ -195,16 +187,16 @@ impl GoalFocusedSchedule {
             self.alternate_split_kinds || self.strategy.is_complementary(),
             "only complementary collections choose split kinds per variant"
         );
-        let (direction, tie_rank, seed) = if self.strategy.is_complementary() {
-            let direction = self.alternate_split_kinds.then(|| {
+        let (split_kind, tie_rank, seed) = if self.strategy.is_complementary() {
+            let split_kind = self.alternate_split_kinds.then(|| {
                 if construction_variant.is_multiple_of(2) {
-                    MemberDirection::Progression
+                    SplitKind::Concrete
                 } else {
-                    MemberDirection::Regression
+                    SplitKind::Wanted
                 }
             });
             (
-                direction,
+                split_kind,
                 Some(construction_variant / 2),
                 (construction_variant > 0).then(derived_seed),
             )
@@ -218,7 +210,7 @@ impl GoalFocusedSchedule {
             full_task: !self.single_goal_tasks,
             variant_id: member.variant_id,
             kind: member.kind,
-            direction,
+            split_kind,
             tie_rank,
             seed,
         }
@@ -384,13 +376,13 @@ fn build_member<B: GoalFocusedBackend>(
         .as_ref()
         .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
     debug!(
-        "{} collection: building abstraction {}, goal={}, variant={}, kind={:?}, direction={:?}, tie_rank={:?}, remaining_states={}, seed={:?}",
+        "{} collection: building abstraction {}, goal={}, variant={}, kind={:?}, split_kind={:?}, tie_rank={:?}, remaining_states={}, seed={:?}",
         B::NAME,
         abstraction_id + 1,
         member.goal_id,
         member.variant_id,
         member.kind,
-        variant.direction,
+        variant.split_kind,
         variant.tie_rank,
         budget.remaining_states,
         variant.seed

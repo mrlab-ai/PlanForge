@@ -389,12 +389,12 @@ pub(in crate::evaluation::abstractions) fn subtract_cartesian_set(
     }
     for var_id in 0..core.numeric.len() {
         let parent = core.numeric[var_id];
-        let cut = removed.numeric[var_id];
+        let removed_interval = removed.numeric[var_id];
         let lower = Interval::new(
             parent.lower,
-            cut.lower,
+            removed_interval.lower,
             parent.lower_closed,
-            !cut.lower_closed,
+            !removed_interval.lower_closed,
         );
         if !lower.is_empty() {
             let mut piece = core.clone();
@@ -402,9 +402,9 @@ pub(in crate::evaluation::abstractions) fn subtract_cartesian_set(
             result.push(piece);
         }
         let upper = Interval::new(
-            cut.upper,
+            removed_interval.upper,
             parent.upper,
-            !cut.upper_closed,
+            !removed_interval.upper_closed,
             parent.upper_closed,
         );
         if !upper.is_empty() {
@@ -412,7 +412,7 @@ pub(in crate::evaluation::abstractions) fn subtract_cartesian_set(
             Arc::make_mut(&mut piece.numeric)[var_id] = upper;
             result.push(piece);
         }
-        Arc::make_mut(&mut core.numeric)[var_id] = cut;
+        Arc::make_mut(&mut core.numeric)[var_id] = removed_interval;
     }
     debug_assert!(result.iter().all(cartesian_set_is_nonempty));
     debug_assert!(regional_regions_are_disjoint(&result));

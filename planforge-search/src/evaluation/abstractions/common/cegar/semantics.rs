@@ -1,6 +1,6 @@
 //! The task as CEGAR refines its abstractions: region semantics, operator
 //! costs, which numeric dimensions live on an integer lattice, the constants
-//! wanted splits cut at, and how splits are chosen.
+//! wanted splits split at, and how splits are chosen.
 
 use std::cell::RefCell;
 
@@ -39,7 +39,7 @@ pub(crate) struct CegarSemantics<'task> {
     regions: RegionSemantics<'task>,
     operator_costs: Vec<NumericValue>,
     numeric_integer_lattice: Vec<bool>,
-    target_split_boundaries: Vec<NumericValue>,
+    wanted_split_boundaries: Vec<NumericValue>,
     split_options: SplitOptions,
     random_split_rng: Option<RefCell<SmallRng>>,
 }
@@ -59,7 +59,7 @@ impl<'task> CegarSemantics<'task> {
         let operator_costs = (0..task.get_operators().len())
             .map(|op_id| task.abstract_operator_cost(OperatorIndex::from_usize(op_id)))
             .collect();
-        let mut target_split_boundaries = task
+        let mut wanted_split_boundaries = task
             .numeric_variables()
             .iter()
             .enumerate()
@@ -72,8 +72,8 @@ impl<'task> CegarSemantics<'task> {
             })
             .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
-        target_split_boundaries.sort_by(NumericValue::total_cmp);
-        target_split_boundaries.dedup_by(|left, right| {
+        wanted_split_boundaries.sort_by(NumericValue::total_cmp);
+        wanted_split_boundaries.dedup_by(|left, right| {
             float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
         });
         let random_split_rng = (split_options.selection == SplitSelection::Random).then(|| {
@@ -86,7 +86,7 @@ impl<'task> CegarSemantics<'task> {
             regions,
             operator_costs,
             numeric_integer_lattice,
-            target_split_boundaries,
+            wanted_split_boundaries,
             split_options,
             random_split_rng,
         })
@@ -113,9 +113,9 @@ impl<'task> CegarSemantics<'task> {
         &self.numeric_integer_lattice
     }
 
-    /// The task's finite constants, sorted: where wanted splits cut.
-    pub(crate) fn target_split_boundaries(&self) -> &[NumericValue] {
-        &self.target_split_boundaries
+    /// The task's finite constants, sorted: where wanted splits split.
+    pub(crate) fn wanted_split_boundaries(&self) -> &[NumericValue] {
+        &self.wanted_split_boundaries
     }
 
     pub(crate) fn split_kind(&self) -> SplitKind {

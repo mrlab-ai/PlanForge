@@ -11,12 +11,12 @@ use super::{
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{FlawScope, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use crate::evaluation::abstractions::domain::config::CegarConfig;
-use crate::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
@@ -109,7 +109,7 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progress_states=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
+        "astar(scp(cartesian_collection(max_states=1000, flaw_scope=whole_plan, collection_strategy=complementary, variants_per_goal=8, progress_states=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -128,7 +128,8 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert!(config.progress_states);
     assert!(!config.alternate_split_kinds);
     assert!(config.single_goal_tasks);
-    assert_eq!(config.abstraction.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(config.abstraction.flaw_kind, FlawKind::Progression);
+    assert_eq!(config.abstraction.flaw_scope, FlawScope::WholePlan);
     assert!(config.abstraction.compute_source_sets);
 }
 
@@ -262,7 +263,7 @@ fn direct_cartesian_abstraction_rejects_cegar_only_options() {
     for option in [
         "max_iterations=10",
         "use_wildcard_plans=true",
-        "flaw_treatment=first",
+        "split_selection=first",
     ] {
         let h = astar_heuristic(&format!("astar(cartesian_abstraction({option}))"));
         let error = super::validate_cartesian_cegar_options(&h.args).unwrap_err();
@@ -288,23 +289,26 @@ fn rejects_boolean_cost_partitioning_mode() {
 }
 
 #[test]
-fn parses_execute_entire_plan_flaw_kind() {
-    let h = astar_heuristic("astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))");
+fn parses_whole_plan_regression_flaws() {
+    let h = astar_heuristic(
+        "astar(canonical_domain_abstractions(flaw_kind=regression, flaw_scope=whole_plan))",
+    );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(cfg.flaw_kind, FlawKind::Regression);
+    assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
 }
 
 #[test]
 fn parses_single_domain_abstraction_time_limit() {
     let h = astar_heuristic(
-        "astar(domain_abstraction(max_abstraction_size=1000,max_time=900,flaw_kind=execute_entire_plan))",
+        "astar(domain_abstraction(max_abstraction_size=1000,max_time=900,flaw_scope=whole_plan))",
     );
     let mut cfg = CegarConfig::default();
     cfg.apply_options(&h.args).unwrap();
     assert_eq!(cfg.max_abstraction_size, 1000);
     assert_eq!(cfg.max_time, Some(std::time::Duration::from_secs(900)));
-    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
 
     let h = astar_heuristic("astar(domain_abstraction(max_time=infinity))");
     cfg.apply_options(&h.args).unwrap();
@@ -314,7 +318,7 @@ fn parses_single_domain_abstraction_time_limit() {
 #[test]
 fn parses_full_task_interleaved_domain_collection() {
     let h = astar_heuristic(
-        "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_kind=execute_entire_plan,flaw_treatment=min_growth_single_atom)))",
+        "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_scope=whole_plan,split_selection=min_growth)))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -324,11 +328,9 @@ fn parses_full_task_interleaved_domain_collection() {
 
     assert_eq!(source.collection_strategy, CollectionStrategy::Standard);
     assert!(source.interleave_split_directions);
-    assert_eq!(source.flaw_kind, FlawKind::ExecuteEntirePlan);
-    assert_eq!(
-        source.flaw_treatment,
-        FlawTreatmentVariants::MinGrowthSingleAtom
-    );
+    assert_eq!(source.flaw_kind, FlawKind::Progression);
+    assert_eq!(source.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(source.split_selection, SplitSelection::MinGrowth);
 }
 
 #[test]
@@ -432,7 +434,7 @@ fn parses_astar_lmcutnumeric_with_named_options() {
 #[test]
 fn parses_astar_multi_domain_abstractions_with_named_options() {
     let h = astar_heuristic(
-        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=execute_entire_plan, collection_strategy=complementary, random_seed=7, debug=true))",
+        "astar(multi_domain_abstractions(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, flaw_scope=whole_plan, collection_strategy=complementary, random_seed=7, debug=true))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -440,7 +442,8 @@ fn parses_astar_multi_domain_abstractions_with_named_options() {
     assert_eq!(cfg.total_max_time, 4.5);
     assert!(!cfg.use_wildcard_plans);
     assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::ExecuteEntirePlan);
+    assert_eq!(cfg.flaw_kind, FlawKind::Progression);
+    assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
     assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
     assert_eq!(cfg.random_seed, Some(7));
     assert!(cfg.debug);
@@ -466,7 +469,7 @@ fn parses_full_task_goal_focused_options() {
 #[test]
 fn parses_goal_focused_domain_collection_options() {
     let h = astar_heuristic(
-        "astar(domain(collection_strategy=complementary, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_direction=backward))",
+        "astar(domain(collection_strategy=complementary, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
@@ -475,10 +478,7 @@ fn parses_goal_focused_domain_collection_options() {
     assert!(cfg.progress_states);
     assert!(!cfg.alternate_split_kinds);
     assert!(cfg.single_goal_tasks);
-    assert_eq!(
-        cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::config::SplitDirection::Backward)
-    );
+    assert_eq!(cfg.split_kind, Some(SplitKind::Wanted));
 }
 
 #[test]

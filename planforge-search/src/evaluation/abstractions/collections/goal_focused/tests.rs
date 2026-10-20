@@ -100,7 +100,7 @@ struct Call {
     goal_id: Option<usize>,
     variant_id: usize,
     kind: MemberKind,
-    direction: Option<MemberDirection>,
+    split_kind: Option<SplitKind>,
     tie_rank: Option<usize>,
     seed: Option<u64>,
     /// `x` at the refinement root, `None` for the task initial state.
@@ -163,7 +163,7 @@ impl GoalFocusedBackend for ScriptedBackend {
             goal_id: variant.goal_id,
             variant_id: variant.variant_id,
             kind: variant.kind,
-            direction: variant.direction,
+            split_kind: variant.split_kind,
             tie_rank: variant.tie_rank,
             seed: variant.seed,
             root_x: root.map(|root| root.numeric[0].value()),
@@ -311,29 +311,29 @@ fn complementary_variants_alternate_direction_and_rank_ties_by_pairs() {
             (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.direction.unwrap(),
+                member.call.split_kind.unwrap(),
                 member.call.tie_rank.unwrap(),
                 member.call.seed,
             )
         })
         .collect::<Vec<_>>();
     let seed = |goal_id, variant_id: usize| Some(derive_variant_seed(5, goal_id, variant_id - 1));
-    use MemberDirection::{Progression, Regression};
+    use SplitKind::{Concrete, Wanted};
     assert_eq!(
         calls,
         vec![
-            (0, 0, Progression, 0, None),
-            (1, 0, Progression, 0, None),
-            (2, 0, Progression, 0, None),
-            (0, 1, Regression, 0, seed(0, 1)),
-            (1, 1, Regression, 0, seed(1, 1)),
-            (2, 1, Regression, 0, seed(2, 1)),
-            (1, 2, Progression, 1, seed(1, 2)),
-            (1, 3, Regression, 1, seed(1, 3)),
-            (2, 2, Progression, 1, seed(2, 2)),
-            (2, 3, Regression, 1, seed(2, 3)),
-            (0, 2, Progression, 1, seed(0, 2)),
-            (0, 3, Regression, 1, seed(0, 3)),
+            (0, 0, Concrete, 0, None),
+            (1, 0, Concrete, 0, None),
+            (2, 0, Concrete, 0, None),
+            (0, 1, Wanted, 0, seed(0, 1)),
+            (1, 1, Wanted, 0, seed(1, 1)),
+            (2, 1, Wanted, 0, seed(2, 1)),
+            (1, 2, Concrete, 1, seed(1, 2)),
+            (1, 3, Wanted, 1, seed(1, 3)),
+            (2, 2, Concrete, 1, seed(2, 2)),
+            (2, 3, Wanted, 1, seed(2, 3)),
+            (0, 2, Concrete, 1, seed(0, 2)),
+            (0, 3, Wanted, 1, seed(0, 3)),
         ]
     );
     assert!(members.iter().all(|member| member.call.root_x.is_none()));
@@ -355,7 +355,7 @@ fn standard_variants_vary_only_the_seed() {
         members
             .iter()
             .map(|member| (
-                member.call.direction,
+                member.call.split_kind,
                 member.call.tie_rank,
                 member.call.seed
             ))
@@ -388,7 +388,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
                 goal_id: None,
                 variant_id: 0,
                 kind: MemberKind::Scheduled,
-                direction: None,
+                split_kind: None,
                 tie_rank: None,
                 seed: Some(5),
                 root_x: None,
@@ -663,7 +663,7 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
             .map(|member| (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.direction,
+                member.call.split_kind,
                 member.call.tie_rank,
                 member.call.seed
             ))
@@ -702,29 +702,29 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
     .unwrap();
 
     let seed = |goal_id, variant_id: usize| Some(derive_variant_seed(5, goal_id, variant_id - 1));
-    use MemberDirection::{Progression, Regression};
+    use SplitKind::{Concrete, Wanted};
     assert_eq!(
         members
             .iter()
             .map(|member| (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.direction.unwrap(),
+                member.call.split_kind.unwrap(),
                 member.call.tie_rank.unwrap(),
                 member.call.seed,
                 member.membership,
             ))
             .collect::<Vec<_>>(),
         vec![
-            (0, 0, Progression, 0, None, None),
-            (1, 0, Progression, 0, None, None),
-            (2, 0, Progression, 0, None, None),
-            (0, 1, Regression, 0, seed(0, 1), None),
-            (1, 1, Regression, 0, seed(1, 1), None),
-            (2, 1, Regression, 0, seed(2, 1), None),
-            (0, 2, Progression, 1, seed(0, 2), None),
-            (1, 2, Progression, 1, seed(1, 2), None),
-            (2, 2, Progression, 1, seed(2, 2), None),
+            (0, 0, Concrete, 0, None, None),
+            (1, 0, Concrete, 0, None, None),
+            (2, 0, Concrete, 0, None, None),
+            (0, 1, Wanted, 0, seed(0, 1), None),
+            (1, 1, Wanted, 0, seed(1, 1), None),
+            (2, 1, Wanted, 0, seed(2, 1), None),
+            (0, 2, Concrete, 1, seed(0, 2), None),
+            (1, 2, Concrete, 1, seed(1, 2), None),
+            (2, 2, Concrete, 1, seed(2, 2), None),
         ]
     );
     assert!(members.iter().all(|member| member.call.root_x.is_none()));

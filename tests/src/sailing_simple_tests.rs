@@ -54,7 +54,9 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
 use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use planforge_search::evaluation::abstractions::common::cegar::FlawKind;
+use planforge_search::evaluation::abstractions::common::cegar::{
+    FlawKind, FlawScope, SplitSelection,
+};
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
@@ -64,7 +66,6 @@ use planforge_search::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
 use planforge_search::evaluation::abstractions::domain::config::CegarConfig;
-use planforge_search::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
@@ -301,10 +302,11 @@ fn goal_focused_collection_config(
         max_collection_size: 10_000,
         abstraction_generation_max_time: f64::INFINITY,
         total_max_time: f64::INFINITY,
-        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+        split_selection: SplitSelection::MinGrowth,
         use_wildcard_plans: true,
         combine_labels: false,
-        flaw_kind: FlawKind::ExecuteEntirePlan,
+        flaw_kind: FlawKind::Progression,
+        flaw_scope: FlawScope::WholePlan,
         collection_strategy: CollectionStrategy::Complementary,
         variants_per_goal: 2,
         progress_states: true,

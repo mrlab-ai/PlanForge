@@ -372,6 +372,7 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
+        flaw_scope: config.flaw_scope,
         split_kind: SplitKind::Concrete,
         split_selection_rank: None,
         split_selection: SplitSelection::MinGrowth,
@@ -387,14 +388,19 @@ fn validate_cartesian_cegar_options(args: &[ConfigArg]) -> Result<(), String> {
         "use_wildcard_plans",
         "combine_labels",
         "random_seed",
-        "flaw_treatment",
         "flaw_kind",
+        "flaw_scope",
+        "split_kind",
+        "split_selection",
     ];
     crate::config::for_each_option(args, ORDER, |key, _| match key {
-        "max_abstraction_size" | "max_time" | "combine_labels" | "random_seed" | "flaw_kind" => {
-            Ok(())
-        }
-        "max_iterations" | "use_wildcard_plans" | "flaw_treatment" => Err(format!(
+        "max_abstraction_size"
+        | "max_time"
+        | "combine_labels"
+        | "random_seed"
+        | "flaw_kind"
+        | "flaw_scope" => Ok(()),
+        "max_iterations" | "use_wildcard_plans" | "split_kind" | "split_selection" => Err(format!(
             "option `{key}` is not supported for Cartesian abstractions"
         )),
         other => Err(format!(

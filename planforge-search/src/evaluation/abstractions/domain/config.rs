@@ -1,14 +1,14 @@
 //! Configuration of domain-abstraction CEGAR.
 
 use std::collections::HashSet;
-use std::fmt;
 use std::time::Duration;
 
 use anyhow::Result;
 use planforge_sas::numeric_task::VariableIndex;
-use serde::{Deserialize, Serialize};
 
-use crate::evaluation::abstractions::common::cegar::{FlawKind, SplitKind, SplitSelection};
+use crate::evaluation::abstractions::common::cegar::{
+    FlawKind, FlawScope, SplitKind, SplitSelection,
+};
 
 #[derive(Debug, Clone)]
 pub struct CegarConfig {
@@ -20,7 +20,9 @@ pub struct CegarConfig {
     pub debug: bool,
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
-    pub flaw_treatment: FlawTreatmentVariants,
+    pub flaw_scope: FlawScope,
+    pub split_kind: SplitKind,
+    pub split_selection: SplitSelection,
     pub init_split_var_ids: Option<HashSet<VariableIndex>>,
     pub blacklisted_prop_var_ids: HashSet<VariableIndex>,
     pub blacklisted_numeric_var_ids: HashSet<VariableIndex>,
@@ -31,11 +33,6 @@ pub struct CegarConfig {
     /// can be large (~12 GB of `CartesianSet`s on
     /// minecraft-sword-advanced/prob_30x30_5).
     pub compute_source_sets: bool,
-    /// How numeric flaw split values are chosen: `Forward` splits next to the
-    /// concrete value; `Backward` places splits at the boundary derived
-    /// from the regressed-target / required interval. When `None`, the flaw
-    /// kind's default ([`FlawKind::default_split_direction`]) is used.
-    pub split_direction: Option<SplitDirection>,
     /// Maximum number of comparison-axiom propositional vars this CEGAR run
     /// may refine into its pattern. `None` = unbounded. When the cap is
     /// reached, the refinement loop refuses to introduce additional
@@ -48,10 +45,10 @@ pub struct CegarConfig {
     /// `DomainAbstractionCollectionGeneratorMultipleCegarConfig::max_refined_comparison_vars_per_abstraction`
     /// for the longer rationale).
     pub max_refined_comparison_vars_per_abstraction: Option<usize>,
-    /// Which of the tied best flaws to refine: `flaw_treatment` scores the
-    /// flaws, the best-scoring ones are sorted by a deterministic key, and the
-    /// one at `rank % ties` is refined. `None` breaks ties with the random
-    /// seed. Treatments that refine every flaw have no tie to break.
+    /// Which of the tied best splits to take: `split_selection` scores the
+    /// candidates, the best-scoring ones are sorted by a deterministic key,
+    /// and the one at `rank % ties` is taken. `None` breaks ties with the
+    /// random seed.
     pub flaw_selection_rank: Option<usize>,
 }
 
@@ -66,31 +63,16 @@ impl Default for CegarConfig {
             debug: false,
             random_seed: Some(2011),
             flaw_kind: FlawKind::Progression,
-            flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
+            flaw_scope: FlawScope::First,
+            split_kind: SplitKind::Concrete,
+            split_selection: SplitSelection::Random,
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
-            split_direction: None,
             compute_source_sets: true,
             max_refined_comparison_vars_per_abstraction: None,
             flaw_selection_rank: None,
         }
-    }
-}
-
-impl CegarConfig {
-    /// The split kind refinement uses.
-    pub(crate) fn split_kind(&self) -> SplitKind {
-        match self.effective_split_direction() {
-            SplitDirection::Backward => SplitKind::Wanted,
-            SplitDirection::Forward => SplitKind::Concrete,
-        }
-    }
-
-    /// The split direction refinement uses: the configured one, or concrete
-    /// splits.
-    pub fn effective_split_direction(&self) -> SplitDirection {
-        self.split_direction.unwrap_or(SplitDirection::Forward)
     }
 }
 
@@ -113,9 +95,10 @@ impl crate::config::ApplyOptions for CegarConfig {
             "use_wildcard_plans",
             "combine_labels",
             "random_seed",
-            "flaw_treatment",
             "flaw_kind",
-            "split_direction",
+            "flaw_scope",
+            "split_kind",
+            "split_selection",
         ];
         for_each_option(args, ORDER, |key, value| {
             match key {
@@ -134,98 +117,15 @@ impl crate::config::ApplyOptions for CegarConfig {
                 "use_wildcard_plans" => self.use_wildcard_plans = parse(value)?,
                 "combine_labels" => self.combine_labels = parse(value)?,
                 "random_seed" => self.random_seed = parse(value)?,
-                "flaw_treatment" => self.flaw_treatment = parse(value)?,
                 "flaw_kind" => self.flaw_kind = parse(value)?,
-                "split_direction" => self.split_direction = parse(value)?,
+                "flaw_scope" => self.flaw_scope = parse(value)?,
+                "split_kind" => self.split_kind = parse(value)?,
+                "split_selection" => self.split_selection = parse(value)?,
                 other => {
                     return Err(format!("unknown option `{other}` for `domain_abstraction`"));
                 }
             }
             Ok(())
         })
-    }
-}
-
-/// Direction of the split value computed for a numeric flaw.
-///
-/// `Forward` matches today's progression behavior: when a precondition,
-/// goal, or deviation flaw is detected, the split is placed at the *concrete*
-/// value that produced the flaw. `Backward` matches the target-centered
-/// behavior: the split is placed at the *boundary* derived from the
-/// regressed target / required interval, separating the cell containing the
-/// goal-directed region from the cell that does not.
-///
-/// The direction is orthogonal to [`FlawKind`]: it selects how a split value
-/// is chosen, not which iteration of the flaw search is run.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum SplitDirection {
-    #[default]
-    Forward,
-    Backward,
-}
-
-impl fmt::Display for SplitDirection {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Forward => write!(f, "forward"),
-            Self::Backward => write!(f, "backward"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for Option<SplitDirection> {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "default" => Ok(None),
-            "forward" => Ok(Some(SplitDirection::Forward)),
-            "backward" => Ok(Some(SplitDirection::Backward)),
-            other => Err(format!(
-                "invalid split_direction `{other}`; expected default, forward or backward"
-            )),
-        }
-    }
-}
-
-/// How `fix_flaws` chooses which flaws to refine.
-///
-/// This mirrors numeric-FD's `FlawTreatment` options, but our defaults aim to
-/// stay deterministic.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum FlawTreatmentVariants {
-    RandomSingleAtom,
-    MinGrowthSingleAtom,
-}
-
-impl fmt::Display for FlawTreatmentVariants {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RandomSingleAtom => write!(f, "random_single_atom"),
-            Self::MinGrowthSingleAtom => write!(f, "min_growth_single_atom"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for FlawTreatmentVariants {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "random_single_atom" => Ok(Self::RandomSingleAtom),
-            "min_growth_single_atom" => Ok(Self::MinGrowthSingleAtom),
-            other => Err(format!(
-                "invalid flaw_treatment `{other}`; expected random_single_atom or min_growth_single_atom"
-            )),
-        }
-    }
-}
-
-impl FlawTreatmentVariants {
-    /// The shared split selection this treatment names.
-    pub(crate) fn split_selection(self) -> SplitSelection {
-        match self {
-            Self::RandomSingleAtom => SplitSelection::Random,
-            Self::MinGrowthSingleAtom => SplitSelection::MinGrowth,
-        }
     }
 }

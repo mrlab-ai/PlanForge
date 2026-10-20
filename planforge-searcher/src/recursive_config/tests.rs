@@ -416,8 +416,8 @@ fn sgd_never_reports_a_nested_heuristic() {
 #[test]
 fn display_round_trips_enum_valued_options() {
     for spec in [
-        "astar(canonical_domain_abstractions(flaw_kind=execute_entire_plan))",
-        "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
+        "astar(canonical_domain_abstractions(flaw_scope=whole_plan))",
+        "astar(canonical_domain_abstractions(split_kind=wanted))",
     ] {
         let parsed = parse_search_spec(spec).unwrap();
         assert_eq!(parse_search_spec(&parsed.to_string()).unwrap(), parsed);
