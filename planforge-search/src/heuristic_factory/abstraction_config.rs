@@ -761,6 +761,15 @@ fn apply_cartesian_source_options(
             "single_goal_tasks" if collection => {
                 config.single_goal_tasks = bool::from_option_value(arg.value())?;
             }
+            "stagnation_limit" if collection => {
+                config.stagnation_limit = f64::from_option_value(arg.value())?;
+            }
+            "blacklist_trigger_percentage" if collection => {
+                config.blacklist_trigger_percentage = f64::from_option_value(arg.value())?;
+            }
+            "enable_blacklist_on_stagnation" if collection => {
+                config.enable_blacklist_on_stagnation = bool::from_option_value(arg.value())?;
+            }
             "max_collection_size" if collection => {
                 config.max_collection_states = usize::from_option_value(arg.value())?;
             }

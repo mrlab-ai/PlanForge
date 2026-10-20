@@ -32,6 +32,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: true,
+            ..Default::default()
         })
         .unwrap()
         .generate(&task)

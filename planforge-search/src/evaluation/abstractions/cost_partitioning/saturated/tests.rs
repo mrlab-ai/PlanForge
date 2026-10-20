@@ -149,6 +149,7 @@ pub(super) fn goal_cover_scp<'task>(
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: true,
+            ..Default::default()
         })
         .unwrap()
         .generate(&**task)

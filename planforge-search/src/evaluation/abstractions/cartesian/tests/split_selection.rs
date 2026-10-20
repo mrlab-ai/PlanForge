@@ -142,7 +142,7 @@ fn min_growth_uses_projected_transition_count() {
         working: &working,
         semantics: &semantics,
         shortest_paths: &paths,
-        max_states: usize::MAX,
+        limits: unlimited(),
     };
     retain_min_growth_splits(&view, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
@@ -219,7 +219,7 @@ fn native_random_selector_is_seeded() {
             working: &working,
             semantics,
             shortest_paths: &paths,
-            max_states: usize::MAX,
+            limits: unlimited(),
         };
         (0..32)
             .map(|_| {
@@ -233,4 +233,14 @@ fn native_random_selector_is_seeded() {
     assert_eq!(sequence, draw(&random_b));
     assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(0))));
     assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(1))));
+}
+
+fn unlimited() -> CartesianLimits<'static> {
+    static NONE: std::sync::LazyLock<HashSet<VariableIndex>> =
+        std::sync::LazyLock::new(HashSet::new);
+    CartesianLimits {
+        max_states: usize::MAX,
+        blacklisted_prop_var_ids: &NONE,
+        blacklisted_numeric_var_ids: &NONE,
+    }
 }

@@ -72,6 +72,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: true,
+            ..Default::default()
         })
         .expect("valid oracle Cartesian collection config")
         .generate(&restricted_task)

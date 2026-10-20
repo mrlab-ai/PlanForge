@@ -58,12 +58,32 @@ impl CartesianAbstractionGenerator {
                 numeric: initial_numeric.clone(),
             },
         };
+        if let Some(var) = self.config.initial_split_var {
+            let mut initial_prop_values = Vec::new();
+            concrete_prop_values(
+                task,
+                &state_packer,
+                &initial_propositions,
+                &mut initial_prop_values,
+            );
+            apply_initial_split(
+                &mut working,
+                &semantics,
+                &self.config,
+                &initial_prop_values,
+                var,
+            )?;
+        }
         let shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let mut refinement = CartesianRefinement {
             working,
             shortest_paths,
             semantics: &semantics,
-            max_states: self.config.max_states,
+            limits: CartesianLimits {
+                max_states: self.config.max_states,
+                blacklisted_prop_var_ids: &self.config.blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids: &self.config.blacklisted_numeric_var_ids,
+            },
             debug: self.config.debug,
         };
         let outcome = refine(

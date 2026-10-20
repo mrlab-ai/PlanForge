@@ -12,9 +12,10 @@ use planforge_sas::numeric_task::{
 
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, RefinementNode,
 };
 use crate::evaluation::abstractions::collections::goal_focused::MemberKind;
+use crate::evaluation::abstractions::collections::standard::StandardBackend;
 use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocusedMember};
 
 #[test]
@@ -448,6 +449,7 @@ fn cartesian_members(
             alternate_split_kinds: Some(true),
             single_goal_tasks: true,
             fixed_split_kind: false,
+            ..Default::default()
         },
     )
 }
@@ -582,6 +584,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             alternate_split_kinds: Some(false),
             single_goal_tasks: true,
             fixed_split_kind: false,
+            ..Default::default()
         },
     );
 
@@ -605,6 +608,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
 fn per_goal_cartesian_collections_reject_alternation() {
     let error =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
+            collection_strategy: CollectionStrategy::PerGoal,
             alternate_split_kinds: Some(true),
             single_goal_tasks: true,
             ..Default::default()
@@ -641,6 +645,9 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: false,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -734,4 +741,152 @@ fn full_task_members_are_rejected_where_they_are_ill_defined() {
             .unwrap();
         assert!(error.to_string().contains(expected), "{error:#}");
     }
+}
+
+fn cartesian_collection(
+    strategy: CollectionStrategy,
+    max_states: usize,
+    max_collection_states: usize,
+) -> CartesianAbstractionCollectionConfig {
+    CartesianAbstractionCollectionConfig {
+        abstraction: CartesianAbstractionConfig {
+            max_states,
+            random_seed: Some(1),
+            ..Default::default()
+        },
+        collection_strategy: strategy,
+        max_collection_states,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn both_representations_build_one_per_goal_member_per_goal() {
+    let task = two_counter_task();
+    let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
+        collection_strategy: CollectionStrategy::PerGoal,
+        max_states: 64,
+        max_collection_size: 10_000,
+        total_max_time: f64::INFINITY,
+        random_seed: Some(1),
+        compute_source_sets: false,
+        ..Default::default()
+    })
+    .generate(&task)
+    .unwrap();
+    let cartesian = CartesianAbstractionCollectionGenerator::new(cartesian_collection(
+        CollectionStrategy::PerGoal,
+        64,
+        10_000,
+    ))
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    let domain_goals: Vec<_> = domain
+        .iter()
+        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .collect();
+    let cartesian_goals: Vec<_> = cartesian
+        .iter()
+        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .collect();
+    assert_eq!(domain_goals, [0, 1]);
+    assert_eq!(cartesian_goals, [0, 1]);
+}
+
+#[test]
+fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_task() {
+    let task = two_counter_task();
+    let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
+        max_states: 1_000,
+        max_collection_size: 100_000,
+        total_max_time: f64::INFINITY,
+        random_seed: Some(1),
+        compute_source_sets: false,
+        ..Default::default()
+    })
+    .generate(&task)
+    .unwrap();
+    let cartesian = CartesianAbstractionCollectionGenerator::new(cartesian_collection(
+        CollectionStrategy::Standard,
+        1_000,
+        100_000,
+    ))
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    assert_eq!(domain.len(), 1);
+    assert!(domain[0].metadata.solved_by_self);
+    assert_eq!(cartesian.len(), 1);
+    assert!(cartesian[0].metadata.solved_by_self);
+}
+
+#[test]
+fn standard_cartesian_restarts_are_distinct_full_task_abstractions() {
+    let task = two_counter_task();
+    let members = CartesianAbstractionCollectionGenerator::new(cartesian_collection(
+        CollectionStrategy::Standard,
+        3,
+        12,
+    ))
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    assert!(members.len() > 1, "only {} restart", members.len());
+    let generator = CartesianAbstractionCollectionGenerator::new(cartesian_collection(
+        CollectionStrategy::Standard,
+        3,
+        12,
+    ))
+    .unwrap();
+    let keys: HashSet<_> = members
+        .iter()
+        .map(|member| StandardBackend::key(&generator, member))
+        .collect();
+    assert_eq!(keys.len(), members.len());
+    assert!(
+        members
+            .iter()
+            .all(|member| member.metadata.collection_member.is_none())
+    );
+}
+
+#[test]
+fn cartesian_cegar_leaves_blacklisted_variables_alone() {
+    let task = two_counter_task();
+    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 100,
+        blacklisted_numeric_var_ids: [0, 1].map(VariableIndex::from_usize).into(),
+        ..Default::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    assert_eq!(
+        abstraction.metadata.stop_reason,
+        CegarStopReason::NoRefinableFlaw
+    );
+    assert_eq!(abstraction.num_states(), 1);
+}
+
+#[test]
+fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initial_value() {
+    let task = two_counter_task();
+    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        max_states: 2,
+        initial_split_var: Some(VariableIndex::from_usize(0)),
+        ..Default::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    assert!(
+        matches!(
+            abstraction.hierarchy.nodes[0],
+            RefinementNode::Numeric { var_id, boundary, .. }
+                if var_id == VariableIndex::from_usize(0) && boundary == NumericValue::new(0.0)
+        ),
+        "{:?}",
+        abstraction.hierarchy.nodes[0]
+    );
 }

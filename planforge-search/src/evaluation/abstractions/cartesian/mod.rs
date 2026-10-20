@@ -15,6 +15,7 @@ mod finalize;
 mod generator;
 mod heuristic;
 mod hierarchy;
+mod initial_splits;
 mod refinement;
 mod semantics;
 #[cfg(test)]
@@ -36,6 +37,7 @@ use finalize::*;
 pub use generator::*;
 pub use heuristic::*;
 pub use hierarchy::*;
+use initial_splits::*;
 use semantics::*;
 use view::*;
 use working::*;
@@ -64,6 +66,9 @@ use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, GoalFocusedBackend, GoalFocusedSchedule, GoalVariant,
     MemberBudget, build_goal_focused_collection,
+};
+use crate::evaluation::abstractions::collections::standard::{
+    StandardBackend, StandardMember, StandardSchedule, build_standard_collection,
 };
 use crate::evaluation::abstractions::collections::strategy::{
     CollectionOptions, CollectionStrategy, validate_collection_options,

@@ -94,6 +94,9 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -212,6 +215,9 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             alternate_split_kinds: None,
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -235,6 +241,9 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -317,6 +326,9 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             alternate_split_kinds: None,
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -476,6 +488,9 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             alternate_split_kinds: None,
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -590,6 +605,9 @@ fn progress_states_complete_after_a_dead_progress_state() {
             alternate_split_kinds: None,
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -725,6 +743,9 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
             alternate_split_kinds: None,
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)
@@ -898,6 +919,9 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             alternate_split_kinds: Some(true),
             fixed_split_kind: false,
             single_goal_tasks: true,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
         })
         .unwrap()
         .generate(&task)

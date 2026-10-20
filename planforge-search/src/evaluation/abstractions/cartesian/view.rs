@@ -8,7 +8,16 @@ pub(super) struct CartesianView<'a> {
     pub(super) working: &'a WorkingAbstraction,
     pub(super) semantics: &'a CartesianSemantics<'a>,
     pub(super) shortest_paths: &'a ShortestPaths,
+    pub(super) limits: CartesianLimits<'a>,
+}
+
+/// What a Cartesian abstraction may still refine: a split adds one state, up
+/// to `max_states`, and leaves the blacklisted variables alone.
+#[derive(Clone, Copy)]
+pub(super) struct CartesianLimits<'a> {
     pub(super) max_states: usize,
+    pub(super) blacklisted_prop_var_ids: &'a HashSet<VariableIndex>,
+    pub(super) blacklisted_numeric_var_ids: &'a HashSet<VariableIndex>,
 }
 
 /// The working abstraction under refinement, with the shortest paths CEGAR
@@ -17,7 +26,7 @@ pub(super) struct CartesianRefinement<'a> {
     pub(super) working: WorkingAbstraction,
     pub(super) shortest_paths: ShortestPaths,
     pub(super) semantics: &'a CartesianSemantics<'a>,
-    pub(super) max_states: usize,
+    pub(super) limits: CartesianLimits<'a>,
     pub(super) debug: bool,
 }
 
@@ -32,7 +41,7 @@ impl Refinable for CartesianRefinement<'_> {
             working: &self.working,
             semantics: self.semantics,
             shortest_paths: &self.shortest_paths,
-            max_states: self.max_states,
+            limits: self.limits,
         })
     }
 
@@ -99,8 +108,21 @@ impl AbstractionView for CartesianView<'_> {
     }
 
     /// Every split adds one state.
-    fn refinement_limit(&self, _split: &Split) -> Option<CegarStopReason> {
-        (self.working.states().len() >= self.max_states).then_some(CegarStopReason::SizeLimit)
+    fn refinement_limit(&self, split: &Split) -> Option<CegarStopReason> {
+        let blacklisted = match split {
+            Split::Propositional { var_id, .. } => {
+                self.limits.blacklisted_prop_var_ids.contains(var_id)
+            }
+            Split::Numeric { var_id, .. } => {
+                self.limits.blacklisted_numeric_var_ids.contains(var_id)
+            }
+        };
+        if blacklisted {
+            Some(CegarStopReason::NoRefinableFlaw)
+        } else {
+            (self.working.states().len() >= self.limits.max_states)
+                .then_some(CegarStopReason::SizeLimit)
+        }
     }
 }
 

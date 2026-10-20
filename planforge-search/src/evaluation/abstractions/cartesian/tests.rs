@@ -14,9 +14,9 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
-    CartesianView, CegarStopReason, FlawKind, FlawScope, OperatorBitSet, RefinementNode,
-    ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianLimits, CartesianSemantics,
+    CartesianSet, CartesianView, CegarStopReason, FlawKind, FlawScope, OperatorBitSet,
+    RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::selection::{
