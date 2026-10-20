@@ -379,7 +379,7 @@ impl<'task> Coordinates<'task> {
         if let Some(view) = &self.views[coordinate.index()] {
             let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Ok(Some(preimage));
+            return Ok(Some(preimage.canonicalized()));
         }
         let initial = self.task.get_initial_numeric_state_values();
         for effect in self.task.get_operators()[op_id.index()]
