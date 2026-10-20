@@ -14,7 +14,6 @@ use super::abstract_operators::DomainMapping;
 use super::abstraction::compute_abstraction_size_u128;
 use super::config::CegarConfig;
 use super::partitions::NumericPartitions;
-use planforge_sas::numeric_conditions::ConditionValue;
 
 use crate::evaluation::abstractions::common::coordinates::{
     comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
@@ -37,10 +36,9 @@ pub(super) fn sorted_goal_facts(task: &dyn AbstractNumericTask) -> Vec<ExplicitF
     goals
 }
 
-/// The initial split of propositional variable `var_id`: the value it is
-/// split off on in one class, every other value in the other. That value is
-/// the initial value, or for a condition variable the value that establishes
-/// the condition.
+/// The initial split of propositional variable `var_id`: its initial value in
+/// one class, every other value in the other. Condition variables have none;
+/// they are derived from the numeric partitions.
 pub(super) fn initial_split_mapping(
     task: &dyn AbstractNumericTask,
     var_id: VariableIndex,
@@ -49,14 +47,14 @@ pub(super) fn initial_split_mapping(
         .get_variable_domain_size(var_id)
         .map_err(|error| anyhow::anyhow!(error.to_string()))
         .with_context(|| format!("domain size of variable {var_id}"))?;
-    let separated = if task.numeric_conditions().is_condition_var(var_id) {
-        ExplicitValueIndex::from_usize(ConditionValue::True.as_usize())
-    } else {
-        *task
-            .get_initial_propositional_state_values()
-            .get(var_id.index())
-            .with_context(|| format!("variable {var_id} has no initial value"))?
-    };
+    assert!(
+        !task.numeric_conditions().is_condition_var(var_id),
+        "condition variable {var_id} has no initial split"
+    );
+    let separated = *task
+        .get_initial_propositional_state_values()
+        .get(var_id.index())
+        .with_context(|| format!("variable {var_id} has no initial value"))?;
     ensure!(
         separated.index() < domain_size,
         "initial split value {separated} of variable {var_id} is outside its domain of size {domain_size}"
@@ -129,12 +127,10 @@ pub(super) fn apply_initial_goal_splits(
     }
 
     // Seed the numeric operands of every goal condition whose variable this
-    // run splits initially. A condition variable split without its operands
-    // has no operator that flips it, so the abstract initial state cannot
-    // reach the goal. Seeding only the selected conditions, rather than every
-    // goal condition, lets the members of a collection focus on different
-    // conditions; seeding them all made every member refine the same
-    // conditions, which left canonical heuristics no additive subsets.
+    // run splits initially. Seeding only the selected conditions, rather than
+    // every goal condition, lets the members of a collection focus on
+    // different conditions; seeding them all made every member refine the
+    // same conditions, which left canonical heuristics no additive subsets.
     let initial_numeric = initial_numeric_values_with_additive_views(task);
     for goal in &goals {
         if let Some(selected) = &config.init_split_var_ids
