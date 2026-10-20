@@ -4,11 +4,10 @@
 mod tests;
 
 use std::cell::RefCell;
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
-use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use rand::{SeedableRng, rngs::SmallRng};
 
@@ -24,9 +23,6 @@ use crate::evaluation::abstractions::common::cegar::refine::{CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
 use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
-use crate::evaluation::abstractions::common::concrete_state::{
-    ConcreteState, make_prop_state_packer,
-};
 use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
 
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata, compute_hash_multipliers};
@@ -99,9 +95,7 @@ pub(super) fn refine_domain_abstraction(
     )
     .context("failed to construct the initial domain abstraction")?;
 
-    let state_packer = Arc::new(make_prop_state_packer(task));
-    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
-    let root = ConcreteState::initial(task)?;
+    let root = semantics.states().initial_state()?;
     let limits = RefinementLimits {
         max_states: config.max_states,
         blacklisted_prop_var_ids: &blacklisted_prop_var_ids,
@@ -114,8 +108,6 @@ pub(super) fn refine_domain_abstraction(
             semantics: &semantics,
             flaw_kind: config.flaw_kind,
             flaw_scope: config.flaw_scope,
-            state_packer: &state_packer,
-            axiom_evaluator: &axiom_evaluator,
             refinement_root: &root,
             driver: CegarDriver::new(config.max_iterations, config.max_time),
         },
@@ -163,7 +155,7 @@ impl DomainAbstractionGenerator {
     pub(crate) fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
-        refinement_root: Option<&ConcreteState>,
+        refinement_root: Option<&ExplicitState>,
     ) -> Result<DomainAbstraction> {
         let outcome = match refinement_root {
             Some(root) => {
@@ -195,11 +187,11 @@ impl DomainAbstractionGenerator {
             Vec::new()
         };
         let distance_table = factory
-            .build_distance_table_with_operators(
+            .build_distance_table(
                 task,
                 &operator_generator,
                 &abstract_operators,
-                false,
+                DistanceTableOptions::default(),
             )
             .context("failed to build abstract distance table")?;
         let initial_h = distance_table

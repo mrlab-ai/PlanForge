@@ -2,12 +2,10 @@
 //! abstract plan, refine one, and repeat until the plan is concrete, the
 //! refinement root is an abstract dead end, or a limit is reached.
 
-use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
-use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::utils::state_packer::StatePacker;
+use planforge_sas::explicit_state::ExplicitState;
 
 use super::progression::{ConcretePlan, PlanCheck, progression_plan_check};
 use super::regression::regression_plan_check;
@@ -15,7 +13,6 @@ use super::semantics::CegarSemantics;
 use super::split::Split;
 use super::view::AbstractionView;
 use super::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, FlawScope};
-use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 
 /// An abstraction that CEGAR refines.
 pub(crate) trait Refinable {
@@ -37,9 +34,8 @@ pub(crate) struct CegarRun<'a> {
     pub(crate) semantics: &'a CegarSemantics<'a>,
     pub(crate) flaw_kind: FlawKind,
     pub(crate) flaw_scope: FlawScope,
-    pub(crate) state_packer: &'a Arc<StatePacker>,
-    pub(crate) axiom_evaluator: &'a AxiomEvaluator<'a>,
-    pub(crate) refinement_root: &'a ConcreteState,
+    /// The concrete state flaws are searched from.
+    pub(crate) refinement_root: &'a ExplicitState,
     pub(crate) driver: CegarDriver,
 }
 
@@ -62,21 +58,12 @@ pub(crate) fn check_abstract_plan(
     run: &CegarRun<'_>,
 ) -> Result<PlanCheck> {
     match run.flaw_kind {
-        FlawKind::Progression => progression_plan_check(
-            view,
-            run.semantics,
-            run.state_packer,
-            run.axiom_evaluator,
-            run.refinement_root,
-            run.flaw_scope,
-        ),
-        FlawKind::Regression => regression_plan_check(
-            view,
-            run.semantics,
-            run.state_packer,
-            run.refinement_root,
-            run.flaw_scope,
-        ),
+        FlawKind::Progression => {
+            progression_plan_check(view, run.semantics, run.refinement_root, run.flaw_scope)
+        }
+        FlawKind::Regression => {
+            regression_plan_check(view, run.semantics, run.refinement_root, run.flaw_scope)
+        }
     }
 }
 

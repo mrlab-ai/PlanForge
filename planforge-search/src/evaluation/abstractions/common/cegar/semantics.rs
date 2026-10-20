@@ -1,10 +1,11 @@
-//! The task as CEGAR refines its abstractions: region semantics, operator
-//! costs, which numeric dimensions live on an integer lattice, the constants
+//! The task as CEGAR refines its abstractions: its concrete states, region
+//! semantics, operator costs, which numeric dimensions live on an integer lattice, the constants
 //! wanted splits split at, and how splits are chosen.
 
 use std::cell::RefCell;
 
 use anyhow::Result;
+use planforge_sas::explicit_state::ExplicitStateSpace;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, NumericTaskExt, NumericType, NumericValue,
     OperatorIndex,
@@ -36,6 +37,7 @@ pub(crate) struct SplitOptions {
 }
 
 pub(crate) struct CegarSemantics<'task> {
+    states: ExplicitStateSpace<'task>,
     regions: RegionSemantics<'task>,
     operator_costs: Vec<NumericValue>,
     numeric_integer_lattice: Vec<bool>,
@@ -83,6 +85,7 @@ impl<'task> CegarSemantics<'task> {
         });
         let numeric_integer_lattice = numeric_integer_lattice(task, regions.coordinates());
         Ok(Self {
+            states: ExplicitStateSpace::new(task),
             regions,
             operator_costs,
             numeric_integer_lattice,
@@ -94,6 +97,11 @@ impl<'task> CegarSemantics<'task> {
 
     pub(crate) fn task(&self) -> &'task dyn AbstractNumericTask {
         self.regions.task()
+    }
+
+    /// The concrete states that flaws are witnessed in.
+    pub(crate) fn states(&self) -> &ExplicitStateSpace<'task> {
+        &self.states
     }
 
     pub(crate) fn regions(&self) -> &RegionSemantics<'task> {

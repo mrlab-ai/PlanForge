@@ -6,6 +6,7 @@
 //! effect order under which sequential application would give a different
 //! answer, so a regression fails rather than silently reordering.
 
+use crate::explicit_state::ExplicitStateSpace;
 use crate::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
@@ -65,6 +66,8 @@ fn task_with_effects(
     })
 }
 
+/// The successor's numeric values, which the registry and the explicit
+/// state space must agree on.
 fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<NumericValue> {
     let task: TaskRef = Arc::new(task_with_effects(effects, None));
     let mut registry = StateRegistry::for_task(task.clone());
@@ -72,9 +75,15 @@ fn successor_values(effects: Vec<AssignmentEffect>) -> Vec<NumericValue> {
     let successor = registry
         .get_successor_state(&initial, &task.get_operators()[0])
         .expect("operator applies to the initial state");
-    registry
+    let values = registry
         .get_numeric_vars(&successor)
-        .expect("successor has numeric values")
+        .expect("successor has numeric values");
+    let space = ExplicitStateSpace::new(&*task);
+    let explicit = space
+        .successor(&space.initial_state().unwrap(), &task.get_operators()[0])
+        .unwrap();
+    assert_eq!(explicit.numeric, values, "explicit successor differs");
+    values
 }
 
 fn plus(affected: VariableIndex, rhs: VariableIndex) -> AssignmentEffect {
@@ -232,6 +241,12 @@ fn effect_conditions_are_read_from_the_parent_state() {
         NumericValue::new(10.0),
         "condition must read the parent value of p"
     );
+    let space = ExplicitStateSpace::new(&*task);
+    let explicit = space
+        .successor(&space.initial_state().unwrap(), &task.get_operators()[0])
+        .unwrap();
+    assert_eq!(explicit.propositional, [ExplicitValueIndex::new(1)]);
+    assert_eq!(explicit.numeric, values);
 }
 
 #[test]

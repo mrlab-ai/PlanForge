@@ -1,4 +1,5 @@
 use super::*;
+use ordered_float::NotNan;
 
 use std::collections::BTreeSet;
 

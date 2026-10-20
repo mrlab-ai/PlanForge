@@ -1,15 +1,12 @@
 #[cfg(test)]
 mod tests;
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 #[cfg(any(test, debug_assertions))]
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use ordered_float::NotNan;
 use rand::seq::SliceRandom;
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::debug;
@@ -43,7 +40,8 @@ use crate::evaluation::abstractions::common::cartesian_set::{
 };
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, LabelSourceSet,
+    AbstractTransitionSystem, BackwardGraph, CostedTransitionSystem, LabelSourceSet,
+    backward_goal_distances,
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     AbstractTransitionCostFunction, RemainingCosts, SourceSetCost, SourceSetCostAllocation,

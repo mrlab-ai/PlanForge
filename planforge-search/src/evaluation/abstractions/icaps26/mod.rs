@@ -8,6 +8,7 @@
 //! [`CartesianAbstraction`]. Delete this module once AAMAS27 is accepted.
 
 mod artifact;
+mod concrete_state;
 mod config;
 mod distances;
 mod finalize;
@@ -48,6 +49,7 @@ mod tests;
 mod working;
 
 pub use artifact::Icaps26SplitSelection;
+use concrete_state::*;
 pub use config::*;
 use distances::*;
 use finalize::*;
@@ -84,15 +86,10 @@ use tracing::info;
 
 use crate::evaluation::validate_abstractable_goal;
 
-use super::common::cegar::{
-    CegarDriver, CegarIterationResult, CegarStopReason, progress_concrete_state,
-};
+use super::common::cegar::{CegarDriver, CegarIterationResult, CegarStopReason};
 use super::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
-};
-use crate::evaluation::abstractions::common::concrete_state::{
-    ConcreteState, get_initial_state, make_prop_state_packer,
 };
 use crate::evaluation::abstractions::common::coordinates::{
     AdditiveNumericView, comparison_refinement_dimensions,
@@ -102,7 +99,7 @@ use crate::evaluation::abstractions::common::task::{
 };
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
+    AbstractTransitionSystem, CostedTransitionSystem, LabelSourceSet, backward_goal_distances,
 };
 use artifact::*;
 use planforge_sas::utils::interval::Interval;

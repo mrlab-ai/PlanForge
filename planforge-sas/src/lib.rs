@@ -17,6 +17,7 @@
 
 pub mod axioms;
 pub mod default_value_axioms;
+pub mod explicit_state;
 pub mod numeric_conditions;
 pub mod numeric_parser;
 pub mod numeric_task;

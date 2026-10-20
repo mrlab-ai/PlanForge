@@ -29,12 +29,12 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
+use planforge_sas::explicit_state::{ExplicitState, ExplicitStateSpace};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
 use super::strategy::{CollectionStrategy, derive_variant_seed};
 use crate::evaluation::abstractions::common::cegar::SplitKind;
-use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 
 /// Why the collection is building a member.
@@ -113,7 +113,7 @@ pub(crate) trait GoalFocusedBackend {
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
-        root: Option<&ConcreteState>,
+        root: Option<&ExplicitState>,
         variant: &GoalVariant,
         budget: MemberBudget,
     ) -> Result<(Self::Member, BuiltReport)>;
@@ -264,7 +264,6 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             break;
         }
         let member = match state.select_next_member(
-            task,
             goal_count,
             abstraction_count,
             variants_per_goal,
@@ -316,7 +315,6 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             built.report.initial_h,
         );
         state.advance_progress_state::<B>(
-            task,
             goal_count,
             &member,
             built.report.concrete_plan.as_deref(),
@@ -368,7 +366,7 @@ struct BuiltMember<M> {
 fn build_member<B: GoalFocusedBackend>(
     task: &dyn AbstractNumericTask,
     backend: &B,
-    state: &CollectionState,
+    state: &CollectionState<'_>,
     member: &ScheduledMember,
     variant: &GoalVariant,
     abstraction_id: usize,
@@ -502,11 +500,13 @@ fn remaining_collection_time(
 ///
 /// With progress states enabled the collection keeps `variants_per_goal`
 /// independent progress states; see the module documentation.
-struct CollectionState {
+struct CollectionState<'task> {
+    /// The concrete states progress states move through.
+    states: ExplicitStateSpace<'task>,
     /// `None` when progress states are off, in which case there are none
     /// at all.
-    initial_refinement_root: Option<ConcreteState>,
-    refinement_roots: Vec<ConcreteState>,
+    initial_refinement_root: Option<ExplicitState>,
+    refinement_roots: Vec<ExplicitState>,
     satisfied_goals_by_root: Vec<usize>,
     progress_state_advanced: Vec<bool>,
     progress_complete: Vec<bool>,
@@ -519,25 +519,27 @@ struct CollectionState {
     initial_abstractions_built: usize,
 }
 
-impl CollectionState {
+impl<'task> CollectionState<'task> {
     fn new(
-        task: &dyn AbstractNumericTask,
+        task: &'task dyn AbstractNumericTask,
         goal_count: usize,
         variants_per_goal: usize,
         progress_states: bool,
     ) -> Result<Self> {
+        let states = ExplicitStateSpace::new(task);
         let initial_refinement_root = (progress_states && goal_count > 0)
-            .then(|| ConcreteState::initial(task))
+            .then(|| states.initial_state())
             .transpose()?;
         let refinement_roots = initial_refinement_root
             .as_ref()
             .map_or_else(Vec::new, |root| vec![root.clone(); variants_per_goal]);
         let satisfied_goals_by_root = refinement_roots
             .iter()
-            .map(|root| root.satisfied_goal_count(task))
-            .collect::<Result<Vec<_>>>()?;
+            .map(|root| states.satisfied_goal_count(root))
+            .collect();
         let variant_count = refinement_roots.len();
         Ok(Self {
+            states,
             initial_refinement_root,
             refinement_roots,
             satisfied_goals_by_root,
@@ -583,7 +585,6 @@ impl CollectionState {
 
     fn select_next_member(
         &mut self,
-        task: &dyn AbstractNumericTask,
         goal_count: usize,
         abstraction_count: usize,
         variants_per_goal: usize,
@@ -602,7 +603,7 @@ impl CollectionState {
             && !scheduled_member_pending
             && initial_root_specialist_goal.is_none()
         {
-            self.pop_unsatisfied_continuation(task)?
+            self.pop_unsatisfied_continuation()
         } else {
             None
         };
@@ -658,20 +659,17 @@ impl CollectionState {
     /// Drop queued retries whose goal the variant's progress state now
     /// satisfies anyway,
     /// and return the first one that still has work to do.
-    fn pop_unsatisfied_continuation(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<Option<(usize, usize)>> {
+    fn pop_unsatisfied_continuation(&mut self) -> Option<(usize, usize)> {
         while let Some((goal_id, variant_id)) = self.continuation_queue.pop_front() {
             let root = self
                 .refinement_roots
                 .get(variant_id)
                 .expect("a progress-state continuation references a missing root");
-            if !root.satisfies_goal(task, goal_id)? {
-                return Ok(Some((goal_id, variant_id)));
+            if !self.states.satisfies_goal(root, goal_id) {
+                return Some((goal_id, variant_id));
             }
         }
-        Ok(None)
+        None
     }
 
     fn record_built_member(
@@ -703,7 +701,6 @@ impl CollectionState {
     /// the next member of that variant refines from further along.
     fn advance_progress_state<B: GoalFocusedBackend>(
         &mut self,
-        task: &dyn AbstractNumericTask,
         goal_count: usize,
         member: &ScheduledMember,
         concrete_plan: Option<&[OperatorIndex]>,
@@ -717,7 +714,7 @@ impl CollectionState {
             return Ok(());
         }
         if reset_progress_state {
-            self.complete_progress(task, variant_id)?;
+            self.complete_progress(variant_id);
             debug!(
                 "{} collection: dead progress state completed variant {variant_id} after rebuilding goal {} from the initial state",
                 B::NAME,
@@ -735,14 +732,16 @@ impl CollectionState {
         };
 
         let previous_satisfied_goals = self.satisfied_goals_by_root[variant_id];
-        let root = self.refinement_roots[variant_id].replay(task, operator_ids)?;
+        let root = self
+            .states
+            .replay(&self.refinement_roots[variant_id], operator_ids)?;
         ensure!(
-            root.satisfies_goal(task, member.goal_id)?,
+            self.states.satisfies_goal(&root, member.goal_id),
             "{} collection: the concrete plan of goal {} variant {variant_id} does not reach its goal",
             B::NAME,
             member.goal_id
         );
-        let satisfied_goals = root.satisfied_goal_count(task)?;
+        let satisfied_goals = self.states.satisfied_goal_count(&root);
         self.refinement_roots[variant_id] = root;
         self.satisfied_goals_by_root[variant_id] = satisfied_goals;
         debug!(
@@ -752,7 +751,7 @@ impl CollectionState {
         );
 
         if satisfied_goals == goal_count {
-            self.complete_progress(task, variant_id)?;
+            self.complete_progress(variant_id);
             debug!(
                 "{} collection: full goal reached for variant {variant_id}; completed its progress",
                 B::NAME
@@ -761,7 +760,7 @@ impl CollectionState {
         }
         self.progress_state_advanced[variant_id] = true;
         if satisfied_goals > previous_satisfied_goals {
-            self.queue_reopened_goals(task, variant_id)?;
+            self.queue_reopened_goals(variant_id);
         }
         Ok(())
     }
@@ -769,38 +768,29 @@ impl CollectionState {
     /// Return a variant's progress state to the task initial state and stop
     /// advancing it, because it is a dead end or has reached the complete task
     /// goal. Retries queued for the variant go with it.
-    fn complete_progress(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        variant_id: usize,
-    ) -> Result<()> {
+    fn complete_progress(&mut self, variant_id: usize) {
         let initial_root = self
             .initial_refinement_root
             .as_ref()
             .expect("a progress state requires an initial root")
             .clone();
-        self.satisfied_goals_by_root[variant_id] = initial_root.satisfied_goal_count(task)?;
+        self.satisfied_goals_by_root[variant_id] = self.states.satisfied_goal_count(&initial_root);
         self.refinement_roots[variant_id] = initial_root;
         self.progress_state_advanced[variant_id] = false;
         self.progress_complete[variant_id] = true;
         self.continuation_queue
             .retain(|(_, queued_variant_id)| *queued_variant_id != variant_id);
-        Ok(())
     }
 
     /// The variant's progress state now satisfies goals it did not before, so
     /// goals this variant already attempted may be worth another abstraction
     /// from here.
-    fn queue_reopened_goals(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        variant_id: usize,
-    ) -> Result<()> {
+    fn queue_reopened_goals(&mut self, variant_id: usize) {
         let root = &self.refinement_roots[variant_id];
         for (retry_goal_id, &variants_built) in self.variants_built_by_goal.iter().enumerate() {
             let was_already_attempted = variants_built > variant_id;
             if was_already_attempted
-                && !root.satisfies_goal(task, retry_goal_id)?
+                && !self.states.satisfies_goal(root, retry_goal_id)
                 && !self
                     .continuation_queue
                     .contains(&(retry_goal_id, variant_id))
@@ -809,7 +799,6 @@ impl CollectionState {
                     .push_back((retry_goal_id, variant_id));
             }
         }
-        Ok(())
     }
 
     fn log_summary<B: GoalFocusedBackend>(

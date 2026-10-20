@@ -41,12 +41,15 @@ fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
 }
 
 impl MatchTree {
-    pub(super) fn build(
-        domain_sizes: &[usize],
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
+    /// Indexes `operators`, built by `generator`, by the abstract states they
+    /// regress from.
+    pub(super) fn new(
+        generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
     ) -> Self {
+        let domain_sizes = generator.domain_sizes();
+        let numeric_domain_sizes = generator.numeric_domain_sizes();
+        let hash_multipliers = generator.hash_multipliers();
         let total_vars = domain_sizes.len() + numeric_domain_sizes.len();
         let mut var_counts = vec![0usize; total_vars];
         for op in operators {

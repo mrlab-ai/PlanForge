@@ -12,7 +12,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::concrete_state::ConcreteState;
+use planforge_sas::explicit_state::ExplicitState;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AbstractionUse {
@@ -251,8 +251,18 @@ pub(crate) struct RootedTask<'task> {
 }
 
 impl<'task> RootedTask<'task> {
-    pub(crate) fn new(base: &'task dyn AbstractNumericTask, root: &ConcreteState) -> Result<Self> {
-        let propositional = root.propositional_values(base)?;
+    pub(crate) fn new(base: &'task dyn AbstractNumericTask, root: &ExplicitState) -> Result<Self> {
+        assert_eq!(
+            root.propositional.len(),
+            base.get_num_variables(),
+            "the refinement root is a state of another task"
+        );
+        assert_eq!(
+            root.numeric.len(),
+            base.numeric_variables().len(),
+            "the refinement root is a state of another task"
+        );
+        let propositional = root.propositional.clone();
         let base_numeric = base.get_initial_numeric_state_values();
         let mut numeric = root.numeric.clone();
         for (numeric_var_id, variable) in base.numeric_variables().iter().enumerate() {

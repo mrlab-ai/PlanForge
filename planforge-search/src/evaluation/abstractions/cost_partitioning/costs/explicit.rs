@@ -4,7 +4,8 @@ use anyhow::{Context, Result, ensure};
 
 use super::RemainingCosts;
 use crate::evaluation::abstractions::common::transition_system::{
-    AbstractOperatorSourceSets, AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
+    AbstractOperatorSourceSets, AbstractTransitionSystem, CostedTransitionSystem, LabelSourceSet,
+    backward_goal_distances,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -146,9 +147,18 @@ pub(crate) fn build_explicit_goal_distances(
     deadline: Option<Instant>,
     generating: Option<&mut [Option<usize>]>,
 ) -> Result<Vec<f64>> {
+    ensure!(
+        transition_system.transitions.len() == transition_costs.len(),
+        "transition system/cost vector size mismatch: {} vs {}",
+        transition_system.transitions.len(),
+        transition_costs.len()
+    );
     backward_goal_distances(
-        transition_system,
-        transition_costs,
+        &mut CostedTransitionSystem {
+            system: transition_system,
+            transition_costs,
+        },
+        &transition_system.goal_state_hashes,
         || ensure_scp_table_deadline(deadline),
         generating,
     )

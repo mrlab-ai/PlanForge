@@ -133,12 +133,7 @@ impl DomainAbstractionFactory {
             hash_multipliers,
         )?;
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        let match_tree = MatchTree::build(
-            &self.domain_sizes,
-            numeric_domain_sizes,
-            hash_multipliers,
-            operators,
-        );
+        let match_tree = MatchTree::new(generator, operators);
 
         let mut transitions: Vec<AbstractTransition> = Vec::with_capacity(num_states);
         let mut concrete_label_transition_count = 0usize;
@@ -155,99 +150,54 @@ impl DomainAbstractionFactory {
                 )?);
             }
         }
-        let duplicate_transition_attempts = 0usize;
-        let mut applicable_operator_ids: Vec<usize> = Vec::new();
         // Debug-only triple-uniqueness witness: every pushed AbstractTransition
         // must have a unique `(abstract_op_id, source_hash, target_hash)`.
         #[cfg(debug_assertions)]
         let mut seen_transition_triples: HashSet<(usize, usize, usize)> = HashSet::new();
 
-        // Cascade-aware predecessor enumeration. When the abstraction has
-        // refined comparison-axiom prop vars, an operator with `hash_effect=0`
-        // on those vars can still transition between abstract states because
-        // the comparison bit is evaluated from the post-update numeric state
-        // (see `compute_distances_and_generating_ops`, which calls
-        // `enumerate_states_with_evaluated_comparisons_cached` to find all
-        // predecessors compatible with the operator's comparison preconditions).
-        // Mirroring that here ensures the transition system records the same
-        // edges Dijkstra walks; otherwise SCP's per-op saturated cost is
-        // undercounted on cascade-only transitions, the residual stays high,
-        // subsequent abstractions over-saturate the same operator, and the
-        // sum exceeds the optimal — inadmissibility (plant-watering/prob_4_1_2
-        // h=31 reproducer with `scp`).
-
-        for target_hash in 0..num_states {
+        let mut graph = MatchTreeGraph {
+            operators,
+            match_tree: &match_tree,
+            num_states,
+            applicable: Vec::new(),
+        };
+        let mut incoming = Vec::new();
+        for (target_hash, target_backward) in backward.iter_mut().enumerate() {
             if target_hash % 64 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
-            let base_target = target_hash;
-            match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
-            for &abstract_op_id in &applicable_operator_ids {
-                let op = &operators[abstract_op_id];
-                let predecessor_i64 = base_target as i64 + op.hash_effect as i64;
-                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
+            graph.incoming(target_hash, &mut incoming)?;
+            for &(source_hash, abstract_op_id, _) in &incoming {
+                if source_hash == target_hash && !include_self_loops {
                     continue;
                 }
-                let base_predecessor = predecessor_i64 as usize;
-
-                // Without comparison branching the predecessor is unique.
-                // With comparison branching, the comparison var bits in the
-                // predecessor hash are wildcarded — enumerate every state hash
-                // whose comparison-axiom variables are consistent with the
-                // operator's comparison preconditions.
-                let push_source =
-                    |source_hash: usize,
-                     transitions: &mut Vec<AbstractTransition>,
-                     concrete_label_transition_count: &mut usize,
-                     backward: &mut Vec<Vec<usize>>,
-                     forward: &mut Vec<Vec<usize>>,
-                     #[cfg(debug_assertions)] seen: &mut HashSet<(usize, usize, usize)>|
-                     -> bool {
-                        if source_hash == target_hash && !include_self_loops {
-                            return true;
-                        }
-                        let required = concrete_label_transition_count
-                            .saturating_add(op.concrete_op_ids.len());
-                        if max_concrete_label_transitions.is_some_and(|cap| required > cap) {
-                            return false;
-                        }
-                        *concrete_label_transition_count = required;
-                        #[cfg(debug_assertions)]
-                        {
-                            let triple = (abstract_op_id, source_hash, target_hash);
-                            debug_assert!(
-                                seen.insert(triple),
-                                "duplicate AbstractTransition triple {:?}",
-                                triple
-                            );
-                        }
-                        let transition_id = transitions.len();
-                        transitions.push(AbstractTransition {
-                            transition_id,
-                            abstract_op_id,
-                            concrete_op_ids: op.concrete_op_ids.clone(),
-                            source_hash,
-                            target_hash,
-                        });
-                        backward[target_hash].push(transition_id);
-                        forward[source_hash].push(transition_id);
-                        true
-                    };
-
-                if !push_source(
-                    base_predecessor,
-                    &mut transitions,
-                    &mut concrete_label_transition_count,
-                    &mut backward,
-                    &mut forward,
-                    #[cfg(debug_assertions)]
-                    &mut seen_transition_triples,
-                ) {
+                let op = &operators[abstract_op_id];
+                let required =
+                    concrete_label_transition_count.saturating_add(op.concrete_op_ids.len());
+                if max_concrete_label_transitions.is_some_and(|cap| required > cap) {
                     return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
-                        required_at_least: concrete_label_transition_count
-                            .saturating_add(op.concrete_op_ids.len()),
+                        required_at_least: required,
                     });
                 }
+                concrete_label_transition_count = required;
+                #[cfg(debug_assertions)]
+                {
+                    let triple = (abstract_op_id, source_hash, target_hash);
+                    debug_assert!(
+                        seen_transition_triples.insert(triple),
+                        "duplicate AbstractTransition triple {triple:?}"
+                    );
+                }
+                let transition_id = transitions.len();
+                transitions.push(AbstractTransition {
+                    transition_id,
+                    abstract_op_id,
+                    concrete_op_ids: op.concrete_op_ids.clone(),
+                    source_hash,
+                    target_hash,
+                });
+                target_backward.push(transition_id);
+                forward[source_hash].push(transition_id);
             }
         }
 
@@ -291,15 +241,7 @@ impl DomainAbstractionFactory {
             }
         }
 
-        // Goal states are simply those whose hash matches the goal facts.
-        // The old self-consistency check via
-        // `enumerate_states_with_evaluated_comparisons` filtered to states
-        // whose comparison bits agreed with the (potentially ambiguous)
-        // interval evaluation — that filtering is no longer needed because
-        // operators only land transitions in states with the *optimistic*
-        // comparison bit, and the initial state hash is computed with the
-        // same optimistic semantics, so every reachable state has
-        // self-consistent bits by construction.
+        // Goal states are those whose hash matches the goal facts.
         let mut goal_state_hashes = Vec::new();
         for state_hash in 0..num_states {
             if self.is_goal_state(
@@ -316,7 +258,6 @@ impl DomainAbstractionFactory {
         Ok(OcpTransitionSystemBuild::Complete(
             AbstractTransitionSystem {
                 transitions,
-                duplicate_transition_attempts,
                 backward,
                 forward,
                 goal_facts,
@@ -337,15 +278,9 @@ impl DomainAbstractionFactory {
         deadline: Option<Instant>,
     ) -> Result<Vec<OperatorIndex>> {
         ensure_online_scp_deadline(deadline)?;
-        let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        let match_tree = MatchTree::build(
-            &self.domain_sizes,
-            numeric_domain_sizes,
-            hash_multipliers,
-            operators,
-        );
+        let match_tree = MatchTree::new(generator, operators);
         let mut seen_operator_ids = vec![false; task.get_operators().len()];
         let mut num_seen = 0usize;
         let mut applicable_operator_ids: Vec<usize> = Vec::new();

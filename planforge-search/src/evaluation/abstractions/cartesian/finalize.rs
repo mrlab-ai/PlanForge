@@ -109,7 +109,6 @@ pub(super) fn finalize_abstraction(
     }
     let transition_system = AbstractTransitionSystem {
         transitions,
-        duplicate_transition_attempts: 0,
         backward,
         forward,
         goal_facts: (0..semantics.task().get_num_goals())
@@ -134,8 +133,11 @@ pub(super) fn finalize_abstraction(
         .collect::<Vec<_>>();
     let mut generating_op_ids = vec![None; transition_system.backward.len()];
     let distances = backward_goal_distances(
-        &transition_system,
-        &transition_costs,
+        &mut CostedTransitionSystem {
+            system: &transition_system,
+            transition_costs: &transition_costs,
+        },
+        &transition_system.goal_state_hashes,
         || Ok(()),
         Some(&mut generating_op_ids),
     )?;
@@ -192,7 +194,6 @@ pub(super) fn finalize_standalone_abstraction(
     };
     let transition_system = AbstractTransitionSystem {
         transitions: Vec::new(),
-        duplicate_transition_attempts: 0,
         backward: Vec::new(),
         forward: Vec::new(),
         goal_facts,

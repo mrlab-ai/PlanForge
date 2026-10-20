@@ -144,6 +144,16 @@ impl StatePacker {
         Self::from_abstract_task(task)
     }
 
+    /// Packer for the propositional variables of `task` alone.
+    pub fn propositional<T: AbstractNumericTask + ?Sized>(task: &T) -> Self {
+        let ranges: Vec<u64> = task
+            .variables()
+            .iter()
+            .map(|variable| variable.domain_size() as u64)
+            .collect();
+        Self::new(&ranges)
+    }
+
     pub fn from_abstract_task(task: &dyn AbstractNumericTask) -> Self {
         Self::from_abstract_task_with_numeric_range(task, u64::MAX)
     }

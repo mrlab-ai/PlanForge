@@ -105,7 +105,6 @@ fn two_state_transition_system() -> AbstractTransitionSystem {
             source_hash: 0,
             target_hash: 1,
         }],
-        duplicate_transition_attempts: 0,
         backward: vec![vec![], vec![0]],
         forward: vec![vec![0], vec![]],
         goal_facts: vec![],
