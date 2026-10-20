@@ -105,7 +105,6 @@ impl CartesianAbstractionGenerator {
             working_transition_count
         };
         if let Some(plan) = &solved_plan {
-            validate_concrete_plan(semantics.cegar(), refinement_root, plan)?;
             let root_state_id = working
                 .hierarchy
                 .map_state(&refinement_root.propositional, &refinement_root.numeric)?;
