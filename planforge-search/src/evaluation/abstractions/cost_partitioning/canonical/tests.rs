@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
     NumericRootTaskParts, Operator, OperatorCost, OperatorIndex, VariableIndex,
@@ -159,12 +160,15 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
     domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
 
     let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 16,
-        max_time: None,
-        combine_labels: false,
+        cegar: CegarOptions {
+            max_states: 16,
+            max_time: None,
+            combine_labels: false,
+            random_seed: None,
+            debug: false,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         compute_source_sets: true,
-        random_seed: None,
-        debug: false,
         ..Default::default()
     })
     .unwrap()

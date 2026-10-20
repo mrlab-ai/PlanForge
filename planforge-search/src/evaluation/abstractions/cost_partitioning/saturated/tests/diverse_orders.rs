@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn diverse_orders_retain_available_goal_cover_orders_per_cartesian_goal() {
@@ -38,8 +39,11 @@ fn required_orders_are_retained_beyond_max_orders() {
 fn diverse_orders_support_mixed_abstraction_representations() {
     let task = std::sync::Arc::new(independent_goals_task());
     let domain_config = DomainAbstractionConfig {
-        max_states: 16,
-        combine_labels: false,
+        cegar: CegarOptions {
+            max_states: 16,
+            combine_labels: false,
+            ..DomainAbstractionConfig::default().cegar
+        },
         compute_source_sets: true,
         ..Default::default()
     };

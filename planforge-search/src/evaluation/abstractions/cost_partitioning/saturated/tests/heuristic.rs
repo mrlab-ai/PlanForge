@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
@@ -84,8 +85,11 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
 fn interval_scp_combines_all_representations() {
     let task = independent_goals_task();
     let domain_config = DomainAbstractionConfig {
-        max_states: 16,
-        combine_labels: false,
+        cegar: CegarOptions {
+            max_states: 16,
+            combine_labels: false,
+            ..DomainAbstractionConfig::default().cegar
+        },
         compute_source_sets: true,
         ..Default::default()
     };

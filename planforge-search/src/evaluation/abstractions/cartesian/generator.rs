@@ -6,7 +6,10 @@ pub struct CartesianAbstractionGenerator {
 
 impl CartesianAbstractionGenerator {
     pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
-        ensure!(config.max_states > 0, "Cartesian max_states must be > 0");
+        ensure!(
+            config.cegar.max_states > 0,
+            "Cartesian max_states must be > 0"
+        );
         Ok(Self { config })
     }
 
@@ -50,20 +53,20 @@ impl CartesianAbstractionGenerator {
             shortest_paths,
             semantics: &semantics,
             limits: CartesianLimits {
-                max_states: self.config.max_states,
+                max_states: self.config.cegar.max_states,
                 blacklisted_prop_var_ids: &self.config.blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids: &self.config.blacklisted_numeric_var_ids,
             },
-            debug: self.config.debug,
+            debug: self.config.cegar.debug,
         };
         let outcome = refine(
             &mut refinement,
             &CegarRun {
                 semantics: semantics.cegar(),
-                flaw_kind: self.config.flaw_kind,
-                flaw_scope: self.config.flaw_scope,
+                flaw_kind: self.config.cegar.flaw_kind,
+                flaw_scope: self.config.cegar.flaw_scope,
                 refinement_root,
-                driver: CegarDriver::new(usize::MAX, self.config.max_time),
+                driver: CegarDriver::new(usize::MAX, self.config.cegar.max_time),
             },
             start,
         )?;
@@ -85,7 +88,7 @@ impl CartesianAbstractionGenerator {
                     &working,
                     &semantics,
                     initial_state_hash,
-                    self.config.combine_labels,
+                    self.config.cegar.combine_labels,
                     self.config.compute_source_sets,
                 )?
             } else {
@@ -134,8 +137,8 @@ impl CartesianAbstractionGenerator {
                 pending_flaw: outcome.pending_flaw,
                 refinements: outcome.refinements,
                 collection_member: None,
-                split_kind: self.config.split_kind,
-                split_selection_rank: self.config.split_selection_rank,
+                split_kind: self.config.cegar.split_kind,
+                split_selection_rank: self.config.cegar.split_selection_rank,
                 concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
                 transition_count,
             },

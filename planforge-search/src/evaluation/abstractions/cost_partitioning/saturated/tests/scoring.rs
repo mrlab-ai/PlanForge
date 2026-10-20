@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn interval_stolen_costs_accept_transition_free_components() {
@@ -7,7 +8,10 @@ fn interval_stolen_costs_accept_transition_free_components() {
     cartesian.transition_system.transitions.clear();
     cartesian.abstract_source_sets.clear();
     let domain_config = DomainAbstractionConfig {
-        max_states: 16,
+        cegar: CegarOptions {
+            max_states: 16,
+            ..DomainAbstractionConfig::default().cegar
+        },
         compute_source_sets: true,
         ..Default::default()
     };

@@ -80,13 +80,13 @@ impl<'task> CartesianSemantics<'task> {
         let cegar = CegarSemantics::new(
             task,
             SplitOptions {
-                kind: config.split_kind,
-                selection: config.split_selection,
-                rank: config.split_selection_rank,
-                random_seed: config.random_seed,
+                kind: config.cegar.split_kind,
+                selection: config.cegar.split_selection,
+                rank: config.cegar.split_selection_rank,
+                random_seed: config.cegar.random_seed,
             },
         )?;
-        if config.flaw_kind == FlawKind::Regression {
+        if config.cegar.flaw_kind == FlawKind::Regression {
             ensure_regressable(task, cegar.coordinates())?;
         }
         let regions = cegar.regions();

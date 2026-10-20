@@ -26,8 +26,10 @@ use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
-use planforge_search::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
+use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
+use planforge_search::evaluation::abstractions::domain::config::{
+    DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
 use planforge_search::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planforge_search::evaluation::abstractions::pdb::pdb_heuristic::GreedyNumericPdbHeuristic;
@@ -404,14 +406,20 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     };
 
     let collection = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
-        max_states: 10_000,
         max_collection_size: 10_000,
         stagnation_limit: 0.0,
         enable_blacklist_on_stagnation: false,
-        compute_source_sets: false,
+        member: DomainAbstractionConfig {
+            cegar: CegarOptions {
+                max_states: 10_000,
+                ..DomainAbstractionCollectionConfig::default().member.cegar
+            },
+            compute_source_sets: false,
+            ..DomainAbstractionCollectionConfig::default().member
+        },
         ..Default::default()
     })
-    .generate(&task);
+    .and_then(|generator| generator.generate(&task));
     assert_refusal(
         "the domain-abstraction collection",
         format!(
@@ -421,7 +429,10 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
     );
 
     let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 10_000,
+        cegar: CegarOptions {
+            max_states: 10_000,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         ..Default::default()
     })
     .expect("the Cartesian generator constructs")

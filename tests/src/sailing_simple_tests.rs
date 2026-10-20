@@ -54,6 +54,7 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
 use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_search::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitSelection,
 };
@@ -61,9 +62,8 @@ use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use planforge_search::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
-};
+use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
+use planforge_search::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
 use planforge_search::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
@@ -245,8 +245,11 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     let optimum = optimum_of("prob_1b1p_x");
 
     let domain_abstraction = DomainAbstractionGenerator::new(DomainAbstractionConfig {
-        max_iterations: usize::MAX,
-        random_seed: Some(1),
+        cegar: CegarOptions {
+            max_iterations: usize::MAX,
+            random_seed: Some(1),
+            ..DomainAbstractionConfig::default().cegar
+        },
         compute_source_sets: false,
         ..Default::default()
     })
@@ -268,7 +271,10 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     );
 
     let cartesian_abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: usize::MAX,
+        cegar: CegarOptions {
+            max_states: usize::MAX,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         compute_source_sets: false,
         ..Default::default()
     })
@@ -295,19 +301,25 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 /// function of the instance and the seed alone.
 fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfig {
     DomainAbstractionCollectionConfig {
-        max_states: 1_000,
         max_collection_size: 10_000,
-        max_time: f64::INFINITY,
-        total_max_time: f64::INFINITY,
-        split_selection: SplitSelection::MinGrowth,
-        use_wildcard_plans: true,
-        combine_labels: false,
-        flaw_kind: FlawKind::Progression,
-        flaw_scope: FlawScope::WholePlan,
+        total_max_time: None,
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 2,
         progress_states: true,
         random_seed: Some(seed),
+        member: DomainAbstractionConfig {
+            cegar: CegarOptions {
+                max_states: 1_000,
+                max_time: None,
+                split_selection: SplitSelection::MinGrowth,
+                combine_labels: false,
+                flaw_kind: FlawKind::Progression,
+                flaw_scope: FlawScope::WholePlan,
+                ..DomainAbstractionCollectionConfig::default().member.cegar
+            },
+            use_wildcard_plans: true,
+            ..DomainAbstractionCollectionConfig::default().member
+        },
         ..Default::default()
     }
 }
@@ -321,7 +333,8 @@ fn scp_initial_h_with_config(
         .expect("sailing-simple restricted task construction must not fail")
         .expect("sailing-simple instances have promotable derived roots")
         .into_task();
-    let generator = DomainAbstractionCollectionGenerator::new(collection_config.clone());
+    let generator = DomainAbstractionCollectionGenerator::new(collection_config.clone())
+        .expect("the domain collection configuration is valid");
     let abstractions = generator
         .generate(&task)
         .expect("scp domain abstractions should build");
@@ -370,7 +383,8 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         .expect("sailing-simple restricted task construction must not fail")
         .expect("sailing-simple instances have promotable derived roots")
         .into_task();
-    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1));
+    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1))
+        .expect("the domain collection configuration is valid");
     let abstractions = generator
         .generate(&task)
         .expect("scp domain abstractions should build");
@@ -445,7 +459,8 @@ fn sailing_simple_assignment_gap() {
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
     let (task, _scratch) = sailing_task("prob_2b1p");
-    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1));
+    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1))
+        .expect("the domain collection configuration is valid");
     let abstractions = generator
         .generate(&task)
         .expect("goal-focused collection should build on prob_2b1p");
@@ -534,7 +549,8 @@ fn sailing_simple_scp_solves_rather_than_reporting_dead_ends() {
 #[test]
 fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions() {
     let (task, _scratch) = sailing_task("prob_1b4p_axes");
-    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1));
+    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1))
+        .expect("the domain collection configuration is valid");
     let abstractions = generator
         .generate(&task)
         .expect("goal-focused collection should build on prob_1b4p_axes");

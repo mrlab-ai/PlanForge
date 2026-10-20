@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn label_candidates_always_include_max_heuristic_greedy_order() {
@@ -15,22 +16,26 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let task = independent_goals_task();
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 16,
-                max_time: None,
-                combine_labels: false,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 16,
+                    max_time: None,
+                    combine_labels: false,
+                    random_seed: Some(1),
+                    debug: false,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 compute_source_sets: true,
-                random_seed: Some(1),
-                debug: false,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
-            max_collection_states: 128,
+            max_collection_size: 128,
             total_max_time: None,
             progress_states: false,
             alternate_split_kinds: Some(true),
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })

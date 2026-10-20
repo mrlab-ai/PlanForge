@@ -80,7 +80,7 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                 "combine_labels" => self.combine_labels = bool::from_option_value(arg.value())?,
                 "debug" => self.debug = bool::from_option_value(arg.value())?,
                 other => {
-                    return Err(format!("unknown option `{other}` for `icaps26_cartesian`"));
+                    return Err(format!("unknown option `{other}`"));
                 }
             }
         }

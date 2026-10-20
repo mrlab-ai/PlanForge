@@ -13,6 +13,7 @@
 //!   enum definition.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 pub use parser::{parse_call, parse_heuristic_spec};
 pub use planforge_config_derive::ApplyOptions;
@@ -264,10 +265,14 @@ pub fn for_each_option(
                     .get(next_positional)
                     .copied()
                     .ok_or_else(|| {
-                        format!(
-                            "too many positional arguments (maximum {})",
-                            positional_order.len()
-                        )
+                        if positional_order.is_empty() {
+                            "options must be named, as in `key=value`".to_string()
+                        } else {
+                            format!(
+                                "too many positional arguments (maximum {})",
+                                positional_order.len()
+                            )
+                        }
                     })?;
                 next_positional += 1;
                 k
@@ -296,6 +301,18 @@ pub fn for_each_option(
 /// (e.g. coupled writes, curated subsets).
 pub trait ApplyOptions {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>;
+}
+
+/// `config` with the options `args` of `name(...)` applied; errors name it.
+pub fn configure<C: ApplyOptions>(
+    name: &str,
+    mut config: C,
+    args: &[ConfigArg],
+) -> Result<C, String> {
+    config
+        .apply_options(args)
+        .map_err(|error| format!("{name}(...): {error}"))?;
+    Ok(config)
 }
 
 /// Implemented by every type that can appear as the value of an option.
@@ -368,6 +385,32 @@ impl FromOptionValue for Option<u64> {
                 .map(Some)
                 .map_err(|_| format!("expected non-negative integer or `none`, got `{s}`"))
         }
+    }
+}
+
+impl FromOptionValue for Option<usize> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+        let s = atom(value)?;
+        if s.eq_ignore_ascii_case("none") {
+            Ok(None)
+        } else {
+            s.parse::<usize>()
+                .map(Some)
+                .map_err(|_| format!("expected non-negative integer or `none`, got `{s}`"))
+        }
+    }
+}
+
+/// A time limit in seconds; `infinity` is none.
+impl FromOptionValue for Option<Duration> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+        let seconds = f64::from_option_value(value)?;
+        if seconds == f64::INFINITY {
+            return Ok(None);
+        }
+        Duration::try_from_secs_f64(seconds)
+            .map(Some)
+            .map_err(|error| format!("invalid time limit of {seconds} seconds: {error}"))
     }
 }
 

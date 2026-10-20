@@ -26,7 +26,7 @@
 //! - `#[option(rename = "alias")]` — CLI key differs from field name.
 //! - `#[option(flatten)]` — catch-all: unknown keys delegate to this field's
 //!   `apply_options` (the field's type must impl `ApplyOptions`). Only one
-//!   `flatten` per struct.
+//!   `flatten` per struct, and a struct with one takes named options only.
 //! - `#[option(nested = "key")]` — explicit named arm whose value is a `Call`;
 //!   its args are routed through this field's `apply_options`. Can be combined
 //!   with `flatten` on the same field, so the same nested config is reachable
@@ -63,7 +63,6 @@ pub fn derive_apply_options(input: TokenStream) -> TokenStream {
 
 fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     let ty = &input.ident;
-    let ty_str = ty.to_string();
 
     let fields = match &input.data {
         Data::Struct(s) => match &s.fields {
@@ -180,10 +179,16 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         }
     } else {
         quote! {
-            other => return Err(format!("unknown option `{other}` for `{}`", #ty_str)),
+            other => return Err(format!("unknown option `{other}`")),
         }
     };
 
+    // A struct that delegates to a flattened one takes named options only:
+    // a position would otherwise mean an option of the outer struct while
+    // most options live in the inner one.
+    if flatten_field.is_some() {
+        order_keys.clear();
+    }
     let order_lits: Vec<syn::LitStr> = order_keys
         .iter()
         .map(|s| syn::LitStr::new(s, proc_macro2::Span::call_site()))

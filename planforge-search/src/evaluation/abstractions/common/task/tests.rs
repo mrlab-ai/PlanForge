@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
@@ -141,8 +142,11 @@ fn rooted_task_rejects_a_root_that_changes_a_constant() {
 
 fn cegar_config() -> DomainAbstractionConfig {
     DomainAbstractionConfig {
-        max_states: 1_000,
-        flaw_kind: FlawKind::Progression,
+        cegar: CegarOptions {
+            max_states: 1_000,
+            flaw_kind: FlawKind::Progression,
+            ..DomainAbstractionConfig::default().cegar
+        },
         init_split_var_ids: Some(Default::default()),
         ..Default::default()
     }

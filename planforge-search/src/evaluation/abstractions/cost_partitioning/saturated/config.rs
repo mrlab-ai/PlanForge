@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn unchanged_transition_source_sets_share_state_dimensions() {
@@ -87,7 +88,10 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
         global_constraint: ExplicitFact::propositional(0, 1),
     });
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 1,
+        cegar: CegarOptions {
+            max_states: 1,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         compute_source_sets: true,
         ..CartesianAbstractionConfig::default()
     })
@@ -137,7 +141,10 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
     });
     let generate = |retain_transition_system| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-            max_states: 2,
+            cegar: CegarOptions {
+                max_states: 2,
+                ..CartesianAbstractionConfig::default().cegar
+            },
             compute_source_sets: false,
             retain_transition_system,
             ..CartesianAbstractionConfig::default()

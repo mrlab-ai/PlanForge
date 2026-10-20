@@ -48,13 +48,13 @@ pub(super) fn refine_domain_abstraction(
     let semantics = CegarSemantics::new(
         task,
         SplitOptions {
-            kind: config.split_kind,
-            selection: config.split_selection,
-            rank: config.flaw_selection_rank,
-            random_seed: config.random_seed,
+            kind: config.cegar.split_kind,
+            selection: config.cegar.split_selection,
+            rank: config.cegar.split_selection_rank,
+            random_seed: config.cegar.random_seed,
         },
     )?;
-    if config.flaw_kind == FlawKind::Regression {
+    if config.cegar.flaw_kind == FlawKind::Regression {
         ensure_regressable(task, semantics.coordinates())?;
     }
 
@@ -63,6 +63,7 @@ pub(super) fn refine_domain_abstraction(
     // generators hand every member its own seed.
     let mut rng = SmallRng::seed_from_u64(
         config
+            .cegar
             .random_seed
             .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
     );
@@ -97,7 +98,7 @@ pub(super) fn refine_domain_abstraction(
 
     let root = semantics.states().initial_state()?;
     let limits = RefinementLimits {
-        max_states: config.max_states,
+        max_states: config.cegar.max_states,
         blacklisted_prop_var_ids: &blacklisted_prop_var_ids,
         blacklisted_numeric_var_ids: &blacklisted_numeric_var_ids,
     };
@@ -106,15 +107,15 @@ pub(super) fn refine_domain_abstraction(
         &mut refinement,
         &CegarRun {
             semantics: &semantics,
-            flaw_kind: config.flaw_kind,
-            flaw_scope: config.flaw_scope,
+            flaw_kind: config.cegar.flaw_kind,
+            flaw_scope: config.cegar.flaw_scope,
             refinement_root: &root,
-            driver: CegarDriver::new(config.max_iterations, config.max_time),
+            driver: CegarDriver::new(config.cegar.max_iterations, config.cegar.max_time),
         },
         start,
     )?;
     let factory = refinement.into_factory();
-    if config.debug {
+    if config.cegar.debug {
         log_final_abstraction(task, &factory);
     }
     Ok(DomainRefinementOutcome {
@@ -132,8 +133,11 @@ pub struct DomainAbstractionGenerator {
 
 impl DomainAbstractionGenerator {
     pub fn new(config: DomainAbstractionConfig) -> Result<Self> {
-        ensure!(config.max_states > 0, "max_states must be > 0");
-        ensure!(config.max_iterations > 0, "max_iterations must be > 0");
+        ensure!(config.cegar.max_states > 0, "max_states must be > 0");
+        ensure!(
+            config.cegar.max_iterations > 0,
+            "max_iterations must be > 0"
+        );
         Ok(Self { config })
     }
 
@@ -170,7 +174,7 @@ impl DomainAbstractionGenerator {
         let concrete_plan_operator_ids = outcome.concrete_plan.map(ConcretePlan::into_operator_ids);
         let factory = outcome.factory;
         let mut operator_generator =
-            factory.make_operator_generator(task, self.config.combine_labels)?;
+            factory.make_operator_generator(task, self.config.cegar.combine_labels)?;
         let abstract_operators = operator_generator
             .build_abstract_operators_with_deadline(task, None)
             .context("failed to build abstract operators")?;
@@ -222,7 +226,7 @@ impl DomainAbstractionGenerator {
         let relevant_operator_ids = factory
             .relevant_operator_ids_from_operators(
                 task,
-                self.config.combine_labels,
+                self.config.cegar.combine_labels,
                 &abstract_operators,
                 DistanceTableOptions::default(),
             )
@@ -232,7 +236,7 @@ impl DomainAbstractionGenerator {
             factory,
             distance_table,
             hash_multipliers,
-            combine_labels: self.config.combine_labels,
+            combine_labels: self.config.cegar.combine_labels,
             relevant_operator_ids,
             abstract_operators,
             transition_data_retained: true,
@@ -242,8 +246,8 @@ impl DomainAbstractionGenerator {
                 solved_by_self,
                 abstraction_use: AbstractionUse::Standalone,
                 stop_reason: Some(stop_reason),
-                split_kind: self.config.split_kind,
-                flaw_selection_rank: self.config.flaw_selection_rank,
+                split_kind: self.config.cegar.split_kind,
+                split_selection_rank: self.config.cegar.split_selection_rank,
                 concrete_plan_operator_ids,
                 ..DomainAbstractionMetadata::default()
             },
