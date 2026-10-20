@@ -1,22 +1,16 @@
 use std::collections::BTreeSet;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
-};
+use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
-use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstraction, CartesianAbstractionHeuristic,
-};
+use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
-use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
-use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use crate::evaluation::heuristic::Heuristic;
+use crate::evaluation::evaluator::EvaluationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbstractionKind {
@@ -47,57 +41,28 @@ pub struct GoalFocusedMember {
     pub retained_transitions: usize,
 }
 
+/// An abstraction that collection heuristics combine.
 pub enum AbstractionComponent<'task> {
-    Domain(Box<DomainAbstractionHeuristic>),
-    Cartesian(Box<CartesianAbstractionHeuristic>),
+    Domain(Box<DomainAbstraction>),
+    Cartesian(Box<CartesianAbstraction>),
     PatternDatabase(Box<PatternDatabase<'task>>),
 }
 
-#[derive(Debug, Default)]
-pub(super) struct ComponentStateValues {
-    pub(super) propositional: Vec<ExplicitValueIndex>,
-    pub(super) numeric: Vec<NumericValue>,
-}
-
-impl ComponentStateValues {
-    pub(super) fn fill(
-        &mut self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<(), EvaluationError> {
-        let registry = eval_state.state_registry();
-        eval_state
-            .state()
-            .fill_state(registry, &mut self.propositional);
-        registry
-            .fill_numeric_vars(eval_state.state(), &mut self.numeric)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to read numeric state for abstraction component: {error:?}"
-                ))
-            })
-    }
-}
-
 impl<'task> AbstractionComponent<'task> {
-    pub fn domain(name: Option<String>, abstraction: DomainAbstraction) -> Self {
-        Self::Domain(Box::new(DomainAbstractionHeuristic::new(name, abstraction)))
-    }
-
-    pub fn cartesian(name: Option<String>, abstraction: CartesianAbstraction) -> Self {
-        Self::Cartesian(Box::new(CartesianAbstractionHeuristic::new(
-            name,
-            abstraction,
-        )))
-    }
-
-    pub fn pattern_database(pdb: PatternDatabase<'task>) -> Self {
-        Self::PatternDatabase(Box::new(pdb))
+    /// The component as an abstraction CEGAR built; `None` for a pattern
+    /// database.
+    pub fn cegar(&self) -> Option<&dyn CegarAbstraction> {
+        match self {
+            Self::Domain(abstraction) => Some(abstraction.as_ref()),
+            Self::Cartesian(abstraction) => Some(abstraction.as_ref()),
+            Self::PatternDatabase(_) => None,
+        }
     }
 
     pub fn discard_transition_data(&mut self) {
         match self {
-            Self::Domain(heuristic) => heuristic.discard_transition_data(),
-            Self::Cartesian(heuristic) => heuristic.discard_transition_data(),
+            Self::Domain(abstraction) => abstraction.discard_transition_data(),
+            Self::Cartesian(abstraction) => abstraction.discard_transition_data(),
             Self::PatternDatabase(_) => {}
         }
     }
@@ -112,110 +77,56 @@ impl<'task> AbstractionComponent<'task> {
 
     pub fn num_states(&self) -> usize {
         match self {
-            Self::Domain(heuristic) => heuristic.abstraction().distance_table.distances.len(),
-            Self::Cartesian(heuristic) => heuristic.abstraction().num_states(),
             Self::PatternDatabase(pdb) => pdb.num_states(),
+            _ => self.cegar().expect("not a pattern database").num_states(),
         }
     }
 
     pub fn proves_initial_state_optimal(&self) -> bool {
-        match self {
-            Self::Domain(heuristic) => heuristic.proves_initial_state_optimal(),
-            Self::Cartesian(heuristic) => heuristic.proves_initial_state_optimal(),
-            Self::PatternDatabase(_) => false,
-        }
+        self.cegar().is_some_and(|abstraction| {
+            let metadata = abstraction.metadata();
+            metadata.solved_by_self() && metadata.abstraction_use.permits_initial_optimality_proof()
+        })
     }
 
-    pub fn standalone_value(
+    /// The abstract state of the concrete state `values`; `None` for a state
+    /// outside the states a pattern database enumerated.
+    pub fn abstract_state_id(
         &self,
-        eval_state: &EvaluationState<'_, '_>,
-    ) -> Result<f64, EvaluationError> {
-        let mut values = ComponentStateValues::default();
-        values.fill(eval_state)?;
-        self.standalone_value_from_state_values(&values.propositional, &values.numeric)
-    }
-
-    pub fn standalone_value_from_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<f64, EvaluationError> {
-        match self {
-            Self::Domain(heuristic) => {
-                let state_id = heuristic.compute_abstract_hash_from_projected_state_values_inner(
-                    propositional,
-                    numeric,
-                    None,
-                )?;
-                self.distance_for_state_id(state_id)
-            }
-            Self::Cartesian(heuristic) => {
-                let state_id = heuristic
-                    .abstraction()
-                    .hierarchy
-                    .map_state(propositional, numeric)
-                    .map_err(|error| EvaluationError::ComputationFailed(error.to_string()))?;
-                self.distance_for_state_id(state_id)
-            }
-            Self::PatternDatabase(pdb) => pdb
-                .lookup_projected_or_fallback_from_source_state_values(propositional, numeric)
-                .map_err(EvaluationError::ComputationFailed),
-        }
-    }
-
-    pub fn exact_state_id(
-        &self,
-        eval_state: &EvaluationState<'_, '_>,
+        values: &ExplicitState,
     ) -> Result<Option<usize>, EvaluationError> {
-        let mut values = ComponentStateValues::default();
-        values.fill(eval_state)?;
         match self {
-            Self::Domain(heuristic) => heuristic
-                .compute_abstract_hash_from_projected_state_values_inner(
-                    &values.propositional,
-                    &values.numeric,
-                    None,
-                )
-                .map(Some),
-            Self::Cartesian(heuristic) => heuristic
-                .abstraction()
-                .hierarchy
-                .map_state(&values.propositional, &values.numeric)
-                .map(Some)
-                .map_err(|error| EvaluationError::ComputationFailed(error.to_string())),
             Self::PatternDatabase(pdb) => pdb
                 .abstract_state_id_from_source_state_values(&values.propositional, &values.numeric)
                 .map_err(EvaluationError::ComputationFailed),
+            _ => self
+                .cegar()
+                .expect("not a pattern database")
+                .abstract_state(&values.propositional, &values.numeric)
+                .map(Some)
+                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
         }
     }
 
-    pub fn distance_for_state_id(&self, state_id: usize) -> Result<f64, EvaluationError> {
-        let value = match self {
-            Self::Domain(heuristic) => heuristic
-                .abstraction()
-                .distance_table
-                .distances
-                .get(state_id)
-                .copied(),
-            Self::Cartesian(heuristic) => heuristic
-                .abstraction()
-                .distance_table
-                .distances
-                .get(state_id)
-                .copied(),
-            Self::PatternDatabase(pdb) => {
-                return pdb
-                    .distance_for_state_id(state_id)
-                    .map_err(EvaluationError::InvalidState);
+    /// The goal distance this component alone estimates for `values`.
+    pub fn standalone_value(&self, values: &ExplicitState) -> Result<f64, EvaluationError> {
+        match self {
+            // A pattern database projects the state itself, and falls back
+            // for a state it did not enumerate.
+            Self::PatternDatabase(pdb) => pdb
+                .lookup_projected_or_fallback_from_source_state_values(
+                    &values.propositional,
+                    &values.numeric,
+                )
+                .map_err(EvaluationError::ComputationFailed),
+            _ => {
+                let abstraction = self.cegar().expect("not a pattern database");
+                let state_id = abstraction
+                    .abstract_state(&values.propositional, &values.numeric)
+                    .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
+                Ok(abstraction.distance_table().distances[state_id])
             }
-        };
-        value.ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "{} state id {state_id} out of bounds for {} states",
-                self.kind(),
-                self.num_states()
-            ))
-        })
+        }
     }
 
     pub fn relevant_operator_ids(
@@ -223,39 +134,10 @@ impl<'task> AbstractionComponent<'task> {
         task: &dyn AbstractNumericTask,
     ) -> Result<BTreeSet<OperatorIndex>, String> {
         let ids: Vec<OperatorIndex> = match self {
-            Self::Domain(heuristic) => {
-                let abstraction = heuristic.abstraction();
-                if !abstraction.relevant_operator_ids.is_empty() {
-                    abstraction.relevant_operator_ids.clone()
-                } else {
-                    let mut generator = abstraction
-                        .factory
-                        .make_operator_generator(task, abstraction.combine_labels)
-                        .map_err(|error| {
-                            format!(
-                                "failed to build domain abstraction operator generator: {error:#}"
-                            )
-                        })?;
-                    let operators = generator.build_abstract_operators(task).map_err(|error| {
-                        format!("failed to build domain abstraction operators: {error:#}")
-                    })?;
-                    abstraction
-                        .factory
-                        .relevant_operator_ids_from_operators(
-                            task,
-                            abstraction.combine_labels,
-                            &operators,
-                            DistanceTableOptions::default(),
-                        )
-                        .map_err(|error| {
-                            format!("failed to compute domain relevant operators: {error:#}")
-                        })?
-                }
-            }
-            Self::Cartesian(heuristic) => heuristic.abstraction().relevant_operator_ids.clone(),
+            Self::Domain(abstraction) => abstraction.relevant_operator_ids.clone(),
+            Self::Cartesian(abstraction) => abstraction.relevant_operator_ids.clone(),
             Self::PatternDatabase(pdb) => pdb.relevant_operator_ids(),
         };
-
         let operator_count = task.get_operators().len();
         if let Some(operator_id) = ids.iter().copied().find(|id| id.index() >= operator_count) {
             return Err(format!(
@@ -268,81 +150,61 @@ impl<'task> AbstractionComponent<'task> {
 
     /// `Some` exactly for members of a goal-focused collection.
     pub fn goal_focused_member(&self) -> Option<GoalFocusedMember> {
-        match self {
-            Self::Domain(heuristic) => {
-                let abstraction = heuristic.abstraction();
-                let metadata = &abstraction.metadata;
-                metadata
-                    .collection_member
-                    .map(|membership| GoalFocusedMember {
-                        membership,
-                        split_kind: metadata.split_kind,
-                        tie_rank: metadata.split_selection_rank,
-                        retained_transitions: abstraction.abstract_operators.len(),
-                    })
-            }
-            Self::Cartesian(heuristic) => {
-                let abstraction = heuristic.abstraction();
-                let metadata = &abstraction.metadata;
-                metadata
-                    .collection_member
-                    .map(|membership| GoalFocusedMember {
-                        membership,
-                        split_kind: metadata.split_kind,
-                        tie_rank: metadata.split_selection_rank,
-                        retained_transitions: abstraction.transition_system.transitions.len(),
-                    })
-            }
-            Self::PatternDatabase(_) => None,
-        }
+        let retained_transitions = match self {
+            Self::Domain(abstraction) => abstraction.abstract_operators.len(),
+            Self::Cartesian(abstraction) => abstraction.transition_system.transitions.len(),
+            Self::PatternDatabase(_) => return None,
+        };
+        let metadata = self.cegar().expect("not a pattern database").metadata();
+        metadata
+            .collection_member
+            .map(|membership| GoalFocusedMember {
+                membership,
+                split_kind: metadata.split_kind,
+                tie_rank: metadata.split_selection_rank,
+                retained_transitions,
+            })
     }
 
     /// The source sets of the abstract operators, which regional cost
     /// partitioning attaches costs to; `None` for a pattern database.
     pub fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
         match self {
-            Self::Domain(heuristic) => Some(&heuristic.abstraction().abstract_source_sets),
-            Self::Cartesian(heuristic) => Some(&heuristic.abstraction().abstract_source_sets),
+            Self::Domain(abstraction) => Some(&abstraction.abstract_source_sets),
+            Self::Cartesian(abstraction) => Some(&abstraction.abstract_source_sets),
             Self::PatternDatabase(_) => None,
         }
     }
 
     pub fn as_domain(&self) -> Option<&DomainAbstraction> {
         match self {
-            Self::Domain(heuristic) => Some(heuristic.abstraction()),
+            Self::Domain(abstraction) => Some(abstraction),
             Self::Cartesian(_) | Self::PatternDatabase(_) => None,
         }
     }
 
     pub fn as_cartesian(&self) -> Option<&CartesianAbstraction> {
         match self {
-            Self::Cartesian(heuristic) => Some(heuristic.abstraction()),
+            Self::Cartesian(abstraction) => Some(abstraction),
             Self::Domain(_) | Self::PatternDatabase(_) => None,
         }
     }
-
-    pub fn as_pattern_database(&self) -> Option<&PatternDatabase<'task>> {
-        match self {
-            Self::PatternDatabase(pdb) => Some(pdb.as_ref()),
-            Self::Domain(_) | Self::Cartesian(_) => None,
-        }
-    }
 }
 
-impl From<DomainAbstraction> for AbstractionComponent<'static> {
+impl<'task> From<DomainAbstraction> for AbstractionComponent<'task> {
     fn from(abstraction: DomainAbstraction) -> Self {
-        Self::domain(None, abstraction)
+        Self::Domain(Box::new(abstraction))
     }
 }
 
-impl From<CartesianAbstraction> for AbstractionComponent<'static> {
+impl<'task> From<CartesianAbstraction> for AbstractionComponent<'task> {
     fn from(abstraction: CartesianAbstraction) -> Self {
-        Self::cartesian(None, abstraction)
+        Self::Cartesian(Box::new(abstraction))
     }
 }
 
 impl<'task> From<PatternDatabase<'task>> for AbstractionComponent<'task> {
     fn from(pdb: PatternDatabase<'task>) -> Self {
-        Self::pattern_database(pdb)
+        Self::PatternDatabase(Box::new(pdb))
     }
 }

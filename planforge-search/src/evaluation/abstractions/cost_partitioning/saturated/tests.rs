@@ -174,7 +174,7 @@ pub(super) fn goal_cover_scp<'task>(
         .collect::<HashSet<_>>();
     let components = abstractions
         .into_iter()
-        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .map(AbstractionComponent::from)
         .collect();
     let mut config = scp_config(Saturator::All, true);
     config.diversify = true;

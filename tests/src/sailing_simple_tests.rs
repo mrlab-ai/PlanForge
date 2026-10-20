@@ -52,9 +52,10 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstractions::cartesian::{
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use planforge_search::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
 use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_search::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitSelection,
@@ -67,7 +68,6 @@ use planforge_search::evaluation::abstractions::domain::collection::DomainAbstra
 use planforge_search::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
 use planforge_search::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
-use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
@@ -266,7 +266,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     );
     assert_exact_single_abstraction_search(
         &task,
-        DomainAbstractionHeuristic::new(None, domain_abstraction),
+        AbstractionHeuristic::new("abstraction", domain_abstraction),
         optimum,
         "domain",
     );
@@ -285,7 +285,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     assert!(cartesian_abstraction.metadata.solved_by_self());
     assert_exact_single_abstraction_search(
         &task,
-        CartesianAbstractionHeuristic::new(None, cartesian_abstraction),
+        AbstractionHeuristic::new("abstraction", cartesian_abstraction),
         optimum,
         "Cartesian",
     );
@@ -354,7 +354,7 @@ fn scp_initial_h_for_collection(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components("scp", abstractions, Vec::new(), vec![]),
+        collection_components(abstractions, Vec::new(), vec![]),
         config,
         task,
         Default::default(),
@@ -397,7 +397,7 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components("scp", abstractions, Vec::new(), vec![]),
+        collection_components(abstractions, Vec::new(), vec![]),
         config,
         &task,
         Default::default(),

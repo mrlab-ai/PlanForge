@@ -62,16 +62,16 @@ impl CegarAbstraction for DomainAbstraction {
     fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
         &mut self.metadata
     }
-}
 
-impl DomainAbstraction {
-    pub fn discard_transition_data(&mut self) {
+    fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
         self.transition_data_retained = false;
         self.abstract_source_sets.clear();
         self.interval_transition_system.get_mut().take();
     }
+}
 
+impl DomainAbstraction {
     pub fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
         if !self.abstract_source_sets.is_empty() {
             ensure!(

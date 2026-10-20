@@ -70,8 +70,7 @@ impl ComponentSaturation<'_, '_> {
         deadline: Option<Instant>,
     ) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError> {
         match (self.component, self.cost_space) {
-            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Label) => {
-                let abstraction = heuristic.abstraction();
+            (AbstractionComponent::Domain(abstraction), SaturationCostSpace::Label) => {
                 let operator_costs = residual.operator_costs_for_label_cp();
                 let (distances, saturated) = if let Some(state_id) = cap_state_id {
                     let table = abstraction
@@ -111,8 +110,7 @@ impl ComponentSaturation<'_, '_> {
                 };
                 Ok((distances, SaturatedCosts::Label(saturated)))
             }
-            (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Interval) => {
-                let abstraction = heuristic.abstraction();
+            (AbstractionComponent::Domain(abstraction), SaturationCostSpace::Interval) => {
                 let transition_system = abstraction
                     .interval_transition_system(self.task, deadline)
                     .map_err(|error| {
@@ -140,9 +138,9 @@ impl ComponentSaturation<'_, '_> {
                     })?;
                 Ok((table.distances, SaturatedCosts::Interval(saturated)))
             }
-            (AbstractionComponent::Cartesian(heuristic), SaturationCostSpace::Label) => {
+            (AbstractionComponent::Cartesian(abstraction), SaturationCostSpace::Label) => {
                 let (distances, saturated) = build_explicit_label_cost_partitioning_table(
-                    &heuristic.abstraction().transition_system,
+                    &abstraction.transition_system,
                     &residual.operator_costs_for_label_cp(),
                     cap_state_id,
                     deadline,
@@ -157,8 +155,7 @@ impl ComponentSaturation<'_, '_> {
                 })?;
                 Ok((distances, SaturatedCosts::Label(saturated)))
             }
-            (AbstractionComponent::Cartesian(heuristic), SaturationCostSpace::Interval) => {
-                let abstraction = heuristic.abstraction();
+            (AbstractionComponent::Cartesian(abstraction), SaturationCostSpace::Interval) => {
                 let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
                     &abstraction.transition_system,
                     &abstraction.abstract_source_sets,
@@ -790,8 +787,7 @@ pub(super) fn saturate_original_costs(
     original_costs: &[f64],
 ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
     match component {
-        AbstractionComponent::Domain(heuristic) => {
-            let abstraction = heuristic.abstraction();
+        AbstractionComponent::Domain(abstraction) => {
             let (table, saturated) = abstraction
                 .factory
                 .build_cost_partitioned_distance_table(
@@ -808,17 +804,19 @@ pub(super) fn saturate_original_costs(
                 })?;
             Ok((table.distances, saturated))
         }
-        AbstractionComponent::Cartesian(heuristic) => build_explicit_label_cost_partitioning_table(
-            &heuristic.abstraction().transition_system,
-            original_costs,
-            None,
-            None,
-        )
-        .map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to compute Cartesian order-generator table {component_id}: {error:#}"
-            ))
-        }),
+        AbstractionComponent::Cartesian(abstraction) => {
+            build_explicit_label_cost_partitioning_table(
+                &abstraction.transition_system,
+                original_costs,
+                None,
+                None,
+            )
+            .map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to compute Cartesian order-generator table {component_id}: {error:#}"
+                ))
+            })
+        }
         AbstractionComponent::PatternDatabase(pdb) => pdb
             .build_cost_partitioned_distance_table(original_costs)
             .map_err(|error| {

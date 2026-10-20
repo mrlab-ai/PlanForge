@@ -1,4 +1,5 @@
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::explicit_state::ExplicitState;
 use std::collections::HashSet;
 
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -473,7 +474,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
         assert_eq!(stored_h, 20.0 - initial, "x0={initial}");
 
-        let component = AbstractionComponent::domain(None, abstraction);
+        let component = AbstractionComponent::from(abstraction);
         for step in 0..=(20.0 - initial) as usize {
             let x = initial + step as f64;
             let goal_value = if x >= 20.0 {
@@ -482,10 +483,10 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
                 ConditionValue::False
             };
             let h = component
-                .standalone_value_from_state_values(
-                    &[ExplicitValueIndex::from_usize(goal_value.as_usize())],
-                    &[x, 1.0, 20.0].map(NumericValue::new),
-                )
+                .standalone_value(&ExplicitState {
+                    propositional: vec![ExplicitValueIndex::from_usize(goal_value.as_usize())],
+                    numeric: [x, 1.0, 20.0].map(NumericValue::new).to_vec(),
+                })
                 .unwrap();
             assert_eq!(
                 h,

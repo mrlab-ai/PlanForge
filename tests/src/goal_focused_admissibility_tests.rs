@@ -15,9 +15,9 @@ use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianAbstractionHeuristic,
 };
 use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use planforge_search::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
 use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_search::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
@@ -28,7 +28,6 @@ use planforge_search::evaluation::abstractions::domain::collection::DomainAbstra
 use planforge_search::evaluation::abstractions::domain::config::{
     DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
-use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
@@ -202,7 +201,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                 &task,
                 &registry,
                 &states,
-                &DomainAbstractionHeuristic::new(None, abstraction.clone()),
+                &AbstractionHeuristic::new("abstraction", abstraction.clone()),
             );
         }
         for (index, abstraction) in cartesian.iter().enumerate() {
@@ -211,7 +210,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                 &task,
                 &registry,
                 &states,
-                &CartesianAbstractionHeuristic::new(None, abstraction.clone()),
+                &AbstractionHeuristic::new("abstraction", abstraction.clone()),
             );
         }
         for partitioning in [
@@ -223,7 +222,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     "domain",
                     SaturatedCostPartitioningHeuristic::new(
                         None,
-                        collection_components("scp", domain.clone(), Vec::new(), vec![]),
+                        collection_components(domain.clone(), Vec::new(), vec![]),
                         scp_config(partitioning),
                         &task,
                         Default::default(),
@@ -233,7 +232,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     "Cartesian",
                     SaturatedCostPartitioningHeuristic::new(
                         None,
-                        collection_components("scp", vec![], cartesian.clone(), vec![]),
+                        collection_components(vec![], cartesian.clone(), vec![]),
                         scp_config(partitioning),
                         &task,
                         Default::default(),
@@ -243,7 +242,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     "mixed",
                     SaturatedCostPartitioningHeuristic::new(
                         None,
-                        collection_components("scp", domain.clone(), cartesian.clone(), vec![]),
+                        collection_components(domain.clone(), cartesian.clone(), vec![]),
                         scp_config(partitioning),
                         &task,
                         Default::default(),

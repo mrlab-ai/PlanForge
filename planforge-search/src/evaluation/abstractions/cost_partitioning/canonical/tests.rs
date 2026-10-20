@@ -154,9 +154,9 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
         None,
         &task,
         vec![
-            AbstractionComponent::domain(Some("da0".to_string()), da0),
-            AbstractionComponent::domain(Some("da1".to_string()), da1),
-            AbstractionComponent::domain(Some("da2".to_string()), da2),
+            AbstractionComponent::from(da0),
+            AbstractionComponent::from(da1),
+            AbstractionComponent::from(da2),
         ],
         vec![vec![0, 1], vec![2]],
     )
@@ -193,9 +193,9 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
     let pdb = PatternDatabase::new(projected, 32).unwrap();
 
     vec![
-        AbstractionComponent::domain(Some("domain".to_string()), domain),
-        AbstractionComponent::cartesian(Some("Cartesian".to_string()), cartesian),
-        AbstractionComponent::pattern_database(pdb),
+        AbstractionComponent::from(domain),
+        AbstractionComponent::from(cartesian),
+        AbstractionComponent::from(pdb),
     ]
 }
 
@@ -227,7 +227,7 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
     domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
     domain.metadata.abstraction_use = AbstractionUse::Standalone;
-    let component = AbstractionComponent::domain(None, domain);
+    let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
     let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
     assert!(!max.proves_initial_state_optimal());
@@ -236,11 +236,8 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
     domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
     domain.metadata.abstraction_use = AbstractionUse::Standalone;
-    let canonical = CanonicalAbstractionHeuristic::new(
-        None,
-        &task,
-        vec![AbstractionComponent::domain(None, domain)],
-    )
-    .unwrap();
+    let canonical =
+        CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
+            .unwrap();
     assert!(!canonical.proves_initial_state_optimal());
 }

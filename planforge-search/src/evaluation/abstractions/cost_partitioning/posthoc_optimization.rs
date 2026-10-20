@@ -1,4 +1,4 @@
-//! Posthoc-optimization heuristic for a collection of domain abstractions.
+//! Posthoc-optimization heuristic for a collection of abstractions.
 //!
 //! Given abstractions α_1, …, α_n built with the full operator cost function
 //! c, the posthoc-optimization heuristic of a state s is the optimum of
@@ -37,138 +37,103 @@ use planforge_cplex::{
     Constraint as LpConstraint, Model as LpModel, ObjectiveSense, SolveStatus, Variable,
     assert_unrestricted_license,
 };
-use planforge_sas::numeric_task::{AbstractNumericTask, metric_operator_cost_from_initial_values};
-use rustc_hash::FxHashMap;
+use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, OperatorIndex, metric_operator_cost_from_initial_values,
+};
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::info;
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::state_value_cache::StateValueCache;
 
-use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use crate::evaluation::abstractions::domain::heuristic::{
-    DomainAbstractionHeuristic, DomainAbstractionLookupScratch,
-    compute_collection_abstract_state_ids,
-};
+use crate::evaluation::abstractions::component::AbstractionComponent;
 
-#[derive(Debug, Clone, Default)]
-pub struct PostHocOptimizationConfig {
-    /// Optional caller-supplied label appended to the heuristic name.
-    pub label: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct PostHocOptimizationHeuristic {
+pub struct PostHocOptimizationHeuristic<'task> {
     name: String,
-    heuristics: Vec<DomainAbstractionHeuristic>,
+    components: Vec<AbstractionComponent<'task>>,
     /// For each LP constraint, the (sorted, distinct) abstraction ids that
     /// appear with coefficient 1 in that constraint. Constraint right-hand
     /// side is uniformly 1.
     constraints: Vec<Vec<usize>>,
     lp_model: RefCell<Option<LpModel>>,
     state_value_cache: RefCell<StateValueCache>,
-    lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
+    values: RefCell<ExplicitState>,
     diagnostics_logged: RefCell<bool>,
 }
 
-impl PostHocOptimizationHeuristic {
+impl<'task> PostHocOptimizationHeuristic<'task> {
     pub fn new(
         name: Option<String>,
         task: &dyn AbstractNumericTask,
-        abstractions: Vec<DomainAbstraction>,
+        mut components: Vec<AbstractionComponent<'task>>,
     ) -> Result<Self, String> {
-        let heuristics: Vec<_> = abstractions
-            .into_iter()
-            .enumerate()
-            .map(|(index, abstraction)| {
-                DomainAbstractionHeuristic::new(
-                    Some(format!("posthoc_optimization_{index}")),
-                    abstraction,
-                )
-            })
-            .collect();
-
-        let mut relevant_operators: Vec<BTreeSet<usize>> = Vec::with_capacity(heuristics.len());
-        for heuristic in &heuristics {
-            relevant_operators.push(compute_relevant_operator_ids(
-                task,
-                heuristic.abstraction(),
-            )?);
+        let relevant_operators = components
+            .iter()
+            .map(|component| component.relevant_operator_ids(task))
+            .collect::<Result<Vec<_>, _>>()?;
+        for component in &mut components {
+            component.discard_transition_data();
         }
 
         let original_costs: Vec<f64> = task
             .get_operators()
             .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op))
+            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
             .collect();
 
-        let constraints = build_constraints(&relevant_operators, &original_costs, heuristics.len());
+        let constraints = build_constraints(&relevant_operators, &original_costs);
 
         assert_unrestricted_license().map_err(|error| {
             format!("posthoc_optimization requires unrestricted CPLEX: {error}")
         })?;
-        let lp_model = build_lp_model(heuristics.len(), &constraints)?;
+        let lp_model = build_lp_model(components.len(), &constraints)?;
 
         info!(
             "posthoc_optimization: abstractions={}, lp_constraints={} (CPLEX)",
-            heuristics.len(),
+            components.len(),
             constraints.len(),
         );
 
         Ok(Self {
             name: name.unwrap_or_else(|| "posthoc_optimization".to_string()),
-            heuristics,
+            components,
             constraints,
             lp_model: RefCell::new(lp_model),
             state_value_cache: RefCell::new(StateValueCache::default()),
-            lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
+            values: RefCell::default(),
             diagnostics_logged: RefCell::new(false),
         })
     }
 
-    pub fn heuristics(&self) -> &[DomainAbstractionHeuristic] {
-        &self.heuristics
+    pub fn components(&self) -> &[AbstractionComponent<'task>] {
+        &self.components
     }
 
     fn evaluate_lp(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        if self.heuristics.is_empty() {
+        if self.components.is_empty() {
             return Ok(0.0);
         }
 
-        let mut scratch = self.lookup_scratch.borrow_mut();
-        compute_collection_abstract_state_ids(&self.heuristics, eval_state, None, &mut scratch)?;
-
-        let mut h_values = vec![0.0_f64; self.heuristics.len()];
-        for (abstraction_id, state_id) in scratch.abstract_state_ids.iter().enumerate() {
-            let Some(state_id) = *state_id else {
-                continue;
-            };
-            let heuristic = self.heuristics.get(abstraction_id).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "invalid posthoc abstraction index {abstraction_id}"
-                ))
-            })?;
-            let value = heuristic
-                .abstraction()
-                .distance_table
-                .distances
-                .get(state_id)
-                .copied()
-                .ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "abstract hash out of bounds: {state_id} (len={})",
-                        heuristic.abstraction().distance_table.distances.len()
-                    ))
-                })?;
-            if value.is_infinite() && value.is_sign_positive() {
-                self.log_diagnostics_once(&h_values, &scratch.abstract_state_ids);
+        let mut values = self.values.borrow_mut();
+        eval_state.fill_values(&mut values)?;
+        let mut h_values = Vec::with_capacity(self.components.len());
+        for component in &self.components {
+            let value = component.standalone_value(&values)?;
+            assert!(
+                value >= 0.0,
+                "{} returned the invalid heuristic value {value}",
+                component.kind()
+            );
+            if value == f64::INFINITY {
+                self.log_diagnostics_once(&h_values);
                 return Ok(f64::INFINITY);
             }
-            h_values[abstraction_id] = value.max(0.0);
+            h_values.push(value);
         }
 
-        self.log_diagnostics_once(&h_values, &scratch.abstract_state_ids);
-
+        self.log_diagnostics_once(&h_values);
         self.solve_dual(&h_values)
     }
 
@@ -230,7 +195,7 @@ impl PostHocOptimizationHeuristic {
         }
     }
 
-    fn log_diagnostics_once(&self, h_values: &[f64], abstract_state_ids: &[Option<usize>]) {
+    fn log_diagnostics_once(&self, h_values: &[f64]) {
         {
             let mut logged = self.diagnostics_logged.borrow_mut();
             if *logged {
@@ -246,15 +211,12 @@ impl PostHocOptimizationHeuristic {
             .collect();
         info!(
             "posthoc_optimization first-state diagnostics: abstractions={}, with_positive_h={}, lp_constraints={}",
-            self.heuristics.len(),
+            self.components.len(),
             positive.len(),
             self.constraints.len(),
         );
-        for (id, h) in positive.iter().take(16) {
-            info!(
-                "posthoc abstraction {id}: h={h}, lookup_state={:?}",
-                abstract_state_ids.get(*id).copied().flatten()
-            );
+        for (id, h) in positive {
+            info!("posthoc abstraction {id}: h={h}");
         }
     }
 }
@@ -295,7 +257,7 @@ fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {
     EvaluationError::ComputationFailed(format!("posthoc_optimization CPLEX failure: {error}"))
 }
 
-impl Heuristic for PostHocOptimizationHeuristic {
+impl Heuristic for PostHocOptimizationHeuristic<'_> {
     fn compute_heuristic(
         &self,
         eval_state: &EvaluationState<'_, '_>,
@@ -315,48 +277,12 @@ impl Heuristic for PostHocOptimizationHeuristic {
     }
 }
 
-fn compute_relevant_operator_ids(
-    task: &dyn AbstractNumericTask,
-    abstraction: &DomainAbstraction,
-) -> Result<BTreeSet<usize>, String> {
-    if !abstraction.relevant_operator_ids.is_empty() {
-        return Ok(abstraction.relevant_operator_ids.iter().copied().collect());
-    }
-
-    let task = task;
-    let mut generator = abstraction
-        .factory
-        .make_operator_generator(task, abstraction.combine_labels)
-        .map_err(|error| {
-            format!("failed to build operator generator for posthoc optimization: {error:#}")
-        })?;
-    let operators = generator.build_abstract_operators(task).map_err(|error| {
-        format!("failed to build abstract operators for posthoc optimization: {error:#}")
-    })?;
-    let relevant = abstraction
-        .factory
-        .relevant_operator_ids_from_operators_with_deadline(
-            task,
-            abstraction.combine_labels,
-            &operators,
-            None,
-        )
-        .map_err(|error| {
-            format!("failed to compute relevant operator ids for posthoc optimization: {error:#}")
-        })?;
-    Ok(relevant.into_iter().collect())
-}
-
 fn build_constraints(
-    relevant_operators: &[BTreeSet<usize>],
+    relevant_operators: &[BTreeSet<OperatorIndex>],
     original_costs: &[f64],
-    n_abstractions: usize,
 ) -> Vec<Vec<usize>> {
-    let mut operator_to_abstractions: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    let mut operator_to_abstractions: FxHashMap<OperatorIndex, Vec<usize>> = FxHashMap::default();
     for (abstraction_id, ops) in relevant_operators.iter().enumerate() {
-        if abstraction_id >= n_abstractions {
-            continue;
-        }
         for &operator_id in ops {
             operator_to_abstractions
                 .entry(operator_id)
@@ -365,24 +291,17 @@ fn build_constraints(
         }
     }
 
-    let mut seen: FxHashMap<Vec<usize>, ()> = FxHashMap::default();
+    let mut seen = FxHashSet::default();
     let mut constraints = Vec::new();
-    for (operator_id, mut abstraction_ids) in operator_to_abstractions {
-        let cost = original_costs.get(operator_id).copied().unwrap_or(0.0);
-        if !matches!(cost.partial_cmp(&0.0), Some(std::cmp::Ordering::Greater)) {
-            // Free operators impose no constraint in the dual LP.
+    for (operator_id, abstraction_ids) in operator_to_abstractions {
+        // Free operators impose no constraint in the dual LP.
+        if original_costs[operator_id.index()] <= 0.0 {
             continue;
         }
-        abstraction_ids.sort_unstable();
-        abstraction_ids.dedup();
-        if abstraction_ids.is_empty() {
-            continue;
+        // Each abstraction appears once per operator, in increasing order.
+        if seen.insert(abstraction_ids.clone()) {
+            constraints.push(abstraction_ids);
         }
-        if seen.contains_key(&abstraction_ids) {
-            continue;
-        }
-        seen.insert(abstraction_ids.clone(), ());
-        constraints.push(abstraction_ids);
     }
 
     constraints

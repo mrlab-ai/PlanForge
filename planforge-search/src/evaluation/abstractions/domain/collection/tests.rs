@@ -459,7 +459,7 @@ fn domain_members(
             let initial_h =
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
             let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
-            let member = AbstractionComponent::domain(None, abstraction).goal_focused_member();
+            let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
         .collect()
@@ -508,7 +508,7 @@ fn cartesian_members_with(
             let initial_h =
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
             let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
-            let member = AbstractionComponent::cartesian(None, abstraction).goal_focused_member();
+            let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
         .collect()
@@ -748,7 +748,7 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             assert_eq!(plan.map(Vec::len), Some(5), "{backend} member {index}");
         }
         assert!(
-            AbstractionComponent::domain(None, domain.clone())
+            AbstractionComponent::from(domain.clone())
                 .goal_focused_member()
                 .is_none()
         );

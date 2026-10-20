@@ -82,64 +82,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         ids.clear();
         ids.resize(components.len(), None);
 
-        let registry = eval_state.state_registry();
-        let mut scratch = self.lookup_scratch.borrow_mut();
-        eval_state.state().fill_state(registry, &mut scratch.prop);
-        registry
-            .fill_numeric_vars(eval_state.state(), &mut scratch.numeric)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to read numeric state: {error:?}"
-                ))
-            })?;
-        scratch.required_domain_ids.clear();
-        scratch.required_domain_ids.extend(
-            components
-                .iter()
-                .enumerate()
-                .filter(|(id, component)| {
-                    lookup_mask.is_none_or(|mask| mask[*id])
-                        && matches!(component, AbstractionComponent::Domain(_))
-                })
-                .map(|(id, _)| id),
-        );
-        scratch.comparisons.clear();
-        if scratch.required_domain_ids.len() > 1 {
-            let first_id = scratch.required_domain_ids[0];
-            let AbstractionComponent::Domain(heuristic) = &components[first_id] else {
-                unreachable!("required domain component id must reference a domain abstraction")
-            };
-            let DomainAbstractionLookupScratch {
-                numeric,
-                comparisons,
-                ..
-            } = &mut *scratch;
-            heuristic.fill_comparison_values_from_projected_state_values(numeric, comparisons)?;
-        }
-
+        let mut values = self.state_values.borrow_mut();
+        eval_state.fill_values(&mut values)?;
         for (component_id, component) in components.iter().enumerate() {
-            if lookup_mask.is_some_and(|mask| !mask[component_id]) {
-                continue;
+            if lookup_mask.is_none_or(|mask| mask[component_id]) {
+                ids[component_id] = component.abstract_state_id(&values)?;
             }
-            ids[component_id] = match component {
-                AbstractionComponent::Domain(heuristic) => Some(
-                    heuristic.compute_abstract_hash_from_projected_state_values_inner(
-                        &scratch.prop,
-                        &scratch.numeric,
-                        Some(&scratch.comparisons),
-                    )?,
-                ),
-                AbstractionComponent::Cartesian(heuristic) => Some(
-                    heuristic
-                        .abstraction()
-                        .hierarchy
-                        .map_state(&scratch.prop, &scratch.numeric)
-                        .map_err(|error| EvaluationError::ComputationFailed(error.to_string()))?,
-                ),
-                AbstractionComponent::PatternDatabase(pdb) => pdb
-                    .abstract_state_id_from_source_state_values(&scratch.prop, &scratch.numeric)
-                    .map_err(EvaluationError::ComputationFailed)?,
-            };
         }
 
         Ok(())

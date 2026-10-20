@@ -4,6 +4,7 @@
 // without a CPLEX installation.
 #![allow(clippy::field_reassign_with_default)]
 
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use std::sync::Arc;
 
 use planforge_sas::axioms::{

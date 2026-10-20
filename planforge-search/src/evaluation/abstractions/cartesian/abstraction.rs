@@ -33,10 +33,8 @@ impl CegarAbstraction for CartesianAbstraction {
     fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
         &mut self.metadata
     }
-}
 
-impl CartesianAbstraction {
-    pub fn discard_transition_data(&mut self) {
+    fn discard_transition_data(&mut self) {
         self.transition_system.transitions = Vec::new();
         self.transition_system.backward = Vec::new();
         self.transition_system.forward = Vec::new();

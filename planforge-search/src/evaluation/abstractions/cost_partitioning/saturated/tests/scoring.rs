@@ -24,8 +24,8 @@ fn interval_stolen_costs_accept_transition_free_components() {
     domain.abstract_source_sets.clear();
 
     let components = vec![
-        AbstractionComponent::domain(None, domain),
-        AbstractionComponent::cartesian(None, cartesian),
+        AbstractionComponent::from(domain),
+        AbstractionComponent::from(cartesian),
     ];
     assert_eq!(
         interval_stolen_costs(
@@ -48,7 +48,7 @@ fn interval_stolen_costs_reject_missing_source_sets() {
     assert!(!abstraction.transition_system.transitions.is_empty());
     abstraction.abstract_source_sets.clear();
 
-    let components = vec![AbstractionComponent::cartesian(None, abstraction)];
+    let components = vec![AbstractionComponent::from(abstraction)];
     let error = interval_stolen_costs(
         &components,
         &[vec![f64::NEG_INFINITY; task.get_num_operators()]],

@@ -26,6 +26,7 @@ use crate::evaluation::abstractions::domain::abstraction::compute_hash_multiplie
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 
 #[test]
@@ -147,7 +148,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
     let components = abstractions
         .iter()
         .cloned()
-        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .map(AbstractionComponent::from)
         .collect::<Vec<_>>();
     let goal_cover_order = goal_cover_order(
         &(0..abstractions.len()).collect::<Vec<_>>(),
@@ -199,7 +200,7 @@ fn initial_cartesian_scp_value(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components("scp", vec![], abstractions, vec![]),
+        collection_components(vec![], abstractions, vec![]),
         config,
         task,
         Default::default(),
@@ -263,7 +264,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
 
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components("scp", abstractions, Vec::new(), vec![]),
+        collection_components(abstractions, Vec::new(), vec![]),
         config,
         transformed_task,
         Default::default(),
@@ -474,27 +475,18 @@ fn initial_abstract_state_ids(
     heuristic: &SaturatedCostPartitioningHeuristic<'_>,
     task: &dyn AbstractNumericTask,
 ) -> Vec<Option<usize>> {
-    let prop = task.get_initial_propositional_state_values();
-    let numeric = task.get_initial_numeric_state_values();
+    let values = ExplicitState {
+        propositional: task.get_initial_propositional_state_values().to_vec(),
+        numeric: task.get_initial_numeric_state_values().to_vec(),
+    };
     heuristic
         .components
         .borrow()
         .iter()
-        .map(|component| match component {
-            AbstractionComponent::Domain(domain) => Some(
-                domain
-                    .abstract_state_hash_from_state_values(prop, numeric)
-                    .expect("failed to hash initial state for handcrafted abstraction"),
-            ),
-            AbstractionComponent::Cartesian(cartesian) => Some(
-                cartesian
-                    .abstraction()
-                    .abstract_state(prop, numeric)
-                    .expect("failed to map initial Cartesian state"),
-            ),
-            AbstractionComponent::PatternDatabase(pdb) => pdb
-                .abstract_state_id_from_source_state_values(prop, numeric)
-                .expect("failed to map initial PDB state"),
+        .map(|component| {
+            component
+                .abstract_state_id(&values)
+                .expect("failed to map the initial state")
         })
         .collect()
 }

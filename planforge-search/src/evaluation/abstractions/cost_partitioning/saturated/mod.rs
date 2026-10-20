@@ -28,7 +28,7 @@ use crate::evaluation::abstractions::cost_partitioning::costs::{
 use crate::evaluation::abstractions::domain::abstract_operators::AbstractOperator;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
-use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionLookupScratch;
+use planforge_sas::explicit_state::ExplicitState;
 
 mod config;
 mod deadline;
@@ -91,7 +91,7 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     config: ScpConfig,
     original_operator_costs: Vec<f64>,
     state: RefCell<ScpState>,
-    lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
+    state_values: RefCell<ExplicitState>,
     component_ids_scratch: RefCell<Vec<Option<usize>>>,
     sampling_task: RefCell<Option<TaskRef<'task>>>,
 }
@@ -106,34 +106,22 @@ pub struct ScpBuildOptions<'task> {
 }
 
 /// The components of a collection of domain abstractions, Cartesian
-/// abstractions and pattern databases, in that order, named `{prefix}_{i}` and
-/// `{prefix}_cartesian_{i}`.
+/// abstractions and pattern databases, in that order.
 pub fn collection_components<'task>(
-    prefix: &str,
     domain_abstractions: Vec<DomainAbstraction>,
     cartesian_abstractions: Vec<CartesianAbstraction>,
     pdbs: Vec<PatternDatabase<'task>>,
 ) -> Vec<AbstractionComponent<'task>> {
-    let mut components =
-        Vec::with_capacity(domain_abstractions.len() + cartesian_abstractions.len() + pdbs.len());
-    components.extend(
-        domain_abstractions
-            .into_iter()
-            .enumerate()
-            .map(|(index, abstraction)| {
-                AbstractionComponent::domain(Some(format!("{prefix}_{index}")), abstraction)
-            }),
-    );
-    components.extend(cartesian_abstractions.into_iter().enumerate().map(
-        |(index, abstraction)| {
-            AbstractionComponent::cartesian(
-                Some(format!("{prefix}_cartesian_{index}")),
-                abstraction,
-            )
-        },
-    ));
-    components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
-    components
+    domain_abstractions
+        .into_iter()
+        .map(AbstractionComponent::from)
+        .chain(
+            cartesian_abstractions
+                .into_iter()
+                .map(AbstractionComponent::from),
+        )
+        .chain(pdbs.into_iter().map(AbstractionComponent::from))
+        .collect()
 }
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
@@ -214,7 +202,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             config,
             original_operator_costs: original_costs,
             state: RefCell::new(st),
-            lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
+            state_values: RefCell::default(),
             component_ids_scratch: RefCell::new(Vec::new()),
             sampling_task: RefCell::new(sampling_task),
         })

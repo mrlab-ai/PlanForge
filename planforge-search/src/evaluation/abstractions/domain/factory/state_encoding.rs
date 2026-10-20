@@ -522,8 +522,12 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes.len()
         );
 
+        // A variable with one abstract value contributes nothing.
         let mut index: usize = 0;
         for (var, &concrete_value) in propositions.iter().enumerate() {
+            if self.domain_sizes[var] == 1 {
+                continue;
+            }
             let abstract_value = *self.domain_mapping[var]
                 .get(concrete_value.index())
                 .with_context(|| {
@@ -535,6 +539,9 @@ impl DomainAbstractionFactory {
         }
 
         for num_var_id in (0..numeric_domain_sizes.len()).map(VariableIndex::from_usize) {
+            if numeric_domain_sizes[num_var_id.index()] == 1 {
+                continue;
+            }
             let abs_var = abstraction_numeric_var(num_props, num_var_id);
             let concrete_value = self
                 .additive_numeric_views

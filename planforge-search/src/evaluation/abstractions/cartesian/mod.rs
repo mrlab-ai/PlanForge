@@ -13,7 +13,6 @@ mod config;
 mod distances;
 mod finalize;
 mod generator;
-mod heuristic;
 mod hierarchy;
 mod initial_splits;
 mod refinement;
@@ -34,7 +33,6 @@ pub use config::*;
 use distances::*;
 use finalize::*;
 pub use generator::*;
-pub use heuristic::*;
 pub use hierarchy::*;
 use initial_splits::*;
 use semantics::*;
@@ -55,9 +53,6 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
-
-use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use crate::evaluation::heuristic::Heuristic;
 
 use super::common::cegar::regression::ensure_regressable;
 use super::common::cegar::{CegarDriver, CegarStopReason, FlawKind, FlawScope};

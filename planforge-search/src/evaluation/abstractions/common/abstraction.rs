@@ -1,7 +1,10 @@
 //! What every abstraction CEGAR builds offers and records about its
 //! construction and use, for domain and Cartesian abstractions alike.
 
+use std::cell::RefCell;
+
 use anyhow::Result;
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
 
 use super::cegar::progression::ConcretePlan;
@@ -9,6 +12,8 @@ use super::cegar::refine::CegarOutcome;
 use super::cegar::{CegarStopReason, SplitKind};
 use super::transition_system::AbstractDistanceTable;
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
+use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
+use crate::evaluation::heuristic::Heuristic;
 
 /// Whether an abstraction stands alone or is a member of a collection.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -97,6 +102,10 @@ pub trait CegarAbstraction {
 
     fn metadata_mut(&mut self) -> &mut AbstractionMetadata;
 
+    /// Drops what only cost partitioning reads: the transitions and the
+    /// operators' source sets. Lookups stay intact.
+    fn discard_transition_data(&mut self);
+
     fn num_states(&self) -> usize {
         self.distance_table().distances.len()
     }
@@ -105,5 +114,52 @@ pub trait CegarAbstraction {
     fn initial_h(&self) -> f64 {
         let table = self.distance_table();
         table.distances[table.initial_state_hash]
+    }
+}
+
+/// The heuristic of one abstraction: the goal distance of the abstract state
+/// a state maps to.
+#[derive(Debug, Clone)]
+pub struct AbstractionHeuristic<A> {
+    name: String,
+    abstraction: A,
+    values: RefCell<ExplicitState>,
+}
+
+impl<A: CegarAbstraction> AbstractionHeuristic<A> {
+    pub fn new(name: impl Into<String>, abstraction: A) -> Self {
+        Self {
+            name: name.into(),
+            abstraction,
+            values: RefCell::default(),
+        }
+    }
+
+    pub fn abstraction(&self) -> &A {
+        &self.abstraction
+    }
+}
+
+impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
+    fn compute_heuristic(
+        &self,
+        eval_state: &EvaluationState<'_, '_>,
+    ) -> Result<f64, EvaluationError> {
+        let mut values = self.values.borrow_mut();
+        eval_state.fill_values(&mut values)?;
+        let state_id = self
+            .abstraction
+            .abstract_state(&values.propositional, &values.numeric)
+            .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
+        Ok(self.abstraction.distance_table().distances[state_id])
+    }
+
+    fn proves_initial_state_optimal(&self) -> bool {
+        let metadata = self.abstraction.metadata();
+        metadata.solved_by_self() && metadata.abstraction_use.permits_initial_optimality_proof()
+    }
+
+    fn heuristic_name(&self) -> &str {
+        &self.name
     }
 }

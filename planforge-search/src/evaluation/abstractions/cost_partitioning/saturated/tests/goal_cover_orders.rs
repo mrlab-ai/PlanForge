@@ -52,7 +52,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let components = abstractions
         .iter()
         .cloned()
-        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .map(AbstractionComponent::from)
         .collect::<Vec<_>>();
     let order = |variant| {
         goal_cover_order(&base_order, &components, &abstraction_h, true, variant).unwrap()
@@ -119,7 +119,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let mixed_components = mixed
         .iter()
         .cloned()
-        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .map(AbstractionComponent::from)
         .collect::<Vec<_>>();
     let prefixed = goal_cover_order(
         &mixed_order,
