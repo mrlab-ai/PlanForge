@@ -12,7 +12,7 @@ use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use rand::{SeedableRng, rngs::SmallRng};
 
-use super::config::CegarConfig;
+use super::config::DomainAbstractionConfig;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
 use super::initial_splits::{
     RefinementState, apply_initial_goal_splits, trivial_domain_mapping_and_sizes,
@@ -46,7 +46,7 @@ pub(super) struct DomainRefinementOutcome {
 /// `task`: the trivial abstraction split on the goal variables, refined until
 /// the abstract plan is concrete or a limit is reached.
 pub(super) fn refine_domain_abstraction(
-    config: &CegarConfig,
+    config: &DomainAbstractionConfig,
     task: &dyn AbstractNumericTask,
 ) -> Result<DomainRefinementOutcome> {
     let semantics = CegarSemantics::new(
@@ -135,17 +135,17 @@ pub(super) fn refine_domain_abstraction(
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionGenerator {
-    config: CegarConfig,
+    config: DomainAbstractionConfig,
 }
 
 impl DomainAbstractionGenerator {
-    pub fn new(config: CegarConfig) -> Result<Self> {
+    pub fn new(config: DomainAbstractionConfig) -> Result<Self> {
         ensure!(config.max_states > 0, "max_states must be > 0");
         ensure!(config.max_iterations > 0, "max_iterations must be > 0");
         Ok(Self { config })
     }
 
-    pub fn config(&self) -> &CegarConfig {
+    pub fn config(&self) -> &DomainAbstractionConfig {
         &self.config
     }
 

@@ -15,8 +15,8 @@ use crate::evaluation::abstractions::common::cegar::{FlawScope, SplitKind, Split
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
@@ -41,7 +41,7 @@ fn parses_astar_domain_abstraction_with_named_options() {
     );
     assert_eq!(h.name, "domain_abstraction");
 
-    let mut cfg = CegarConfig::default();
+    let mut cfg = DomainAbstractionConfig::default();
     cfg.apply_options(&h.args).unwrap();
     assert_eq!(cfg.max_states, 10_000);
     assert!(!cfg.use_wildcard_plans);
@@ -50,12 +50,12 @@ fn parses_astar_domain_abstraction_with_named_options() {
 }
 
 /// The domain collection options of a combinator's single source.
-fn domain_collection_source(spec: &str) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+fn domain_collection_source(spec: &str) -> DomainAbstractionCollectionConfig {
     let h = astar_heuristic(spec);
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "domain_collection");
-    let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    let mut config = DomainAbstractionCollectionConfig::default();
     ApplyOptions::apply_options(&mut config, sources[0].args()).unwrap();
     config
 }
@@ -65,7 +65,7 @@ fn domain_collection_source_error(spec: &str) -> String {
     let h = astar_heuristic(spec);
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     ApplyOptions::apply_options(
-        &mut DomainAbstractionCollectionGeneratorMultipleCegarConfig::default(),
+        &mut DomainAbstractionCollectionConfig::default(),
         sources[0].args(),
     )
     .unwrap_err()
@@ -320,7 +320,7 @@ fn parses_single_domain_abstraction_time_limit() {
     let h = astar_heuristic(
         "astar(domain_abstraction(max_states=1000,max_time=900,flaw_scope=whole_plan))",
     );
-    let mut cfg = CegarConfig::default();
+    let mut cfg = DomainAbstractionConfig::default();
     cfg.apply_options(&h.args).unwrap();
     assert_eq!(cfg.max_states, 1000);
     assert_eq!(cfg.max_time, Some(std::time::Duration::from_secs(900)));
@@ -339,7 +339,7 @@ fn parses_full_task_interleaved_domain_collection() {
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert!(options.is_empty());
-    let mut source = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    let mut source = DomainAbstractionCollectionConfig::default();
     ApplyOptions::apply_options(&mut source, sources[0].args()).unwrap();
 
     assert_eq!(source.collection_strategy, CollectionStrategy::Standard);
@@ -469,7 +469,7 @@ fn parses_full_task_goal_focused_options() {
         "astar(scp(domain_collection(collection_strategy=goal_focused, single_goal_tasks=false), cartesian_collection(collection_strategy=goal_focused, single_goal_tasks=false)))",
     );
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let mut domain = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    let mut domain = DomainAbstractionCollectionConfig::default();
     ApplyOptions::apply_options(&mut domain, sources[0].args()).unwrap();
     assert!(!domain.single_goal_tasks);
     let cartesian = abstraction_config::apply_cartesian_collection_options(
@@ -485,7 +485,7 @@ fn parses_goal_focused_domain_collection_options() {
     let h = astar_heuristic(
         "astar(domain_collection(collection_strategy=goal_focused, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_kind=wanted))",
     );
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    let mut cfg = DomainAbstractionCollectionConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(cfg.variants_per_goal, 10);
@@ -581,7 +581,7 @@ fn domain_source_is_one_domain_abstraction_with_its_own_options() {
     );
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources[0].name(), "domain");
-    let mut config = CegarConfig::default();
+    let mut config = DomainAbstractionConfig::default();
     config.apply_options(sources[0].args()).unwrap();
     assert_eq!(config.max_states, 500);
     assert_eq!(config.flaw_kind, FlawKind::Regression);
@@ -590,7 +590,7 @@ fn domain_source_is_one_domain_abstraction_with_its_own_options() {
 
     let h = astar_heuristic("astar(canonical(domain(max_collection_size=10)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let error = CegarConfig::default()
+    let error = DomainAbstractionConfig::default()
         .apply_options(sources[0].args())
         .unwrap_err();
     assert!(

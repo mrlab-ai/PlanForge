@@ -27,7 +27,7 @@ use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
 
 use super::abstraction::compute_abstraction_size_u128;
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
-use super::config::CegarConfig;
+use super::config::DomainAbstractionConfig;
 use super::generator::DomainAbstractionGenerator;
 use crate::resource_limits;
 use planforge_sas::utils::float_tolerance;
@@ -36,7 +36,7 @@ use planforge_sas::utils::interval::Interval;
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
-pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+pub struct DomainAbstractionCollectionConfig {
     pub max_states: usize,
     pub max_collection_size: usize,
     pub max_time: f64,
@@ -85,7 +85,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub interleave_split_directions: bool,
     /// The fixed split kind; concrete splits when unset.
     pub split_kind: Option<SplitKind>,
-    /// Pass-through for `CegarConfig::compute_source_sets`. Default
+    /// Pass-through for `DomainAbstractionConfig::compute_source_sets`. Default
     /// `true`. Hierarchical combinators disable it during CEGAR and construct
     /// operator regions after collection generation when region SCP needs them.
     /// Set internally by heuristic construction; not exposed as a CLI option.
@@ -111,7 +111,7 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     pub max_refined_comparison_vars_per_abstraction: Option<usize>,
 }
 
-impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+impl Default for DomainAbstractionCollectionConfig {
     fn default() -> Self {
         Self {
             max_states: 1_000_000,
@@ -141,7 +141,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     }
 }
 
-impl DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+impl DomainAbstractionCollectionConfig {
     /// Bound both collection-level and per-abstraction construction by the
     /// time remaining to the caller.
     pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
@@ -183,7 +183,7 @@ fn is_generation_deadline_error(error: &anyhow::Error) -> bool {
     crate::resource_limits::is_deadline_exceeded(error)
 }
 
-impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+impl fmt::Display for DomainAbstractionCollectionConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -241,16 +241,16 @@ struct MemberVariableChoice {
 }
 
 #[derive(Debug, Clone)]
-pub struct DomainAbstractionCollectionGeneratorMultipleCegar {
-    config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+pub struct DomainAbstractionCollectionGenerator {
+    config: DomainAbstractionCollectionConfig,
 }
 
-impl DomainAbstractionCollectionGeneratorMultipleCegar {
-    pub fn new(config: DomainAbstractionCollectionGeneratorMultipleCegarConfig) -> Self {
+impl DomainAbstractionCollectionGenerator {
+    pub fn new(config: DomainAbstractionCollectionConfig) -> Self {
         Self { config }
     }
 
-    pub fn config(&self) -> &DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    pub fn config(&self) -> &DomainAbstractionCollectionConfig {
         &self.config
     }
 
@@ -325,15 +325,15 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         variable_choice: MemberVariableChoice,
         random_seed: u64,
         split_kind: Option<SplitKind>,
-    ) -> CegarConfig {
+    ) -> DomainAbstractionConfig {
         let MemberVariableChoice {
             init_split_var_ids,
             blacklisted_prop_var_ids,
             blacklisted_numeric_var_ids,
         } = variable_choice;
-        CegarConfig {
+        DomainAbstractionConfig {
             max_states,
-            max_iterations: CegarConfig::default().max_iterations,
+            max_iterations: DomainAbstractionConfig::default().max_iterations,
             max_time: if remaining_time.is_finite() {
                 Some(Duration::from_secs_f64(remaining_time.max(0.0)))
             } else {
@@ -358,10 +358,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
         }
     }
 
-    pub fn generate_collection(
-        &self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<Vec<DomainAbstraction>> {
+    pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Vec<DomainAbstraction>> {
         self.validate_supported_options()?;
         let abstractions = match self.config.collection_strategy {
             CollectionStrategy::Standard => self.generate_standard_collection(task)?,
@@ -656,7 +653,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
 /// Builds the members of a goal-focused domain collection.
 struct GoalFocusedDomainBackend<'config> {
-    config: &'config DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    config: &'config DomainAbstractionCollectionConfig,
     member_max_time: Option<Duration>,
 }
 
@@ -665,10 +662,14 @@ impl GoalFocusedDomainBackend<'_> {
     /// what is left of the collection's budgets and specialised for the
     /// variant. Members start from the trivial abstraction: no initial splits
     /// and no blacklisted variables.
-    fn member_cegar_config(&self, variant: &GoalVariant, budget: MemberBudget) -> CegarConfig {
-        CegarConfig {
+    fn member_cegar_config(
+        &self,
+        variant: &GoalVariant,
+        budget: MemberBudget,
+    ) -> DomainAbstractionConfig {
+        DomainAbstractionConfig {
             max_states: self.config.max_states.min(budget.remaining_states),
-            max_iterations: CegarConfig::default().max_iterations,
+            max_iterations: DomainAbstractionConfig::default().max_iterations,
             // Whichever of the two budgets exist bind; the tighter one wins.
             max_time: self
                 .member_max_time

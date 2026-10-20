@@ -143,7 +143,7 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let config = CegarConfig {
+    let config = DomainAbstractionConfig {
         use_wildcard_plans: false,
         max_iterations: 2,
         random_seed: Some(1),
@@ -161,7 +161,7 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
 
 #[test]
 fn cegar_default_config_matches_numeric_fd_defaults() {
-    let config = CegarConfig::default();
+    let config = DomainAbstractionConfig::default();
 
     assert_eq!(config.max_states, 100_000);
     assert_eq!(config.max_iterations, usize::MAX);
@@ -196,7 +196,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
     });
 
     let outcome = refine_domain_abstraction(
-        &CegarConfig {
+        &DomainAbstractionConfig {
             max_states: 1,
             ..Default::default()
         },
@@ -232,7 +232,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let mut config = CegarConfig::default();
+    let mut config = DomainAbstractionConfig::default();
     config
         .blacklisted_prop_var_ids
         .insert(VariableIndex::from_usize(0));
@@ -282,7 +282,7 @@ fn init_value_split_separates_the_initial_value() {
 #[test]
 fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
     let task = one_dimensional_sailing_like_task();
-    let config = CegarConfig {
+    let config = DomainAbstractionConfig {
         flaw_kind: FlawKind::Progression,
         split_kind: SplitKind::Wanted,
         split_selection: SplitSelection::MinGrowth,
@@ -326,7 +326,7 @@ fn backward_splits_build_goal_side_partitions() {
 
     let task = one_dimensional_sailing_like_task();
     let backward = refine_domain_abstraction(
-        &CegarConfig {
+        &DomainAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             split_kind: SplitKind::Wanted,
             split_selection: SplitSelection::MinGrowth,
@@ -338,7 +338,7 @@ fn backward_splits_build_goal_side_partitions() {
     )
     .expect("backward-split CEGAR should build goal-side partitions");
     let progression = refine_domain_abstraction(
-        &CegarConfig {
+        &DomainAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             split_selection: SplitSelection::MinGrowth,
             max_iterations: 5,
@@ -429,7 +429,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
 
     for initial in [0.0, 7.0, 15.0] {
         let task = counter_to_twenty(initial);
-        let abstraction = DomainAbstractionGenerator::new(CegarConfig {
+        let abstraction = DomainAbstractionGenerator::new(DomainAbstractionConfig {
             max_states: 10_000,
             flaw_kind: FlawKind::Progression,
             init_split_var_ids: Some(HashSet::new()),
@@ -490,7 +490,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
     ] {
         for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
             for split_kind in [SplitKind::Concrete, SplitKind::Wanted] {
-                let abstraction = DomainAbstractionGenerator::new(CegarConfig {
+                let abstraction = DomainAbstractionGenerator::new(DomainAbstractionConfig {
                     max_states: 1_000,
                     flaw_kind: FlawKind::Regression,
                     flaw_scope,

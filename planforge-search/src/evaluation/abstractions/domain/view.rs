@@ -14,7 +14,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator};
-use super::config::CegarConfig;
+use super::config::DomainAbstractionConfig;
 use super::debug_dump::debug_print_abstraction_stats;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
@@ -190,7 +190,7 @@ impl<'a> DomainRefinement<'a> {
         task: &'a dyn AbstractNumericTask,
         factory: DomainAbstractionFactory,
         limits: RefinementLimits<'a>,
-        config: &CegarConfig,
+        config: &DomainAbstractionConfig,
     ) -> Self {
         Self {
             task,

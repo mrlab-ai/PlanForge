@@ -16,8 +16,8 @@ use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
 #[cfg(feature = "cplex")]
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegar;
-use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
@@ -530,7 +530,7 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             info!("Building domain abstraction (CEGAR)...");
-            let mut cfg = CegarConfig::default();
+            let mut cfg = DomainAbstractionConfig::default();
             cfg.apply_options(&spec.args)?;
             // Single DA reads only the distance table; operator regions are
             // SCP-specific. Skip the per-concrete-op CartesianSet cost.
@@ -578,13 +578,13 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-                use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
-                let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+                use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionConfig;
+                let mut cfg = DomainAbstractionCollectionConfig::default();
                 ApplyOptions::apply_options(&mut cfg, &spec.args)?;
                 cfg.set_compute_source_sets(false);
-                let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(cfg);
+                let generator = DomainAbstractionCollectionGenerator::new(cfg);
                 info!("Building posthoc_optimization domain abstractions (CEGAR)...");
-                let abstractions = generator.generate_collection(task).map_err(|e| {
+                let abstractions = generator.generate(task).map_err(|e| {
                     format!("failed to build posthoc_optimization domain abstractions: {e:#}")
                 })?;
                 let h = PostHocOptimizationHeuristic::new(None, task, abstractions).map_err(|e| {
@@ -676,7 +676,7 @@ heuristic_registry! {
                         .into(),
                 );
             }
-            let mut da_config = CegarConfig::default();
+            let mut da_config = DomainAbstractionConfig::default();
             da_config.apply_options(&da_args)?;
             da_config.compute_source_sets = false;
             info!("Building recorded domain abstraction for pot_da_ocp...");

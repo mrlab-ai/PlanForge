@@ -18,7 +18,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigValue};
-use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::{EvaluationState, Heuristic};
 
@@ -519,11 +519,11 @@ fn ocp_retains_stuttering_action_constraints() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
-    let cegar_config = CegarConfig {
+    let cegar_config = DomainAbstractionConfig {
         max_states: 1,
         max_iterations: 1,
         compute_source_sets: false,
-        ..CegarConfig::default()
+        ..DomainAbstractionConfig::default()
     };
     let generator = DomainAbstractionGenerator::new(cegar_config).unwrap();
     let abstraction = generator.generate(&*task).unwrap();

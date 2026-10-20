@@ -11,10 +11,9 @@ use crate::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
 };
-use crate::evaluation::abstractions::domain::config::CegarConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -412,7 +411,7 @@ pub(crate) fn build_components<'task>(
         let before = components.len();
         match source.name() {
             "domain" => {
-                let mut config = CegarConfig::default();
+                let mut config = DomainAbstractionConfig::default();
                 config.apply_options(source.args())?;
                 cap_duration(&mut config.max_time, remaining);
                 config.compute_source_sets = component_use.needs_source_sets();
@@ -431,7 +430,7 @@ pub(crate) fn build_components<'task>(
                 ));
             }
             "domain_collection" => {
-                let mut config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+                let mut config = DomainAbstractionCollectionConfig::default();
                 config.apply_options(source.args())?;
                 if let Some(remaining) = remaining {
                     config.cap_construction_time(remaining.as_secs_f64());
@@ -440,10 +439,10 @@ pub(crate) fn build_components<'task>(
                 // canonical, label SCP, and region SCP receive the same generation budget.
                 config.set_compute_source_sets(false);
                 info!("Building domain abstraction collection source {source_index}...");
-                let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
+                let mut abstractions = DomainAbstractionCollectionGenerator::new(
                     config,
                 )
-                .generate_collection(task)
+                .generate(task)
                 .map_err(|error| {
                     HeuristicBuildError::from_source(
                         error,

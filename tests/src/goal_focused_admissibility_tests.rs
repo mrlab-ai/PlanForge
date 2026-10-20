@@ -24,8 +24,7 @@ use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
 };
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
@@ -100,22 +99,20 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
 }
 
 fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
-    DomainAbstractionCollectionGeneratorMultipleCegar::new(
-        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            max_states: 300,
-            max_collection_size: 3_000,
-            max_time: f64::INFINITY,
-            total_max_time: f64::INFINITY,
-            flaw_kind: FlawKind::Progression,
-            flaw_scope: FlawScope::WholePlan,
-            collection_strategy: CollectionStrategy::GoalFocused,
-            variants_per_goal: 4,
-            progress_states: true,
-            random_seed: Some(1),
-            ..Default::default()
-        },
-    )
-    .generate_collection(task)
+    DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
+        max_states: 300,
+        max_collection_size: 3_000,
+        max_time: f64::INFINITY,
+        total_max_time: f64::INFINITY,
+        flaw_kind: FlawKind::Progression,
+        flaw_scope: FlawScope::WholePlan,
+        collection_strategy: CollectionStrategy::GoalFocused,
+        variants_per_goal: 4,
+        progress_states: true,
+        random_seed: Some(1),
+        ..Default::default()
+    })
+    .generate(task)
     .expect("the goal-focused domain collection must build")
 }
 

@@ -17,7 +17,7 @@ use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocus
 
 #[test]
 fn standard_collection_defaults() {
-    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
+    let config = DomainAbstractionCollectionConfig::default();
     assert_eq!(config.collection_strategy, CollectionStrategy::Standard);
     assert_eq!(config.max_states, 1_000_000);
     assert_eq!(config.max_collection_size, 10_000_000);
@@ -68,7 +68,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
         CollectionStrategy::Standard,
         CollectionStrategy::GoalFocused,
     ] {
-        let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        let config = DomainAbstractionCollectionConfig {
             max_states: 10,
             max_collection_size: 100,
             max_time: 0.0,
@@ -77,8 +77,8 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             collection_strategy,
             ..Default::default()
         };
-        let abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
-            .generate_collection(&task)
+        let abstractions = DomainAbstractionCollectionGenerator::new(config)
+            .generate(&task)
             .unwrap();
 
         assert_eq!(abstractions.len(), 1, "{collection_strategy}");
@@ -93,7 +93,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
 fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
     // Without the stop, every restart rebuilds the same solved abstraction
     // until the collection time limit.
-    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let config = DomainAbstractionCollectionConfig {
         max_states: 1_000,
         max_collection_size: 100_000,
         max_time: 600.0,
@@ -103,8 +103,8 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
         ..Default::default()
     };
     let start = Instant::now();
-    let abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
-        .generate_collection(&two_counter_task())
+    let abstractions = DomainAbstractionCollectionGenerator::new(config)
+        .generate(&two_counter_task())
         .unwrap();
 
     assert!(start.elapsed() < Duration::from_secs(60));
@@ -114,14 +114,14 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 
 #[test]
 fn standard_can_interleave_split_directions_on_the_full_task() {
-    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let config = DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::Standard,
         flaw_kind: FlawKind::Progression,
         flaw_scope: FlawScope::WholePlan,
         interleave_split_directions: true,
         ..Default::default()
     };
-    let generator = DomainAbstractionCollectionGeneratorMultipleCegar::new(config);
+    let generator = DomainAbstractionCollectionGenerator::new(config);
 
     assert_eq!(
         generator.split_kind_for_iteration(1),
@@ -137,8 +137,8 @@ fn standard_can_interleave_split_directions_on_the_full_task() {
     );
 }
 
-fn validation_error(config: DomainAbstractionCollectionGeneratorMultipleCegarConfig) -> String {
-    DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+fn validation_error(config: DomainAbstractionCollectionConfig) -> String {
+    DomainAbstractionCollectionGenerator::new(config)
         .validate_supported_options()
         .unwrap_err()
         .to_string()
@@ -146,7 +146,7 @@ fn validation_error(config: DomainAbstractionCollectionGeneratorMultipleCegarCon
 
 #[test]
 fn interleaving_rejects_ambiguous_direction_configuration() {
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         interleave_split_directions: true,
         split_kind: Some(SplitKind::Concrete),
         ..Default::default()
@@ -157,7 +157,7 @@ fn interleaving_rejects_ambiguous_direction_configuration() {
 
 #[test]
 fn interleaving_rejects_goal_focused_collections() {
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::GoalFocused,
         interleave_split_directions: true,
         ..Default::default()
@@ -168,30 +168,30 @@ fn interleaving_rejects_goal_focused_collections() {
 
 #[test]
 fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
-    let goal_focused = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let goal_focused = DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::GoalFocused,
         ..Default::default()
     };
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         split_kind: Some(SplitKind::Wanted),
         ..goal_focused.clone()
     });
     assert!(error.contains("split kind per variant"), "{error}");
-    let without_alternation = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let without_alternation = DomainAbstractionCollectionConfig {
         split_kind: Some(SplitKind::Wanted),
         alternate_split_kinds: false,
         single_goal_tasks: true,
         ..goal_focused.clone()
     };
     assert!(
-        DomainAbstractionCollectionGeneratorMultipleCegar::new(without_alternation)
+        DomainAbstractionCollectionGenerator::new(without_alternation)
             .validate_supported_options()
             .is_ok(),
         "without alternation the configured split kind applies to every variant"
     );
 
     for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
-        let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        let error = validation_error(DomainAbstractionCollectionConfig {
             flaw_kind: FlawKind::Regression,
             flaw_scope,
             ..goal_focused.clone()
@@ -202,7 +202,7 @@ fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
         );
     }
 
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         variants_per_goal: 0,
         ..goal_focused
     });
@@ -211,7 +211,7 @@ fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
 
 #[test]
 fn standard_rejects_goal_focused_options() {
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         variants_per_goal: 2,
         ..Default::default()
     });
@@ -220,7 +220,7 @@ fn standard_rejects_goal_focused_options() {
         "{error}"
     );
 
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         progress_states: true,
         ..Default::default()
     });
@@ -229,7 +229,7 @@ fn standard_rejects_goal_focused_options() {
         "{error}"
     );
 
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         alternate_split_kinds: false,
         single_goal_tasks: true,
         ..Default::default()
@@ -242,7 +242,7 @@ fn standard_rejects_goal_focused_options() {
 
 #[test]
 fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
-    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let config = DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::GoalFocused,
         flaw_kind: FlawKind::Progression,
         split_selection: SplitSelection::MinGrowth,
@@ -412,8 +412,8 @@ fn one_counter_task(first: f64, second: f64, upper_second: bool) -> NumericRootT
 fn domain_goal_focused_config(
     variants_per_goal: usize,
     progress_states: bool,
-) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+) -> DomainAbstractionCollectionConfig {
+    DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::GoalFocused,
         flaw_kind: FlawKind::Progression,
         max_states: 64,
@@ -433,10 +433,10 @@ type MemberSummary = (Option<GoalFocusedMember>, f64, Option<Vec<OperatorIndex>>
 
 fn domain_members(
     task: &NumericRootTask,
-    config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    config: DomainAbstractionCollectionConfig,
 ) -> Vec<MemberSummary> {
-    DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
-        .generate_collection(task)
+    DomainAbstractionCollectionGenerator::new(config)
+        .generate(task)
         .unwrap()
         .into_iter()
         .map(|abstraction| {
@@ -579,7 +579,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
     let task = two_counter_task();
     let domain = domain_members(
         &task,
-        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        DomainAbstractionCollectionConfig {
             alternate_split_kinds: false,
             single_goal_tasks: true,
             split_kind: Some(SplitKind::Wanted),
@@ -642,13 +642,11 @@ fn cartesian_collections_reject_disabled_alternation_without_goal_focused_strate
 #[test]
 fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
     let task = two_counter_task();
-    let domain = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            single_goal_tasks: false,
-            ..domain_goal_focused_config(2, false)
-        },
-    )
-    .generate_collection(&task)
+    let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
+        single_goal_tasks: false,
+        ..domain_goal_focused_config(2, false)
+    })
+    .generate(&task)
     .unwrap();
     let cartesian =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
@@ -720,7 +718,7 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
 
 #[test]
 fn full_task_members_are_rejected_where_they_are_ill_defined() {
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         single_goal_tasks: false,
         ..Default::default()
     });
@@ -728,7 +726,7 @@ fn full_task_members_are_rejected_where_they_are_ill_defined() {
         error.contains("collection_strategy=goal_focused"),
         "{error}"
     );
-    let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+    let error = validation_error(DomainAbstractionCollectionConfig {
         single_goal_tasks: false,
         ..domain_goal_focused_config(2, true)
     });

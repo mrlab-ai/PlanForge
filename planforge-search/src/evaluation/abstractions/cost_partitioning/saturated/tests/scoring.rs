@@ -6,7 +6,7 @@ fn interval_stolen_costs_accept_transition_free_components() {
     let mut cartesian = cartesian_abstraction(&task);
     cartesian.transition_system.transitions.clear();
     cartesian.abstract_source_sets.clear();
-    let domain_config = CegarConfig {
+    let domain_config = DomainAbstractionConfig {
         max_states: 16,
         compute_source_sets: true,
         ..Default::default()

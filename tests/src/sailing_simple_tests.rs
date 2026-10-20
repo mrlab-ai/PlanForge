@@ -62,10 +62,9 @@ use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
 };
-use planforge_search::evaluation::abstractions::domain::config::CegarConfig;
+use planforge_search::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use planforge_search::evaluation::evaluator::EvaluationState;
@@ -245,7 +244,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     let (task, _scratch) = sailing_task("prob_1b1p_x");
     let optimum = optimum_of("prob_1b1p_x");
 
-    let domain_abstraction = DomainAbstractionGenerator::new(CegarConfig {
+    let domain_abstraction = DomainAbstractionGenerator::new(DomainAbstractionConfig {
         max_iterations: usize::MAX,
         random_seed: Some(1),
         compute_source_sets: false,
@@ -294,10 +293,8 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 /// every member's CEGAR seed is derived from the configured seed, the goal, and
 /// the variant -- so the collection, and every value asserted below, is a
 /// function of the instance and the seed alone.
-fn goal_focused_collection_config(
-    seed: u64,
-) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfig {
+    DomainAbstractionCollectionConfig {
         max_states: 1_000,
         max_collection_size: 10_000,
         max_time: f64::INFINITY,
@@ -317,17 +314,16 @@ fn goal_focused_collection_config(
 
 fn scp_initial_h_with_config(
     instance: &str,
-    collection_config: DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    collection_config: DomainAbstractionCollectionConfig,
 ) -> f64 {
     let (task, _scratch) = sailing_task(instance);
     let task = build_restricted_task(&task)
         .expect("sailing-simple restricted task construction must not fail")
         .expect("sailing-simple instances have promotable derived roots")
         .into_task();
-    let generator =
-        DomainAbstractionCollectionGeneratorMultipleCegar::new(collection_config.clone());
+    let generator = DomainAbstractionCollectionGenerator::new(collection_config.clone());
     let abstractions = generator
-        .generate_collection(&task)
+        .generate(&task)
         .expect("scp domain abstractions should build");
     scp_initial_h_for_collection(&task, abstractions)
 }
@@ -374,10 +370,9 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         .expect("sailing-simple restricted task construction must not fail")
         .expect("sailing-simple instances have promotable derived roots")
         .into_task();
-    let generator =
-        DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
+    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1));
     let abstractions = generator
-        .generate_collection(&task)
+        .generate(&task)
         .expect("scp domain abstractions should build");
     let config = ScpConfig {
         max_time: 100.0,
@@ -450,10 +445,9 @@ fn sailing_simple_assignment_gap() {
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
     let (task, _scratch) = sailing_task("prob_2b1p");
-    let generator =
-        DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
+    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1));
     let abstractions = generator
-        .generate_collection(&task)
+        .generate(&task)
         .expect("goal-focused collection should build on prob_2b1p");
 
     let saved_p0_group_counts = abstractions
@@ -540,10 +534,9 @@ fn sailing_simple_scp_solves_rather_than_reporting_dead_ends() {
 #[test]
 fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions() {
     let (task, _scratch) = sailing_task("prob_1b4p_axes");
-    let generator =
-        DomainAbstractionCollectionGeneratorMultipleCegar::new(goal_focused_collection_config(1));
+    let generator = DomainAbstractionCollectionGenerator::new(goal_focused_collection_config(1));
     let abstractions = generator
-        .generate_collection(&task)
+        .generate(&task)
         .expect("goal-focused collection should build on prob_1b4p_axes");
 
     for goal_id in 0..task.get_num_goals() {

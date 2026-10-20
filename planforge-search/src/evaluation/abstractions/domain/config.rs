@@ -11,7 +11,7 @@ use crate::evaluation::abstractions::common::cegar::{
 };
 
 #[derive(Debug, Clone)]
-pub struct CegarConfig {
+pub struct DomainAbstractionConfig {
     pub max_states: usize,
     pub max_iterations: usize,
     pub max_time: Option<Duration>,
@@ -42,7 +42,7 @@ pub struct CegarConfig {
     /// candidates remain, the CEGAR run terminates and the collection
     /// generator starts the next iteration with a different init seed.
     /// Exists to preserve canonical-DA additive-subset diversity (see
-    /// `DomainAbstractionCollectionGeneratorMultipleCegarConfig::max_refined_comparison_vars_per_abstraction`
+    /// `DomainAbstractionCollectionConfig::max_refined_comparison_vars_per_abstraction`
     /// for the longer rationale).
     pub max_refined_comparison_vars_per_abstraction: Option<usize>,
     /// Which of the tied best splits to take: `split_selection` scores the
@@ -52,7 +52,7 @@ pub struct CegarConfig {
     pub flaw_selection_rank: Option<usize>,
 }
 
-impl Default for CegarConfig {
+impl Default for DomainAbstractionConfig {
     fn default() -> Self {
         Self {
             max_states: 100_000,
@@ -79,7 +79,7 @@ impl Default for CegarConfig {
 /// `domain_abstraction(...)` and friends expose a curated subset of the fields:
 /// the rest are internal runtime flags the collection generators set
 /// themselves, so this is written by hand rather than derived.
-impl crate::config::ApplyOptions for CegarConfig {
+impl crate::config::ApplyOptions for DomainAbstractionConfig {
     fn apply_options(&mut self, args: &[crate::config::ConfigArg]) -> Result<(), String> {
         use crate::config::{ConfigValue, FromOptionValue, for_each_option};
 

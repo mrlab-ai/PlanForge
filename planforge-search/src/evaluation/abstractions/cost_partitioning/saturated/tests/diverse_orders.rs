@@ -37,7 +37,7 @@ fn required_orders_are_retained_beyond_max_orders() {
 #[test]
 fn diverse_orders_support_mixed_abstraction_representations() {
     let task = std::sync::Arc::new(independent_goals_task());
-    let domain_config = CegarConfig {
+    let domain_config = DomainAbstractionConfig {
         max_states: 16,
         combine_labels: false,
         compute_source_sets: true,

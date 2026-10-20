@@ -27,8 +27,7 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use planforge_search::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionGeneratorMultipleCegar,
-    DomainAbstractionCollectionGeneratorMultipleCegarConfig,
+    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
 };
 use planforge_search::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use planforge_search::evaluation::abstractions::pdb::pdb_heuristic::GreedyNumericPdbHeuristic;
@@ -404,17 +403,15 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
         );
     };
 
-    let collection = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-        DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-            max_states: 10_000,
-            max_collection_size: 10_000,
-            stagnation_limit: 0.0,
-            enable_blacklist_on_stagnation: false,
-            compute_source_sets: false,
-            ..Default::default()
-        },
-    )
-    .generate_collection(&task);
+    let collection = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
+        max_states: 10_000,
+        max_collection_size: 10_000,
+        stagnation_limit: 0.0,
+        enable_blacklist_on_stagnation: false,
+        compute_source_sets: false,
+        ..Default::default()
+    })
+    .generate(&task);
     assert_refusal(
         "the domain-abstraction collection",
         format!(

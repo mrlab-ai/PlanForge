@@ -12,7 +12,7 @@ use rand::rngs::SmallRng;
 
 use super::abstract_operators::DomainMapping;
 use super::abstraction::compute_abstraction_size_u128;
-use super::config::CegarConfig;
+use super::config::DomainAbstractionConfig;
 use super::partitions::NumericPartitions;
 
 use crate::evaluation::abstractions::common::coordinates::{
@@ -71,7 +71,7 @@ pub(super) fn initial_split_mapping(
 /// split at their initial values, so an operator can change the condition.
 pub(super) fn apply_initial_goal_splits(
     task: &dyn AbstractNumericTask,
-    config: &CegarConfig,
+    config: &DomainAbstractionConfig,
     numeric_integer_lattice: &[bool],
     rng: &mut SmallRng,
     state: RefinementState<'_>,
