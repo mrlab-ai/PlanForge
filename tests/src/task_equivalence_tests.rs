@@ -34,6 +34,7 @@ const PDDL_CORPORA: &[&str] = &[
     "action-costs",
     "adl",
     "derived-predicates",
+    "lmcut-bounds",
     "numeric-conditions",
     "numeric-pddl-files",
     "strips-pddl-files",

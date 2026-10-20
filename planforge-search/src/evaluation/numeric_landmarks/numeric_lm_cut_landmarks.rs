@@ -476,6 +476,12 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.build_comparison_fact_condition_ids();
         self.add_linear_conditions();
         self.prepare_goal_preconditions();
+        // Operator costs read the bounds of the variables before each operator.
+        if self.use_bounds {
+            let initial_numeric_values = self.task.get_initial_numeric_state_values();
+            self.numeric_bound
+                .calculate_bounds(initial_numeric_values, self.config.bound_iterations);
+        }
         self.build_relaxed_operators();
         self.build_goal_operator();
         self.build_original_to_relaxed_index();
@@ -505,11 +511,6 @@ impl<'task> LandmarkCutLandmarks<'task> {
         self.incremental_original_operator_marks
             .resize(self.original_to_relaxed_operators.len(), 0);
         self.cut_marks.resize(self.relaxed_operators.len(), 0);
-        if self.use_bounds {
-            let initial_numeric_values = self.task.get_initial_numeric_state_values();
-            self.numeric_bound
-                .calculate_bounds(initial_numeric_values, self.config.bound_iterations);
-        }
         self.initialized = true;
     }
 

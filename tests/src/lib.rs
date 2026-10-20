@@ -18,6 +18,8 @@ mod goal_census;
 #[cfg(test)]
 mod goal_focused_admissibility_tests;
 #[cfg(test)]
+mod lmcut_bounds_tests;
+#[cfg(test)]
 mod numeric_condition_tests;
 #[cfg(test)]
 mod numeric_corpus_tests;
