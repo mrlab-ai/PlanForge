@@ -4,7 +4,9 @@ use std::path::Path;
 use planforge_cplex::{
     Constraint, Model, ObjectiveSense, SolveStatus, Variable, assert_unrestricted_license,
 };
-use planforge_sas::numeric_task::AbstractNumericTask;
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, VariableIndex,
+};
 use planforge_sas::state_registry::{ConcreteState, ConcreteStateView, StateRegistry};
 
 use super::{NumericPotentialConfig, NumericPotentialFunction, PotentialTask};
@@ -30,7 +32,7 @@ pub(super) struct PotentialSystem {
     pub(super) constant_column: Option<usize>,
     pub(super) weight_columns: Vec<usize>,
     pub(super) operator_rows: Vec<Option<usize>>,
-    pub(super) conditioned_goal: Option<(usize, usize)>,
+    pub(super) conditioned_goal: Option<(VariableIndex, ExplicitValueIndex)>,
 }
 
 #[derive(Debug)]
@@ -40,8 +42,8 @@ pub struct NumericPotentialOptimizer {
     model: Model,
     max_potential: f64,
     ignore_numeric_variables: bool,
-    prop_scratch: Vec<usize>,
-    numeric_scratch: Vec<f64>,
+    prop_scratch: Vec<ExplicitValueIndex>,
+    numeric_scratch: Vec<NumericValue>,
 }
 
 impl NumericPotentialOptimizer {
@@ -140,13 +142,15 @@ impl NumericPotentialOptimizer {
         state.fill_propositional(&mut self.prop_scratch);
         let mut goals = vec![None; self.task.domain_sizes.len()];
         for goal in &self.task.propositional_goals {
-            goals[goal.var()] = Some(goal.value());
+            goals[goal.var()] = Some(goal.value_index());
         }
         for (var_id, &domain_size) in self.task.domain_sizes.iter().enumerate() {
             if self.task.derived_propositional[var_id] {
                 continue;
             }
+            let var = VariableIndex::from_usize(var_id);
             for value in 0..domain_size {
+                let value_id = ExplicitValueIndex::from_usize(value);
                 if goals[var_id].is_none()
                     && self.task.reachable_facts.as_ref().is_some_and(|facts| {
                         !facts
@@ -160,13 +164,13 @@ impl NumericPotentialOptimizer {
                 }
                 let mut coefficients = BTreeMap::new();
                 for (operator_id, operator) in self.task.operators.iter().enumerate() {
-                    if operator.effects.contains(&(var_id, value)) {
+                    if operator.effects.contains(&(var, value_id)) {
                         *coefficients.entry(operator_id).or_insert(0.0) += 1.0;
                     }
                     if operator
                         .effects
                         .iter()
-                        .any(|(effect_var, _)| *effect_var == var_id)
+                        .any(|(effect_var, _)| *effect_var == var)
                         && operator
                             .preconditions
                             .iter()
@@ -179,8 +183,8 @@ impl NumericPotentialOptimizer {
                 if coefficients.is_empty() {
                     continue;
                 }
-                let lower = f64::from(goals[var_id] == Some(value))
-                    - f64::from(self.prop_scratch[var_id] == value);
+                let lower = f64::from(goals[var_id] == Some(value_id))
+                    - f64::from(self.prop_scratch[var_id] == value_id);
                 constraints.push(Constraint::new(lower, infinity, coefficients));
             }
         }
@@ -319,7 +323,7 @@ impl NumericPotentialOptimizer {
         self.solve_current_objective()
     }
 
-    pub fn conditionable_goals(&self) -> Vec<(usize, usize)> {
+    pub fn conditionable_goals(&self) -> Vec<(VariableIndex, ExplicitValueIndex)> {
         if self.ignore_numeric_variables || self.task.features.is_empty() {
             return Vec::new();
         }
@@ -330,13 +334,17 @@ impl NumericPotentialOptimizer {
                 self.task
                     .operators
                     .iter()
-                    .any(|operator| operator.effects.contains(&(goal.var(), goal.value())))
-                    .then_some((goal.var(), goal.value()))
+                    .any(|operator| {
+                        operator
+                            .effects
+                            .contains(&(goal.var_index(), goal.value_index()))
+                    })
+                    .then_some((goal.var_index(), goal.value_index()))
             })
             .collect()
     }
 
-    pub fn goal_achievers(&self, var: usize, value: usize) -> Vec<usize> {
+    pub fn goal_achievers(&self, var: VariableIndex, value: ExplicitValueIndex) -> Vec<usize> {
         let mut achievers: Vec<usize> = Vec::new();
         'operators: for (operator_id, operator) in self.task.operators.iter().enumerate() {
             if !operator.reachable || !operator.effects.contains(&(var, value)) {
@@ -359,8 +367,8 @@ impl NumericPotentialOptimizer {
 
     pub fn optimize_for_conditioned_goal(
         &mut self,
-        var: usize,
-        value: usize,
+        var: VariableIndex,
+        value: ExplicitValueIndex,
         achiever: usize,
         state: ConcreteStateView<'_>,
     ) -> Result<OptimizationOutcome, String> {
@@ -442,7 +450,7 @@ impl NumericPotentialOptimizer {
         let mut objective = vec![0.0; system.variables.len()];
         state.fill_propositional(&mut self.prop_scratch);
         for (var_id, &value) in self.prop_scratch.iter().enumerate() {
-            objective[system.fact_columns[var_id][value]] += 1.0;
+            objective[system.fact_columns[var_id][value.index()]] += 1.0;
         }
         if let Some(column) = system.constant_column {
             objective[column] = 1.0;
@@ -475,7 +483,7 @@ impl NumericPotentialOptimizer {
         state.fill_propositional(&mut self.prop_scratch);
         if !self.system.fact_columns.is_empty() {
             for (var_id, &value) in self.prop_scratch.iter().enumerate() {
-                objective[self.system.fact_columns[var_id][value]] += 1.0;
+                objective[self.system.fact_columns[var_id][value.index()]] += 1.0;
             }
         }
         if let Some(column) = self.system.constant_column {
@@ -491,7 +499,7 @@ impl NumericPotentialOptimizer {
     fn extract_function(
         &self,
         solution: &[f64],
-        conditioned_goal: Option<(usize, usize)>,
+        conditioned_goal: Option<(VariableIndex, ExplicitValueIndex)>,
     ) -> NumericPotentialFunction {
         extract_function_for_system(&self.task, &self.system, solution, conditioned_goal)
     }
@@ -501,7 +509,7 @@ fn extract_function_for_system(
     task: &PotentialTask,
     system: &PotentialSystem,
     solution: &[f64],
-    conditioned_goal: Option<(usize, usize)>,
+    conditioned_goal: Option<(VariableIndex, ExplicitValueIndex)>,
 ) -> NumericPotentialFunction {
     assert_eq!(solution.len(), system.variables.len());
     let fact_potentials = if system.fact_columns.is_empty() {
@@ -616,19 +624,22 @@ fn build_plain_system(
         }
         let mut pre_by_var = BTreeMap::new();
         for fact in &operator.preconditions {
-            pre_by_var.insert(fact.var(), fact.value());
+            pre_by_var.insert(fact.var_index(), fact.value());
         }
         let mut coefficients = BTreeMap::<usize, f64>::new();
-        for &(var_id, post) in &operator.effects {
+        for &(var, post) in &operator.effects {
+            let var_id = var.index();
             if task.derived_propositional[var_id] {
                 continue;
             }
             let pre = pre_by_var
-                .get(&var_id)
+                .get(&var)
                 .copied()
                 .unwrap_or(task.domain_sizes[var_id]);
             *coefficients.entry(fact_columns[var_id][pre]).or_default() += 1.0;
-            *coefficients.entry(fact_columns[var_id][post]).or_default() -= 1.0;
+            *coefficients
+                .entry(fact_columns[var_id][post.index()])
+                .or_default() -= 1.0;
         }
         for &(feature_id, delta) in &operator.numeric_deltas {
             *coefficients.entry(weight_columns[feature_id]).or_default() -= delta;
@@ -738,8 +749,8 @@ fn box_variable(variable: Variable, box_bound: f64) -> Variable {
 fn build_conditioned_system(
     task: &PotentialTask,
     _max_potential: f64,
-    goal_var: usize,
-    goal_value: usize,
+    goal_var: VariableIndex,
+    goal_value: ExplicitValueIndex,
     achiever_id: usize,
 ) -> Result<PotentialSystem, String> {
     let infinity = Model::infinity();
@@ -771,7 +782,7 @@ fn build_conditioned_system(
     }
 
     let achiever = &task.operators[achiever_id];
-    let mut inequalities: Vec<(Vec<(usize, f64)>, f64)> = Vec::new();
+    let mut inequalities: Vec<(Vec<(VariableIndex, f64)>, f64)> = Vec::new();
     for equality in &task.global_linear_equalities {
         inequalities.push((equality.coefficients.clone(), equality.rhs));
         inequalities.push((
@@ -816,12 +827,12 @@ fn build_conditioned_system(
         .collect::<Vec<BTreeMap<usize, f64>>>();
     for (row_id, (row, _)) in inequalities.iter().enumerate() {
         for &(numeric_var_id, coefficient) in row {
-            balance_rows[numeric_var_id].insert(dual_columns[row_id], coefficient);
+            balance_rows[numeric_var_id.index()].insert(dual_columns[row_id], coefficient);
         }
     }
     for (feature_id, feature) in task.features.iter().enumerate() {
         for &(numeric_var_id, coefficient) in &feature.coefficients {
-            balance_rows[numeric_var_id].insert(weight_columns[feature_id], -coefficient);
+            balance_rows[numeric_var_id.index()].insert(weight_columns[feature_id], -coefficient);
         }
     }
     for coefficients in balance_rows {

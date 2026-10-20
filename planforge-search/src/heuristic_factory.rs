@@ -620,7 +620,7 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-            use crate::config::for_each_option;
+            use crate::config::{FromOptionValue, for_each_option};
             use crate::evaluation::numeric_potentials::{
                 NumericPotentialConfig, PotentialAbstractionOcpHeuristic,
             };

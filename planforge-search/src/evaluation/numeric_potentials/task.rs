@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use planforge_sas::axioms::{CalOperator, ComparisonOperator};
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, NumericTaskExt, NumericType,
+    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
+    NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
     metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::ConcreteStateView;
@@ -33,16 +34,16 @@ impl Default for FeatureBounds {
 pub struct NumericFeature {
     pub name: String,
     /// Sorted `(numeric_variable_id, coefficient)` entries.
-    pub coefficients: Vec<(usize, f64)>,
+    pub coefficients: Vec<(VariableIndex, f64)>,
     pub constant: f64,
     pub affine: bool,
-    pub source_numeric_var: usize,
+    pub source_numeric_var: VariableIndex,
 }
 
 #[derive(Debug, Clone)]
 pub struct PotentialOperator {
     pub preconditions: Vec<ExplicitFact>,
-    pub effects: Vec<(usize, usize)>,
+    pub effects: Vec<(VariableIndex, ExplicitValueIndex)>,
     /// Sorted `(feature_id, delta)` entries. Zero deltas are omitted.
     pub numeric_deltas: Vec<(usize, f64)>,
     /// Sorted `(feature_id, bounds)` entries. Unbounded intervals are omitted.
@@ -62,7 +63,7 @@ impl PotentialOperator {
 
 #[derive(Debug, Clone)]
 pub struct LinearEquality {
-    pub coefficients: Vec<(usize, f64)>,
+    pub coefficients: Vec<(VariableIndex, f64)>,
     pub rhs: f64,
 }
 
@@ -135,8 +136,8 @@ impl PotentialTask {
         let mut numeric_conditions = Vec::new();
         for goal_id in 0..task.get_num_goals() {
             let goal = *task.get_goal_fact(goal_id);
-            let materialized =
-                helper.comparison_fact_materialized_conditions(goal.var(), goal.value());
+            let materialized = helper
+                .comparison_fact_materialized_conditions(goal.var_index(), goal.value_index());
             if materialized.is_empty() {
                 propositional_goals.push(goal);
             } else {
@@ -151,13 +152,14 @@ impl PotentialTask {
         // numeric goal interval.
         for prop_goal in &propositional_goals {
             for comparison in task.comparison_axioms() {
-                let false_fact = ExplicitFact::propositional(comparison.get_affected_var_id(), 1);
+                let false_fact =
+                    ExplicitFact::propositional(comparison.get_affected_var_id().index(), 1);
                 if prop_goal.var() != false_fact.var()
                     && task.are_facts_mutex(prop_goal, &false_fact)
                 {
                     numeric_conditions.extend(helper.comparison_fact_materialized_conditions(
                         comparison.get_affected_var_id(),
-                        0,
+                        ExplicitValueIndex::new(0),
                     ));
                 }
             }
@@ -169,7 +171,7 @@ impl PotentialTask {
         // all weights are fixed to zero because no numeric goal interval is
         // registered below.
         let features = build_cpp_numeric_features(task)?;
-        let mut feature_keys: BTreeMap<Vec<(usize, u64)>, usize> = BTreeMap::new();
+        let mut feature_keys: BTreeMap<Vec<(VariableIndex, u64)>, usize> = BTreeMap::new();
         for (feature_id, feature) in features.iter().enumerate() {
             if !feature.affine || feature.coefficients.is_empty() {
                 continue;
@@ -206,18 +208,18 @@ impl PotentialTask {
         let mut primitive_deltas = Vec::with_capacity(task.get_operators().len());
         for (operator_id, operator) in task.get_operators().iter().enumerate() {
             let linearized = task
-                .linearized_assignment_effects(operator_id)
+                .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
                 .map_err(|error| {
                     format!(
                         "numeric_potential cannot linearize numeric effects of operator {operator_id} (`{}`): {error}",
                         operator.name()
                     )
                 })?;
-            let mut deltas = BTreeMap::<usize, f64>::new();
+            let mut deltas = BTreeMap::<VariableIndex, f64>::new();
             for effect in linearized {
                 match effect.operation {
                     AssignmentOperation::Assign => {
-                        assignment_targets[effect.affected_var_id] = true;
+                        assignment_targets[effect.affected_var_id.index()] = true;
                     }
                     AssignmentOperation::Plus | AssignmentOperation::Minus => {
                         if !effect.delta.is_constant() {
@@ -252,7 +254,7 @@ impl PotentialTask {
                     || feature
                         .coefficients
                         .iter()
-                        .any(|(variable_id, _)| assignment_targets[*variable_id])
+                        .any(|(variable_id, _)| assignment_targets[variable_id.index()])
             })
             .collect();
         let initial_numeric = task.get_initial_numeric_state_values();
@@ -263,28 +265,31 @@ impl PotentialTask {
             {
                 continue;
             }
+            let lhs_id = VariableIndex::from_usize(lhs);
             for rhs in (lhs + 1)..numeric_count {
                 if task.numeric_variables()[rhs].get_type() != &NumericType::Regular
                     || assignment_targets[rhs]
                 {
                     continue;
                 }
+                let rhs_id = VariableIndex::from_usize(rhs);
                 let identical = primitive_deltas
                     .iter()
-                    .all(|deltas| sparse_value(deltas, lhs) == sparse_value(deltas, rhs));
+                    .all(|deltas| sparse_value(deltas, lhs_id) == sparse_value(deltas, rhs_id));
                 let opposite = primitive_deltas
                     .iter()
-                    .all(|deltas| sparse_value(deltas, lhs) == -sparse_value(deltas, rhs));
+                    .all(|deltas| sparse_value(deltas, lhs_id) == -sparse_value(deltas, rhs_id));
                 let has_nonzero_delta = primitive_deltas.iter().any(|deltas| {
-                    sparse_value(deltas, lhs) != 0.0 || sparse_value(deltas, rhs) != 0.0
+                    sparse_value(deltas, lhs_id) != 0.0 || sparse_value(deltas, rhs_id) != 0.0
                 });
                 if !has_nonzero_delta || (!identical && !opposite) {
                     continue;
                 }
                 let rhs_coefficient = if identical { -1.0 } else { 1.0 };
-                let coefficients = vec![(lhs, 1.0), (rhs, rhs_coefficient)];
+                let coefficients = vec![(lhs_id, 1.0), (rhs_id, rhs_coefficient)];
                 global_linear_equalities.push(LinearEquality {
-                    rhs: initial_numeric[lhs] + rhs_coefficient * initial_numeric[rhs],
+                    rhs: initial_numeric[lhs].value()
+                        + rhs_coefficient * initial_numeric[rhs].value(),
                     coefficients,
                 });
             }
@@ -299,8 +304,8 @@ impl PotentialTask {
                     vec![FeatureBounds::default(); features.len()];
                 for precondition in operator.preconditions() {
                     for condition in helper.comparison_fact_materialized_conditions(
-                        precondition.var(),
-                        precondition.value(),
+                        precondition.var_index(),
+                        precondition.value_index(),
                     ) {
                         register_closed_condition_bound(
                             &condition,
@@ -333,7 +338,7 @@ impl PotentialTask {
                         })
                         .collect(),
                     numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
-                    cost: metric_operator_cost_from_initial_values(task, operator),
+                    cost: metric_operator_cost_from_initial_values(task, operator).value(),
                     reachable: true,
                 })
             })
@@ -348,11 +353,11 @@ impl PotentialTask {
         if simple_action_bounds {
             let mut primitive_bounds = vec![FeatureBounds::default(); numeric_count];
             for (local_id, task_id) in task.regular_numeric_variable_ids().into_iter().enumerate() {
-                if assignment_targets[task_id] {
+                if assignment_targets[task_id.index()] {
                     continue;
                 }
                 if let Some((lower, upper)) = helper.numeric_variable_bounds(local_id) {
-                    primitive_bounds[task_id] = FeatureBounds {
+                    primitive_bounds[task_id.index()] = FeatureBounds {
                         lower: if lower > -9_999_999.0 {
                             lower
                         } else {
@@ -370,11 +375,11 @@ impl PotentialTask {
                 if feature.affine
                     && feature.coefficients.len() == 1
                     && feature.constant == 0.0
-                    && task.numeric_variables()[feature.source_numeric_var].get_type()
+                    && task.numeric_variables()[feature.source_numeric_var.index()].get_type()
                         == &NumericType::Regular
                 {
                     global_feature_bounds[feature_id] =
-                        primitive_bounds[feature.source_numeric_var];
+                        primitive_bounds[feature.source_numeric_var.index()];
                 }
             }
         }
@@ -394,9 +399,9 @@ impl PotentialTask {
                     .iter()
                     .all(|deltas| dot_sparse(&feature.coefficients, deltas) <= 0.0);
                 let initial_value = if feature.affine {
-                    dot_sparse_dense(&feature.coefficients, &initial) + feature.constant
+                    dot_sparse_dense(&feature.coefficients, initial) + feature.constant
                 } else {
-                    initial[feature.source_numeric_var]
+                    initial[feature.source_numeric_var.index()].value()
                 };
                 if all_nonnegative {
                     global_feature_bounds[feature_id].lower = initial_value;
@@ -482,7 +487,7 @@ impl PotentialTask {
     pub fn feature_values(
         &self,
         state: ConcreteStateView<'_>,
-        numeric_scratch: &mut Vec<f64>,
+        numeric_scratch: &mut Vec<NumericValue>,
     ) -> Result<Vec<f64>, String> {
         state
             .fill_numeric(numeric_scratch)
@@ -494,7 +499,7 @@ impl PotentialTask {
                 if feature.affine {
                     dot_sparse_dense(&feature.coefficients, numeric_scratch) + feature.constant
                 } else {
-                    numeric_scratch[feature.source_numeric_var]
+                    numeric_scratch[feature.source_numeric_var.index()].value()
                 }
             })
             .collect())
@@ -503,7 +508,7 @@ impl PotentialTask {
 
 #[derive(Clone)]
 struct ParsedNumericExpression {
-    coefficients: Vec<(usize, f64)>,
+    coefficients: Vec<(VariableIndex, f64)>,
     constant: f64,
     affine: bool,
     is_constant: bool,
@@ -517,6 +522,7 @@ fn build_cpp_numeric_features(
         if variable.get_type() != &NumericType::Regular {
             continue;
         }
+        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
         features.push(NumericFeature {
             name: variable.name().to_string(),
             coefficients: vec![(numeric_var_id, 1.0)],
@@ -526,7 +532,7 @@ fn build_cpp_numeric_features(
         });
     }
 
-    let comparison_by_var: BTreeMap<usize, usize> = task
+    let comparison_by_var: BTreeMap<VariableIndex, usize> = task
         .comparison_axioms()
         .iter()
         .enumerate()
@@ -536,8 +542,9 @@ fn build_cpp_numeric_features(
     let mut seen_comparisons = BTreeSet::new();
     {
         let mut record_fact = |fact: &ExplicitFact| {
-            if comparison_by_var.contains_key(&fact.var()) && seen_comparisons.insert(fact.var()) {
-                used_comparison_vars.push(fact.var());
+            let var = fact.var_index();
+            if comparison_by_var.contains_key(&var) && seen_comparisons.insert(var) {
+                used_comparison_vars.push(var);
             }
         };
         // This is the C++ numeric_pdb_helper construction order: operator
@@ -567,7 +574,8 @@ fn build_cpp_numeric_features(
     for goal_id in 0..task.get_num_goals() {
         let goal = task.get_goal_fact(goal_id);
         for comparison in task.comparison_axioms() {
-            let false_fact = ExplicitFact::propositional(comparison.get_affected_var_id(), 1);
+            let false_fact =
+                ExplicitFact::propositional(comparison.get_affected_var_id().index(), 1);
             if goal.var() != false_fact.var()
                 && task.are_facts_mutex(goal, &false_fact)
                 && seen_comparisons.insert(comparison.get_affected_var_id())
@@ -577,7 +585,7 @@ fn build_cpp_numeric_features(
         }
     }
 
-    let assignment_by_var: BTreeMap<usize, usize> = task
+    let assignment_by_var: BTreeMap<VariableIndex, usize> = task
         .assignment_axioms()
         .iter()
         .enumerate()
@@ -626,15 +634,15 @@ fn build_cpp_numeric_features(
 
 fn parse_cpp_numeric_expression(
     task: &dyn AbstractNumericTask,
-    numeric_var_id: usize,
-    assignment_by_var: &BTreeMap<usize, usize>,
+    numeric_var_id: VariableIndex,
+    assignment_by_var: &BTreeMap<VariableIndex, usize>,
     auxiliary_by_name: &mut BTreeMap<String, usize>,
     features: &mut Vec<NumericFeature>,
-    recursion_stack: &mut BTreeSet<usize>,
+    recursion_stack: &mut BTreeSet<VariableIndex>,
 ) -> Result<ParsedNumericExpression, String> {
     let variable = task
         .numeric_variables()
-        .get(numeric_var_id)
+        .get(numeric_var_id.index())
         .ok_or_else(|| {
             format!(
                 "numeric_potential expression references unknown numeric variable {numeric_var_id}"
@@ -649,7 +657,7 @@ fn parse_cpp_numeric_expression(
         }),
         NumericType::Constant => Ok(ParsedNumericExpression {
             coefficients: Vec::new(),
-            constant: task.get_initial_numeric_state_values()[numeric_var_id],
+            constant: task.get_initial_numeric_state_values()[numeric_var_id.index()].value(),
             affine: true,
             is_constant: true,
         }),
@@ -743,12 +751,12 @@ fn combine_numeric_expression(
 
 fn insert_cpp_auxiliary_feature(
     task: &dyn AbstractNumericTask,
-    source_numeric_var: usize,
+    source_numeric_var: VariableIndex,
     expression: ParsedNumericExpression,
     auxiliary_by_name: &mut BTreeMap<String, usize>,
     features: &mut Vec<NumericFeature>,
 ) -> usize {
-    let name = task.numeric_variables()[source_numeric_var]
+    let name = task.numeric_variables()[source_numeric_var.index()]
         .name()
         .to_string();
     if let Some(feature_id) = auxiliary_by_name.get(&name) {
@@ -785,13 +793,13 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
         .map(|variable| vec![false; variable.domain_size()])
         .collect();
     for (var_id, value) in initial_props.into_iter().enumerate() {
-        reachable_facts[var_id][value] = true;
+        reachable_facts[var_id][value.index()] = true;
     }
     let mut intervals: Vec<FeatureBounds> = initial_numeric
         .into_iter()
         .map(|value| FeatureBounds {
-            lower: value,
-            upper: value,
+            lower: value.value(),
+            upper: value.value(),
         })
         .collect();
     // This closure has to *over*approximate reachability -- an operator whose
@@ -808,23 +816,23 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
         let previous_intervals = intervals.clone();
 
         for axiom in task.assignment_axioms() {
-            let left = intervals[axiom.get_left_var_id()];
-            let right = intervals[axiom.get_right_var_id()];
+            let left = intervals[axiom.get_left_var_id().index()];
+            let right = intervals[axiom.get_right_var_id().index()];
             let value = match axiom.get_operator() {
                 CalOperator::Sum => interval_add(left, right),
                 CalOperator::Difference => interval_subtract(left, right),
                 CalOperator::Product => interval_product(left, right),
                 CalOperator::Division => interval_divide(left, right),
             };
-            hull_into(&mut intervals[axiom.get_affected_var_id()], value);
+            hull_into(&mut intervals[axiom.get_affected_var_id().index()], value);
         }
         for axiom in task.comparison_axioms() {
             if comparison_may_hold(
-                intervals[axiom.get_left_var_id()],
-                intervals[axiom.get_right_var_id()],
+                intervals[axiom.get_left_var_id().index()],
+                intervals[axiom.get_right_var_id().index()],
                 axiom.get_operator(),
             ) {
-                reachable_facts[axiom.get_affected_var_id()][0] = true;
+                reachable_facts[axiom.get_affected_var_id().index()][0] = true;
             }
         }
         for axiom in task.axioms().iter().chain(&default_value_axioms) {
@@ -833,7 +841,7 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
                 .iter()
                 .all(|fact| reachable_facts[fact.var()][fact.value()])
             {
-                reachable_facts[axiom.var_id()][axiom.effect_value()] = true;
+                reachable_facts[axiom.var_id().index()][axiom.effect_value().index()] = true;
             }
         }
         for operator in task.get_operators() {
@@ -845,11 +853,11 @@ fn compute_aibr_closure(task: &dyn AbstractNumericTask) -> Result<AibrClosure, S
                 continue;
             }
             for effect in operator.effects() {
-                reachable_facts[effect.var_id()][effect.value()] = true;
+                reachable_facts[effect.var_id().index()][effect.value().index()] = true;
             }
             for effect in operator.assignment_effects() {
-                let source = intervals[effect.var_id()];
-                let target = &mut intervals[effect.affected_var_id()];
+                let source = intervals[effect.var_id().index()];
+                let target = &mut intervals[effect.affected_var_id().index()];
                 match effect.operation() {
                     AssignmentOperation::Assign => hull_into(target, source),
                     AssignmentOperation::Plus => {
@@ -1008,7 +1016,7 @@ fn map_primitive_bounds_to_features(
         let mut lower = feature.constant;
         let mut upper = feature.constant;
         for &(variable_id, coefficient) in &feature.coefficients {
-            let bounds = primitive_bounds[variable_id];
+            let bounds = primitive_bounds[variable_id.index()];
             if coefficient >= 0.0 {
                 lower += coefficient * bounds.lower;
                 upper += coefficient * bounds.upper;
@@ -1025,7 +1033,7 @@ fn map_primitive_bounds_to_features(
 fn register_closed_condition_bound(
     condition: &LinearNumericCondition,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(usize, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
     bounds: &mut [FeatureBounds],
 ) -> Result<(), String> {
     if condition
@@ -1059,7 +1067,7 @@ fn register_closed_condition_bound(
 fn register_condition_bound(
     condition: &LinearNumericCondition,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(usize, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
     bounds: &mut [FeatureBounds],
     integral: bool,
     epsilon: f64,
@@ -1116,7 +1124,9 @@ fn register_condition_bound(
     Ok(())
 }
 
-fn canonical_feature(coefficients: &[(usize, f64)]) -> Option<(Vec<(usize, f64)>, f64)> {
+fn canonical_feature(
+    coefficients: &[(VariableIndex, f64)],
+) -> Option<(Vec<(VariableIndex, f64)>, f64)> {
     let scale = coefficients
         .iter()
         .map(|(_, coefficient)| *coefficient)
@@ -1131,17 +1141,18 @@ fn canonical_feature(coefficients: &[(usize, f64)]) -> Option<(Vec<(usize, f64)>
     Some((canonical, scale))
 }
 
-fn canonical_dense_feature(coefficients: &[f64]) -> Option<(Vec<(usize, f64)>, f64)> {
+fn canonical_dense_feature(coefficients: &[f64]) -> Option<(Vec<(VariableIndex, f64)>, f64)> {
     let sparse = coefficients
         .iter()
         .copied()
         .enumerate()
         .filter(|(_, coefficient)| *coefficient != 0.0)
+        .map(|(variable_id, coefficient)| (VariableIndex::from_usize(variable_id), coefficient))
         .collect::<Vec<_>>();
     canonical_feature(&sparse)
 }
 
-fn feature_key(coefficients: &[(usize, f64)]) -> Vec<(usize, u64)> {
+fn feature_key(coefficients: &[(VariableIndex, f64)]) -> Vec<(VariableIndex, u64)> {
     coefficients
         .iter()
         .map(|&(variable_id, value)| (variable_id, value.to_bits()))
@@ -1151,7 +1162,7 @@ fn feature_key(coefficients: &[(usize, f64)]) -> Vec<(usize, u64)> {
 fn all_values_integral(
     task: &dyn AbstractNumericTask,
     features: &[NumericFeature],
-    feature_keys: &BTreeMap<Vec<(usize, u64)>, usize>,
+    feature_keys: &BTreeMap<Vec<(VariableIndex, u64)>, usize>,
     goal_conditions: &[LinearNumericCondition],
     precision: f64,
 ) -> Result<bool, String> {
@@ -1167,18 +1178,18 @@ fn all_values_integral(
                 NumericType::Regular | NumericType::Constant
             )
         })
-        .all(|(variable_id, _)| integral(initial[variable_id]))
+        .all(|(variable_id, _)| integral(initial[variable_id].value()))
         || !features.iter().all(|feature| {
-            integral(dot_sparse_dense(&feature.coefficients, &initial) + feature.constant)
+            integral(dot_sparse_dense(&feature.coefficients, initial) + feature.constant)
         })
     {
         return Ok(false);
     }
     for operator_id in 0..task.get_num_operators() {
         let effects = task
-            .linearized_assignment_effects(operator_id)
+            .linearized_assignment_effects(OperatorIndex::from_usize(operator_id))
             .map_err(|error| error.to_string())?;
-        let mut primitive_delta = vec![0.0; task.numeric_variables().len()];
+        let mut primitive_delta = vec![ZERO_VALUE; task.numeric_variables().len()];
         for effect in effects {
             if effect.operation != AssignmentOperation::Assign && !effect.delta.is_constant() {
                 return Ok(false);
@@ -1187,7 +1198,8 @@ fn all_values_integral(
                 effect.operation,
                 AssignmentOperation::Plus | AssignmentOperation::Minus
             ) {
-                primitive_delta[effect.affected_var_id] += effect.delta.constant;
+                primitive_delta[effect.affected_var_id.index()] +=
+                    NumericValue::new(effect.delta.constant);
             }
         }
         if features
@@ -1216,14 +1228,14 @@ fn all_values_integral(
     Ok(true)
 }
 
-fn dot_sparse_dense(sparse: &[(usize, f64)], dense: &[f64]) -> f64 {
+fn dot_sparse_dense(sparse: &[(VariableIndex, f64)], dense: &[NumericValue]) -> f64 {
     sparse
         .iter()
-        .map(|&(index, value)| dense[index] * value)
+        .map(|&(variable_id, value)| dense[variable_id.index()].value() * value)
         .sum()
 }
 
-fn dot_sparse(left: &[(usize, f64)], right: &[(usize, f64)]) -> f64 {
+fn dot_sparse(left: &[(VariableIndex, f64)], right: &[(VariableIndex, f64)]) -> f64 {
     let mut result = 0.0;
     let (mut left_index, mut right_index) = (0, 0);
     while left_index < left.len() && right_index < right.len() {
@@ -1243,10 +1255,10 @@ fn dot_sparse(left: &[(usize, f64)], right: &[(usize, f64)]) -> f64 {
 }
 
 fn add_sparse(
-    left: &[(usize, f64)],
-    right: &[(usize, f64)],
+    left: &[(VariableIndex, f64)],
+    right: &[(VariableIndex, f64)],
     right_scale: f64,
-) -> Vec<(usize, f64)> {
+) -> Vec<(VariableIndex, f64)> {
     let mut coefficients = BTreeMap::new();
     for &(variable_id, coefficient) in left {
         coefficients.insert(variable_id, coefficient);
@@ -1260,7 +1272,7 @@ fn add_sparse(
         .collect()
 }
 
-fn scale_sparse(coefficients: &[(usize, f64)], scale: f64) -> Vec<(usize, f64)> {
+fn scale_sparse(coefficients: &[(VariableIndex, f64)], scale: f64) -> Vec<(VariableIndex, f64)> {
     coefficients
         .iter()
         .filter_map(|&(variable_id, coefficient)| {
@@ -1270,7 +1282,7 @@ fn scale_sparse(coefficients: &[(usize, f64)], scale: f64) -> Vec<(usize, f64)> 
         .collect()
 }
 
-fn sparse_value(sparse: &[(usize, f64)], index: usize) -> f64 {
+fn sparse_value(sparse: &[(VariableIndex, f64)], index: VariableIndex) -> f64 {
     sparse
         .binary_search_by_key(&index, |(id, _)| *id)
         .map(|position| sparse[position].1)

@@ -1,4 +1,6 @@
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef,
+};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
 use crate::successor_generator::SuccessorTree;
@@ -6,10 +8,10 @@ use crate::successor_generator::SuccessorTree;
 pub(crate) struct RandomWalkSampler {
     successor_generator: SuccessorTree,
     rng: CppMt19937,
-    propositional: Vec<usize>,
-    applicable: Vec<u32>,
-    successor_numeric: Vec<f64>,
-    successor_cost: Vec<f64>,
+    propositional: Vec<ExplicitValueIndex>,
+    applicable: Vec<OperatorIndex>,
+    successor_numeric: Vec<NumericValue>,
+    successor_cost: Vec<NumericValue>,
 }
 
 impl RandomWalkSampler {
@@ -57,7 +59,7 @@ impl RandomWalkSampler {
                     break;
                 }
                 let operator_id = self.applicable[self.rng.index(self.applicable.len())];
-                let operator = &task.get_operators()[operator_id as usize];
+                let operator = &task.get_operators()[operator_id.index()];
                 state = registry
                     .get_successor_state_with_buffers(
                         &state,

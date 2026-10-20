@@ -1,10 +1,8 @@
-// `numeric_potentials` is behind the `cplex` feature, which needs a proprietary
-// CPLEX installation. Neither CI nor a checkout without one can compile this
-// file, so no clippy run can tell whether these two fire; `-D warnings` under
-// `--features cplex` would break for whoever has CPLEX. Both stay until someone
-// with an installation can look. `field_reassign_with_default` is live by
-// inspection (`let mut config = ...::default();` followed by field writes).
-#![allow(clippy::arc_with_non_send_sync, clippy::field_reassign_with_default)]
+// `field_reassign_with_default` fires on the `let mut config = ...::default();`
+// followed by field writes that vary one option per test; `DOCS_RS=1 cargo
+// clippy -p planforge-search --features cplex --all-targets` lints this file
+// without a CPLEX installation.
+#![allow(clippy::field_reassign_with_default)]
 
 use std::sync::Arc;
 
@@ -12,12 +10,14 @@ use planforge_sas::axioms::{
     AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator, PropositionalAxiom,
 };
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, Metric,
-    NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator, TaskRef,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorCost, TaskRef, VariableIndex,
 };
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigValue};
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::{EvaluationState, Heuristic};
@@ -241,31 +241,31 @@ fn thirty_deterministic_random_duality_instances() {
             NumericVariable::new("x".into(), NumericType::Regular, None),
             NumericVariable::new("target".into(), NumericType::Constant, None),
         ];
-        let mut initial_numeric = vec![0.0, target];
+        let mut initial_numeric = vec![NumericValue::new(0.0), NumericValue::new(target)];
         let mut operators = Vec::with_capacity(operator_count);
         let mut expected_ratio = f64::INFINITY;
         for operator_id in 0..operator_count {
             let delta = (next() % 4 + 1) as f64;
             let cost = next() % 7 + 1;
-            let delta_var = numeric_variables.len();
+            let delta_var = VariableIndex::from_usize(numeric_variables.len());
             numeric_variables.push(NumericVariable::new(
                 format!("delta-{operator_id}"),
                 NumericType::Constant,
                 None,
             ));
-            initial_numeric.push(delta);
+            initial_numeric.push(NumericValue::new(delta));
             operators.push(Operator::new(
                 format!("increment-{operator_id}"),
                 vec![],
                 vec![],
                 vec![AssignmentEffect::new(
-                    0,
+                    VariableIndex::new(0),
                     AssignmentOperation::Plus,
                     delta_var,
                     false,
                     vec![],
                 )],
-                cost,
+                OperatorCost::new(cost),
             ));
             expected_ratio = expected_ratio.min(cost as f64 / delta);
         }
@@ -341,8 +341,18 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
         ],
         goals: vec![ExplicitFact::propositional(2, 0)],
         mutexes: vec![],
-        state: vec![1, 1, 1],
-        numeric_state: vec![0.0, 0.0, 2.0, 3.0, 1.0],
+        state: vec![
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(1),
+        ],
+        numeric_state: vec![
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(2.0),
+            NumericValue::new(3.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![
             Operator::new(
                 "increment-x".into(),
@@ -355,7 +365,7 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "increment-y".into(),
@@ -368,7 +378,7 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
         ],
         axioms: vec![PropositionalAxiom::new(
@@ -376,9 +386,9 @@ fn conjunctive_numeric_goal_helper_keeps_original_conditions_separate() {
                 ExplicitFact::propositional(0, 0),
                 ExplicitFact::propositional(1, 0),
             ],
-            2,
-            1,
-            0,
+            VariableIndex::new(2),
+            ExplicitValueIndex::new(1),
+            ExplicitValueIndex::new(0),
         )],
         comparison_axioms: vec![
             ComparisonAxiom::new(
@@ -610,7 +620,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "finish".into(),
@@ -642,10 +652,11 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     let initial = registry.get_initial_state();
     let mut optimizer =
         NumericPotentialOptimizer::new(&*task, &NumericPotentialConfig::default()).unwrap();
-    assert_eq!(optimizer.conditionable_goals(), [(1, 0)]);
-    assert_eq!(optimizer.goal_achievers(1, 0), [1]);
+    let goal = (VariableIndex::new(1), ExplicitValueIndex::new(0));
+    assert_eq!(optimizer.conditionable_goals(), [goal]);
+    assert_eq!(optimizer.goal_achievers(goal.0, goal.1), [1]);
     let OptimizationOutcome::Optimal { value, function } = optimizer
-        .optimize_for_conditioned_goal(1, 0, 1, registry.view(&initial))
+        .optimize_for_conditioned_goal(goal.0, goal.1, 1, registry.view(&initial))
         .unwrap()
     else {
         panic!("expected conditioned optimum")
@@ -723,7 +734,7 @@ fn monotone_and_aibr_bounds_preserve_numeric_optimum() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             )],
             axioms: vec![],
             comparison_axioms: vec![ComparisonAxiom::new(
@@ -972,7 +983,15 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
         goals: vec![ExplicitFact::propositional(1, 0)],
         mutexes: vec![],
         state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)],
-        numeric_state: vec![5.0, 2.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        numeric_state: vec![
+            NumericValue::new(5.0),
+            NumericValue::new(2.0),
+            NumericValue::new(1.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(0.0),
+            NumericValue::new(1.0),
+        ],
         operators: vec![
             Operator::new(
                 "decrease-z".into(),
@@ -985,7 +1004,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "finish".into(),
@@ -1013,7 +1032,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
             Operator::new(
                 "increase-y".into(),
@@ -1026,7 +1045,7 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
                     false,
                     vec![],
                 )],
-                1,
+                OperatorCost::new(1),
             ),
         ],
         axioms: vec![],
@@ -1037,8 +1056,18 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
             ComparisonOperator::GreaterThanOrEqual,
         )],
         assignment_axioms: vec![
-            AssignmentAxiom::new(3, CalOperator::Sum, 2, 1),
-            AssignmentAxiom::new(4, CalOperator::Difference, 3, 0),
+            AssignmentAxiom::new(
+                VariableIndex::new(3),
+                CalOperator::Sum,
+                VariableIndex::new(2),
+                VariableIndex::new(1),
+            ),
+            AssignmentAxiom::new(
+                VariableIndex::new(4),
+                CalOperator::Difference,
+                VariableIndex::new(3),
+                VariableIndex::new(0),
+            ),
         ],
         global_constraint: ExplicitFact::propositional(1, 0),
     }));
@@ -1076,7 +1105,12 @@ fn affine_auxiliary_features_match_cpp_numeric_proxy() {
     let mut registry = StateRegistry::for_task(task.clone());
     let initial = registry.get_initial_state();
     let OptimizationOutcome::Optimal { value, .. } = optimizer
-        .optimize_for_conditioned_goal(1, 0, 1, registry.view(&initial))
+        .optimize_for_conditioned_goal(
+            VariableIndex::new(1),
+            ExplicitValueIndex::new(0),
+            1,
+            registry.view(&initial),
+        )
         .unwrap()
     else {
         panic!("expected an optimal conditioned affine potential")

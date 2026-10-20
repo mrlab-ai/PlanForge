@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
 use planforge_sas::state_registry::ConcreteStateView;
 use serde_json::json;
 use tracing::info;
@@ -21,8 +22,8 @@ impl Ray {
         &self,
         state: ConcreteStateView<'_>,
         task: &PotentialTask,
-        prop_scratch: &mut Vec<usize>,
-        numeric_scratch: &mut Vec<f64>,
+        prop_scratch: &mut Vec<ExplicitValueIndex>,
+        numeric_scratch: &mut Vec<NumericValue>,
     ) -> Result<f64, String> {
         self.function
             .value(state, task, prop_scratch, numeric_scratch)

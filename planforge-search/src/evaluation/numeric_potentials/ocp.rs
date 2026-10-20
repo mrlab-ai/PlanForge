@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use tracing::{info, warn};
 
@@ -26,8 +26,8 @@ pub struct PotentialAbstractionOcpHeuristic {
     potential: NumericPotentialFunction,
     abstract_potentials: Option<Vec<f64>>,
     dead_end_certified: bool,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
+    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: RefCell<Vec<NumericValue>>,
 }
 
 impl PotentialAbstractionOcpHeuristic {
@@ -148,7 +148,8 @@ impl PotentialAbstractionOcpHeuristic {
         let mut constraints = Vec::new();
         for transition in &transition_system.transitions {
             for &operator_id in &transition.concrete_op_ids {
-                if operator_id >= operator_count
+                let operator_column = operator_id.index();
+                if operator_column >= operator_count
                     || transition.source_hash >= state_count
                     || transition.target_hash >= state_count
                 {
@@ -160,7 +161,7 @@ impl PotentialAbstractionOcpHeuristic {
                         transition.target_hash
                     ));
                 }
-                let mut coefficients = vec![(operator_id, -1.0)];
+                let mut coefficients = vec![(operator_column, -1.0)];
                 if transition.source_hash != transition.target_hash {
                     coefficients.push((operator_count + transition.source_hash, 1.0));
                     coefficients.push((operator_count + transition.target_hash, -1.0));
