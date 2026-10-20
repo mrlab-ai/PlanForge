@@ -129,6 +129,12 @@ pub struct ScpConfig {
     pub order_generator: OrderGenerator,
     /// Time for the candidate orders built for every sample.
     pub initial_order_generation_max_time: f64,
+    /// Goal-cover orders per goal that every diversified collection keeps
+    /// (AAMAS 2027), in addition to the best order.
+    pub goal_cover_orders_per_goal: usize,
+    /// Seeded random orders among the candidate orders of the evaluated
+    /// state.
+    pub random_orders: usize,
     pub saturator: Saturator,
     pub random_seed: Option<u64>,
     pub partitioning: CostPartitioningMethod,
@@ -146,6 +152,8 @@ impl Default for ScpConfig {
             combine_labels: false,
             order_generator: OrderGenerator::Greedy,
             initial_order_generation_max_time: 10.0,
+            goal_cover_orders_per_goal: 4,
+            random_orders: 3,
             saturator: Saturator::All,
             random_seed,
             partitioning: CostPartitioningMethod::Label,

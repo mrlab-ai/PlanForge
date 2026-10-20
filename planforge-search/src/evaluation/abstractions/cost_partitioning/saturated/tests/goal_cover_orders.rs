@@ -131,20 +131,20 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
 }
 
 #[test]
-fn compact_goal_cover_schedule_visits_every_anchor_goal_and_four_variants() {
-    let variants = compact_goal_cover_variants(18, 8, true);
+fn compact_goal_cover_schedule_visits_every_anchor_goal_with_every_variant_pair() {
+    let variants = compact_goal_cover_variants(18, 8, Some(4));
     let anchor_goals = variants
         .iter()
         .map(|variant| variant.anchor_goal_offset)
         .collect::<HashSet<_>>();
 
-    assert_eq!(variants.len(), 72);
+    assert_eq!(variants.len(), 18 * 8 * 8);
     assert_eq!(anchor_goals, (0..18).collect());
 }
 
 #[test]
 fn compact_goal_cover_schedule_supports_one_abstraction_per_goal() {
-    let variants = compact_goal_cover_variants(18, 1, true);
+    let variants = compact_goal_cover_variants(18, 1, Some(4));
     let anchor_goals = variants
         .iter()
         .map(|variant| variant.anchor_goal_offset)

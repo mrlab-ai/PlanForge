@@ -182,8 +182,10 @@ fn diverse_orders_keep_partitionings_that_improve_different_samples() {
     assert_eq!(best, vec![5.0, 6.0]);
 }
 
+/// The heuristic is the maximum over the retained orders only (Seipp et al.
+/// 2020): the abstractions' own goal distances add nothing to it.
 #[test]
-fn abstraction_maximum_keeps_every_abstraction_without_orders() {
+fn the_heuristic_is_the_maximum_over_the_retained_orders_only() {
     let mut state = ScpState::new(Some(1));
     state.goal_distances_by_abstraction = vec![vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]];
     let samples = [vec![Some(0), Some(0), None], vec![Some(1), Some(1), None]];
@@ -193,31 +195,12 @@ fn abstraction_maximum_keeps_every_abstraction_without_orders() {
             .iter()
             .map(|ids| SaturatedCostPartitioningHeuristic::compute_max_h(&state, ids))
             .collect::<Vec<_>>(),
-        vec![5.0, 6.0]
+        vec![0.0, 0.0]
     );
-
-    SaturatedCostPartitioningHeuristic::retain_abstraction_lookup_tables(&mut state);
-    state.lookup_mask = SaturatedCostPartitioningHeuristic::compute_lookup_mask(&state, 3);
-
-    assert!(state.goal_distances_by_abstraction.is_empty());
-    assert_eq!(state.abstraction_lookup_tables.len(), 2);
-    assert!(state.cp_heuristics.is_empty());
-    assert_eq!(state.lookup_mask, vec![true, true, false]);
     assert_eq!(
-        samples
-            .iter()
-            .map(|ids| SaturatedCostPartitioningHeuristic::compute_max_h(&state, ids))
-            .collect::<Vec<_>>(),
-        vec![5.0, 6.0]
+        SaturatedCostPartitioningHeuristic::compute_lookup_mask(&state, 3),
+        vec![false, false, false]
     );
-}
-
-#[test]
-fn abstraction_maximum_size_excludes_tables_that_are_not_retained() {
-    let useful = vec![1.0; 128];
-    let zero = vec![0.0; 128];
-
-    assert_eq!(abstraction_lookup_tables_size_kb(&[useful, zero]), 1);
 }
 
 #[test]

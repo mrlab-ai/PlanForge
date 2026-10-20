@@ -55,10 +55,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             return Vec::new();
         }
 
-        // Rotate the anchor goal before varying its construction variant. This
-        // guarantees coverage of every goal when the 64-order cap is large
-        // enough, including states where that goal is the last one remaining.
-        let variants = compact_goal_cover_variants(goal_count, max_variants, progress_states);
+        // Rotate the anchor goal before varying its construction variant, so
+        // that every goal is covered, including states where that goal is the
+        // last one remaining.
+        let variants = compact_goal_cover_variants(
+            goal_count,
+            max_variants,
+            progress_states.then_some(self.config.goal_cover_orders_per_goal),
+        );
 
         let mut seen = HashSet::new();
         variants
@@ -120,22 +124,23 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 }
 
+/// Every anchor goal with every pair of anchor and representative variants;
+/// with `specialists_per_goal`, also at least that many anchor variants per
+/// goal.
 pub(super) fn compact_goal_cover_variants(
     goal_count: usize,
     variants_per_goal: usize,
-    guarantee_specialist_coverage: bool,
+    specialists_per_goal: Option<usize>,
 ) -> Vec<GoalCoverOrderVariant> {
     assert!(goal_count > 0);
     assert!(variants_per_goal > 0);
     let pairwise_variant_count = goal_count
-        .saturating_mul(variants_per_goal)
-        .saturating_mul(variants_per_goal)
-        .min(64);
-    let specialist_coverage_count = if guarantee_specialist_coverage {
-        goal_count.saturating_mul(variants_per_goal.min(4))
-    } else {
-        0
-    };
+        .checked_mul(variants_per_goal)
+        .and_then(|count| count.checked_mul(variants_per_goal))
+        .expect("the goal-cover variant count fits usize");
+    let specialist_coverage_count = specialists_per_goal.map_or(0, |specialists| {
+        goal_count * variants_per_goal.min(specialists)
+    });
     let variant_count = pairwise_variant_count.max(specialist_coverage_count);
     (0..variant_count)
         .map(|variant_index| {

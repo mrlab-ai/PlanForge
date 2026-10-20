@@ -253,6 +253,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: CostPartitioningMethod::Region,
+        ..Default::default()
     };
 
     let heuristic = SaturatedCostPartitioningHeuristic::new(
