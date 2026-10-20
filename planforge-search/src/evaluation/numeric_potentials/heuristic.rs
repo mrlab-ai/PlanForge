@@ -1,14 +1,12 @@
 //! Numeric potential heuristics, behind the `cplex` feature.
 //!
-//! The three `too_many_arguments` allows below stay for the same reason as the
-//! two in `tests.rs`: this file compiles only against a proprietary CPLEX
-//! installation, which neither this checkout nor CI has. No clippy run here can
-//! confirm the lints still fire or that a refactor still builds, and
-//! `-D warnings` under `--features cplex` would break the build for whoever does
-//! have CPLEX. The portfolio builders below take the same eight -- task,
-//! optimizer, registry, initial state, initial `h`, config, sampler -- and want
-//! the same parameter struct the rest of the crate now uses; that is a change
-//! for someone who can compile it.
+//! Linking needs a proprietary CPLEX installation, which neither this checkout
+//! nor CI has, but `DOCS_RS=1 cargo clippy -p planforge-search --features cplex`
+//! type-checks and lints this module without one. The three
+//! `too_many_arguments` allows below still fire: the portfolio builders take the
+//! same eight -- task, optimizer, registry, initial state, initial `h`, config,
+//! sampler -- and want the same parameter struct the rest of the crate now uses;
+//! that is a change for someone who can run the tests against CPLEX.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -16,7 +14,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use tracing::{debug, info, warn};
 
@@ -47,8 +45,8 @@ pub struct NumericPotentialHeuristic {
     online_optimizer: RefCell<Option<NumericPotentialOptimizer>>,
     online_state: RefCell<OnlineState>,
     revision: Cell<u64>,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
+    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: RefCell<Vec<NumericValue>>,
 }
 
 struct OnlineState {
@@ -305,7 +303,7 @@ impl NumericPotentialHeuristic {
         let mut max_initial_value = functions
             .iter()
             .map(|function| {
-                function_value(function, &initial_state, &potential_task, &registry)
+                function_value(function, registry.view(&initial_state), &potential_task)
                     .map(|value| value.max(0.0))
             })
             .collect::<Result<Vec<_>, _>>()?
@@ -316,7 +314,7 @@ impl NumericPotentialHeuristic {
             let group_value = group
                 .iter()
                 .map(|function| {
-                    function_value(function, &initial_state, &potential_task, &registry)
+                    function_value(function, registry.view(&initial_state), &potential_task)
                 })
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
@@ -828,7 +826,7 @@ fn build_conditioned_groups(
     let mut goals: Vec<_> = optimizer
         .conditionable_goals()
         .into_iter()
-        .filter(|(var, value)| initial_props[*var] != *value)
+        .filter(|(var, value)| initial_props[var.index()] != *value)
         .map(|(var, value)| {
             let achievers = optimizer.goal_achievers(var, value);
             (var, value, achievers)
@@ -871,8 +869,7 @@ fn build_conditioned_groups(
                 var,
                 value,
                 achiever,
-                initial_state,
-                registry,
+                registry.view(initial_state),
             )? {
                 OptimizationOutcome::Optimal {
                     value: objective_value,
@@ -923,7 +920,7 @@ fn build_static_portfolio(
     match config.opt {
         OptimizeFor::InitialState => Ok(vec![initial_function]),
         OptimizeFor::AllStates => {
-            match optimizer.optimize_for_all_propositional_states(initial_state, registry)? {
+            match optimizer.optimize_for_all_propositional_states(registry.view(initial_state))? {
                 OptimizationOutcome::Optimal { function, .. } => Ok(vec![function]),
                 _ => Ok(vec![initial_function]),
             }
@@ -979,7 +976,7 @@ fn build_diverse_portfolio(
     if config.include_all_states_potential
         && functions.len() < config.num_heuristics
         && let OptimizationOutcome::Optimal { function, .. } =
-            optimizer.optimize_for_all_propositional_states(initial_state, registry)?
+            optimizer.optimize_for_all_propositional_states(registry.view(initial_state))?
     {
         functions.push(function);
     }
