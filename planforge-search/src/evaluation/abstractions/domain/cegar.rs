@@ -188,7 +188,7 @@ impl Cegar {
                     &table,
                     limits,
                     config.use_wildcard_plans,
-                )?;
+                );
                 let check = match config.flaw_kind {
                     FlawKind::Progression => replay_optimal_abstract_trace(
                         &view,

@@ -39,7 +39,7 @@ pub(crate) trait AbstractionView {
 
     fn goal_distance(&self, state: usize) -> f64;
 
-    fn is_goal(&self, state: usize) -> bool;
+    fn is_goal(&self, state: usize) -> Result<bool>;
 
     /// The first transition of an optimal plan from the non-goal `state`.
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey>;

@@ -780,7 +780,7 @@ pub(crate) fn regression_plan_check(
 fn abstract_plan(view: &impl AbstractionView, initial_state: usize) -> Result<Vec<TransitionKey>> {
     let mut plan = Vec::new();
     let mut state = initial_state;
-    while !view.is_goal(state) {
+    while !view.is_goal(state)? {
         ensure!(
             plan.len() <= view.num_states(),
             "optimal abstract transitions contain a cycle"

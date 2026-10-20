@@ -21,8 +21,8 @@ pub(super) struct DomainView<'a> {
     numeric_domain_sizes: &'a [usize],
     hash_multipliers: &'a [usize],
     operators: &'a [AbstractOperator],
+    task: &'a dyn AbstractNumericTask,
     table: &'a AbstractDistanceTable,
-    goal_flags: Vec<bool>,
     limits: RefinementLimits<'a>,
     /// Plan steps execute any label of their abstract operator, not just
     /// the first.
@@ -40,7 +40,7 @@ pub(super) struct RefinementLimits<'a> {
 
 impl<'a> DomainView<'a> {
     pub(super) fn new(
-        task: &dyn AbstractNumericTask,
+        task: &'a dyn AbstractNumericTask,
         factory: &'a DomainAbstractionFactory,
         numeric_domain_sizes: &'a [usize],
         hash_multipliers: &'a [usize],
@@ -48,28 +48,17 @@ impl<'a> DomainView<'a> {
         table: &'a AbstractDistanceTable,
         limits: RefinementLimits<'a>,
         wildcard_plans: bool,
-    ) -> Result<Self> {
-        let goal_flags = (0..table.distances.len())
-            .map(|state| {
-                factory.is_goal_state(
-                    task,
-                    state,
-                    &table.goal_facts,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Self {
+    ) -> Self {
+        Self {
             factory,
             numeric_domain_sizes,
             hash_multipliers,
             operators,
+            task,
             table,
-            goal_flags,
             limits,
             wildcard_plans,
-        })
+        }
     }
 
     /// The abstract state count, which splitting a dimension of `values`
@@ -114,8 +103,16 @@ impl AbstractionView for DomainView<'_> {
         self.table.distances[state]
     }
 
-    fn is_goal(&self, state: usize) -> bool {
-        self.goal_flags[state]
+    /// Evaluated on demand: the flaw search only asks about the states along
+    /// the abstract plan.
+    fn is_goal(&self, state: usize) -> Result<bool> {
+        self.factory.is_goal_state(
+            self.task,
+            state,
+            &self.table.goal_facts,
+            self.numeric_domain_sizes,
+            self.hash_multipliers,
+        )
     }
 
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey> {

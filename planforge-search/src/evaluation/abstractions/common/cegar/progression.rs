@@ -108,7 +108,7 @@ pub(crate) fn replay_optimal_abstract_trace(
             "concrete trace left optimal abstract path: g={concrete_cost} h={abstract_distance} initial_h={abstract_plan_cost}"
         );
 
-        if view.is_goal(abstract_state) {
+        if view.is_goal(abstract_state)? {
             if concrete_is_goal(semantics, state_packer, &propositions) {
                 return Ok(PlanCheck::ConcretePlan(ConcretePlan {
                     operator_ids,
@@ -281,7 +281,7 @@ pub(crate) fn replay_entire_optimal_abstract_trace(
             };
         }
 
-        if view.is_goal(abstract_state) {
+        if view.is_goal(abstract_state)? {
             if concrete_is_goal(semantics, state_packer, &propositions) {
                 return if candidates.is_empty() {
                     Ok(PlanCheck::ConcretePlan(ConcretePlan {
