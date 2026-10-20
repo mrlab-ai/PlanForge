@@ -89,7 +89,6 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     task: &'task dyn AbstractNumericTask,
     components: RefCell<Vec<AbstractionComponent<'task>>>,
     config: ScpConfig,
-    debug_diagnostics: bool,
     original_operator_costs: Vec<f64>,
     state: RefCell<ScpState>,
     lookup_scratch: RefCell<DomainAbstractionLookupScratch>,
@@ -104,8 +103,6 @@ pub struct ScpBuildOptions<'task> {
     /// An owned task to sample states from by random walks; required for
     /// diverse orders.
     pub sampling_task: Option<TaskRef<'task>>,
-    /// Log per-abstraction diagnostics while building cost partitionings.
-    pub debug_diagnostics: bool,
 }
 
 /// The components of a collection of domain abstractions, Cartesian
@@ -147,10 +144,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         options: ScpBuildOptions<'task>,
     ) -> Result<Self, EvaluationError> {
-        let ScpBuildOptions {
-            sampling_task,
-            debug_diagnostics,
-        } = options;
+        let ScpBuildOptions { sampling_task } = options;
         if components.is_empty() {
             return Err(EvaluationError::ComputationFailed(
                 "SCP requires at least one abstraction component".to_string(),
@@ -177,44 +171,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());
         let mut saturated_costs_by_abstraction: Vec<Vec<f64>> =
             Vec::with_capacity(components.len());
-        let mut debug_initial_h_values = Vec::new();
-
         for (component_id, component) in components.iter().enumerate() {
-            let (distances, saturated, initial_state_id) = saturate_original_costs(
+            let (distances, saturated) = saturate_original_costs(
                 component,
                 component_id,
                 task,
                 config.combine_labels,
                 &original_costs,
-                debug_diagnostics,
             )?;
-            if debug_diagnostics {
-                let initial_h = distances.get(initial_state_id).copied().ok_or_else(|| {
-                    EvaluationError::InvalidState(format!(
-                        "{} component {component_id} initial state {initial_state_id} out of bounds for {} states",
-                        component.kind(),
-                        distances.len()
-                    ))
-                })?;
-                debug_initial_h_values.push(initial_h);
-                info!(
-                    "scp debug: {} component {component_id}: original_initial_h={initial_h}, states={}",
-                    component.kind(),
-                    component.num_states()
-                );
-            }
             h_values.push(distances);
             saturated_costs_by_abstraction.push(saturated);
-        }
-
-        if debug_diagnostics {
-            let max_initial_h = debug_initial_h_values
-                .iter()
-                .copied()
-                .fold(f64::NEG_INFINITY, f64::max);
-            info!(
-                "scp debug: collection max original-cost initial h before cost partitioning = {max_initial_h}"
-            );
         }
 
         let surplus_costs =
@@ -246,7 +212,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             task,
             components: RefCell::new(components),
             config,
-            debug_diagnostics,
             original_operator_costs: original_costs,
             state: RefCell::new(st),
             lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
@@ -292,9 +257,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             order.len(),
             self.config.saturator,
         );
-        if self.debug_diagnostics {
-            log_abstraction_candidate_report(mode, state, &components, &order, abstract_state_ids);
-        }
 
         if !self.config.diversify {
             let cp = self.build_cp(collection, &order, deadline)?;

@@ -69,7 +69,6 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         &*task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
-            ..Default::default()
         },
     )
     .unwrap();
@@ -130,7 +129,6 @@ fn diverse_orders_reject_nan_initial_order_budget() {
         &*task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
-            ..Default::default()
         },
     );
     let error = match result {

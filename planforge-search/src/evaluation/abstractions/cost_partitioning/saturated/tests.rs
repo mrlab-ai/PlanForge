@@ -187,7 +187,6 @@ pub(super) fn goal_cover_scp<'task>(
         &**task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
-            ..Default::default()
         },
     )
     .unwrap();

@@ -214,34 +214,6 @@ impl MatchTree {
     }
 }
 
-pub(super) fn decode_state_to_vectors(
-    state_hash: usize,
-    num_props: usize,
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    hash_multipliers: &[usize],
-    prop_out: &mut Vec<Vec<usize>>,
-    num_out: &mut Vec<Vec<usize>>,
-) {
-    let mut props: Vec<usize> = Vec::with_capacity(num_props);
-    for var_id in 0..num_props {
-        let mult = hash_multipliers[var_id];
-        let dom = domain_sizes[var_id];
-        let val = (state_hash / mult) % dom;
-        props.push(val);
-    }
-    let mut nums: Vec<usize> = Vec::with_capacity(numeric_domain_sizes.len());
-    for (num_id, &dom_u) in numeric_domain_sizes.iter().enumerate() {
-        let abs_var = abstraction_numeric_var(num_props, VariableIndex::from_usize(num_id));
-        let mult = hash_multipliers[abs_var.index()];
-        let dom = dom_u;
-        let part = (state_hash / mult) % dom;
-        nums.push(part);
-    }
-    prop_out.push(props);
-    num_out.push(nums);
-}
-
 impl DomainAbstractionFactory {
     /// Check the invariant the sparse propositional overlap depends on: a
     /// dimension the region does not list as constrained must admit its whole

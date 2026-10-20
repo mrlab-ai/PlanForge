@@ -162,9 +162,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                     && partitions[best_index].is_empty()
                     && !partitions[candidate_index].is_empty())
             {
-                if self.debug_diagnostics {
-                    info!("scp: candidate order improved h {best_h} -> {candidate_h}");
-                }
                 best_h = candidate_h;
                 best_order = candidate;
                 best_index = candidate_index;

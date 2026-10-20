@@ -9,6 +9,7 @@ use crate::evaluation::abstractions::cartesian::{
 };
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
@@ -294,6 +295,16 @@ impl<'task> AbstractionComponent<'task> {
                         retained_transitions: abstraction.transition_system.transitions.len(),
                     })
             }
+            Self::PatternDatabase(_) => None,
+        }
+    }
+
+    /// The source sets of the abstract operators, which regional cost
+    /// partitioning attaches costs to; `None` for a pattern database.
+    pub fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
+        match self {
+            Self::Domain(heuristic) => Some(&heuristic.abstraction().abstract_source_sets),
+            Self::Cartesian(heuristic) => Some(&heuristic.abstraction().abstract_source_sets),
             Self::PatternDatabase(_) => None,
         }
     }

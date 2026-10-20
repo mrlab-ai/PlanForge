@@ -237,7 +237,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
             max_states: Some(10_000),
             ..DomainAbstractionMetadata::default()
         };
-        let states = abstraction_state_count(&abstraction);
+        let states = abstraction.distance_table.distances.len();
         assert!(
             states <= 10_000,
             "{} has {states} states, expected at most 10000",
@@ -312,7 +312,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
             "HANDCRAFTED_FULL_TASK_ABS index={index} name={} abstraction_h={abstraction_h} scp_contribution={} states={} abstract_ops={} views={}",
             spec.name,
             contributions[index],
-            abstraction_state_count(abstraction),
+            abstraction.distance_table.distances.len(),
             abstraction.abstract_operators.len(),
             partition_report(transformed_task, abstraction, &spec.view_ids),
         );

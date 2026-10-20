@@ -429,7 +429,6 @@ fn build_scp_from_sources<'task>(
         task,
         ScpBuildOptions {
             sampling_task: Some(sampling_task),
-            ..Default::default()
         },
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
