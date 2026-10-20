@@ -26,24 +26,14 @@ pub enum SearchSpec {
     /// list ordering and a *slow* but possibly tighter one evaluated
     /// lazily when a state is about to be expanded.
     AstarFs(HeuristicSpec, HeuristicSpec),
-    /// Search-free plan synthesis by gradient descent. Not a search engine at
-    /// all; it shares `--search` only to reuse the translation, resource-limit
-    /// and plan-writing plumbing.
-    ///
-    /// The arguments are kept as raw `ConfigArg`s rather than a `HeuristicSpec`
-    /// because a `HeuristicSpec` prints its own name, which would round-trip as
-    /// `sgd(sgd(...))` and break the self-re-exec.
-    Sgd(Vec<ConfigArg>),
 }
 
 impl SearchSpec {
-    /// Every heuristic the engine will build, in configuration order. The `sgd`
-    /// engine yields none: it is not allowed a heuristic.
+    /// Every heuristic the engine will build, in configuration order.
     pub fn heuristics(&self) -> impl Iterator<Item = &HeuristicSpec> {
         let (first, second) = match self {
             Self::Astar(heuristic, _) | Self::Gbfs(heuristic) => (Some(heuristic), None),
             Self::AstarFs(fast, slow) => (Some(fast), Some(slow)),
-            Self::Sgd(_) => (None, None),
         };
         first.into_iter().chain(second)
     }
@@ -65,19 +55,6 @@ impl fmt::Display for SearchSpec {
             Self::Astar(h, true) => write!(f, "astar({h}, mpd=true)"),
             Self::Gbfs(h) => write!(f, "gbfs({h})"),
             Self::AstarFs(fast, slow) => write!(f, "astar_fs(fast={fast}, slow={slow})"),
-            Self::Sgd(args) => {
-                if args.is_empty() {
-                    return write!(f, "sgd()");
-                }
-                let parts: Vec<String> = args
-                    .iter()
-                    .map(|arg| match arg.key() {
-                        Some(key) => format!("{key}={}", arg.value()),
-                        None => arg.value().to_string(),
-                    })
-                    .collect();
-                write!(f, "sgd({})", parts.join(", "))
-            }
         }
     }
 }
@@ -105,10 +82,6 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchSpec, String> {
         }
         let nested = call_from_value(&call.args[0].value)?;
         return build_search_spec(&nested);
-    }
-
-    if call.name == "sgd" {
-        return Ok(SearchSpec::Sgd(call.args.clone()));
     }
 
     let plugin = search_algorithm(&call.name).ok_or_else(|| {

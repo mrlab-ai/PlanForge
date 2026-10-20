@@ -9,11 +9,7 @@ publish = false
 [dependencies]
 planforge-sas = { path = "../planforge-sas", version = "0.1.0" }
 planforge-search = { path = "../planforge-search", version = "0.1.0" }
-planforge-sgd = { path = "../planforge-sgd", version = "0.1.0" }
 planforge-translate = { path = "../planforge-translate", version = "0.1.0" }
 anyhow = "1"
 serde_json = "1"
 
-[features]
-# Enables the candle-backed sgd engine tests.
-sgd = ["planforge-sgd/candle"]

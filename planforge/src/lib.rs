@@ -317,8 +317,7 @@ pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
 
 /// Run search for an already-parsed task and return the result. Contains no
 /// CLI, signal-handler, logging-setup, or file-writing side effects -- those
-/// stay in `run_internal`. Handles the astar / gbfs / astar_fs specs; `sgd`
-/// is dispatched directly in `run_internal`.
+/// stay in `run_internal`.
 pub fn solve_task(
     task: TaskRef<'_>,
     spec: &SearchSpec,
@@ -371,13 +370,6 @@ pub fn solve_task(
                 .unwrap_or_else(make_blind);
             info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
             ("astar_fs", Some(fast_h), Some(slow_h), false)
-        }
-        // `sgd(...)` is not a search engine and does not go through a state
-        // registry or an open list; `run_internal` dispatches it directly.
-        SearchSpec::Sgd(_) => {
-            return Err(std::io::Error::other(
-                "solve_task does not handle `sgd(...)`; it is dispatched in run_internal",
-            ));
         }
     };
     let plugin = search_algorithm(algorithm_name)
@@ -593,20 +585,11 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
             );
         }
     }
-    // Captured before the task is type-erased into a `TaskRef`: the global
-    // constraint is only reachable on the concrete root task, and the gradient
-    // engine's verifier requires it.
-    #[cfg_attr(not(feature = "sgd"), allow(unused_variables))]
-    let global_constraint = *task.global_constraint();
     let task: TaskRef<'static> = Arc::new(task);
     let parse_time = start_time.elapsed();
     info!("Parsed numeric SAS output in: {:?}", parse_time);
 
-    if matches!(cli.search, SearchSpec::Sgd(_)) {
-        info!("=== Gradient Plan Synthesis ===");
-    } else {
-        info!("=== Search Engine ===");
-    }
+    info!("=== Search Engine ===");
     info!("File: {}", sas_label);
     info!(
         "Variables: {} regular, {} numeric",
@@ -616,31 +599,10 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
     let time_limit = cli.max_time;
     let memory_limit = cli.max_memory;
-    let result = match &cli.search {
-        SearchSpec::Astar(_, _) | SearchSpec::Gbfs(_) | SearchSpec::AstarFs(_, _) => {
-            solve_task(task.clone(), &cli.search, time_limit, memory_limit)?
-        }
-        #[cfg(feature = "sgd")]
-        SearchSpec::Sgd(args) => {
-            planforge_searcher::sgd::run_sgd(task.clone(), global_constraint, args)?
-        }
-        #[cfg(not(feature = "sgd"))]
-        SearchSpec::Sgd(_) => {
-            return Err(std::io::Error::other(
-                "`sgd(...)` requires the `sgd` cargo feature; rebuild with \
-                 `cargo build --release -p planforge --features sgd`",
-            ));
-        }
-    };
+    let result = solve_task(task.clone(), &cli.search, time_limit, memory_limit)?;
 
     write_plan_file(&result)?;
-    // The gradient engine reports no search statistics, so it gets the plan
-    // block only.
-    if matches!(cli.search, SearchSpec::Sgd(_)) {
-        print_plan_result(&result);
-    } else {
-        print_search_result(&result);
-    }
+    print_search_result(&result);
 
     Ok(result)
 }

@@ -598,7 +598,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
 
         if generated_abstractions.is_empty() {
             bail!(
-                "multi_domain_abstractions(...) failed to generate the mandatory first abstraction ({stop_reason})"
+                "the domain collection failed to generate its mandatory first abstraction ({stop_reason})"
             )
         }
         let total_states = generated_abstractions.iter().try_fold(

@@ -37,8 +37,7 @@ jobs:
     # rather than by silencing the lint.
     #
     # Caveat worth knowing: roughly 70 `#[allow(clippy::...)]` attributes
-    # predate this gate, mostly `too_many_arguments` in planforge-search and
-    # planforge-sgd. A zero count therefore means "no new lints", not "no
+    # predate this gate, mostly `too_many_arguments` in planforge-search. A zero count therefore means "no new lints", not "no
     # lints" -- this job will not catch anything hiding behind those. Clearing
     # them means refactoring ~50 more 8-to-13-parameter functions.
     #
@@ -117,13 +116,9 @@ jobs:
             --config "patch.crates-io.planforge-translate.path='$GITHUB_WORKSPACE/planforge-translate'" \
             --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
 
-          cargo package -p planforge-sgd \
-            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'"
-
           cargo package -p planforge-searcher \
             --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'" \
             --config "patch.crates-io.planforge-search.path='$GITHUB_WORKSPACE/planforge-search'" \
-            --config "patch.crates-io.planforge-sgd.path='$GITHUB_WORKSPACE/planforge-sgd'" \
             --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
             --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
 
@@ -133,8 +128,7 @@ jobs:
             --config "patch.crates-io.planforge-search.path='$GITHUB_WORKSPACE/planforge-search'" \
             --config "patch.crates-io.planforge-searcher.path='$GITHUB_WORKSPACE/planforge-searcher'" \
             --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
-            --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'" \
-            --config "patch.crates-io.planforge-sgd.path='$GITHUB_WORKSPACE/planforge-sgd'"
+            --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
 
   release-test:
     name: release tests
@@ -156,46 +150,3 @@ jobs:
       # Not `#[ignore]`: an earlier audit removed six ignored tests, two of which
       # had been silently broken for a long time, so nothing here is opt-in.
       - run: cargo test -p tests --release
-
-  features:
-    name: optional features
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # `sgd` is off by default, so nothing else in CI would compile it and it
-      # would rot unnoticed. Checking it here keeps the gradient engine and its
-      # candle backend building without imposing them on the default build.
-      - run: cargo check -p planforge --features sgd
-      - run: cargo test -p planforge-sgd --features candle
-      # tests/src/sgd_engine_tests.rs is `#![cfg(feature = "sgd")]`, and the
-      # `test` job builds the default feature set, so nothing compiled this file
-      # at all until now - it went stale under a harness change and no job
-      # noticed. Compile-only on purpose: those tests are end-to-end solves of
-      # several thousand optimizer updates, which is minutes in an unoptimized
-      # build, and `cargo test -p planforge-sgd --features candle` above already
-      # exercises the engine. Run them by hand with
-      # `cargo test -p tests --features sgd`.
-      - run: cargo check -p tests --features sgd --all-targets
-
-  default-build-is-lean:
-    name: default build excludes optional backends
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      # The point of the `sgd` feature is that a default build never compiles
-      # the autograd backend. Assert it, rather than trusting the manifest:
-      # candle appears in Cargo.lock either way, so only the build graph is
-      # evidence.
-      - name: candle must not be in the default build graph
-        run: |
-          for crate in planforge tests; do
-            count=$(cargo tree -p "$crate" -e normal | grep -c candle || true)
-            if [ "$count" -ne 0 ]; then
-              echo "::error::$crate pulls in $count candle entries in a default build"
-              exit 1
-            fi
-          done

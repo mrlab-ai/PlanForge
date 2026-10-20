@@ -17,8 +17,6 @@
 //! ```
 
 pub mod recursive_config;
-#[cfg(feature = "sgd")]
-pub mod sgd;
 
 pub use planforge_search::config::HeuristicSpec;
 pub use recursive_config::{SearchSpec, parse_heuristic_spec, parse_search_spec};
