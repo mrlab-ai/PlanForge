@@ -15,7 +15,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::{ExpansionContext, StateRegistry};
 
 use crate::evaluation::abstractions::common::transition_system::{
-    BackwardDijkstraGraph, backward_goal_distances,
+    BackwardGraph, backward_goal_distances,
 };
 use crate::successor_generator::SuccessorTree;
 
@@ -174,46 +174,40 @@ impl OwnedStateSpace {
     }
 }
 
+/// The enumerated state space in CSR form, under its transition costs;
+/// labels are concrete operator ids.
 struct ConcreteBackwardGraph<'a> {
     num_states: usize,
-    goal_state_ids: &'a [usize],
     backward_offsets: &'a [usize],
     backward_transition_ids: &'a [usize],
     transition_sources: &'a [u32],
-    transition_targets: &'a [u32],
     transition_operator_ids: &'a [OperatorIndex],
+    transition_costs: &'a [f64],
 }
 
-impl BackwardDijkstraGraph for ConcreteBackwardGraph<'_> {
+impl BackwardGraph for ConcreteBackwardGraph<'_> {
+    type Label = OperatorIndex;
+
     fn num_states(&self) -> usize {
         self.num_states
     }
 
-    fn goal_state_ids(&self) -> &[usize] {
-        self.goal_state_ids
-    }
-
-    fn incoming_transition_ids(&self, target_id: usize) -> Option<&[usize]> {
-        let start = *self.backward_offsets.get(target_id)?;
-        let end = *self.backward_offsets.get(target_id + 1)?;
-        self.backward_transition_ids.get(start..end)
-    }
-
-    fn transition_endpoints(&self, transition_id: usize) -> Option<(usize, usize)> {
-        Some((
-            *self.transition_sources.get(transition_id)? as usize,
-            *self.transition_targets.get(transition_id)? as usize,
-        ))
-    }
-
-    fn transition_operator_id(&self, transition_id: usize) -> Option<usize> {
-        self.transition_operator_ids
-            .get(transition_id)
-            .map(|&operator_id| operator_id.index())
-    }
-
-    fn num_transitions(&self) -> usize {
-        self.transition_targets.len()
+    fn incoming(
+        &mut self,
+        target: usize,
+        incoming: &mut Vec<(usize, OperatorIndex, f64)>,
+    ) -> AnyResult<()> {
+        incoming.clear();
+        let transition_ids = &self.backward_transition_ids
+            [self.backward_offsets[target]..self.backward_offsets[target + 1]];
+        incoming.extend(transition_ids.iter().map(|&transition_id| {
+            (
+                self.transition_sources[transition_id] as usize,
+                self.transition_operator_ids[transition_id],
+                self.transition_costs[transition_id],
+            )
+        }));
+        Ok(())
     }
 }
 
@@ -440,19 +434,18 @@ pub fn enumerate_state_space(
         })?;
     }
 
-    let backward_graph = ConcreteBackwardGraph {
+    let mut backward_graph = ConcreteBackwardGraph {
         num_states,
-        goal_state_ids: &goal_state_ids,
         backward_offsets: &backward_offsets,
         backward_transition_ids: &backward_transition_ids,
         transition_sources: &transition_sources,
-        transition_targets: &transition_successor_ids,
         transition_operator_ids: &transition_operator_ids,
+        transition_costs: &transition_costs,
     };
     let timed_out = Cell::new(false);
     let h_star = backward_goal_distances(
-        &backward_graph,
-        &transition_costs,
+        &mut backward_graph,
+        &goal_state_ids,
         || -> AnyResult<()> {
             if Instant::now() >= deadline {
                 timed_out.set(true);

@@ -187,11 +187,11 @@ impl DomainAbstractionGenerator {
             Vec::new()
         };
         let distance_table = factory
-            .build_distance_table_with_operators(
+            .build_distance_table(
                 task,
                 &operator_generator,
                 &abstract_operators,
-                false,
+                DistanceTableOptions::default(),
             )
             .context("failed to build abstract distance table")?;
         let initial_h = distance_table

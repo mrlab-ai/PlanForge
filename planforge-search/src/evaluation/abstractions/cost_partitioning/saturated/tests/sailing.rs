@@ -425,11 +425,11 @@ fn build_handcrafted_abstraction(
     let abstract_operators = operator_generator.build_abstract_operators(transformed_task)?;
     let abstract_source_sets =
         factory.build_abstract_source_sets(transformed_task, &abstract_operators)?;
-    let distance_table = factory.build_distance_table_with_operators(
+    let distance_table = factory.build_distance_table(
         transformed_task,
         &operator_generator,
         &abstract_operators,
-        false,
+        DistanceTableOptions::default(),
     )?;
     let relevant_operator_ids = factory.relevant_operator_ids_from_operators(
         transformed_task,

@@ -30,8 +30,6 @@ pub struct DistanceTableOptions<'a> {
     pub dump_distances: bool,
     /// Override the task goals for this distance-table build.
     pub goal_facts: Option<&'a [ExplicitFact]>,
-    /// Reuse a match tree the caller already built for these operators.
-    pub(super) prebuilt_match_tree: Option<&'a MatchTree>,
     /// Give up once the online-SCP budget is spent.
     pub deadline: Option<Instant>,
     /// State whose distance bounds perimeter saturation.
@@ -49,7 +47,6 @@ impl Default for DistanceTableOptions<'_> {
         Self {
             dump_distances: false,
             goal_facts: None,
-            prebuilt_match_tree: None,
             deadline: None,
             cap_state_id: None,
             materialize_cartesian_sets: true,
@@ -111,8 +108,8 @@ pub(super) fn compute_num_states(
 }
 
 impl DomainAbstractionFactory {
-    /// Runs numeric-fd style implicit regression Dijkstra and returns distances-to-goal for
-    /// all abstract states plus the generating operator per state.
+    /// Goal distances of every abstract state under the task's own operator
+    /// costs.
     pub fn build_abstract_distance_table(
         &self,
         task: &dyn AbstractNumericTask,
@@ -121,10 +118,15 @@ impl DomainAbstractionFactory {
     ) -> Result<AbstractDistanceTable> {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let operators = generator.build_abstract_operators(task)?;
-        self.build_distance_table_with_operators(task, &generator, &operators, dump_distances)
+        self.build_distance_table(
+            task,
+            &generator,
+            &operators,
+            DistanceTableOptions::default().with_dump_distances(dump_distances),
+        )
     }
 
-    /// Builds goal distances using the supplied operator costs, without computing
+    /// Goal distances of every abstract state under `operator_costs`, without
     /// saturated costs. Used by the order generator during diversification.
     pub fn build_goal_distances(
         &self,
@@ -146,17 +148,16 @@ impl DomainAbstractionFactory {
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
         apply_operator_costs(&mut operators, operator_costs)?;
-        self.build_distance_table_with_operators_for_goals_inner(
+        self.build_distance_table(
             task,
             &generator,
             &operators,
-            goal_facts,
-            DistanceTableOptions::default(),
+            DistanceTableOptions::default().with_goal_facts(goal_facts),
         )
     }
 
-    /// Goal distances of every abstract state under `operators`, to the
-    /// task's abstract goals.
+    /// Goal distances of every abstract state under `operators`, to the goals
+    /// of `options` or else the task's abstract goals.
     pub(crate) fn build_distance_table(
         &self,
         task: &dyn AbstractNumericTask,
@@ -164,68 +165,29 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
         options: DistanceTableOptions<'_>,
     ) -> Result<AbstractDistanceTable> {
-        let goal_facts = self.compute_abstract_goals(task);
-        self.build_distance_table_with_operators_for_goals_inner(
-            task,
-            generator,
-            operators,
-            &goal_facts,
-            options,
-        )
+        let match_tree = MatchTree::new(generator, operators);
+        self.build_distance_table_with_match_tree(task, generator, operators, &match_tree, options)
     }
 
-    pub(crate) fn build_distance_table_with_operators(
+    /// [`Self::build_distance_table`] with the match tree of `operators`.
+    pub(super) fn build_distance_table_with_match_tree(
         &self,
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
-        dump_distances: bool,
-    ) -> Result<AbstractDistanceTable> {
-        let goal_facts = self.compute_abstract_goals(task);
-        self.build_distance_table_with_operators_for_goals(
-            task,
-            generator,
-            operators,
-            dump_distances,
-            &goal_facts,
-        )
-    }
-
-    pub(super) fn build_distance_table_with_operators_for_goals(
-        &self,
-        task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
-        dump_distances: bool,
-        goal_facts: &[ExplicitFact],
-    ) -> Result<AbstractDistanceTable> {
-        self.build_distance_table_with_operators_for_goals_inner(
-            task,
-            generator,
-            operators,
-            goal_facts,
-            DistanceTableOptions {
-                dump_distances,
-                ..DistanceTableOptions::default()
-            },
-        )
-    }
-
-    pub(super) fn build_distance_table_with_operators_for_goals_inner(
-        &self,
-        task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
-        goal_facts: &[ExplicitFact],
+        match_tree: &MatchTree,
         options: DistanceTableOptions<'_>,
     ) -> Result<AbstractDistanceTable> {
-        let DistanceTableOptions {
-            dump_distances,
-            prebuilt_match_tree,
-            deadline,
-            ..
-        } = options;
+        let deadline = options.deadline;
         ensure_online_scp_deadline(deadline)?;
+        let computed_goal_facts;
+        let goal_facts = match options.goal_facts {
+            Some(goal_facts) => goal_facts,
+            None => {
+                computed_goal_facts = self.compute_abstract_goals(task);
+                &computed_goal_facts
+            }
+        };
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
 
@@ -238,19 +200,8 @@ impl DomainAbstractionFactory {
         )?;
 
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-
-        let owned_match_tree = if prebuilt_match_tree.is_none() {
-            Some(MatchTree::build(
-                &self.domain_sizes,
-                numeric_domain_sizes,
-                hash_multipliers,
-                operators,
-            ))
-        } else {
-            None
-        };
-        let match_tree = prebuilt_match_tree.unwrap_or_else(|| owned_match_tree.as_ref().unwrap());
-        let (distances, generating_op_ids) = self.compute_distances_and_generating_ops(
+        let mut generating_op_ids = vec![None; num_states];
+        let distances = self.compute_goal_distances(
             AbstractGoalDistanceSpace {
                 task,
                 operators,
@@ -262,20 +213,20 @@ impl DomainAbstractionFactory {
                 },
                 num_states,
             },
+            Some(&mut generating_op_ids),
             deadline,
         )?;
 
-        let goal_facts = goal_facts.to_vec();
         let table = AbstractDistanceTable {
             distances,
             generating_op_ids,
             initial_state_hash: init_hash,
-            goal_facts,
+            goal_facts: goal_facts.to_vec(),
             hash_multipliers: hash_multipliers.to_vec(),
             numeric_domain_sizes: numeric_domain_sizes.to_vec(),
         };
 
-        if dump_distances {
+        if options.dump_distances {
             self.dump_distances(task, &table);
         }
 
@@ -296,49 +247,16 @@ impl DomainAbstractionFactory {
             transition_costs.len()
         );
 
-        let num_states = transition_system.backward.len();
-        let mut distances = vec![f64::INFINITY; num_states];
-        let mut generating_op_ids = vec![None; num_states];
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-
-        for &state_hash in &transition_system.goal_state_hashes {
-            ensure!(
-                state_hash < num_states,
-                "goal state hash out of range: {state_hash} >= {num_states}"
-            );
-            distances[state_hash] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
-        }
-
-        while let Some((Reverse(d), target_hash)) = heap.pop() {
-            let d = d.into_inner();
-            if d > distances[target_hash] + float_tolerance::DIJKSTRA_EPSILON {
-                continue;
-            }
-            for &transition_id in &transition_system.backward[target_hash] {
-                let transition = &transition_system.transitions[transition_id];
-                let transition_cost = transition_costs[transition_id];
-                if !transition_cost.is_finite() {
-                    continue;
-                }
-                ensure!(
-                    transition_cost >= -1e-9,
-                    "transition costs must be nonnegative, got {transition_cost}"
-                );
-                let transition_cost = transition_cost.max(0.0);
-                let alternative_cost = d + transition_cost;
-                if alternative_cost + float_tolerance::DIJKSTRA_EPSILON
-                    < distances[transition.source_hash]
-                {
-                    distances[transition.source_hash] = alternative_cost;
-                    generating_op_ids[transition.source_hash] = Some(transition.abstract_op_id);
-                    heap.push((
-                        Reverse(NotNan::new(alternative_cost).context("alternative cost is NaN")?),
-                        transition.source_hash,
-                    ));
-                }
-            }
-        }
+        let mut generating_op_ids = vec![None; transition_system.backward.len()];
+        let distances = backward_goal_distances(
+            &mut CostedTransitionSystem {
+                system: transition_system,
+                transition_costs,
+            },
+            &transition_system.goal_state_hashes,
+            || Ok(()),
+            Some(&mut generating_op_ids),
+        )?;
 
         Ok(AbstractDistanceTable {
             distances,
@@ -359,21 +277,10 @@ impl DomainAbstractionFactory {
         dump_distances(self, task, table);
     }
 
-    pub(super) fn compute_distances_and_generating_ops(
-        &self,
-        space: AbstractGoalDistanceSpace<'_>,
-        deadline: Option<Instant>,
-    ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
-        let mut generating_op_ids = vec![None; space.num_states];
-        let distances =
-            self.compute_goal_distances(space, Some(&mut generating_op_ids), deadline)?;
-        Ok((distances, generating_op_ids))
-    }
-
     pub(super) fn compute_goal_distances(
         &self,
         space: AbstractGoalDistanceSpace<'_>,
-        mut generating_op_ids: Option<&mut [Option<usize>]>,
+        generating_op_ids: Option<&mut [Option<usize>]>,
         deadline: Option<Instant>,
     ) -> Result<Vec<f64>> {
         let AbstractGoalDistanceSpace {
@@ -388,68 +295,69 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes,
             hash_multipliers,
         } = layout;
-        ensure_online_scp_deadline(deadline)?;
-        let mut distances: Vec<f64> = vec![f64::INFINITY; num_states];
-        if let Some(generating) = &generating_op_ids {
-            ensure!(
-                generating.len() == num_states,
-                "generating-operator output has {} entries for {num_states} abstract states",
-                generating.len()
-            );
-        }
-        let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
-
-        for (state_hash, distance) in distances.iter_mut().enumerate() {
+        let mut goal_states = Vec::new();
+        for state_hash in 0..num_states {
             if state_hash % 1024 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
-            if !self.is_goal_state(
+            if self.is_goal_state(
                 task,
                 state_hash,
                 goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
             )? {
-                continue;
-            }
-            *distance = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_hash));
-        }
-        let mut applicable_operator_ids: Vec<usize> = Vec::new();
-        while let Some((Reverse(d), state_hash)) = heap.pop() {
-            if state_hash % 1024 == 0 {
-                ensure_online_scp_deadline(deadline)?;
-            }
-            let d = d.into_inner();
-            if d > distances[state_hash] + float_tolerance::DIJKSTRA_EPSILON {
-                continue;
-            }
-
-            let base_state = state_hash;
-            match_tree.get_applicable_operator_ids(base_state, &mut applicable_operator_ids);
-            for &op_id in &applicable_operator_ids {
-                let op = &operators[op_id];
-                ensure!(op.cost.is_finite(), "abstract operator cost must be finite");
-                let alternative_cost = d + op.cost.value();
-                let predecessor_i64 = base_state as i64 + op.hash_effect as i64;
-                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
-                    continue;
-                }
-                let pred = predecessor_i64 as usize;
-                debug_assert!(pred < num_states, "predecessor hash does not fit usize");
-                if alternative_cost + float_tolerance::DIJKSTRA_EPSILON < distances[pred] {
-                    distances[pred] = alternative_cost;
-                    if let Some(generating) = generating_op_ids.as_deref_mut() {
-                        generating[pred] = Some(op_id);
-                    }
-                    heap.push((
-                        Reverse(NotNan::new(alternative_cost).context("alternative cost is NaN")?),
-                        pred,
-                    ));
-                }
+                goal_states.push(state_hash);
             }
         }
+        backward_goal_distances(
+            &mut MatchTreeGraph {
+                operators,
+                match_tree,
+                num_states,
+                applicable: Vec::new(),
+            },
+            &goal_states,
+            || ensure_online_scp_deadline(deadline),
+            generating_op_ids,
+        )
+    }
+}
 
-        Ok(distances)
+/// The implicit transition graph of a domain abstraction: every abstract
+/// operator the match tree finds applicable in a state, indexed by its
+/// effects, leads into it from the state its hash effect names.
+pub(super) struct MatchTreeGraph<'a> {
+    pub(super) operators: &'a [AbstractOperator],
+    pub(super) match_tree: &'a MatchTree,
+    pub(super) num_states: usize,
+    pub(super) applicable: Vec<usize>,
+}
+
+impl BackwardGraph for MatchTreeGraph<'_> {
+    type Label = usize;
+
+    fn num_states(&self) -> usize {
+        self.num_states
+    }
+
+    fn incoming(&mut self, target: usize, incoming: &mut Vec<(usize, usize, f64)>) -> Result<()> {
+        incoming.clear();
+        self.match_tree
+            .get_applicable_operator_ids(target, &mut self.applicable);
+        for &op_id in &self.applicable {
+            let op = &self.operators[op_id];
+            let source = target
+                .checked_add_signed(op.hash_effect as isize)
+                .filter(|&source| source < self.num_states)
+                .with_context(|| {
+                    format!(
+                        "abstract operator {op_id} regresses state {target} by {} out of the {} states",
+                        op.hash_effect, self.num_states
+                    )
+                })?;
+            incoming.push((source, op_id, op.cost.value()));
+        }
+        Ok(())
     }
 }

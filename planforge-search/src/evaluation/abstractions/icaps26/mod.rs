@@ -99,7 +99,7 @@ use crate::evaluation::abstractions::common::task::{
 };
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
+    AbstractTransitionSystem, CostedTransitionSystem, LabelSourceSet, backward_goal_distances,
 };
 use artifact::*;
 use planforge_sas::utils::interval::Interval;

@@ -87,13 +87,19 @@ impl DomainAbstractionFactory {
             operator_start.elapsed().as_secs_f64()
         );
         ensure_online_scp_deadline(deadline)?;
+        let match_tree_start = Instant::now();
+        let match_tree = MatchTree::new(&generator, &operators);
+        debug!(
+            "domain abstraction factory: built match tree in {:.3}s",
+            match_tree_start.elapsed().as_secs_f64()
+        );
+        ensure_online_scp_deadline(deadline)?;
         let table_start = Instant::now();
-        let goal_facts = self.compute_abstract_goals(task);
-        let table = self.build_distance_table_with_operators_for_goals_inner(
+        let table = self.build_distance_table_with_match_tree(
             task,
             &generator,
             &operators,
-            &goal_facts,
+            &match_tree,
             DistanceTableOptions {
                 dump_distances: options.dump_distances,
                 deadline,
@@ -104,18 +110,6 @@ impl DomainAbstractionFactory {
             "domain abstraction factory: built abstract distance table with {} states in {:.3}s",
             table.distances.len(),
             table_start.elapsed().as_secs_f64()
-        );
-        ensure_online_scp_deadline(deadline)?;
-        let match_tree_start = Instant::now();
-        let match_tree = MatchTree::build(
-            generator.domain_sizes(),
-            generator.numeric_domain_sizes(),
-            generator.hash_multipliers(),
-            &operators,
-        );
-        debug!(
-            "domain abstraction factory: built match tree in {:.3}s",
-            match_tree_start.elapsed().as_secs_f64()
         );
         ensure_online_scp_deadline(deadline)?;
 

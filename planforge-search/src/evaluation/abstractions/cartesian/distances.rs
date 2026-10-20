@@ -117,43 +117,18 @@ pub(super) fn compute_shortest_paths_with_goals(
         is_goal.iter().any(|is_goal| *is_goal),
         "Cartesian abstraction has no abstract goal state"
     );
-    let mut distances = vec![f64::INFINITY; working.states().len()];
+    let goal_states = is_goal
+        .iter()
+        .enumerate()
+        .filter_map(|(state_id, &state_is_goal)| state_is_goal.then_some(state_id))
+        .collect::<Vec<_>>();
     let mut generating_transition = vec![None; working.states().len()];
-    let mut heap = BinaryHeap::new();
-    for (state_id, &state_is_goal) in is_goal.iter().enumerate() {
-        if state_is_goal {
-            distances[state_id] = 0.0;
-            heap.push((Reverse(NotNan::new(0.0).unwrap()), state_id));
-        }
-    }
-    while let Some((Reverse(distance), target)) = heap.pop() {
-        let distance = distance.into_inner();
-        if distance > distances[target] + float_tolerance::SEARCH_EPSILON {
-            continue;
-        }
-        for &transition_id in &working.incoming()[target] {
-            let transition = working.transition(transition_id);
-            if transition.source == target {
-                continue;
-            }
-            let cost = semantics.cegar().operator_costs()[transition.concrete_op_id.index()];
-            ensure!(
-                cost.value() >= -float_tolerance::SEARCH_EPSILON && cost.is_finite(),
-                "invalid operator cost {cost}"
-            );
-            let alternative = distance + cost.value().max(0.0);
-            let source = transition.source;
-            if alternative + float_tolerance::SEARCH_EPSILON < distances[source] {
-                distances[source] = alternative;
-                generating_transition[source] = Some(TransitionKey {
-                    source,
-                    concrete_op_id: transition.concrete_op_id,
-                    target,
-                });
-                heap.push((Reverse(NotNan::new(alternative).unwrap()), source));
-            }
-        }
-    }
+    let distances = backward_goal_distances(
+        &mut WorkingGraph { working, semantics },
+        &goal_states,
+        || Ok(()),
+        Some(&mut generating_transition),
+    )?;
     let mut dependents = vec![Vec::new(); working.states().len()];
     let mut dependent_positions = vec![None; working.states().len()];
     for (source, transition) in generating_transition.iter().enumerate() {
@@ -171,6 +146,46 @@ pub(super) fn compute_shortest_paths_with_goals(
         is_goal,
         invalid: vec![false; working.states().len()],
     })
+}
+
+/// The working abstraction under the operator costs; labels are transitions.
+struct WorkingGraph<'a> {
+    working: &'a WorkingAbstraction,
+    semantics: &'a CartesianSemantics<'a>,
+}
+
+impl BackwardGraph for WorkingGraph<'_> {
+    type Label = TransitionKey;
+
+    fn num_states(&self) -> usize {
+        self.working.states().len()
+    }
+
+    fn incoming(
+        &mut self,
+        target: usize,
+        incoming: &mut Vec<(usize, TransitionKey, f64)>,
+    ) -> Result<()> {
+        incoming.clear();
+        let operator_costs = self.semantics.cegar().operator_costs();
+        for &transition_id in &self.working.incoming()[target] {
+            let transition = self.working.transition(transition_id);
+            // A self-loop never shortens a path.
+            if transition.source == target {
+                continue;
+            }
+            incoming.push((
+                transition.source,
+                TransitionKey {
+                    source: transition.source,
+                    concrete_op_id: transition.concrete_op_id,
+                    target,
+                },
+                operator_costs[transition.concrete_op_id.index()].value(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn update_shortest_paths_after_split(

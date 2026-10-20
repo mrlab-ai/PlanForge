@@ -80,5 +80,6 @@ use crate::evaluation::abstractions::common::coordinates::comparison_refinement_
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, LabelSourceSet, backward_goal_distances,
+    AbstractTransitionSystem, BackwardGraph, CostedTransitionSystem, LabelSourceSet,
+    backward_goal_distances,
 };

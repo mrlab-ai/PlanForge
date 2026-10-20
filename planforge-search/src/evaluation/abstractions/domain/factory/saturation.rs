@@ -74,31 +74,22 @@ impl DomainAbstractionFactory {
         operator_costs: &[f64],
         options: DistanceTableOptions<'_>,
     ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
-        let computed_goal_facts;
-        let goal_facts = if let Some(goal_facts) = options.goal_facts {
-            goal_facts
-        } else {
-            computed_goal_facts = self.compute_abstract_goals(task);
-            &computed_goal_facts
-        };
         let deadline = options.deadline;
         ensure_online_scp_deadline(deadline)?;
         let mut generator = self.make_operator_generator(task, combine_labels)?;
         let mut operators = generator.build_abstract_operators(task)?;
         ensure_online_scp_deadline(deadline)?;
         apply_operator_costs(&mut operators, operator_costs)?;
-        let table = self.build_distance_table_with_operators_for_goals_inner(
+        let match_tree = MatchTree::new(&generator, &operators);
+        let table = self.build_distance_table_with_match_tree(
             task,
             &generator,
             &operators,
-            goal_facts,
-            DistanceTableOptions {
-                goal_facts: None,
-                ..options
-            },
+            &match_tree,
+            options,
         )?;
         ensure_online_scp_deadline(deadline)?;
-        let saturated_costs = self.compute_saturated_costs(task, &generator, &operators, &table)?;
+        let saturated_costs = saturated_operator_costs(task, &operators, &match_tree, &table)?;
         Ok((table, saturated_costs))
     }
 
@@ -113,7 +104,8 @@ impl DomainAbstractionFactory {
         table: &AbstractDistanceTable,
     ) -> Result<Vec<f64>> {
         let generator = self.make_operator_generator(task, combine_labels)?;
-        self.compute_saturated_costs(task, &generator, operators, table)
+        let match_tree = MatchTree::new(&generator, operators);
+        saturated_operator_costs(task, operators, &match_tree, table)
     }
 
     /// The state region for `state_hash`, materializing it on first use.
@@ -324,104 +316,46 @@ impl DomainAbstractionFactory {
             transition_costs: saturated,
         })
     }
+}
 
-    pub(super) fn compute_saturated_costs(
-        &self,
-        task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
-        table: &AbstractDistanceTable,
-    ) -> Result<Vec<f64>> {
-        let num_operators = task.get_operators().len();
-        let num_states = table.distances.len();
-        let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
-        let match_tree = MatchTree::build(
-            generator.domain_sizes(),
-            generator.numeric_domain_sizes(),
-            generator.hash_multipliers(),
-            operators,
-        );
-        // Mirror `compute_distances_and_generating_ops`: when comparison-axiom
-        // vars are refined, an operator's predecessor set is enumerated via
-        // wildcard expansion on the comparison bits, not just the single
-        // `target + hash_effect` hash. Without this, cascade-only transitions
-        // (e.g. an op that flips a comparison-axiom prop var only via its
-        // effect on a numeric dependency) are missed during saturation, the
-        // residual stays inflated, subsequent abstractions over-saturate the
-        // same operator, and `sum_a h_a > h*` — inadmissibility.
-
-        let mut applicable_operator_ids = Vec::new();
-        for target_hash in 0..num_states {
-            let target_h = table.distances[target_hash];
-            if !target_h.is_finite() {
+/// The saturated cost of every concrete operator for `table`: the most any
+/// transition it labels needs, over every transition into a state of finite
+/// distance and not only the shortest-path ones, as numeric-fd's
+/// `DomainAbstraction::compute_saturated_costs` does.
+fn saturated_operator_costs(
+    task: &dyn AbstractNumericTask,
+    operators: &[AbstractOperator],
+    match_tree: &MatchTree,
+    table: &AbstractDistanceTable,
+) -> Result<Vec<f64>> {
+    let mut saturated_costs = vec![0.0_f64; task.get_operators().len()];
+    let mut graph = MatchTreeGraph {
+        operators,
+        match_tree,
+        num_states: table.distances.len(),
+        applicable: Vec::new(),
+    };
+    let mut incoming = Vec::new();
+    for (target, &target_h) in table.distances.iter().enumerate() {
+        if !target_h.is_finite() {
+            continue;
+        }
+        graph.incoming(target, &mut incoming)?;
+        for &(source, abstract_op_id, cost) in &incoming {
+            let Some(needed) = saturation_need(
+                table.distances[source],
+                target_h,
+                cost,
+                "saturated operator cost",
+            )?
+            else {
                 continue;
-            }
-
-            // Mirror `compute_distances_and_generating_ops`: under
-            // comparison-branching, Dijkstra clears the target state's
-            // comparison-axiom prop vars before consulting `match_tree` for
-            // applicable operators, and computes the predecessor hash from
-            // that cleared state. The reason is that
-            // ops have no direct effect on comparison-axiom prop vars —
-            // those values are derived from the predecessor's numeric
-            // intervals, then enumerated via wildcard expansion. If we
-            // consult `match_tree` at `target_hash` directly (with
-            // specific comparison bits), we'd saturate over transitions
-            // Dijkstra never used (because Dijkstra applied them at the
-            // base form) and miss transitions Dijkstra did use,
-            // diverging from the cost partition that produced the
-            // distance table. The divergence inflates `needed` for ops
-            // not actually on Dijkstra's paths and under-saturates ops
-            // that were, leaving cost in `remaining_costs` for the next
-            // abstraction to re-charge — the symptom is `sum_k h_k > h*`
-            // on plant-watering/prob_4_2_2 (cost 34 vs optimal 33 across
-            // a fraction of seeds).
-            let base_target = target_hash;
-
-            match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
-            for &abstract_op_id in &applicable_operator_ids {
-                let op = &operators[abstract_op_id];
-                let predecessor_i64 = base_target as i64 + op.hash_effect as i64;
-                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
-                    continue;
-                }
-                let base_predecessor = predecessor_i64 as usize;
-
-                // Saturate over ALL applicable transitions, not just those chosen by
-                // Dijkstra as the generating op for the source state. Mirrors
-                // numeric-fd `DomainAbstraction::compute_saturated_costs`
-                // (cost_saturation/domain_abstraction.cc:872-902) which iterates
-                // every label transition with `for_each_label_transition`.
-                //
-                // The previous "generator-only" filter under-saturated: an
-                // operator applicable at a non-generating source still needs cost
-                // ≥ (src_h - target_h) to be admissible in the next abstraction's
-                // residual, but skipping it left that cost in the residual and let
-                // subsequent abstractions over-allocate, producing sum h > h* on
-                // plant-watering/prob_6_2_2 (32-47 across seeds vs optimal 32).
-                let consider_source = |source_hash: usize, saturated_costs: &mut [f64]| {
-                    if let Some(&src_h) = table.distances.get(source_hash)
-                        && src_h.is_finite()
-                    {
-                        let needed = (src_h - target_h).max(0.0);
-                        for &op_id in &op.concrete_op_ids {
-                            if let Some(slot) = saturated_costs.get_mut(op_id.index()) {
-                                *slot = slot.max(needed);
-                            }
-                        }
-                    }
-                };
-
-                consider_source(base_predecessor, &mut saturated_costs);
+            };
+            for &op_id in &operators[abstract_op_id].concrete_op_ids {
+                let slot = &mut saturated_costs[op_id.index()];
+                *slot = slot.max(needed);
             }
         }
-
-        for cost in &mut saturated_costs {
-            if *cost == f64::NEG_INFINITY {
-                *cost = 0.0;
-            }
-        }
-
-        Ok(saturated_costs)
     }
+    Ok(saturated_costs)
 }
