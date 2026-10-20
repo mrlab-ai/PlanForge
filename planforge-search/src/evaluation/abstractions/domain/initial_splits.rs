@@ -96,7 +96,7 @@ pub(super) fn apply_initial_goal_splits(
         (!is_goal, *var_id)
     });
     candidate_var_ids.dedup();
-    let initial_max_abstraction_size = if config.init_split_var_ids.is_some() {
+    let initial_max_states = if config.init_split_var_ids.is_some() {
         (config.max_states / 2).max(1)
     } else {
         config.max_states
@@ -118,7 +118,7 @@ pub(super) fn apply_initial_goal_splits(
             numeric_domain_sizes,
             var_id,
             2,
-            initial_max_abstraction_size,
+            initial_max_states,
         ) {
             continue;
         }
@@ -148,7 +148,7 @@ pub(super) fn apply_initial_goal_splits(
                     domain_sizes,
                     numeric_domain_sizes,
                     numeric_var_id,
-                    initial_max_abstraction_size,
+                    initial_max_states,
                 )
             {
                 continue;
