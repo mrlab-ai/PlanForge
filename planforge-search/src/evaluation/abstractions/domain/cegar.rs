@@ -178,16 +178,16 @@ impl Cegar {
                     }
                     Err(error) => return Err(error),
                 };
-                let view = DomainView::new(
+                let view = DomainView {
                     task,
-                    &factory,
-                    generator.numeric_domain_sizes(),
-                    generator.hash_multipliers(),
-                    &operators,
-                    &table,
+                    factory: &factory,
+                    numeric_domain_sizes: generator.numeric_domain_sizes(),
+                    hash_multipliers: generator.hash_multipliers(),
+                    operators: &operators,
+                    table: &table,
                     limits,
-                    config.use_wildcard_plans,
-                );
+                    wildcard_plans: config.use_wildcard_plans,
+                };
                 let check = match config.flaw_kind {
                     FlawKind::Progression => replay_optimal_abstract_trace(
                         &view,
@@ -234,7 +234,6 @@ impl Cegar {
                 if config.debug {
                     debug!("domain CEGAR iteration {iteration}: {split:?}");
                 }
-                drop(view);
                 factory.apply_split(task, &split)?;
                 Ok(CegarIterationResult::Continue)
             },

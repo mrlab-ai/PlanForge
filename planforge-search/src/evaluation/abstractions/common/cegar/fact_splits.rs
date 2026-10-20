@@ -63,7 +63,7 @@ pub(crate) fn split_failed_fact(
                 for condition in axiom.conditions() {
                     if !semantics
                         .regions()
-                        .guarantees(&*view.region(state_id), condition)?
+                        .guarantees(&view.region(state_id), condition)?
                     {
                         return split_to_guarantee_fact(
                             view,
@@ -90,7 +90,7 @@ pub(crate) fn split_failed_fact(
         for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
             let axiom = &semantics.task().axioms()[axiom_id];
             if axiom.effect_value() != fact.value_index()
-                || !all_conditions_admitted(semantics, &*view.region(state_id), axiom.conditions())?
+                || !all_conditions_admitted(semantics, &view.region(state_id), axiom.conditions())?
             {
                 continue;
             }
@@ -168,7 +168,7 @@ fn split_to_guarantee_fact(
         if fact.value_index() == default_value {
             for &axiom_id in semantics.regions().axioms_for(fact.var_index()) {
                 let axiom = &semantics.task().axioms()[axiom_id];
-                if !all_conditions_admitted(semantics, &*view.region(state_id), axiom.conditions())?
+                if !all_conditions_admitted(semantics, &view.region(state_id), axiom.conditions())?
                 {
                     continue;
                 }
@@ -214,7 +214,7 @@ fn split_to_guarantee_fact(
             for condition in axiom.conditions() {
                 if !semantics
                     .regions()
-                    .guarantees(&*view.region(state_id), condition)?
+                    .guarantees(&view.region(state_id), condition)?
                 {
                     return split_to_guarantee_fact(
                         view,

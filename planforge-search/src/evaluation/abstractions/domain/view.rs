@@ -17,16 +17,16 @@ use crate::evaluation::abstractions::common::cegar::view::{AbstractionView, Tran
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 
 pub(super) struct DomainView<'a> {
-    factory: &'a DomainAbstractionFactory,
-    numeric_domain_sizes: &'a [usize],
-    hash_multipliers: &'a [usize],
-    operators: &'a [AbstractOperator],
-    task: &'a dyn AbstractNumericTask,
-    table: &'a AbstractDistanceTable,
-    limits: RefinementLimits<'a>,
+    pub(super) task: &'a dyn AbstractNumericTask,
+    pub(super) factory: &'a DomainAbstractionFactory,
+    pub(super) numeric_domain_sizes: &'a [usize],
+    pub(super) hash_multipliers: &'a [usize],
+    pub(super) operators: &'a [AbstractOperator],
+    pub(super) table: &'a AbstractDistanceTable,
+    pub(super) limits: RefinementLimits<'a>,
     /// Plan steps execute any label of their abstract operator, not just
     /// the first.
-    wildcard_plans: bool,
+    pub(super) wildcard_plans: bool,
 }
 
 /// What a domain abstraction may still refine: a split must keep it within
@@ -38,29 +38,7 @@ pub(super) struct RefinementLimits<'a> {
     pub(super) blacklisted_numeric_var_ids: &'a HashSet<VariableIndex>,
 }
 
-impl<'a> DomainView<'a> {
-    pub(super) fn new(
-        task: &'a dyn AbstractNumericTask,
-        factory: &'a DomainAbstractionFactory,
-        numeric_domain_sizes: &'a [usize],
-        hash_multipliers: &'a [usize],
-        operators: &'a [AbstractOperator],
-        table: &'a AbstractDistanceTable,
-        limits: RefinementLimits<'a>,
-        wildcard_plans: bool,
-    ) -> Self {
-        Self {
-            factory,
-            numeric_domain_sizes,
-            hash_multipliers,
-            operators,
-            task,
-            table,
-            limits,
-            wildcard_plans,
-        }
-    }
-
+impl DomainView<'_> {
     /// The abstract state count, which splitting a dimension of `values`
     /// values multiplies by `(values + 1) / values`.
     fn size_after_splitting_dimension_of(&self, values: usize) -> u128 {
