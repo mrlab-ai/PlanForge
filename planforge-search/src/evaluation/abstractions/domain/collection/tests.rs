@@ -89,6 +89,29 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
 }
 
 #[test]
+fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
+    // Without the stop, every restart rebuilds the same solved abstraction
+    // until the collection time limit.
+    let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
+        max_abstraction_size: 1_000,
+        max_collection_size: 100_000,
+        abstraction_generation_max_time: 600.0,
+        total_max_time: 600.0,
+        stagnation_limit: 600.0,
+        compute_source_sets: false,
+        ..Default::default()
+    };
+    let start = Instant::now();
+    let abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+        .generate_collection(&two_counter_task())
+        .unwrap();
+
+    assert!(start.elapsed() < Duration::from_secs(60));
+    assert_eq!(abstractions.len(), 1);
+    assert!(abstractions[0].metadata.solved_by_self);
+}
+
+#[test]
 fn standard_can_interleave_split_directions_on_the_full_task() {
     let config = DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         collection_strategy: CollectionStrategy::Standard,

@@ -6,7 +6,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
-use ordered_float::OrderedFloat;
+
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -30,6 +30,7 @@ use super::config::FlawTreatmentVariants;
 use super::config::SplitDirection;
 use super::generator::DomainAbstractionGenerator;
 use crate::resource_limits;
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 #[derive(
@@ -414,7 +415,9 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     /// Full-task members with random restarts until the size, time,
-    /// stagnation, or memory limit.
+    /// stagnation, or memory limit, or until a member's abstract plan is a
+    /// concrete plan: that member is perfect along an optimal plan, so no
+    /// further member can help the search.
     fn generate_standard_collection(
         &self,
         task: &dyn AbstractNumericTask,
@@ -529,6 +532,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             )
             .unwrap_or(u128::MAX);
 
+            let solved = abstraction.metadata.solved_by_self;
             let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
             let elapsed_after_generation = start.elapsed().as_secs_f64();
             if generated_keys.insert(abstraction_key) {
@@ -555,6 +559,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 );
             }
 
+            if solved {
+                stop_reason = "concrete plan";
+                break;
+            }
             let stagnated = elapsed_after_generation - time_point_of_last_new_abstraction
                 > self.config.stagnation_limit;
             if remaining_collection_size == 0 {
@@ -944,8 +952,8 @@ fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct IntervalFingerprint {
-    lower: OrderedFloat<f64>,
-    upper: OrderedFloat<f64>,
+    lower: u64,
+    upper: u64,
     lower_closed: bool,
     upper_closed: bool,
 }
@@ -953,8 +961,8 @@ struct IntervalFingerprint {
 impl IntervalFingerprint {
     fn from_interval(interval: Interval) -> Self {
         Self {
-            lower: OrderedFloat(interval.lower.value()),
-            upper: OrderedFloat(interval.upper.value()),
+            lower: float_tolerance::canonical_bits(interval.lower),
+            upper: float_tolerance::canonical_bits(interval.upper),
             lower_closed: interval.lower_closed,
             upper_closed: interval.upper_closed,
         }
