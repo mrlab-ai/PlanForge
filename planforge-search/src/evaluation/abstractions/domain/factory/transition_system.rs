@@ -263,7 +263,8 @@ impl DomainAbstractionFactory {
         // op rather than per individual transition.
         #[cfg(debug_assertions)]
         if materialize_cartesian_sets {
-            let mut representative_per_op: HashMap<usize, (usize, usize)> = HashMap::new();
+            let mut representative_per_op: std::collections::HashMap<usize, (usize, usize)> =
+                std::collections::HashMap::new();
             for transition in &transitions {
                 match representative_per_op.get(&transition.abstract_op_id) {
                     Some(&(rep_src_hash, rep_tgt_hash)) => {
