@@ -15,7 +15,7 @@ use rand::{Rng, SeedableRng};
 
 use super::split::{Split, SplitDimension, approximately_equal};
 use super::{SplitKind, SplitSelection};
-use crate::evaluation::abstractions::collections::portfolio::{mix_seed, stable_text_seed};
+use crate::evaluation::abstractions::collections::strategy::{mix_seed, stable_text_seed};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;

@@ -44,10 +44,12 @@ pub struct CartesianAbstractionCollectionConfig {
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
     pub progress_states: bool,
-    /// Goal-focused collections only: alternate concrete and wanted splits
-    /// by variant parity. When false, every variant uses the configured
-    /// `split_kind`.
-    pub alternate_split_kinds: bool,
+    /// Alternate concrete and wanted splits between members; unset, exactly
+    /// goal-focused collections alternate (see
+    /// [`CollectionStrategy::alternates_split_kinds`]).
+    pub alternate_split_kinds: Option<bool>,
+    /// Whether the configuration fixes the members' `split_kind`.
+    pub fixed_split_kind: bool,
     /// Goal-focused collections only: build every member on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
@@ -59,12 +61,13 @@ impl Default for CartesianAbstractionCollectionConfig {
     fn default() -> Self {
         Self {
             abstraction: CartesianAbstractionConfig::default(),
-            collection_strategy: CollectionStrategy::Standard,
+            collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
             max_collection_states: 10_000_000,
             total_max_time: None,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
+            fixed_split_kind: false,
             single_goal_tasks: true,
         }
     }

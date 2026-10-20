@@ -6,7 +6,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
@@ -736,6 +736,7 @@ fn apply_cartesian_source_options(
             }
             "split_kind" => {
                 config.abstraction.split_kind = SplitKind::from_option_value(arg.value())?;
+                config.fixed_split_kind = collection;
             }
             "split_selection" => {
                 config.abstraction.split_selection =
@@ -755,7 +756,7 @@ fn apply_cartesian_source_options(
                 config.progress_states = bool::from_option_value(arg.value())?;
             }
             "alternate_split_kinds" if collection => {
-                config.alternate_split_kinds = bool::from_option_value(arg.value())?;
+                config.alternate_split_kinds = Some(bool::from_option_value(arg.value())?);
             }
             "single_goal_tasks" if collection => {
                 config.single_goal_tasks = bool::from_option_value(arg.value())?;

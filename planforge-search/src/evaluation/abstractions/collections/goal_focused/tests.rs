@@ -248,7 +248,7 @@ fn schedule(
         max_collection_states: 1_000,
         total_max_time: None,
         progress_states,
-        alternate_split_kinds: true,
+        alternate_split_kinds: strategy.is_goal_focused(),
         single_goal_tasks: true,
     }
 }
@@ -340,13 +340,13 @@ fn goal_focused_variants_alternate_split_kinds_and_rank_ties_by_pairs() {
 }
 
 #[test]
-fn standard_variants_vary_only_the_seed() {
+fn per_goal_variants_vary_only_the_seed() {
     let bounds = [Bound::AtLeast(1.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 2, false),
+        &schedule(CollectionStrategy::PerGoal, 2, false),
         &backend,
     )
     .unwrap();
@@ -406,7 +406,7 @@ fn progress_states_advance_through_concrete_plans_and_add_initial_root_specialis
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -428,7 +428,7 @@ fn a_progress_state_reaching_the_full_goal_completes_its_variant() {
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -449,7 +449,7 @@ fn a_dead_progress_state_is_rebuilt_from_the_initial_state_and_completes_its_var
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -489,7 +489,7 @@ fn a_member_whose_initial_state_is_dead_is_kept() {
     let backend = ScriptedBackend::new(&bounds);
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, false),
+        &schedule(CollectionStrategy::PerGoal, 1, false),
         &backend,
     )
     .unwrap();
@@ -516,7 +516,7 @@ fn an_advanced_progress_state_retries_goals_it_reopened() {
     backend.unsolved_calls = vec![0];
     let members = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &backend,
     )
     .unwrap();
@@ -559,7 +559,7 @@ fn an_invalid_concrete_plan_is_an_error() {
 
     let error = build_goal_focused_collection(
         &task,
-        &schedule(CollectionStrategy::Standard, 1, true),
+        &schedule(CollectionStrategy::PerGoal, 1, true),
         &ShortPlans(ScriptedBackend::new(&bounds)),
     )
     .unwrap_err();

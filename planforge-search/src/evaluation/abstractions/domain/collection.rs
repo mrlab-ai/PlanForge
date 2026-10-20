@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 use rand::seq::SliceRandom;
@@ -14,10 +14,12 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, FULL_TASK_PROGRESS_STATES_ERROR, GoalFocusedBackend,
-    GoalFocusedSchedule, GoalVariant, MemberBudget, build_goal_focused_collection,
+    BuiltReport, CollectionMembership, GoalFocusedBackend, GoalFocusedSchedule, GoalVariant,
+    MemberBudget, build_goal_focused_collection,
 };
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::{
+    CollectionOptions, CollectionStrategy, validate_collection_options,
+};
 use crate::evaluation::abstractions::common::cegar::{
     CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
 };
@@ -69,20 +71,17 @@ pub struct DomainAbstractionCollectionConfig {
     /// concrete states its earlier members' plans reached. Must be false for
     /// `standard`.
     pub progress_states: bool,
-    /// Alternate concrete and wanted splits by variant parity in a
-    /// `goal_focused` collection. When false, every variant uses the
-    /// configured `split_kind` (concrete splits when unset).
-    /// Must be true for `standard`.
-    pub alternate_split_kinds: bool,
+    /// Alternate concrete and wanted splits between members: by iteration in
+    /// a `standard` collection, by variant parity in a `goal_focused` one.
+    /// Unset, exactly goal-focused collections alternate; otherwise every
+    /// member uses the configured `split_kind` (concrete splits when unset).
+    pub alternate_split_kinds: Option<bool>,
     /// Build every member of a `goal_focused` collection on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
     /// and carry no collection membership. Must be true for `standard` and
     /// with `progress_states`.
     pub single_goal_tasks: bool,
-    /// Alternate concrete and wanted splits between the members of a
-    /// `standard` collection, independently of the flaw kind and scope.
-    pub interleave_split_directions: bool,
     /// The fixed split kind; concrete splits when unset.
     pub split_kind: Option<SplitKind>,
     /// Pass-through for `DomainAbstractionConfig::compute_source_sets`. Default
@@ -131,9 +130,8 @@ impl Default for DomainAbstractionCollectionConfig {
             collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: None,
             single_goal_tasks: true,
-            interleave_split_directions: false,
             split_kind: None,
             compute_source_sets: true,
             max_refined_comparison_vars_per_abstraction: None,
@@ -205,9 +203,8 @@ impl fmt::Display for DomainAbstractionCollectionConfig {
                 "collection_strategy={}, ",
                 "variants_per_goal={}, ",
                 "progress_states={}, ",
-                "alternate_split_kinds={}, ",
+                "alternate_split_kinds={:?}, ",
                 "single_goal_tasks={}, ",
-                "interleave_split_directions={}, ",
             ),
             self.max_states,
             self.max_collection_size,
@@ -228,7 +225,6 @@ impl fmt::Display for DomainAbstractionCollectionConfig {
             self.progress_states,
             self.alternate_split_kinds,
             self.single_goal_tasks,
-            self.interleave_split_directions,
         )
     }
 }
@@ -255,59 +251,16 @@ impl DomainAbstractionCollectionGenerator {
     }
 
     fn validate_supported_options(&self) -> Result<()> {
-        ensure!(
-            self.config.variants_per_goal > 0,
-            "`variants_per_goal` must be > 0"
-        );
-        match self.config.collection_strategy {
-            CollectionStrategy::Standard => {
-                ensure!(
-                    self.config.variants_per_goal == 1,
-                    "`variants_per_goal` requires `collection_strategy=goal_focused`"
-                );
-                ensure!(
-                    !self.config.progress_states,
-                    "`progress_states=true` requires `collection_strategy=goal_focused`"
-                );
-                ensure!(
-                    self.config.alternate_split_kinds,
-                    "`alternate_split_kinds=false` requires `collection_strategy=goal_focused`"
-                );
-                ensure!(
-                    self.config.single_goal_tasks,
-                    "`single_goal_tasks=false` requires `collection_strategy=goal_focused`"
-                );
-                if self.config.interleave_split_directions && self.config.split_kind.is_some() {
-                    bail!(
-                        "`interleave_split_directions=true` cannot be combined with a fixed `split_kind`"
-                    );
-                }
-            }
-            CollectionStrategy::GoalFocused => {
-                ensure!(
-                    !self.config.interleave_split_directions,
-                    "`interleave_split_directions=true` requires `collection_strategy=standard`"
-                );
-                ensure!(
-                    !self.config.alternate_split_kinds || self.config.split_kind.is_none(),
-                    "`alternate_split_kinds=true` chooses the split kind per variant; it cannot be combined with a fixed `split_kind`"
-                );
-                ensure!(
-                    self.config.flaw_kind == FlawKind::Progression,
-                    "`collection_strategy=goal_focused` refines along executed concrete plans and supports flaw_kind=progression, not flaw_kind={}",
-                    self.config.flaw_kind
-                );
-                ensure!(
-                    self.config.max_collection_size > 0,
-                    "`max_collection_size` must be > 0"
-                );
-                ensure!(
-                    self.config.single_goal_tasks || !self.config.progress_states,
-                    "{FULL_TASK_PROGRESS_STATES_ERROR}"
-                );
-            }
-        }
-        Ok(())
+        validate_collection_options(CollectionOptions {
+            strategy: self.config.collection_strategy,
+            variants_per_goal: self.config.variants_per_goal,
+            max_collection_size: self.config.max_collection_size,
+            progress_states: self.config.progress_states,
+            alternate_split_kinds: self.config.alternate_split_kinds,
+            single_goal_tasks: self.config.single_goal_tasks,
+            fixed_split_kind: self.config.split_kind.is_some(),
+            flaw_kind: self.config.flaw_kind,
+        })
     }
 
     fn create_rng(&self) -> SmallRng {
@@ -362,7 +315,9 @@ impl DomainAbstractionCollectionGenerator {
         self.validate_supported_options()?;
         let abstractions = match self.config.collection_strategy {
             CollectionStrategy::Standard => self.generate_standard_collection(task)?,
-            CollectionStrategy::GoalFocused => self.generate_goal_focused_collection(task)?,
+            CollectionStrategy::PerGoal | CollectionStrategy::GoalFocused => {
+                self.generate_goal_focused_collection(task)?
+            }
         };
         if self.config.debug {
             log_collection_debug_summary(&abstractions);
@@ -388,7 +343,10 @@ impl DomainAbstractionCollectionGenerator {
                 max_collection_states: self.config.max_collection_size,
                 total_max_time: optional_duration("total_max_time", self.config.total_max_time)?,
                 progress_states: self.config.progress_states,
-                alternate_split_kinds: self.config.alternate_split_kinds,
+                alternate_split_kinds: self
+                    .config
+                    .collection_strategy
+                    .alternates_split_kinds(self.config.alternate_split_kinds),
                 single_goal_tasks: self.config.single_goal_tasks,
             },
             &backend,
@@ -639,7 +597,11 @@ impl DomainAbstractionCollectionGenerator {
     }
 
     fn split_kind_for_iteration(&self, iteration: usize) -> Option<SplitKind> {
-        if !self.config.interleave_split_directions {
+        if !self
+            .config
+            .collection_strategy
+            .alternates_split_kinds(self.config.alternate_split_kinds)
+        {
             return self.config.split_kind;
         }
         assert!(iteration > 0, "collection iterations are one-based");

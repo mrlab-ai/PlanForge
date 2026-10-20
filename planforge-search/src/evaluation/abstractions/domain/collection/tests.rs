@@ -25,7 +25,7 @@ fn standard_collection_defaults() {
     assert_eq!(config.random_seed, Some(2011));
     assert_eq!(config.flaw_kind, FlawKind::Progression);
     assert_eq!(config.flaw_scope, FlawScope::First);
-    assert!(!config.interleave_split_directions);
+    assert_eq!(config.alternate_split_kinds, None);
     assert_eq!(config.variants_per_goal, 1);
     assert!(!config.progress_states);
 }
@@ -113,12 +113,12 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 }
 
 #[test]
-fn standard_can_interleave_split_directions_on_the_full_task() {
+fn standard_can_alternate_split_kinds_on_the_full_task() {
     let config = DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::Standard,
         flaw_kind: FlawKind::Progression,
         flaw_scope: FlawScope::WholePlan,
-        interleave_split_directions: true,
+        alternate_split_kinds: Some(true),
         ..Default::default()
     };
     let generator = DomainAbstractionCollectionGenerator::new(config);
@@ -145,9 +145,9 @@ fn validation_error(config: DomainAbstractionCollectionConfig) -> String {
 }
 
 #[test]
-fn interleaving_rejects_ambiguous_direction_configuration() {
+fn alternation_rejects_a_fixed_split_kind() {
     let error = validation_error(DomainAbstractionCollectionConfig {
-        interleave_split_directions: true,
+        alternate_split_kinds: Some(true),
         split_kind: Some(SplitKind::Concrete),
         ..Default::default()
     });
@@ -156,14 +156,14 @@ fn interleaving_rejects_ambiguous_direction_configuration() {
 }
 
 #[test]
-fn interleaving_rejects_goal_focused_collections() {
+fn per_goal_collections_reject_alternation() {
     let error = validation_error(DomainAbstractionCollectionConfig {
-        collection_strategy: CollectionStrategy::GoalFocused,
-        interleave_split_directions: true,
+        collection_strategy: CollectionStrategy::PerGoal,
+        alternate_split_kinds: Some(true),
         ..Default::default()
     });
 
-    assert!(error.contains("collection_strategy=standard"));
+    assert!(error.contains("collection_strategy=standard"), "{error}");
 }
 
 #[test]
@@ -176,10 +176,10 @@ fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
         split_kind: Some(SplitKind::Wanted),
         ..goal_focused.clone()
     });
-    assert!(error.contains("split kind per variant"), "{error}");
+    assert!(error.contains("split kind per member"), "{error}");
     let without_alternation = DomainAbstractionCollectionConfig {
         split_kind: Some(SplitKind::Wanted),
-        alternate_split_kinds: false,
+        alternate_split_kinds: Some(false),
         single_goal_tasks: true,
         ..goal_focused.clone()
     };
@@ -194,6 +194,7 @@ fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
         let error = validation_error(DomainAbstractionCollectionConfig {
             flaw_kind: FlawKind::Regression,
             flaw_scope,
+            progress_states: true,
             ..goal_focused.clone()
         });
         assert!(
@@ -215,29 +216,13 @@ fn standard_rejects_goal_focused_options() {
         variants_per_goal: 2,
         ..Default::default()
     });
-    assert!(
-        error.contains("collection_strategy=goal_focused"),
-        "{error}"
-    );
+    assert!(error.contains("`variants_per_goal` requires"), "{error}");
 
     let error = validation_error(DomainAbstractionCollectionConfig {
         progress_states: true,
         ..Default::default()
     });
-    assert!(
-        error.contains("collection_strategy=goal_focused"),
-        "{error}"
-    );
-
-    let error = validation_error(DomainAbstractionCollectionConfig {
-        alternate_split_kinds: false,
-        single_goal_tasks: true,
-        ..Default::default()
-    });
-    assert!(
-        error.contains("collection_strategy=goal_focused"),
-        "{error}"
-    );
+    assert!(error.contains("`progress_states=true` requires"), "{error}");
 }
 
 #[test]
@@ -467,8 +452,9 @@ fn cartesian_members(
             max_collection_states: 10_000,
             total_max_time: None,
             progress_states,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
             single_goal_tasks: true,
+            fixed_split_kind: false,
         },
     )
 }
@@ -580,7 +566,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
     let domain = domain_members(
         &task,
         DomainAbstractionCollectionConfig {
-            alternate_split_kinds: false,
+            alternate_split_kinds: Some(false),
             single_goal_tasks: true,
             split_kind: Some(SplitKind::Wanted),
             ..domain_goal_focused_config(3, true)
@@ -600,8 +586,9 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             max_collection_states: 10_000,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: false,
+            alternate_split_kinds: Some(false),
             single_goal_tasks: true,
+            fixed_split_kind: false,
         },
     );
 
@@ -622,19 +609,17 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
 }
 
 #[test]
-fn cartesian_collections_reject_disabled_alternation_without_goal_focused_strategy() {
+fn per_goal_cartesian_collections_reject_alternation() {
     let error =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            alternate_split_kinds: false,
+            alternate_split_kinds: Some(true),
             single_goal_tasks: true,
             ..Default::default()
         })
         .err()
         .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("collection_strategy=goal_focused"),
+        error.to_string().contains("collection_strategy=standard"),
         "{error:#}"
     );
 }
@@ -660,7 +645,8 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             max_collection_states: 10_000,
             total_max_time: None,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: false,
         })
         .unwrap()

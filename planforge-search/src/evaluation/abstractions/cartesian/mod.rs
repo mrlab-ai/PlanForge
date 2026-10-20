@@ -62,10 +62,12 @@ use super::common::cegar::regression::ensure_regressable;
 use super::common::cegar::{CegarDriver, CegarStopReason, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, FULL_TASK_PROGRESS_STATES_ERROR, GoalFocusedBackend,
-    GoalFocusedSchedule, GoalVariant, MemberBudget, build_goal_focused_collection,
+    BuiltReport, CollectionMembership, GoalFocusedBackend, GoalFocusedSchedule, GoalVariant,
+    MemberBudget, build_goal_focused_collection,
 };
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::{
+    CollectionOptions, CollectionStrategy, validate_collection_options,
+};
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };

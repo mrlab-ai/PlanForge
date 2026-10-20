@@ -6,7 +6,7 @@ use super::sampling::*;
 
 use super::*;
 
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
@@ -146,7 +146,8 @@ pub(super) fn goal_cover_scp<'task>(
             max_collection_states: 128,
             total_max_time: None,
             progress_states: true,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
         })
         .unwrap()

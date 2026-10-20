@@ -29,7 +29,8 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
             max_collection_states: 128,
             total_max_time: None,
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
         })
         .unwrap()

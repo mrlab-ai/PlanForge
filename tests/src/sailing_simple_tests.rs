@@ -53,7 +53,7 @@ use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
 };
-use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use planforge_search::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitSelection,
 };

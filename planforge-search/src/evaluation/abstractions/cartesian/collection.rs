@@ -6,25 +6,19 @@ pub struct CartesianAbstractionCollectionGenerator {
 
 impl CartesianAbstractionCollectionGenerator {
     pub fn new(config: CartesianAbstractionCollectionConfig) -> Result<Self> {
+        validate_collection_options(CollectionOptions {
+            strategy: config.collection_strategy,
+            variants_per_goal: config.variants_per_goal,
+            max_collection_size: config.max_collection_states,
+            progress_states: config.progress_states,
+            alternate_split_kinds: config.alternate_split_kinds,
+            single_goal_tasks: config.single_goal_tasks,
+            fixed_split_kind: config.fixed_split_kind,
+            flaw_kind: config.abstraction.flaw_kind,
+        })?;
         ensure!(
-            config.max_collection_states > 0,
-            "Cartesian max_collection_size must be > 0"
-        );
-        ensure!(
-            config.variants_per_goal > 0,
-            "Cartesian variants_per_goal must be > 0"
-        );
-        ensure!(
-            config.alternate_split_kinds || config.collection_strategy.is_goal_focused(),
-            "`alternate_split_kinds=false` requires `collection_strategy=goal_focused`"
-        );
-        ensure!(
-            config.single_goal_tasks || config.collection_strategy.is_goal_focused(),
-            "`single_goal_tasks=false` requires `collection_strategy=goal_focused`"
-        );
-        ensure!(
-            config.single_goal_tasks || !config.progress_states,
-            "{FULL_TASK_PROGRESS_STATES_ERROR}"
+            config.collection_strategy != CollectionStrategy::Standard,
+            "`collection_strategy=standard` is not supported for Cartesian abstractions yet"
         );
         CartesianAbstractionGenerator::new(config.abstraction.clone())?;
         Ok(Self { config })
@@ -50,7 +44,10 @@ impl CartesianAbstractionCollectionGenerator {
                 max_collection_states: self.config.max_collection_states,
                 total_max_time: self.config.total_max_time,
                 progress_states: self.config.progress_states,
-                alternate_split_kinds: self.config.alternate_split_kinds,
+                alternate_split_kinds: self
+                    .config
+                    .collection_strategy
+                    .alternates_split_kinds(self.config.alternate_split_kinds),
                 single_goal_tasks: self.config.single_goal_tasks,
             },
             self,

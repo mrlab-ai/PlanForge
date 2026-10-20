@@ -352,6 +352,12 @@ impl FromOptionValue for f64 {
     }
 }
 
+impl FromOptionValue for Option<bool> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+        bool::from_option_value(value).map(Some)
+    }
+}
+
 impl FromOptionValue for Option<u64> {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
         let s = atom(value)?;

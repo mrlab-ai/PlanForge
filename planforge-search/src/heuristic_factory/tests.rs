@@ -9,7 +9,7 @@ use super::{
     register_external_heuristics,
 };
 use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::cegar::{FlawScope, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
@@ -143,7 +143,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert_eq!(config.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(config.variants_per_goal, 8);
     assert!(config.progress_states);
-    assert!(!config.alternate_split_kinds);
+    assert_eq!(config.alternate_split_kinds, Some(false));
     assert!(config.single_goal_tasks);
     assert_eq!(config.abstraction.flaw_kind, FlawKind::Progression);
     assert_eq!(config.abstraction.flaw_scope, FlawScope::WholePlan);
@@ -334,7 +334,7 @@ fn parses_single_domain_abstraction_time_limit() {
 #[test]
 fn parses_full_task_interleaved_domain_collection() {
     let h = astar_heuristic(
-        "astar(canonical(domain_collection(collection_strategy=standard,interleave_split_directions=true,flaw_scope=whole_plan,split_selection=min_growth)))",
+        "astar(canonical(domain_collection(collection_strategy=standard,alternate_split_kinds=true,flaw_scope=whole_plan,split_selection=min_growth)))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -343,7 +343,7 @@ fn parses_full_task_interleaved_domain_collection() {
     ApplyOptions::apply_options(&mut source, sources[0].args()).unwrap();
 
     assert_eq!(source.collection_strategy, CollectionStrategy::Standard);
-    assert!(source.interleave_split_directions);
+    assert_eq!(source.alternate_split_kinds, Some(true));
     assert_eq!(source.flaw_kind, FlawKind::Progression);
     assert_eq!(source.flaw_scope, FlawScope::WholePlan);
     assert_eq!(source.split_selection, SplitSelection::MinGrowth);
@@ -490,7 +490,7 @@ fn parses_goal_focused_domain_collection_options() {
     assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(cfg.variants_per_goal, 10);
     assert!(cfg.progress_states);
-    assert!(!cfg.alternate_split_kinds);
+    assert_eq!(cfg.alternate_split_kinds, Some(false));
     assert!(cfg.single_goal_tasks);
     assert_eq!(cfg.split_kind, Some(SplitKind::Wanted));
 }

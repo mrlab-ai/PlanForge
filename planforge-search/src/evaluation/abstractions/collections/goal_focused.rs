@@ -32,7 +32,7 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
-use super::portfolio::{CollectionStrategy, derive_variant_seed};
+use super::strategy::{CollectionStrategy, derive_variant_seed};
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
@@ -141,9 +141,9 @@ pub(crate) struct GoalFocusedSchedule {
     pub(crate) max_collection_states: usize,
     pub(crate) total_max_time: Option<Duration>,
     pub(crate) progress_states: bool,
-    /// Goal-focused collections: alternate progression and regression by
+    /// Goal-focused collections: alternate concrete and wanted splits by
     /// variant parity. When false, every variant keeps the backend's
-    /// configured direction; ranks and seeds are unaffected.
+    /// configured split kind; ranks and seeds are unaffected.
     pub(crate) alternate_split_kinds: bool,
     /// Goal-focused collections: build every member on its goal's
     /// single-goal task. When false, every member is built on the full task;
@@ -184,7 +184,7 @@ impl GoalFocusedSchedule {
         let derived_seed =
             || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
         assert!(
-            self.alternate_split_kinds || self.strategy.is_goal_focused(),
+            !self.alternate_split_kinds || self.strategy.is_goal_focused(),
             "only goal-focused collections choose split kinds per variant"
         );
         let (split_kind, tie_rank, seed) = if self.strategy.is_goal_focused() {
@@ -230,6 +230,10 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     assert!(
         schedule.variants_per_goal > 0,
         "goal-focused collections need at least one variant per goal"
+    );
+    assert!(
+        schedule.strategy != CollectionStrategy::Standard,
+        "standard collections refine full-task members by random restarts"
     );
     assert!(
         schedule.single_goal_tasks

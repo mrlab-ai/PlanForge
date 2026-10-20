@@ -69,7 +69,8 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             max_collection_states: 10_000,
             total_max_time: Some(Duration::from_secs(15)),
             progress_states: false,
-            alternate_split_kinds: true,
+            alternate_split_kinds: Some(true),
+            fixed_split_kind: false,
             single_goal_tasks: true,
         })
         .expect("valid oracle Cartesian collection config")

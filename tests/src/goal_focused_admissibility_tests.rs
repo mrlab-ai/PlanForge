@@ -17,7 +17,7 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
     CartesianAbstractionHeuristic,
 };
-use planforge_search::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use planforge_search::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
@@ -128,7 +128,8 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         max_collection_states: 3_000,
         total_max_time: None,
         progress_states: true,
-        alternate_split_kinds: true,
+        alternate_split_kinds: None,
+        fixed_split_kind: false,
         single_goal_tasks: true,
     })
     .expect("the Cartesian collection configuration is valid")

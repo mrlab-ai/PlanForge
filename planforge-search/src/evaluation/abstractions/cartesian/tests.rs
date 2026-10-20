@@ -18,7 +18,7 @@ use super::{
     CartesianView, CegarStopReason, FlawKind, FlawScope, OperatorBitSet, RefinementNode,
     ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
 };
-use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::selection::{
     push_unique_split, retain_min_growth_splits, select_refinement_split,
 };
