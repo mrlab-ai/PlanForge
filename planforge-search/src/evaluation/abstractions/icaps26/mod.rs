@@ -17,6 +17,32 @@ mod refinement;
 mod semantics;
 mod split;
 mod split_selection;
+
+/// The concrete refinement root maps to an abstract dead end. The ICAPS26
+/// reproduction reports it as an error, as the published code did.
+#[derive(Debug)]
+pub(crate) struct RefinementRootDeadEnd {
+    detail: String,
+}
+
+impl RefinementRootDeadEnd {
+    pub(crate) fn new(detail: String) -> Self {
+        Self { detail }
+    }
+}
+
+impl std::fmt::Display for RefinementRootDeadEnd {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "concrete refinement root maps to an abstract dead end: {}",
+            self.detail
+        )
+    }
+}
+
+impl std::error::Error for RefinementRootDeadEnd {}
+
 #[cfg(test)]
 mod tests;
 mod working;
@@ -33,9 +59,10 @@ use split_selection::*;
 use working::*;
 
 use super::cartesian::{
-    CartesianAbstraction, CartesianAbstractionMetadata, CartesianRefinementDirection,
-    CartesianRefinementHierarchy, CartesianStopReason, NumericSplit, RefinementNode,
+    CartesianAbstraction, CartesianAbstractionMetadata, CartesianRefinementHierarchy,
+    CartesianStopReason, NumericSplit, RefinementNode,
 };
+use super::common::cegar::SplitKind;
 
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -61,7 +88,6 @@ use super::common::cegar::{
     CegarDriver, CegarIterationResult, CegarStopReason, progress_concrete_state,
 };
 use super::common::coordinates::Coordinates;
-use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };

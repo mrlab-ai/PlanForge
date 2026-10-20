@@ -316,7 +316,9 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&plus, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         plus_semantics
-            .numeric_effect_preimage(
+            .cegar()
+            .coordinates()
+            .preimage(
                 Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
@@ -331,7 +333,9 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&times, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         times_semantics
-            .numeric_effect_preimage(
+            .cegar()
+            .coordinates()
+            .preimage(
                 Interval::new(
                     NumericValue::new(-10.0),
                     NumericValue::new(-4.0),
@@ -351,7 +355,9 @@ fn exact_affine_preimages_preserve_open_boundaries() {
         CartesianSemantics::new(&divide, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         divide_semantics
-            .numeric_effect_preimage(
+            .cegar()
+            .coordinates()
+            .preimage(
                 Interval::new(
                     NumericValue::new(-5.0),
                     NumericValue::new(-2.0),
@@ -373,7 +379,9 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
     assert_eq!(
         semantics
-            .numeric_effect_preimage(
+            .cegar()
+            .coordinates()
+            .preimage(
                 Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, true),
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
@@ -384,7 +392,9 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
     );
     assert!(
         semantics
-            .numeric_effect_preimage(
+            .cegar()
+            .coordinates()
+            .preimage(
                 Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, false),
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
@@ -398,19 +408,21 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
 fn assignment_outside_target_is_not_a_cartesian_transition() {
     let task = affine_effect_task(AssignmentOperation::Assign, 3.0);
     let semantics = CartesianSemantics::new(&task, &CartesianAbstractionConfig::default()).unwrap();
-    let source = semantics.trivial_region().unwrap();
+    let source = semantics.regions().trivial_region().unwrap();
     let mut target = source.clone();
     Arc::make_mut(&mut target.numeric)[0] =
         Interval::new(NumericValue::new(2.0), NumericValue::new(3.0), true, false);
 
     assert!(
         !semantics
+            .regions()
             .may_transition(&source, OperatorIndex::new(0), &target)
             .unwrap()
     );
     assert!(
         semantics
-            .source_set_source_for_transition(&source, OperatorIndex::new(0), &target)
+            .regions()
+            .transition_source_set(&source, OperatorIndex::new(0), &target)
             .unwrap()
             .is_none()
     );

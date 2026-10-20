@@ -66,10 +66,11 @@ pub const TOO_SLOW_TO_TRANSLATE_IN_TEST_BUILDS: &[&str] =
     &["minecraft-pogo-advanced", "minecraft-sword-advanced"];
 
 /// Benchmarks with an operator that applies two numeric effects to the same
-/// variable. Repeated additive effects on one variable used to be dropped
-/// rather than accumulated, so which benchmarks exercise the path is worth
-/// pinning: if this set shrinks, the corpus stopped covering it.
-const WITH_REPEATED_NUMERIC_EFFECT_TARGET: &[&str] = &["mprime"];
+/// variable. Grounding folds an action's additive constant effects on one
+/// fluent into one effect (mprime's `drink` from a location to itself had
+/// two), so no translated benchmark has any: a name here means the fold
+/// missed a case.
+const WITH_REPEATED_NUMERIC_EFFECT_TARGET: &[&str] = &[];
 
 /// Benchmarks with a numeric effect guarded by an effect condition. None of the
 /// IPC-derived fixtures has one, which is why `numeric_condition_tests` carries

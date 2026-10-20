@@ -337,3 +337,24 @@ fn test_example1_axiom_evaluation() {
     //     var5_value
     // );
 }
+
+#[test]
+fn assignment_axioms_put_derived_values_on_the_canonical_lattice() {
+    // 0.1 + 0.2 is 0.30000000000000004 in f64; the derived difference must
+    // be exactly zero so that `difference <= 0` holds.
+    let axiom = AssignmentAxiom::new(
+        VariableIndex::new(2),
+        CalOperator::Difference,
+        VariableIndex::new(0),
+        VariableIndex::new(1),
+    );
+    let mut values = [
+        NumericValue::new(0.1) + NumericValue::new(0.2),
+        NumericValue::new(0.3),
+        NumericValue::new(99.0),
+    ];
+    assert_ne!(values[0], values[1]);
+
+    assert_eq!(axiom.update_values(&mut values).unwrap(), ZERO_VALUE);
+    assert_eq!(values[2], ZERO_VALUE);
+}

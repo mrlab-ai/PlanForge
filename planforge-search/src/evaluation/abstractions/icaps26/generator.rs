@@ -131,7 +131,10 @@ impl Icaps26CartesianGenerator {
             CegarStopReason::SizeLimit => CartesianStopReason::StateLimit,
             CegarStopReason::TimeLimit => CartesianStopReason::TimeLimit,
             CegarStopReason::MemoryLimit => CartesianStopReason::MemoryLimit,
-            CegarStopReason::IterationLimit | CegarStopReason::NoRefinableFlaw => {
+            // The ICAPS26 loop reports a dead root as an error.
+            CegarStopReason::IterationLimit
+            | CegarStopReason::NoRefinableFlaw
+            | CegarStopReason::DeadEnd => {
                 unreachable!("Cartesian CEGAR driver returned unsupported stop reason")
             }
         };
@@ -213,7 +216,7 @@ impl Icaps26CartesianGenerator {
                 pending_flaw,
                 refinements,
                 collection_member: None,
-                refinement_direction: CartesianRefinementDirection::Regression,
+                split_kind: SplitKind::Wanted,
                 split_selection_rank: None,
                 concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
                 transition_count,

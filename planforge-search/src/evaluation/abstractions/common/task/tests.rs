@@ -6,8 +6,7 @@ use planforge_sas::numeric_task::{
 };
 
 use super::*;
-use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
-use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::domain::config::CegarConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
@@ -170,16 +169,17 @@ fn a_rooted_domain_abstraction_plans_from_the_root_and_reports_the_initial_state
 }
 
 #[test]
-fn a_dead_root_is_a_typed_error() {
+fn a_dead_root_stops_refinement_as_a_dead_end() {
     let task = doubling_cost_task(0.0, true);
     let root = root_after(&task, 1);
-    let error = DomainAbstractionGenerator::new(cegar_config())
+    let abstraction = DomainAbstractionGenerator::new(cegar_config())
         .unwrap()
         .generate_from_root(&task, Some(&root))
-        .unwrap_err();
+        .unwrap();
 
-    assert!(
-        error.downcast_ref::<RefinementRootDeadEnd>().is_some(),
-        "{error:#}"
+    assert_eq!(
+        abstraction.metadata.stop_reason,
+        Some(CegarStopReason::DeadEnd)
     );
+    assert!(!abstraction.metadata.solved_by_self);
 }

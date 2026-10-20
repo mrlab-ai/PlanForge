@@ -16,7 +16,7 @@ use crate::evaluation::abstractions::cost_partitioning::saturated::{
 };
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGeneratorMultipleCegarConfig;
 use crate::evaluation::abstractions::domain::config::CegarConfig;
-use crate::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
+use crate::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
@@ -109,7 +109,7 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
 #[test]
 fn parses_hierarchical_cartesian_collection_source() {
     let h = astar_heuristic(
-        "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progressive_goal_roots=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
+        "astar(scp(cartesian_collection(max_states=1000, flaw_kind=execute_entire_plan, collection_strategy=complementary, variants_per_goal=8, progress_states=true, alternate_split_kinds=false, max_collection_size=100000, total_max_time=60, random_seed=1), saturator=all, partitioning=region))",
     );
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
@@ -125,7 +125,7 @@ fn parses_hierarchical_cartesian_collection_source() {
         CollectionStrategy::Complementary
     );
     assert_eq!(config.variants_per_goal, 8);
-    assert!(config.progressive_goal_roots);
+    assert!(config.progress_states);
     assert!(!config.alternate_split_kinds);
     assert!(config.single_goal_tasks);
     assert_eq!(config.abstraction.flaw_kind, FlawKind::ExecuteEntirePlan);
@@ -312,19 +312,6 @@ fn parses_single_domain_abstraction_time_limit() {
 }
 
 #[test]
-fn parses_forward_partition_deviation_split_direction() {
-    let h = astar_heuristic(
-        "astar(canonical_domain_abstractions(split_direction=forward_partition_deviation))",
-    );
-    let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(
-        cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::flaws::SplitDirection::ForwardPartitionDeviation)
-    );
-}
-
-#[test]
 fn parses_full_task_interleaved_domain_collection() {
     let h = astar_heuristic(
         "astar(canonical(domain(collection_strategy=standard,interleave_split_directions=true,flaw_kind=execute_entire_plan,flaw_treatment=min_growth_single_atom)))",
@@ -479,18 +466,18 @@ fn parses_full_task_goal_focused_options() {
 #[test]
 fn parses_goal_focused_domain_collection_options() {
     let h = astar_heuristic(
-        "astar(domain(collection_strategy=complementary, variants_per_goal=10, progressive_goal_roots=true, alternate_split_kinds=false, split_direction=backward))",
+        "astar(domain(collection_strategy=complementary, variants_per_goal=10, progress_states=true, alternate_split_kinds=false, split_direction=backward))",
     );
     let mut cfg = DomainAbstractionCollectionGeneratorMultipleCegarConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.collection_strategy, CollectionStrategy::Complementary);
     assert_eq!(cfg.variants_per_goal, 10);
-    assert!(cfg.progressive_goal_roots);
+    assert!(cfg.progress_states);
     assert!(!cfg.alternate_split_kinds);
     assert!(cfg.single_goal_tasks);
     assert_eq!(
         cfg.split_direction,
-        Some(crate::evaluation::abstractions::domain::flaws::SplitDirection::Backward)
+        Some(crate::evaluation::abstractions::domain::config::SplitDirection::Backward)
     );
 }
 

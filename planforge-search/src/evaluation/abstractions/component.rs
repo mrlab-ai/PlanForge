@@ -5,14 +5,15 @@ use planforge_sas::numeric_task::{
 };
 
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstraction, CartesianAbstractionHeuristic, CartesianRefinementDirection,
+    CartesianAbstraction, CartesianAbstractionHeuristic,
 };
 use crate::evaluation::abstractions::collections::goal_focused::{
     CollectionMembership, MemberDirection,
 };
+use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
+use crate::evaluation::abstractions::domain::config::SplitDirection;
 use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
-use crate::evaluation::abstractions::domain::flaws::SplitDirection;
 use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -280,9 +281,7 @@ impl<'task> AbstractionComponent<'task> {
                     .map(|membership| GoalFocusedMember {
                         membership,
                         direction: match metadata.split_direction {
-                            SplitDirection::Forward | SplitDirection::ForwardPartitionDeviation => {
-                                MemberDirection::Progression
-                            }
+                            SplitDirection::Forward => MemberDirection::Progression,
                             SplitDirection::Backward => MemberDirection::Regression,
                         },
                         tie_rank: metadata.flaw_selection_rank,
@@ -296,11 +295,9 @@ impl<'task> AbstractionComponent<'task> {
                     .collection_member
                     .map(|membership| GoalFocusedMember {
                         membership,
-                        direction: match metadata.refinement_direction {
-                            CartesianRefinementDirection::Progression => {
-                                MemberDirection::Progression
-                            }
-                            CartesianRefinementDirection::Regression => MemberDirection::Regression,
+                        direction: match metadata.split_kind {
+                            SplitKind::Concrete => MemberDirection::Progression,
+                            SplitKind::Wanted => MemberDirection::Regression,
                         },
                         tie_rank: metadata.split_selection_rank,
                         retained_transitions: abstraction.transition_system.transitions.len(),

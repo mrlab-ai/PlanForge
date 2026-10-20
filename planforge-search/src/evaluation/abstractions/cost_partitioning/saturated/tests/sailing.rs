@@ -12,8 +12,8 @@ use super::*;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
-    CartesianRefinementDirection,
 };
+use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::abstractions::domain::abstraction::{
     DomainAbstractionMetadata, compute_hash_multipliers,
@@ -68,7 +68,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             variants_per_goal: 4,
             max_collection_states: 10_000,
             total_max_time: Some(Duration::from_secs(15)),
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -96,7 +96,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             })
             .map(|abstraction| {
                 (
-                    abstraction.metadata.refinement_direction,
+                    abstraction.metadata.split_kind,
                     abstraction.metadata.split_selection_rank,
                 )
             })
@@ -104,8 +104,8 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
         modes.sort_by_key(|(direction, rank)| {
             (
                 match direction {
-                    CartesianRefinementDirection::Progression => 0,
-                    CartesianRefinementDirection::Regression => 1,
+                    SplitKind::Concrete => 0,
+                    SplitKind::Wanted => 1,
                 },
                 *rank,
             )
@@ -113,10 +113,10 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
         assert_eq!(
             modes,
             vec![
-                (CartesianRefinementDirection::Progression, Some(0)),
-                (CartesianRefinementDirection::Progression, Some(1)),
-                (CartesianRefinementDirection::Regression, Some(0)),
-                (CartesianRefinementDirection::Regression, Some(1)),
+                (SplitKind::Concrete, Some(0)),
+                (SplitKind::Concrete, Some(1)),
+                (SplitKind::Wanted, Some(0)),
+                (SplitKind::Wanted, Some(1)),
             ]
         );
     }
@@ -368,7 +368,12 @@ fn build_handcrafted_abstraction(
 ) -> anyhow::Result<DomainAbstraction> {
     let mut partitions = NumericPartitions::trivial(transformed_task);
     for seed in &spec.seed_splits {
-        partitions.split_at(seed.numeric_var_id, seed.value, seed.include_in_lower);
+        partitions.split_at(
+            seed.numeric_var_id,
+            seed.value,
+            seed.include_in_lower,
+            false,
+        );
     }
 
     let goal_vars = (0..transformed_task.get_num_goals())
@@ -438,6 +443,7 @@ fn build_handcrafted_abstraction(
         combine_labels: false,
         relevant_operator_ids,
         abstract_operators,
+        transition_data_retained: true,
         abstract_source_sets,
         interval_transition_system: RefCell::new(None),
         metadata: DomainAbstractionMetadata::default(),

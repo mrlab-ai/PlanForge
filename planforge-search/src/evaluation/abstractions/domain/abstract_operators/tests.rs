@@ -1125,10 +1125,8 @@ fn conditional_propositional_effect_branches() {
     )
     .unwrap();
     let err = generator.build_abstract_operators(&task).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("conditional propositional or numeric effects are unsupported")
-    );
+    assert!(crate::unsupported::is_unsupported_task(&err), "{err:#}");
+    assert!(err.to_string().contains("has a conditional"), "{err:#}");
 }
 
 #[test]
@@ -1207,10 +1205,8 @@ fn conditional_assignment_effect_branches() {
     )
     .unwrap();
     let err = generator.build_abstract_operators(&task).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("conditional propositional or numeric effects are unsupported")
-    );
+    assert!(crate::unsupported::is_unsupported_task(&err), "{err:#}");
+    assert!(err.to_string().contains("has a conditional"), "{err:#}");
 }
 
 #[test]
@@ -1265,8 +1261,6 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
     )
     .unwrap();
     let err = generator.build_abstract_operators(&task).unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("assignment effects require constant RHS")
-    );
+    assert!(crate::unsupported::is_unsupported_task(&err), "{err:#}");
+    assert!(err.to_string().contains("not a constant"), "{err:#}");
 }

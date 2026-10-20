@@ -321,6 +321,17 @@ impl DerivedFunctionAdministrator {
             .and_then(|key| self.derived_functions.get(key))
     }
 
+    /// The value of `function` if it is the derived function of a constant.
+    pub fn constant_value(&self, function: &PrimitiveNumericExpression) -> Option<f64> {
+        let axiom = self.axiom_named(&function.symbol)?;
+        match axiom.parts.as_slice() {
+            [FunctionalExpression::NumericConstant(constant)] if axiom.op.is_empty() => {
+                Some(constant.value.into_inner())
+            }
+            _ => None,
+        }
+    }
+
     fn get_default_variables(&self, nr: usize) -> Vec<TypedObject> {
         (0..nr)
             .map(|index| TypedObject::new(&format!("?v{}", index), "object"))

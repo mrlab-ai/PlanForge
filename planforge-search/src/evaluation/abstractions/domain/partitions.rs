@@ -2,9 +2,11 @@
 mod tests;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NAN_VALUE, NumericType, NumericValue, VariableIndex,
+    AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
+
+use crate::evaluation::abstractions::common::cegar::split::numeric_split_intervals;
 
 use planforge_sas::numeric_conditions::ArithOp;
 use planforge_sas::utils::interval::Interval;
@@ -23,9 +25,7 @@ impl NumericPartitions {
             .enumerate()
             .map(|(i, v)| match v.get_type() {
                 NumericType::Constant => {
-                    let value = float_tolerance::canonicalize(
-                        *initial_numeric_values.get(i).unwrap_or(&NAN_VALUE),
-                    );
+                    let value = float_tolerance::canonicalize(initial_numeric_values[i]);
                     if value.is_finite() {
                         vec![Interval::singleton(value)]
                     } else {
@@ -102,37 +102,34 @@ impl NumericPartitions {
     /// Splits the partition that contains `value` into two partitions.
     ///
     /// Returns `true` if a split was applied.
+    /// Split the partition of `numeric_var_id` that contains `value` at
+    /// `value`, which belongs to the lower part iff `include_in_lower`. On an
+    /// integer lattice the parts are closed at the neighbouring integers.
+    /// Returns whether a strict split happened.
     pub fn split_at(
         &mut self,
         numeric_var_id: VariableIndex,
         value: NumericValue,
         include_in_lower: bool,
+        integer_lattice: bool,
     ) -> bool {
         // Numeric states use the canonical ABS_EPSILON lattice. Storing an
         // uncanonicalized flaw/regression value as a partition boundary makes
         // forward image and inverse-image overlap tests disagree.
         let value = float_tolerance::canonicalize(value);
-        let Some(parts) = self
-            .partitions_by_numeric_var
-            .get_mut(numeric_var_id.index())
-        else {
-            return false;
-        };
+        let parts = &mut self.partitions_by_numeric_var[numeric_var_id.index()];
         let Some(part_id) = partition_for_value(parts, value) else {
             return false;
         };
-
         let iv = parts[part_id];
         if !iv.can_split_at(value, include_in_lower) {
             return false;
         }
-
-        let lower = Interval::new(iv.lower, value, iv.lower_closed, include_in_lower);
-        let upper = Interval::new(value, iv.upper, !include_in_lower, iv.upper_closed);
-        if lower.is_empty() || upper.is_empty() {
+        let Ok((lower, upper)) =
+            numeric_split_intervals(iv, value, include_in_lower, integer_lattice)
+        else {
             return false;
-        }
-
+        };
         parts[part_id] = lower;
         parts.insert(part_id + 1, upper);
         true

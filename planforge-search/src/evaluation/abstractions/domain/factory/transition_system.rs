@@ -1,4 +1,4 @@
-use planforge_sas::numeric_task::{OperatorIndex, VariableIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 
 use super::*;
 
@@ -126,13 +126,11 @@ impl DomainAbstractionFactory {
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let comparison_var_ids = self.comparison_var_ids();
         let goal_facts = self.compute_abstract_goals(task);
         let init_hash = self.compute_initial_state_hash_determined(
             task,
             numeric_domain_sizes,
             hash_multipliers,
-            &comparison_var_ids,
         )?;
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
         let match_tree = MatchTree::build(
@@ -140,7 +138,6 @@ impl DomainAbstractionFactory {
             numeric_domain_sizes,
             hash_multipliers,
             operators,
-            &comparison_var_ids,
         );
 
         let mut transitions: Vec<AbstractTransition> = Vec::with_capacity(num_states);
@@ -178,42 +175,12 @@ impl DomainAbstractionFactory {
         // subsequent abstractions over-saturate the same operator, and the
         // sum exceeds the optimal — inadmissibility (plant-watering/prob_4_1_2
         // h=31 reproducer with `scp`).
-        let comparison_branching = !comparison_var_ids.is_empty();
-        let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, &comparison_var_ids)
-        } else {
-            Vec::new()
-        };
-        let mut comparison_enumeration_memo =
-            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
-                numeric_domain_sizes,
-                hash_multipliers,
-                comparison_var_ids: &comparison_var_ids,
-            });
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
                 ensure_online_scp_deadline(deadline)?;
             }
-            let base_target = if comparison_branching {
-                let possible_targets = self.enumerate_states_with_evaluated_comparisons_cached(
-                    target_hash,
-                    task,
-                    &[],
-                    &mut comparison_enumeration_memo,
-                )?;
-                if !possible_targets.contains(&target_hash) {
-                    continue;
-                }
-                self.clear_comparison_vars_except(
-                    target_hash,
-                    hash_multipliers,
-                    &comparison_var_ids,
-                    &[],
-                )?
-            } else {
-                target_hash
-            };
+            let base_target = target_hash;
             match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
                 let op = &operators[abstract_op_id];
@@ -267,45 +234,19 @@ impl DomainAbstractionFactory {
                         true
                     };
 
-                if comparison_branching {
-                    let possible_predecessors = self
-                        .enumerate_states_with_evaluated_comparisons_cached(
-                            base_predecessor,
-                            task,
-                            &comparison_preconditions[abstract_op_id],
-                            &mut comparison_enumeration_memo,
-                        )?;
-                    for &source_hash in possible_predecessors.iter() {
-                        if !push_source(
-                            source_hash,
-                            &mut transitions,
-                            &mut concrete_label_transition_count,
-                            &mut backward,
-                            &mut forward,
-                            #[cfg(debug_assertions)]
-                            &mut seen_transition_triples,
-                        ) {
-                            return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
-                                required_at_least: concrete_label_transition_count
-                                    .saturating_add(op.concrete_op_ids.len()),
-                            });
-                        }
-                    }
-                } else {
-                    if !push_source(
-                        base_predecessor,
-                        &mut transitions,
-                        &mut concrete_label_transition_count,
-                        &mut backward,
-                        &mut forward,
-                        #[cfg(debug_assertions)]
-                        &mut seen_transition_triples,
-                    ) {
-                        return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
-                            required_at_least: concrete_label_transition_count
-                                .saturating_add(op.concrete_op_ids.len()),
-                        });
-                    }
+                if !push_source(
+                    base_predecessor,
+                    &mut transitions,
+                    &mut concrete_label_transition_count,
+                    &mut backward,
+                    &mut forward,
+                    #[cfg(debug_assertions)]
+                    &mut seen_transition_triples,
+                ) {
+                    return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
+                        required_at_least: concrete_label_transition_count
+                            .saturating_add(op.concrete_op_ids.len()),
+                    });
                 }
             }
         }
@@ -322,7 +263,8 @@ impl DomainAbstractionFactory {
         // op rather than per individual transition.
         #[cfg(debug_assertions)]
         if materialize_cartesian_sets {
-            let mut representative_per_op: HashMap<usize, (usize, usize)> = HashMap::new();
+            let mut representative_per_op: std::collections::HashMap<usize, (usize, usize)> =
+                std::collections::HashMap::new();
             for transition in &transitions {
                 match representative_per_op.get(&transition.abstract_op_id) {
                     Some(&(rep_src_hash, rep_tgt_hash)) => {
@@ -361,22 +303,12 @@ impl DomainAbstractionFactory {
         let mut goal_state_hashes = Vec::new();
         for state_hash in 0..num_states {
             if self.is_goal_state(
+                task,
                 state_hash,
                 &goal_facts,
                 numeric_domain_sizes,
                 hash_multipliers,
-            ) {
-                if comparison_branching {
-                    let possible_states = self.enumerate_states_with_evaluated_comparisons_cached(
-                        state_hash,
-                        task,
-                        &[],
-                        &mut comparison_enumeration_memo,
-                    )?;
-                    if !possible_states.contains(&state_hash) {
-                        continue;
-                    }
-                }
+            )? {
                 goal_state_hashes.push(state_hash);
             }
         }
@@ -407,14 +339,12 @@ impl DomainAbstractionFactory {
         ensure_online_scp_deadline(deadline)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let comparison_var_ids = self.comparison_var_ids();
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
         let match_tree = MatchTree::build(
             &self.domain_sizes,
             numeric_domain_sizes,
             hash_multipliers,
             operators,
-            &comparison_var_ids,
         );
         let mut seen_operator_ids = vec![false; task.get_operators().len()];
         let mut num_seen = 0usize;
@@ -471,34 +401,6 @@ impl DomainAbstractionFactory {
         // share a cascade-only operator, and summing their heuristics
         // double-counts that operator's cost — producing an inadmissible
         // canonical heuristic (sailing/plant-watering reproducers).
-        if !comparison_var_ids.is_empty() {
-            let mut cascade_numeric_deps: std::collections::HashSet<VariableIndex> =
-                std::collections::HashSet::new();
-            for &cmp_var_id in &comparison_var_ids {
-                if let Some(condition) = self.numeric_conditions.for_var(cmp_var_id) {
-                    cascade_numeric_deps
-                        .extend(condition.regular_numeric_var_dependencies().iter().copied());
-                }
-            }
-            if !cascade_numeric_deps.is_empty() {
-                for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-                    if seen_operator_ids
-                        .get(concrete_op_id)
-                        .copied()
-                        .unwrap_or(false)
-                    {
-                        continue;
-                    }
-                    if op
-                        .assignment_effects()
-                        .iter()
-                        .any(|eff| cascade_numeric_deps.contains(&eff.affected_var_id()))
-                    {
-                        seen_operator_ids[concrete_op_id] = true;
-                    }
-                }
-            }
-        }
 
         Ok(seen_operator_ids
             .into_iter()

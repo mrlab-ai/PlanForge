@@ -10,8 +10,8 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use super::abstract_operators::AbstractOperator;
+use super::config::SplitDirection;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
-use super::flaws::SplitDirection;
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::task::AbstractionUse;
@@ -29,6 +29,10 @@ pub struct DomainAbstraction {
     pub combine_labels: bool,
     pub relevant_operator_ids: Vec<OperatorIndex>,
     pub abstract_operators: Vec<AbstractOperator>,
+    /// `abstract_operators` holds the abstraction's operators; false once
+    /// they were discarded or for a lookup-only abstraction. An abstraction
+    /// may have no operators at all, so emptiness cannot tell.
+    pub transition_data_retained: bool,
     pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
     pub(crate) interval_transition_system: RefCell<Option<AbstractTransitionSystem>>,
     pub metadata: DomainAbstractionMetadata,
@@ -49,6 +53,7 @@ impl DomainAbstraction {
             combine_labels,
             relevant_operator_ids: Vec::new(),
             abstract_operators: Vec::new(),
+            transition_data_retained: false,
             abstract_source_sets: Vec::new(),
             interval_transition_system: RefCell::new(None),
             metadata,
@@ -64,6 +69,7 @@ impl DomainAbstraction {
 
     pub fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
+        self.transition_data_retained = false;
         self.abstract_source_sets.clear();
         self.interval_transition_system.get_mut().take();
     }
@@ -79,7 +85,7 @@ impl DomainAbstraction {
             return Ok(());
         }
         ensure!(
-            !self.abstract_operators.is_empty(),
+            self.transition_data_retained,
             "cannot construct regional operator regions after abstract operators were discarded"
         );
         self.abstract_source_sets = self

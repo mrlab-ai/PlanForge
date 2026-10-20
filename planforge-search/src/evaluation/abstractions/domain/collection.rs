@@ -6,7 +6,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail, ensure};
-use ordered_float::OrderedFloat;
+
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 use rand::seq::SliceRandom;
 use rand::{RngCore, SeedableRng, rngs::SmallRng};
@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, FULL_TASK_PROGRESSIVE_ROOTS_ERROR, GoalFocusedBackend,
+    BuiltReport, CollectionMembership, FULL_TASK_PROGRESS_STATES_ERROR, GoalFocusedBackend,
     GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
@@ -26,10 +26,11 @@ use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
 use super::abstraction::compute_abstraction_size_u128;
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
 use super::config::CegarConfig;
-use super::flaws::SplitDirection;
+use super::config::FlawTreatmentVariants;
+use super::config::SplitDirection;
 use super::generator::DomainAbstractionGenerator;
-use super::split_selection::FlawTreatmentVariants;
 use crate::resource_limits;
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 #[derive(
@@ -66,26 +67,24 @@ pub struct DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     /// Let every variant of a `complementary` collection refine from the
     /// concrete states its earlier members' plans reached. Must be false for
     /// `standard`.
-    pub progressive_goal_roots: bool,
+    pub progress_states: bool,
     /// Alternate forward and backward splits by variant parity in a
     /// `complementary` collection. When false, every variant uses the
-    /// configured `split_direction` (the flaw kind's default when unset).
+    /// configured `split_direction` (`Forward` when unset).
     /// Must be true for `standard`.
     pub alternate_split_kinds: bool,
     /// Build every member of a `complementary` collection on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
     /// and carry no collection membership. Must be true for `standard` and
-    /// with `progressive_goal_roots`.
+    /// with `progress_states`.
     pub single_goal_tasks: bool,
     /// Alternate forward and backward split-value selection between full-task
     /// collection members. This is orthogonal to flaw collection: in
     /// particular, `execute_entire_plan` still collects every flaw along the
     /// abstract plan in both directions.
     pub interleave_split_directions: bool,
-    /// Overrides `FlawKind`'s default split direction when set; otherwise the
-    /// flaw kind chooses its own default (`Forward` for everything except
-    /// `TargetCentered`, which defaults to `Backward`).
+    /// The fixed split direction; `Forward` when unset.
     pub split_direction: Option<SplitDirection>,
     /// Pass-through for `CegarConfig::compute_source_sets`. Default
     /// `true`. Hierarchical combinators disable it during CEGAR and construct
@@ -135,7 +134,7 @@ impl Default for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_treatment: FlawTreatmentVariants::RandomSingleAtom,
             collection_strategy: CollectionStrategy::Standard,
             variants_per_goal: 1,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
             interleave_split_directions: false,
@@ -208,7 +207,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
                 "flaw_treatment={}, ",
                 "collection_strategy={}, ",
                 "variants_per_goal={}, ",
-                "progressive_goal_roots={}, ",
+                "progress_states={}, ",
                 "alternate_split_kinds={}, ",
                 "single_goal_tasks={}, ",
                 "interleave_split_directions={}, ",
@@ -227,7 +226,7 @@ impl fmt::Display for DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             self.flaw_treatment,
             self.collection_strategy,
             self.variants_per_goal,
-            self.progressive_goal_roots,
+            self.progress_states,
             self.alternate_split_kinds,
             self.single_goal_tasks,
             self.interleave_split_directions,
@@ -268,8 +267,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     "`variants_per_goal` requires `collection_strategy=complementary`"
                 );
                 ensure!(
-                    !self.config.progressive_goal_roots,
-                    "`progressive_goal_roots=true` requires `collection_strategy=complementary`"
+                    !self.config.progress_states,
+                    "`progress_states=true` requires `collection_strategy=complementary`"
                 );
                 ensure!(
                     self.config.alternate_split_kinds,
@@ -308,8 +307,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                     "`max_collection_size` must be > 0"
                 );
                 ensure!(
-                    self.config.single_goal_tasks || !self.config.progressive_goal_roots,
-                    "{FULL_TASK_PROGRESSIVE_ROOTS_ERROR}"
+                    self.config.single_goal_tasks || !self.config.progress_states,
+                    "{FULL_TASK_PROGRESS_STATES_ERROR}"
                 );
             }
         }
@@ -398,7 +397,7 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 random_seed: self.config.random_seed,
                 max_collection_states: self.config.max_collection_size,
                 total_max_time: optional_duration("total_max_time", self.config.total_max_time)?,
-                progressive_goal_roots: self.config.progressive_goal_roots,
+                progress_states: self.config.progress_states,
                 alternate_split_kinds: self.config.alternate_split_kinds,
                 single_goal_tasks: self.config.single_goal_tasks,
             },
@@ -414,7 +413,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     /// Full-task members with random restarts until the size, time,
-    /// stagnation, or memory limit.
+    /// stagnation, or memory limit, or until a member settles the task: its
+    /// abstract plan is a concrete plan, so it is perfect along an optimal
+    /// plan, or the initial state is an abstract dead end, so the task is
+    /// unsolvable. No further member can help the search then.
     fn generate_standard_collection(
         &self,
         task: &dyn AbstractNumericTask,
@@ -529,6 +531,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             )
             .unwrap_or(u128::MAX);
 
+            let settled_by = if abstraction.metadata.solved_by_self {
+                Some("concrete plan")
+            } else if abstraction.metadata.stop_reason == Some(CegarStopReason::DeadEnd) {
+                Some("initial state is a dead end")
+            } else {
+                None
+            };
             let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
             let elapsed_after_generation = start.elapsed().as_secs_f64();
             if generated_keys.insert(abstraction_key) {
@@ -555,6 +564,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 );
             }
 
+            if let Some(reason) = settled_by {
+                stop_reason = reason;
+                break;
+            }
             let stagnated = elapsed_after_generation - time_point_of_last_new_abstraction
                 > self.config.stagnation_limit;
             if remaining_collection_size == 0 {
@@ -722,6 +735,7 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
                 [abstraction.distance_table.initial_state_hash],
             num_states: abstraction.distance_table.distances.len(),
             concrete_plan: abstraction.metadata.concrete_plan_operator_ids.clone(),
+            root_is_dead_end: abstraction.metadata.stop_reason == Some(CegarStopReason::DeadEnd),
         };
         Ok((abstraction, report))
     }
@@ -944,8 +958,8 @@ fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct IntervalFingerprint {
-    lower: OrderedFloat<f64>,
-    upper: OrderedFloat<f64>,
+    lower: u64,
+    upper: u64,
     lower_closed: bool,
     upper_closed: bool,
 }
@@ -953,8 +967,8 @@ struct IntervalFingerprint {
 impl IntervalFingerprint {
     fn from_interval(interval: Interval) -> Self {
         Self {
-            lower: OrderedFloat(interval.lower.value()),
-            upper: OrderedFloat(interval.upper.value()),
+            lower: float_tolerance::canonical_bits(interval.lower),
+            upper: float_tolerance::canonical_bits(interval.upper),
             lower_closed: interval.lower_closed,
             upper_closed: interval.upper_closed,
         }

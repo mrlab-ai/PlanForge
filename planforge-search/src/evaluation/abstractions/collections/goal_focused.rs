@@ -11,14 +11,15 @@
 //! variants; further variants go to the goal whose best member has the largest
 //! `h(s0)`, ties to the smaller goal id.
 //!
-//! Progressive goal roots: the collection keeps one *lane* per variant. A lane
-//! owns a concrete refinement root that walks forward through the validated
-//! concrete plans its members produce. A lane becomes terminal once its root
-//! reaches the complete task goal, or once its root turns out to be an abstract
-//! dead end; terminal lanes refine from the task initial state again. After the
-//! scheduled members, goals that no member built from the initial state covers
-//! get an initial-root specialist, and goals a lane has re-opened are retried
-//! from that lane's root.
+//! Progress states: every variant owns a concrete *progress state*, its
+//! refinement root, which starts as the task initial state and walks forward
+//! through the validated concrete plans the variant's members produce. A
+//! variant's progress is complete once its progress state reaches the complete
+//! task goal, or once it turns out to be an abstract dead end; the variant then
+//! refines from the task initial state again. After the scheduled members,
+//! goals that no member built from the initial state covers get an
+//! initial-root specialist, and goals a variant has re-opened are retried from
+//! that variant's progress state.
 //!
 //! Changing the refinement root only changes which counterexamples refinement
 //! sees. Every member still abstracts the full state space of its goal task, so
@@ -34,34 +35,6 @@ use tracing::{debug, info};
 use super::portfolio::{CollectionStrategy, derive_variant_seed};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-
-/// The concrete refinement root a member was asked to refine from maps to an
-/// abstract dead end of the member's abstraction.
-///
-/// Backends return this as a typed error so the collection can rebuild the
-/// member from the task initial state and make the lane terminal.
-#[derive(Debug)]
-pub(crate) struct RefinementRootDeadEnd {
-    detail: String,
-}
-
-impl RefinementRootDeadEnd {
-    pub(crate) fn new(detail: String) -> Self {
-        Self { detail }
-    }
-}
-
-impl std::fmt::Display for RefinementRootDeadEnd {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "concrete refinement root maps to an abstract dead end: {}",
-            self.detail
-        )
-    }
-}
-
-impl std::error::Error for RefinementRootDeadEnd {}
 
 /// The direction a member refines in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,8 +52,8 @@ pub(crate) enum MemberKind {
     Scheduled,
     /// A goal that no member built from the task initial state covers yet.
     InitialRootSpecialist,
-    /// A goal some lane already attempted, retried from that lane's advanced
-    /// refinement root.
+    /// A goal some variant already attempted, retried from that variant's
+    /// advanced progress state.
     Continuation,
 }
 
@@ -120,6 +93,9 @@ pub(crate) struct BuiltReport {
     /// Operator ids of the concrete plan that solved the member's goal task
     /// from its refinement root, if refinement found one.
     pub(crate) concrete_plan: Option<Vec<OperatorIndex>>,
+    /// Refinement stopped because the root is an abstract dead end, and so
+    /// a dead end of the member's goal task.
+    pub(crate) root_is_dead_end: bool,
 }
 
 /// The collection-level facts recorded on every goal-focused member.
@@ -127,8 +103,8 @@ pub(crate) struct BuiltReport {
 pub struct CollectionMembership {
     pub goal_id: usize,
     pub variant_id: usize,
-    /// The member refined from an advanced (non-initial) lane root.
-    pub progressive_root: bool,
+    /// The member refined from an advanced (non-initial) progress state.
+    pub from_progress_state: bool,
 }
 
 /// One abstraction backend of a goal-focused collection.
@@ -141,7 +117,7 @@ pub(crate) trait GoalFocusedBackend {
     /// Build one member for `task` (the member's single-goal view, or the full
     /// task when it has no goal), refining from `root`, or from the task
     /// initial state when `root` is `None`. A root that is an abstract dead end
-    /// must be reported as [`RefinementRootDeadEnd`].
+    /// stops refinement and is reported in [`BuiltReport::root_is_dead_end`].
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
@@ -159,9 +135,9 @@ pub(crate) trait GoalFocusedBackend {
     );
 }
 
-/// Why `single_goal_tasks=false` and `progressive_goal_roots=true` are
+/// Why `single_goal_tasks=false` and `progress_states=true` are
 /// rejected together.
-pub(crate) const FULL_TASK_PROGRESSIVE_ROOTS_ERROR: &str = "`progressive_goal_roots=true` cannot be combined with `single_goal_tasks=false`: a lane only advances on a concrete plan for the full task, which ends the lane, so the roots would never move";
+pub(crate) const FULL_TASK_PROGRESS_STATES_ERROR: &str = "`progress_states=true` cannot be combined with `single_goal_tasks=false`: a progress state only advances on a concrete plan for the full task, which completes the variant, so progress states would never move";
 
 /// The schedule-level configuration of a goal-focused collection.
 #[derive(Debug, Clone)]
@@ -172,7 +148,7 @@ pub(crate) struct GoalFocusedSchedule {
     pub(crate) random_seed: Option<u64>,
     pub(crate) max_collection_states: usize,
     pub(crate) total_max_time: Option<Duration>,
-    pub(crate) progressive_goal_roots: bool,
+    pub(crate) progress_states: bool,
     /// Complementary collections: alternate progression and regression by
     /// variant parity. When false, every variant keeps the backend's
     /// configured direction; ranks and seeds are unaffected.
@@ -181,9 +157,9 @@ pub(crate) struct GoalFocusedSchedule {
     /// single-goal task. When false, every member is built on the full task;
     /// goals are then only labels that schedule the `G * V` members
     /// round-robin and derive their seeds and ranks, and members carry no
-    /// collection membership. Excludes progressive goal roots, which would be
-    /// a no-op: a lane only advances on a plan for the full task, and that
-    /// ends the lane.
+    /// collection membership. Excludes progress states, which would be
+    /// a no-op: a progress state only advances on a plan for the full task,
+    /// and that completes the variant.
     pub(crate) single_goal_tasks: bool,
 }
 
@@ -265,8 +241,8 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     );
     assert!(
         schedule.single_goal_tasks
-            || (schedule.strategy.is_complementary() && !schedule.progressive_goal_roots),
-        "full-task members require a complementary collection without progressive goal roots"
+            || (schedule.strategy.is_complementary() && !schedule.progress_states),
+        "full-task members require a complementary collection without progress states"
     );
     let goal_count = task.get_num_goals();
     let variants_per_goal = if goal_count == 0 {
@@ -278,16 +254,15 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
         .max(1)
         .checked_mul(variants_per_goal)
         .with_context(|| format!("{} collection abstraction count overflow", B::NAME))?;
-    let progressive_goal_roots = schedule.progressive_goal_roots;
+    let progress_states = schedule.progress_states;
 
     let start = Instant::now();
     let mut remaining_states = schedule.max_collection_states;
     let mut members = Vec::with_capacity(abstraction_count);
-    let mut state =
-        CollectionState::new(task, goal_count, variants_per_goal, progressive_goal_roots)?;
+    let mut state = CollectionState::new(task, goal_count, variants_per_goal, progress_states)?;
 
     let mut stop_reason = "requested abstraction count reached";
-    while state.has_work_left(abstraction_count, progressive_goal_roots) {
+    while state.has_work_left(abstraction_count, progress_states) {
         if remaining_states < 2 && !members.is_empty() {
             stop_reason = "collection size limit";
             break;
@@ -297,7 +272,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             goal_count,
             abstraction_count,
             variants_per_goal,
-            progressive_goal_roots,
+            progress_states,
             schedule.single_goal_tasks,
         )? {
             NextMember::Build(member) => member,
@@ -341,15 +316,15 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             &member,
             goal_count,
             built.built_from_initial_root,
-            built.reset_progressive_root,
+            built.reset_progress_state,
             built.report.initial_h,
         );
-        state.advance_lane::<B>(
+        state.advance_progress_state::<B>(
             task,
             goal_count,
             &member,
             built.report.concrete_plan.as_deref(),
-            built.reset_progressive_root,
+            built.reset_progress_state,
         )?;
 
         members.push(built.member);
@@ -360,7 +335,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     }
 
     if stop_reason == "requested abstraction count reached"
-        && progressive_goal_roots
+        && progress_states
         && state
             .initial_root_goal_covered
             .iter()
@@ -386,12 +361,13 @@ struct BuiltMember<M> {
     /// The member refined from the task initial state, so it covers its goal
     /// for every state.
     built_from_initial_root: bool,
-    /// The lane's progressive root was an abstract dead end and the member had
+    /// The variant's progress state was an abstract dead end and the member had
     /// to be rebuilt from the task initial state.
-    reset_progressive_root: bool,
+    reset_progress_state: bool,
 }
 
-/// Restrict the task to the member's goal, refine from its lane's root, and tag
+/// Restrict the task to the member's goal, refine from its variant's progress
+/// state, and tag
 /// the result so collection heuristics can tell members apart.
 fn build_member<B: GoalFocusedBackend>(
     task: &dyn AbstractNumericTask,
@@ -420,60 +396,55 @@ fn build_member<B: GoalFocusedBackend>(
         variant.seed
     );
 
-    // A specialist and a terminal lane both refine from the task initial state,
+    // A specialist and a variant whose progress is complete both refine from
+    // the task initial state,
     // which the backend takes as `None`.
     let is_specialist = member.kind == MemberKind::InitialRootSpecialist;
-    let lane_is_complete = state.lane_is_complete(member.variant_id);
-    let refinement_root = (!is_specialist && !lane_is_complete)
+    let progress_is_complete = state.progress_is_complete(member.variant_id);
+    let refinement_root = (!is_specialist && !progress_is_complete)
         .then(|| state.refinement_roots.get(member.variant_id))
         .flatten();
-    let built_from_initial_root =
-        is_specialist || refinement_root.is_none() || !state.lane_root_advanced(member.variant_id);
+    let built_from_initial_root = is_specialist
+        || refinement_root.is_none()
+        || !state.progress_state_is_advanced(member.variant_id);
 
-    let (mut built, report, reset_progressive_root) = match backend.build(
-        member_task,
-        refinement_root,
-        variant,
-        budget,
-    ) {
-        Ok((built, report)) => (built, report, false),
-        Err(error)
-            if refinement_root.is_some()
-                && error.downcast_ref::<RefinementRootDeadEnd>().is_some() =>
-        {
-            info!(
-                "{} collection: progressive root is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
-                B::NAME,
-                member.goal_id,
-                member.variant_id
-            );
-            let (built, report) = backend
-                    .build(member_task, None, variant, budget)
-                    .with_context(|| {
-                        format!(
-                            "failed to rebuild {} collection abstraction {abstraction_id} from the task initial state",
-                            B::NAME
-                        )
-                    })?;
-            (built, report, true)
-        }
-        Err(error) => {
-            return Err(error).with_context(|| {
+    let (built, report) = backend
+        .build(member_task, refinement_root, variant, budget)
+        .with_context(|| {
+            format!(
+                "failed to build {} collection abstraction {abstraction_id}",
+                B::NAME
+            )
+        })?;
+    // A dead progress state says nothing about the initial state, so the
+    // member is rebuilt from there; a dead initial state is a result.
+    let reset_progress_state = refinement_root.is_some() && report.root_is_dead_end;
+    let (mut built, report) = if reset_progress_state {
+        info!(
+            "{} collection: progress state is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
+            B::NAME,
+            member.goal_id,
+            member.variant_id
+        );
+        backend
+            .build(member_task, None, variant, budget)
+            .with_context(|| {
                 format!(
-                    "failed to build {} collection abstraction {abstraction_id}",
+                    "failed to rebuild {} collection abstraction {abstraction_id} from the task initial state",
                     B::NAME
                 )
-            });
-        }
+            })?
+    } else {
+        (built, report)
     };
 
     let membership = (!variant.full_task).then(|| CollectionMembership {
         goal_id: member.goal_id,
         variant_id: member.variant_id,
-        progressive_root: !is_specialist
-            && !lane_is_complete
-            && state.lane_root_advanced(member.variant_id)
-            && !reset_progressive_root,
+        from_progress_state: !is_specialist
+            && !progress_is_complete
+            && state.progress_state_is_advanced(member.variant_id)
+            && !reset_progress_state,
     });
     backend.record_membership(&mut built, membership);
 
@@ -481,7 +452,7 @@ fn build_member<B: GoalFocusedBackend>(
         member: built,
         report,
         built_from_initial_root,
-        reset_progressive_root,
+        reset_progress_state,
     })
 }
 
@@ -491,7 +462,7 @@ struct ScheduledMember {
     /// `0` for the single member of a goal-free task.
     goal_id: usize,
     /// For an initial-root specialist, `variants_per_goal`: it sits past the
-    /// scheduled variants and uses no lane.
+    /// scheduled variants and has no progress state.
     variant_id: usize,
     kind: MemberKind,
 }
@@ -533,20 +504,21 @@ fn remaining_collection_time(
 
 /// Mutable state of one collection run.
 ///
-/// With progressive goal roots enabled the collection keeps `variants_per_goal`
-/// independent lanes; see the module documentation.
+/// With progress states enabled the collection keeps `variants_per_goal`
+/// independent progress states; see the module documentation.
 struct CollectionState {
-    /// `None` when progressive goal roots are off, in which case there are no
-    /// lanes at all.
+    /// `None` when progress states are off, in which case there are none
+    /// at all.
     initial_refinement_root: Option<ConcreteState>,
     refinement_roots: Vec<ConcreteState>,
     satisfied_goals_by_root: Vec<usize>,
-    progressive_root_advanced: Vec<bool>,
-    progressive_lane_complete: Vec<bool>,
+    progress_state_advanced: Vec<bool>,
+    progress_complete: Vec<bool>,
     initial_root_goal_covered: Vec<bool>,
     variants_built_by_goal: Vec<usize>,
     best_initial_h_by_goal: Vec<f64>,
-    /// `(goal_id, variant_id)` pairs to retry from a lane's advanced root.
+    /// `(goal_id, variant_id)` pairs to retry from a variant's advanced
+    /// progress state.
     continuation_queue: VecDeque<(usize, usize)>,
     initial_abstractions_built: usize,
 }
@@ -556,9 +528,9 @@ impl CollectionState {
         task: &dyn AbstractNumericTask,
         goal_count: usize,
         variants_per_goal: usize,
-        progressive_goal_roots: bool,
+        progress_states: bool,
     ) -> Result<Self> {
-        let initial_refinement_root = (progressive_goal_roots && goal_count > 0)
+        let initial_refinement_root = (progress_states && goal_count > 0)
             .then(|| ConcreteState::initial(task))
             .transpose()?;
         let refinement_roots = initial_refinement_root
@@ -568,13 +540,13 @@ impl CollectionState {
             .iter()
             .map(|root| root.satisfied_goal_count(task))
             .collect::<Result<Vec<_>>>()?;
-        let lane_count = refinement_roots.len();
+        let variant_count = refinement_roots.len();
         Ok(Self {
             initial_refinement_root,
             refinement_roots,
             satisfied_goals_by_root,
-            progressive_root_advanced: vec![false; lane_count],
-            progressive_lane_complete: vec![false; lane_count],
+            progress_state_advanced: vec![false; variant_count],
+            progress_complete: vec![false; variant_count],
             initial_root_goal_covered: vec![false; goal_count],
             variants_built_by_goal: vec![0usize; goal_count],
             best_initial_h_by_goal: vec![0.0f64; goal_count],
@@ -583,30 +555,30 @@ impl CollectionState {
         })
     }
 
-    /// `false` for a variant without a lane: progressive goal roots are off, or
+    /// `false` for a variant without a progress state: progress states are off, or
     /// the variant is an initial-root specialist's.
-    fn lane_root_advanced(&self, variant_id: usize) -> bool {
-        self.progressive_root_advanced
+    fn progress_state_is_advanced(&self, variant_id: usize) -> bool {
+        self.progress_state_advanced
             .get(variant_id)
             .copied()
             .unwrap_or(false)
     }
 
-    /// `false` for a variant without a lane: progressive goal roots are off, or
+    /// `false` for a variant without a progress state: progress states are off, or
     /// the variant is an initial-root specialist's.
-    fn lane_is_complete(&self, variant_id: usize) -> bool {
-        self.progressive_lane_complete
+    fn progress_is_complete(&self, variant_id: usize) -> bool {
+        self.progress_complete
             .get(variant_id)
             .copied()
             .unwrap_or(false)
     }
 
-    /// More scheduled members are due, a lane queued a retry, or some goal
+    /// More scheduled members are due, a variant queued a retry, or some goal
     /// still lacks a member built from the task initial state.
-    fn has_work_left(&self, abstraction_count: usize, progressive_goal_roots: bool) -> bool {
+    fn has_work_left(&self, abstraction_count: usize, progress_states: bool) -> bool {
         self.initial_abstractions_built < abstraction_count
             || !self.continuation_queue.is_empty()
-            || (progressive_goal_roots
+            || (progress_states
                 && self
                     .initial_root_goal_covered
                     .iter()
@@ -619,18 +591,18 @@ impl CollectionState {
         goal_count: usize,
         abstraction_count: usize,
         variants_per_goal: usize,
-        progressive_goal_roots: bool,
+        progress_states: bool,
         single_goal_tasks: bool,
     ) -> Result<NextMember> {
         let scheduled_member_pending = self.initial_abstractions_built < abstraction_count;
-        let initial_root_specialist_goal = (!scheduled_member_pending && progressive_goal_roots)
+        let initial_root_specialist_goal = (!scheduled_member_pending && progress_states)
             .then(|| {
                 self.initial_root_goal_covered
                     .iter()
                     .position(|covered| !covered)
             })
             .flatten();
-        let continuation = if progressive_goal_roots
+        let continuation = if progress_states
             && !scheduled_member_pending
             && initial_root_specialist_goal.is_none()
         {
@@ -687,7 +659,8 @@ impl CollectionState {
         ))
     }
 
-    /// Drop queued retries whose goal the lane's root now satisfies anyway,
+    /// Drop queued retries whose goal the variant's progress state now
+    /// satisfies anyway,
     /// and return the first one that still has work to do.
     fn pop_unsatisfied_continuation(
         &mut self,
@@ -697,7 +670,7 @@ impl CollectionState {
             let root = self
                 .refinement_roots
                 .get(variant_id)
-                .expect("progressive continuation references missing root");
+                .expect("a progress-state continuation references a missing root");
             if !root.satisfies_goal(task, goal_id)? {
                 return Ok(Some((goal_id, variant_id)));
             }
@@ -710,14 +683,14 @@ impl CollectionState {
         member: &ScheduledMember,
         goal_count: usize,
         built_from_initial_root: bool,
-        reset_progressive_root: bool,
+        reset_progress_state: bool,
         initial_h: f64,
     ) {
         if goal_count == 0 {
             self.initial_abstractions_built += 1;
             return;
         }
-        if built_from_initial_root || reset_progressive_root {
+        if built_from_initial_root || reset_progress_state {
             self.initial_root_goal_covered[member.goal_id] = true;
         }
         // Specialists and retries fill gaps; only scheduled members count
@@ -730,27 +703,27 @@ impl CollectionState {
         }
     }
 
-    /// Replay the member's concrete plan onto its lane's refinement root, so
-    /// the next member of that lane refines from further along.
-    fn advance_lane<B: GoalFocusedBackend>(
+    /// Replay the member's concrete plan onto its variant's progress state, so
+    /// the next member of that variant refines from further along.
+    fn advance_progress_state<B: GoalFocusedBackend>(
         &mut self,
         task: &dyn AbstractNumericTask,
         goal_count: usize,
         member: &ScheduledMember,
         concrete_plan: Option<&[OperatorIndex]>,
-        reset_progressive_root: bool,
+        reset_progress_state: bool,
     ) -> Result<()> {
         let variant_id = member.variant_id;
         if member.kind == MemberKind::InitialRootSpecialist
-            || self.lane_is_complete(variant_id)
+            || self.progress_is_complete(variant_id)
             || variant_id >= self.refinement_roots.len()
         {
             return Ok(());
         }
-        if reset_progressive_root {
-            self.make_lane_terminal(task, variant_id)?;
+        if reset_progress_state {
+            self.complete_progress(task, variant_id)?;
             debug!(
-                "{} collection: dead root made progressive variant {variant_id} terminal after rebuilding goal {} from the initial state",
+                "{} collection: dead progress state completed variant {variant_id} after rebuilding goal {} from the initial state",
                 B::NAME,
                 member.goal_id
             );
@@ -758,7 +731,7 @@ impl CollectionState {
         }
         let Some(operator_ids) = concrete_plan else {
             debug!(
-                "{} collection: goal {} variant {variant_id} produced no concrete plan; progressive root remains unchanged",
+                "{} collection: goal {} variant {variant_id} produced no concrete plan; progress state remains unchanged",
                 B::NAME,
                 member.goal_id
             );
@@ -777,30 +750,30 @@ impl CollectionState {
         self.refinement_roots[variant_id] = root;
         self.satisfied_goals_by_root[variant_id] = satisfied_goals;
         debug!(
-            "{} collection: advanced progressive root for variant {variant_id} through {} concrete operators; satisfied_goals={satisfied_goals}/{goal_count}",
+            "{} collection: advanced the progress state of variant {variant_id} through {} concrete operators; satisfied_goals={satisfied_goals}/{goal_count}",
             B::NAME,
             operator_ids.len(),
         );
 
         if satisfied_goals == goal_count {
-            self.make_lane_terminal(task, variant_id)?;
+            self.complete_progress(task, variant_id)?;
             debug!(
-                "{} collection: full goal reached for variant {variant_id}; made the progressive lane terminal",
+                "{} collection: full goal reached for variant {variant_id}; completed its progress",
                 B::NAME
             );
             return Ok(());
         }
-        self.progressive_root_advanced[variant_id] = true;
+        self.progress_state_advanced[variant_id] = true;
         if satisfied_goals > previous_satisfied_goals {
             self.queue_reopened_goals(task, variant_id)?;
         }
         Ok(())
     }
 
-    /// Return a lane to the task initial state and stop advancing it, because
-    /// its root is a dead end or has reached the complete task goal. Retries
-    /// queued for the lane go with it.
-    fn make_lane_terminal(
+    /// Return a variant's progress state to the task initial state and stop
+    /// advancing it, because it is a dead end or has reached the complete task
+    /// goal. Retries queued for the variant go with it.
+    fn complete_progress(
         &mut self,
         task: &dyn AbstractNumericTask,
         variant_id: usize,
@@ -808,19 +781,20 @@ impl CollectionState {
         let initial_root = self
             .initial_refinement_root
             .as_ref()
-            .expect("progressive refinement root requires an initial root")
+            .expect("a progress state requires an initial root")
             .clone();
         self.satisfied_goals_by_root[variant_id] = initial_root.satisfied_goal_count(task)?;
         self.refinement_roots[variant_id] = initial_root;
-        self.progressive_root_advanced[variant_id] = false;
-        self.progressive_lane_complete[variant_id] = true;
+        self.progress_state_advanced[variant_id] = false;
+        self.progress_complete[variant_id] = true;
         self.continuation_queue
             .retain(|(_, queued_variant_id)| *queued_variant_id != variant_id);
         Ok(())
     }
 
-    /// The lane's root now satisfies goals it did not before, so goals this
-    /// lane already attempted may be worth another abstraction from here.
+    /// The variant's progress state now satisfies goals it did not before, so
+    /// goals this variant already attempted may be worth another abstraction
+    /// from here.
     fn queue_reopened_goals(
         &mut self,
         task: &dyn AbstractNumericTask,
@@ -856,7 +830,7 @@ impl CollectionState {
         );
         if !self.satisfied_goals_by_root.is_empty() {
             info!(
-                "{} collection: progressive root goal coverage={:?}/{goal_count}",
+                "{} collection: progress-state goal coverage={:?}/{goal_count}",
                 B::NAME,
                 self.satisfied_goals_by_root
             );

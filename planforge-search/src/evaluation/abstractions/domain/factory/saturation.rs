@@ -1,4 +1,4 @@
-use planforge_sas::numeric_task::{NumericValue, VariableIndex};
+use planforge_sas::numeric_task::NumericValue;
 
 use super::*;
 
@@ -27,27 +27,6 @@ pub(super) fn apply_operator_costs(
         op.cost = NumericValue::new(cost);
     }
     Ok(())
-}
-
-pub(super) fn get_comparison_preconditions(
-    op: &AbstractOperator,
-    comparison_var_ids: &[VariableIndex],
-) -> Vec<ExplicitFact> {
-    op.preconditions
-        .iter()
-        .copied()
-        .filter(|f| comparison_var_ids.contains(&f.var_index()))
-        .collect()
-}
-
-pub(super) fn comparison_preconditions_by_operator(
-    operators: &[AbstractOperator],
-    comparison_var_ids: &[VariableIndex],
-) -> Vec<Vec<ExplicitFact>> {
-    operators
-        .iter()
-        .map(|op| get_comparison_preconditions(op, comparison_var_ids))
-        .collect()
 }
 
 /// Coarse wall-clock split of one regional table build.
@@ -356,15 +335,11 @@ impl DomainAbstractionFactory {
         let num_operators = task.get_operators().len();
         let num_states = table.distances.len();
         let mut saturated_costs = vec![f64::NEG_INFINITY; num_operators];
-
-        let comparison_var_ids = self.comparison_var_ids();
-        let comparison_branching = !comparison_var_ids.is_empty();
         let match_tree = MatchTree::build(
             generator.domain_sizes(),
             generator.numeric_domain_sizes(),
             generator.hash_multipliers(),
             operators,
-            &comparison_var_ids,
         );
         // Mirror `compute_distances_and_generating_ops`: when comparison-axiom
         // vars are refined, an operator's predecessor set is enumerated via
@@ -374,17 +349,6 @@ impl DomainAbstractionFactory {
         // effect on a numeric dependency) are missed during saturation, the
         // residual stays inflated, subsequent abstractions over-saturate the
         // same operator, and `sum_a h_a > h*` — inadmissibility.
-        let comparison_preconditions = if comparison_branching {
-            comparison_preconditions_by_operator(operators, &comparison_var_ids)
-        } else {
-            Vec::new()
-        };
-        let mut comparison_enumeration_memo =
-            ComparisonEnumerationMemo::new(ComparisonBranchingLayout {
-                numeric_domain_sizes: generator.numeric_domain_sizes(),
-                hash_multipliers: generator.hash_multipliers(),
-                comparison_var_ids: &comparison_var_ids,
-            });
 
         let mut applicable_operator_ids = Vec::new();
         for target_hash in 0..num_states {
@@ -412,16 +376,7 @@ impl DomainAbstractionFactory {
             // abstraction to re-charge — the symptom is `sum_k h_k > h*`
             // on plant-watering/prob_4_2_2 (cost 34 vs optimal 33 across
             // a fraction of seeds).
-            let base_target = if comparison_branching {
-                self.clear_comparison_vars_except(
-                    target_hash,
-                    generator.hash_multipliers(),
-                    &comparison_var_ids,
-                    &[],
-                )?
-            } else {
-                target_hash
-            };
+            let base_target = target_hash;
 
             match_tree.get_applicable_operator_ids(base_target, &mut applicable_operator_ids);
             for &abstract_op_id in &applicable_operator_ids {
@@ -457,20 +412,7 @@ impl DomainAbstractionFactory {
                     }
                 };
 
-                if comparison_branching {
-                    let possible_predecessors = self
-                        .enumerate_states_with_evaluated_comparisons_cached(
-                            base_predecessor,
-                            task,
-                            &comparison_preconditions[abstract_op_id],
-                            &mut comparison_enumeration_memo,
-                        )?;
-                    for &source_hash in possible_predecessors.iter() {
-                        consider_source(source_hash, &mut saturated_costs);
-                    }
-                } else {
-                    consider_source(base_predecessor, &mut saturated_costs);
-                }
+                consider_source(base_predecessor, &mut saturated_costs);
             }
         }
 

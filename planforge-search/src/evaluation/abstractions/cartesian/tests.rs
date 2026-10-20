@@ -14,13 +14,16 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSemantics, CartesianSet, CartesianSplitSelection, CartesianStopReason, FlawKind,
-    OperatorBitSet, RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey,
-    WorkingAbstraction, numeric_split_choice_key, push_unique_split, retain_min_growth_splits,
-    select_refinement_split,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
+    CartesianStopReason, CartesianView, FlawKind, OperatorBitSet, RefinementNode, ShortestPaths,
+    Split, SplitDimension, TransitionKey, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
+use crate::evaluation::abstractions::common::cegar::selection::{
+    push_unique_split, retain_min_growth_splits, select_refinement_split,
+};
+use crate::evaluation::abstractions::common::cegar::semantics::numeric_split_choice_key;
+use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use planforge_sas::utils::interval::Interval;
 
 mod collection;
@@ -93,4 +96,16 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             abstraction.transition_system.transitions.len()
         );
     }
+}
+
+/// Shortest paths that make every state a goal: for tests that read only the
+/// regions and growth of a view.
+fn all_goal_paths(states: usize) -> ShortestPaths {
+    ShortestPaths::for_test(
+        vec![0.0; states],
+        vec![None; states],
+        vec![Vec::new(); states],
+        vec![None; states],
+        vec![true; states],
+    )
 }

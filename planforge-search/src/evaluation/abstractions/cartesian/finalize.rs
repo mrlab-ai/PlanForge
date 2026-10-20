@@ -68,7 +68,7 @@ pub(super) fn finalize_abstraction(
                     .iter()
                     .copied()
                     .map(|concrete_op_id| {
-                        let source_set = semantics.source_set_source_for_transition(
+                        let source_set = semantics.regions().transition_source_set(
                             &shared_cartesian_sets[source],
                             concrete_op_id,
                             &shared_cartesian_sets[target],
@@ -103,7 +103,7 @@ pub(super) fn finalize_abstraction(
     }
     let mut goal_state_hashes = Vec::new();
     for (state_id, region) in working.states().iter().enumerate() {
-        if semantics.region_is_goal(region)? {
+        if semantics.regions().is_goal(region)? {
             goal_state_hashes.push(state_id);
         }
     }
@@ -128,7 +128,7 @@ pub(super) fn finalize_abstraction(
             transition
                 .concrete_op_ids
                 .iter()
-                .map(|&op_id| semantics.operator_costs()[op_id.index()].value())
+                .map(|&op_id| semantics.cegar().operator_costs()[op_id.index()].value())
                 .fold(f64::INFINITY, f64::min)
         })
         .collect::<Vec<_>>();

@@ -109,7 +109,7 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
             flaw_kind: FlawKind::ExecuteEntirePlan,
             collection_strategy: CollectionStrategy::Complementary,
             variants_per_goal: 4,
-            progressive_goal_roots: true,
+            progress_states: true,
             random_seed: Some(1),
             ..Default::default()
         },
@@ -129,7 +129,7 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         variants_per_goal: 4,
         max_collection_states: 3_000,
         total_max_time: None,
-        progressive_goal_roots: true,
+        progress_states: true,
         alternate_split_kinds: true,
         single_goal_tasks: true,
     })

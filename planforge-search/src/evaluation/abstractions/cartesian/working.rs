@@ -111,13 +111,6 @@ impl Iterator for OperatorBitSetIntersectionIter<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) struct TransitionKey {
-    pub(super) source: usize,
-    pub(super) concrete_op_id: OperatorIndex,
-    pub(super) target: usize,
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct WorkingAbstraction {
     pub(super) states: Vec<CartesianSet>,

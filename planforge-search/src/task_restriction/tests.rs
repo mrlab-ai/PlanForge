@@ -141,7 +141,7 @@ fn restricted_task_lifts_derived_condition_root_and_maps_effects() {
 }
 
 #[test]
-fn restricted_task_supports_assignment_to_constant_when_views_stay_simple() {
+fn a_unary_comparison_becomes_a_threshold_on_its_variable() {
     let variables = vec![ExplicitVariable::new(
         2,
         "cmp".into(),
@@ -203,19 +203,27 @@ fn restricted_task_supports_assignment_to_constant_when_views_stay_simple() {
     let transformed = restricted.task();
     let assignment_effects = transformed.get_operators()[0].assignment_effects();
 
+    // `capacity - fuel > capacity` is `fuel < 0`: no promoted variable, and the
+    // refuel assignment stays on `fuel`.
+    let fuel = VariableIndex::from_usize(0);
+    assert_eq!(transformed.numeric_variables()[fuel.index()].name(), "fuel");
     assert_eq!(assignment_effects.len(), 1);
-    assert_eq!(
-        assignment_effects[0].affected_var_id(),
-        VariableIndex::from_usize(1)
-    );
+    assert_eq!(assignment_effects[0].affected_var_id(), fuel);
     assert_eq!(
         assignment_effects[0].operation(),
         &AssignmentOperation::Assign
     );
     assert_eq!(
         transformed.get_initial_numeric_state_values()[assignment_effects[0].var_id().index()],
+        NumericValue::new(6000.0)
+    );
+    let comparison = &transformed.comparison_axioms()[0];
+    assert_eq!(comparison.get_left_var_id(), fuel);
+    assert_eq!(
+        transformed.get_initial_numeric_state_values()[comparison.get_right_var_id().index()],
         NumericValue::new(0.0)
     );
+    assert_eq!(comparison.get_operator(), &ComparisonOperator::LessThan);
 }
 
 #[test]

@@ -217,24 +217,65 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
         visiting: vec![false; num_numeric_vars],
     };
 
+    // A comparison whose operands are not derived is already restricted. One
+    // that depends on a single regular variable, such as `fuel - c >= 0`
+    // with a constant `c`, is a threshold on that variable. Only comparisons
+    // over several variables need their derived operands promoted.
+    let mut comparisons = Vec::with_capacity(task.comparison_axioms().len());
     let mut root_var_ids = BTreeSet::new();
-    for condition in task.numeric_conditions().iter() {
-        root_var_ids.insert(condition.left_numeric_var_id());
-        root_var_ids.insert(condition.right_numeric_var_id());
-    }
-
     let mut root_exprs = BTreeMap::new();
-    for &root_var_id in &root_var_ids {
-        let expr = linearizer.linearize(root_var_id)?;
-        match task.numeric_variables()[root_var_id.index()].get_type() {
-            NumericType::Regular | NumericType::Constant | NumericType::Cost => {}
-            NumericType::Derived => {
-                root_exprs.insert(root_var_id, expr);
+    for comparison_axiom in task.comparison_axioms() {
+        let operands = [
+            comparison_axiom.get_left_var_id(),
+            comparison_axiom.get_right_var_id(),
+        ];
+        let is_derived = |var_id: VariableIndex| {
+            task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
+        };
+        if !operands.iter().any(|&var_id| is_derived(var_id)) {
+            root_var_ids.extend(operands);
+            comparisons.push(RestrictedComparison::Operands);
+            continue;
+        }
+        let difference = linearizer
+            .linearize(operands[0])?
+            .sub(linearizer.linearize(operands[1])?);
+        if let [var_id] = difference.non_zero_vars()[..]
+            && task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular
+        {
+            let coefficient = difference.coefficients[var_id.index()];
+            let threshold = float_tolerance::canonicalize(-difference.constant / coefficient);
+            ensure!(
+                threshold.is_finite(),
+                "comparison over numeric variable {var_id} has non-finite threshold {threshold}"
+            );
+            let operator = if coefficient > ZERO_VALUE {
+                comparison_axiom.get_operator().clone()
+            } else {
+                reverse_comparison(comparison_axiom.get_operator())
+            };
+            root_var_ids.insert(var_id);
+            comparisons.push(RestrictedComparison::Threshold {
+                var_id,
+                threshold,
+                operator,
+            });
+            continue;
+        }
+        for var_id in operands {
+            root_var_ids.insert(var_id);
+            if is_derived(var_id) {
+                root_exprs.insert(var_id, linearizer.linearize(var_id)?);
             }
         }
+        comparisons.push(RestrictedComparison::Operands);
     }
 
-    if root_exprs.is_empty() {
+    if root_exprs.is_empty()
+        && !comparisons
+            .iter()
+            .any(|comparison| matches!(comparison, RestrictedComparison::Threshold { .. }))
+    {
         bail!(
             "task violates restricted-task invariants ({restriction_reason}), but no derived numeric comparison roots can be promoted"
         );
@@ -264,7 +305,26 @@ pub fn build_restricted_task(task: &dyn AbstractNumericTask) -> Result<Option<Re
     numeric_var_ids.sort_unstable();
     numeric_var_ids.dedup();
 
-    build_task(task, &initial_numeric, &root_exprs, &numeric_var_ids)
+    build_task(
+        task,
+        &initial_numeric,
+        &root_exprs,
+        &numeric_var_ids,
+        &comparisons,
+    )
+}
+
+/// How a comparison axiom of the original task appears in the restricted one.
+enum RestrictedComparison {
+    /// Over its (mapped) original operands; derived ones are promoted.
+    Operands,
+    /// `var_id operator threshold` for an operand difference that depends on
+    /// the single regular variable `var_id`.
+    Threshold {
+        var_id: VariableIndex,
+        threshold: NumericValue,
+        operator: ComparisonOperator,
+    },
 }
 
 /// Builds the restricted representation consumed by the ICAPS 2026 Cartesian
@@ -505,6 +565,7 @@ fn build_task(
     initial_numeric: &[NumericValue],
     root_exprs: &BTreeMap<VariableIndex, AffineExpression>,
     numeric_var_ids: &[VariableIndex],
+    comparisons: &[RestrictedComparison],
 ) -> Result<Option<RestrictedTask>> {
     let num_original_numeric = task.numeric_variables().len();
     let mut original_to_transformed = vec![None; num_original_numeric];
@@ -569,20 +630,39 @@ fn build_task(
         )?);
     }
 
-    let mut comparison_axioms = Vec::new();
-    for comparison_axiom in task.comparison_axioms() {
-        let Some(left) = original_to_transformed[comparison_axiom.get_left_var_id().index()] else {
-            continue;
-        };
-        let Some(right) = original_to_transformed[comparison_axiom.get_right_var_id().index()]
-        else {
-            continue;
+    let transformed = |var_id: VariableIndex| {
+        original_to_transformed[var_id.index()]
+            .expect("every comparison operand is a restricted numeric variable")
+    };
+    let mut comparison_axioms = Vec::with_capacity(comparisons.len());
+    for (comparison_axiom, comparison) in task.comparison_axioms().iter().zip(comparisons) {
+        let (left, right, operator) = match comparison {
+            RestrictedComparison::Operands => (
+                transformed(comparison_axiom.get_left_var_id()),
+                transformed(comparison_axiom.get_right_var_id()),
+                comparison_axiom.get_operator().clone(),
+            ),
+            RestrictedComparison::Threshold {
+                var_id,
+                threshold,
+                operator,
+            } => (
+                transformed(*var_id),
+                constants.get_or_insert(
+                    *threshold,
+                    &mut numeric_variables,
+                    &mut numeric_initial,
+                    &mut transformed_to_expr,
+                    num_original_numeric,
+                ),
+                operator.clone(),
+            ),
         };
         comparison_axioms.push(ComparisonAxiom::new(
             comparison_axiom.get_affected_var_id(),
             left,
             right,
-            comparison_axiom.get_operator().clone(),
+            operator,
         ));
     }
     let variables = renumber_propositional_axiom_layers(task, &comparison_axioms);

@@ -45,7 +45,8 @@ fn unchanged_transition_source_sets_share_state_dimensions() {
     );
 
     let source_set = semantics
-        .source_set_source_for_transition(&source, OperatorIndex::new(0), &source)
+        .regions()
+        .transition_source_set(&source, OperatorIndex::new(0), &source)
         .unwrap()
         .unwrap();
 

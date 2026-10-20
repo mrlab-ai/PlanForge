@@ -42,23 +42,23 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 .entry(member.membership.goal_id)
                 .or_default() += 1;
         }
-        let progressive_roots = components
+        let progress_states = components
             .iter()
             .filter_map(AbstractionComponent::goal_focused_member)
-            .any(|member| member.membership.progressive_root);
+            .any(|member| member.membership.from_progress_state);
         let goal_count = variants_by_goal
             .values()
-            .filter(|&&variant_count| progressive_roots || variant_count >= 2)
+            .filter(|&&variant_count| progress_states || variant_count >= 2)
             .count();
         let max_variants = variants_by_goal.values().copied().max().unwrap_or(0);
-        if goal_count == 0 || (!progressive_roots && max_variants < 2) {
+        if goal_count == 0 || (!progress_states && max_variants < 2) {
             return Vec::new();
         }
 
         // Rotate the anchor goal before varying its construction variant. This
         // guarantees coverage of every goal when the 64-order cap is large
         // enough, including states where that goal is the last one remaining.
-        let variants = compact_goal_cover_variants(goal_count, max_variants, progressive_roots);
+        let variants = compact_goal_cover_variants(goal_count, max_variants, progress_states);
 
         let mut seen = HashSet::new();
         variants
@@ -97,7 +97,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let first = components[*order.first()?].goal_focused_member()?;
         first
             .membership
-            .progressive_root
+            .from_progress_state
             .then_some(first.membership.goal_id)
     }
 
@@ -183,12 +183,12 @@ pub(super) fn goal_cover_order(
             .or_default()
             .push(component_id);
     }
-    let progressive_roots = components
+    let progress_states = components
         .iter()
         .filter_map(AbstractionComponent::goal_focused_member)
-        .any(|member| member.membership.progressive_root);
+        .any(|member| member.membership.from_progress_state);
     if by_goal.is_empty()
-        || (!progressive_roots && by_goal.values().all(|components| components.len() < 2))
+        || (!progress_states && by_goal.values().all(|components| components.len() < 2))
     {
         return None;
     }
@@ -207,7 +207,7 @@ pub(super) fn goal_cover_order(
     };
     let mut sorted_goals = by_goal
         .iter()
-        .filter(|(_, components)| progressive_roots || components.len() >= 2)
+        .filter(|(_, components)| progress_states || components.len() >= 2)
         .collect::<Vec<_>>();
     sorted_goals.sort_by(|(left_goal, left), (right_goal, right)| {
         goal_max_h(right)
@@ -277,7 +277,7 @@ pub(super) fn goal_cover_order(
         order.push(component_id);
         selected.insert(component_id);
     }
-    if progressive_roots {
+    if progress_states {
         for component_id in sorted_anchor_components {
             if selected.insert(component_id) {
                 order.push(component_id);
@@ -326,7 +326,7 @@ pub(super) fn goal_cover_order(
     if variant.compact {
         debug_assert_eq!(
             order.len(),
-            if progressive_roots {
+            if progress_states {
                 by_goal.len() + anchor_components.len() - 1
             } else {
                 by_goal.len() + 1

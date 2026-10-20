@@ -12,7 +12,18 @@
 //! 2. `p_{i-1}` and `a_{i-1}` are disjoint;
 //! 3. the initial state violates `p_0`.
 //!
-//! If none applies, the operators of the trace are a plan. Every flaw yields
+//! If none applies, the operators of the trace are a plan.
+//!
+//! Whole-plan regression ([`FlawScope::EntirePlan`]) reports every flaw
+//! instead, as complete-plan flaws do for progression: past a flaw it ignores
+//! the contradicted condition and regresses the effects anyway. An effect that
+//! falsifies `p_i` frees its variable, a contradicted precondition is dropped,
+//! and a `p_{i-1}` disjoint from `a_{i-1}` is kept. Every flaw after the first
+//! is thus witnessed by a counterfactual partial state, which need not overlap
+//! the abstract states of the trace; a cut that does not split its abstract
+//! state strictly is no flaw of that state.
+//!
+//! Every first flaw yields
 //! a strict split of one abstract state on one coordinate, cut at a bound of a
 //! regressed partial state (or, in case 3, next to the initial value). Such
 //! bounds are condition constants shifted by the effects of a plan suffix, so
@@ -23,14 +34,29 @@
 //! The split therefore goes to `a_i` when the image of `a_{i-1}` misses `p_i`
 //! and to `a_{i-1}` when only the precondition and `p_i` disagree there.
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
-    VariableIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, ONE_VALUE, OperatorIndex,
+    VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::interval::Interval;
 
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use planforge_sas::utils::state_packer::StatePacker;
+
+use super::SplitKind;
+use super::progression::{ConcretePlan, PlanCheck};
+use super::selection::{push_unique_split, select_refinement};
+use super::semantics::CegarSemantics;
+use super::split::{Split, numeric_split_intervals};
+use super::view::{AbstractionView, TransitionKey};
+use crate::ensure_supported;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::concrete_state::{
+    ConcreteState, concrete_prop_values,
+};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 
 /// Where a case-3 split separates the initial state from `p_0`. Cases 1 and 2
@@ -41,6 +67,37 @@ pub(crate) enum InitialCut {
     Wanted,
     /// Right next to the initial value (concrete split).
     Concrete,
+}
+
+/// How many flaws a regression of the abstract plan reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlawScope {
+    /// The first flaw, walking back from the goal.
+    First,
+    /// Every flaw; see the module documentation.
+    EntirePlan,
+}
+
+/// The flaws found so far.
+struct Flaws {
+    scope: FlawScope,
+    found: Vec<RegressionFlaw>,
+}
+
+impl Flaws {
+    /// Records the flaw of abstract state `state` whose cut is `cut`, `None`
+    /// if the cut does not split the state strictly. Returns whether the
+    /// search stops.
+    fn record(&mut self, state: usize, cut: Option<Cut>) -> Result<bool> {
+        match cut {
+            Some(cut) => self.found.push(RegressionFlaw { state, cut }),
+            None => ensure!(
+                !self.found.is_empty(),
+                "the first regression flaw does not split abstract state {state} strictly"
+            ),
+        }
+        Ok(self.scope == FlawScope::First)
+    }
 }
 
 /// A split of one abstract state of the trace.
@@ -88,13 +145,13 @@ pub(crate) fn ensure_regressable(
     }
     let check = |fact: &ExplicitFact, context: &dyn Fn() -> String| -> Result<()> {
         if task.numeric_conditions().is_condition_var(fact.var_index()) {
-            ensure!(
+            ensure_supported!(
                 coordinates.requirement(fact).is_some(),
                 "regression flaws need conditions over one coordinate, but {} has {fact:?}; --restrict-task compiles every linear condition into one",
                 context()
             );
         } else {
-            ensure!(
+            ensure_supported!(
                 !derived[fact.var()],
                 "regression flaws cannot regress {} fact {fact:?}: its variable is derived by axioms",
                 context()
@@ -159,17 +216,19 @@ impl PartialState {
     }
 }
 
-/// The first regression flaw of the trace `states[0] -operators[0]-> ...
-/// states[n]`, or `None` if `operators` is a plan from `init`. Every
-/// abstract state is the Cartesian set of states it represents.
-pub(crate) fn find_regression_flaw(
+/// The regression flaws of the trace `states[0] -operators[0]-> ...
+/// states[n]` in `scope`, walking back from the goal; none iff `operators` is
+/// a plan from `init`. Every abstract state is the Cartesian set of states it
+/// represents.
+pub(crate) fn find_regression_flaws(
     task: &dyn AbstractNumericTask,
     coordinates: &Coordinates<'_>,
     states: &[CartesianSet],
     operators: &[OperatorIndex],
     init: InitialState<'_>,
     initial_cut: InitialCut,
-) -> Result<Option<RegressionFlaw>> {
+    scope: FlawScope,
+) -> Result<Vec<RegressionFlaw>> {
     ensure!(
         states.len() == operators.len() + 1,
         "a trace of {} operators has {} abstract states",
@@ -188,6 +247,10 @@ pub(crate) fn find_regression_flaw(
         overlaps(&partial, &states[operators.len()]),
         "the last abstract state of the trace admits no goal state"
     );
+    let mut flaws = Flaws {
+        scope,
+        found: Vec::new(),
+    };
     for step in (1..=operators.len()).rev() {
         let op_id = operators[step - 1];
         match regress(
@@ -198,22 +261,21 @@ pub(crate) fn find_regression_flaw(
             &states[step - 1],
             &states[step],
             step,
+            &mut flaws,
         )? {
-            Regressed::Flaw(flaw) => return Ok(Some(flaw)),
-            Regressed::Partial(predecessor) => partial = predecessor,
+            Some(predecessor) => partial = predecessor,
+            None => return Ok(flaws.found),
         }
     }
-    Ok(initial_flaw(&partial, &states[0], init, initial_cut))
-}
-
-enum Regressed {
-    Partial(PartialState),
-    Flaw(RegressionFlaw),
+    initial_flaws(&partial, &states[0], init, initial_cut, &mut flaws)?;
+    Ok(flaws.found)
 }
 
 /// Regresses `partial` (= `p_step`) through `op_id` into the source state
-/// `source` (= `a_{step-1}`), reporting cases 1 and 2. `target` is `a_step`;
-/// `partial` overlaps it on every dimension.
+/// `source` (= `a_{step-1}`), recording cases 1 and 2 in `flaws`. `target` is
+/// `a_step`; before the first flaw, `partial` overlaps it on every dimension.
+/// Returns `p_{step-1}`, or `None` once the search stops.
+#[allow(clippy::too_many_arguments)]
 fn regress(
     task: &dyn AbstractNumericTask,
     coordinates: &Coordinates<'_>,
@@ -222,22 +284,22 @@ fn regress(
     source: &CartesianSet,
     target: &CartesianSet,
     step: usize,
-) -> Result<Regressed> {
+    flaws: &mut Flaws,
+) -> Result<Option<PartialState>> {
     let op = &task.get_operators()[op_id.index()];
     let mut predecessor = PartialState::unconstrained(task);
 
-    // Propositional effects falsify p_step or free their variable.
+    // Propositional effects falsify p_step (case 1) or free their variable;
+    // past the flaw, the effect is regressed anyway and frees it too.
     let mut written = vec![false; task.get_num_variables()];
     for effect in op.effects() {
         let var = effect.var_id();
         written[var.index()] = true;
         if let Some(wanted) = partial.propositions[var.index()]
             && wanted != effect.value()
+            && flaws.record(step, propositional_cut(target, var, wanted))?
         {
-            return Ok(Regressed::Flaw(RegressionFlaw {
-                state: step,
-                cut: Cut::Propositional { var, wanted },
-            }));
+            return Ok(None);
         }
     }
     let mut preconditions = PartialState::unconstrained(task);
@@ -264,73 +326,89 @@ fn regress(
             predecessor.propositions[index] = precondition;
             continue;
         };
-        if !admits_value(source, var, wanted) {
-            return Ok(Regressed::Flaw(RegressionFlaw {
-                state: step,
-                cut: Cut::Propositional { var, wanted },
-            }));
+        // Case 2; past it, p_{step-1} keeps the value.
+        if !admits_value(source, var, wanted)
+            && flaws.record(step, propositional_cut(target, var, wanted))?
+        {
+            return Ok(None);
         }
-        if precondition.is_some_and(|required| required != wanted) {
-            return Ok(Regressed::Flaw(RegressionFlaw {
-                state: step - 1,
-                cut: Cut::Propositional { var, wanted },
-            }));
+        // Case 1; past it, the contradicted precondition is ignored.
+        if precondition.is_some_and(|required| required != wanted)
+            && flaws.record(step - 1, propositional_cut(source, var, wanted))?
+        {
+            return Ok(None);
         }
         predecessor.propositions[index] = Some(wanted);
     }
 
     for (index, &wanted) in partial.numeric.iter().enumerate() {
         let var = VariableIndex::from_usize(index);
-        let Some(regressed) = coordinates.preimage(wanted, op_id, var)? else {
-            // op_id assigns var a value outside p_step; a_step contains it.
-            let assigned = coordinates.image(source.numeric[index], op_id, var)?;
-            return Ok(Regressed::Flaw(RegressionFlaw {
-                state: step,
-                cut: separate(var, wanted, assigned, target.numeric[index])?,
-            }));
-        };
         let source_interval = source.numeric[index];
-        if !regressed.intersects(&source_interval) {
-            let image = coordinates.image(source_interval, op_id, var)?;
-            return Ok(Regressed::Flaw(RegressionFlaw {
-                state: step,
-                cut: separate(var, wanted, image, target.numeric[index])?,
-            }));
-        }
         let required = preconditions.numeric[index];
+        let Some(regressed) = coordinates.preimage(wanted, op_id, var)? else {
+            // Case 1: op_id assigns var a value outside p_step, which a_step
+            // contains. Past it, the assignment is regressed anyway and
+            // leaves only the precondition on var.
+            let assigned = coordinates.image(source_interval, op_id, var)?;
+            if flaws.record(
+                step,
+                separate(var, wanted, assigned, target.numeric[index])?,
+            )? {
+                return Ok(None);
+            }
+            predecessor.numeric[index] = required;
+            continue;
+        };
+        let reaches_source = regressed.intersects(&source_interval);
+        // Case 2; past it, p_{step-1} keeps the regressed values.
+        if !reaches_source {
+            let image = coordinates.image(source_interval, op_id, var)?;
+            if flaws.record(step, separate(var, wanted, image, target.numeric[index])?)? {
+                return Ok(None);
+            }
+        }
         let combined = regressed.intersection(&required);
-        if !combined.intersects(&source_interval) {
-            return Ok(Regressed::Flaw(RegressionFlaw {
-                state: step - 1,
-                cut: separate(
+        // Case 1: the precondition contradicts the regression in a_{step-1};
+        // past it, a precondition that contradicts the regression outright is
+        // ignored.
+        if reaches_source
+            && !combined.intersects(&source_interval)
+            && flaws.record(
+                step - 1,
+                separate(
                     var,
                     regressed,
                     required.intersection(&source_interval),
                     source_interval,
                 )?,
-            }));
+            )?
+        {
+            return Ok(None);
         }
-        predecessor.numeric[index] = combined;
+        predecessor.numeric[index] = if combined.is_empty() {
+            regressed
+        } else {
+            combined
+        };
     }
-    Ok(Regressed::Partial(predecessor))
+    Ok(Some(predecessor))
 }
 
 /// Case 3: the initial state against `p_0` in its abstract state `state`.
-fn initial_flaw(
+fn initial_flaws(
     partial: &PartialState,
     state: &CartesianSet,
     init: InitialState<'_>,
     initial_cut: InitialCut,
-) -> Option<RegressionFlaw> {
+    flaws: &mut Flaws,
+) -> Result<()> {
     for (index, wanted) in partial.propositions.iter().enumerate() {
-        if wanted.is_some_and(|wanted| init.propositions[index] != wanted) {
-            return Some(RegressionFlaw {
-                state: 0,
-                cut: Cut::Propositional {
-                    var: VariableIndex::from_usize(index),
-                    wanted: wanted.expect("checked above"),
-                },
-            });
+        let var = VariableIndex::from_usize(index);
+        if let Some(wanted) = *wanted
+            && init.propositions[index] != wanted
+            && flaws.record(0, propositional_cut(state, var, wanted))?
+        {
+            return Ok(());
         }
     }
     for (index, wanted) in partial.numeric.iter().enumerate() {
@@ -339,25 +417,41 @@ fn initial_flaw(
             continue;
         }
         let var = VariableIndex::from_usize(index);
-        let initial = Interval::singleton(value);
         let cut = match initial_cut {
-            InitialCut::Wanted => separate(var, *wanted, initial, state.numeric[index]),
+            InitialCut::Wanted => separate(
+                var,
+                *wanted,
+                Interval::singleton(value),
+                state.numeric[index],
+            )?,
             InitialCut::Concrete => cut_next_to(var, value, *wanted, state.numeric[index]),
+        };
+        if flaws.record(0, cut)? {
+            return Ok(());
         }
-        .expect("the initial state lies in its abstract state, which overlaps p_0");
-        return Some(RegressionFlaw { state: 0, cut });
     }
-    None
+    Ok(())
+}
+
+/// The cut that separates the value `wanted` of `var` from its other values
+/// in `state`, `None` unless `state` admits `wanted` and another value.
+fn propositional_cut(
+    state: &CartesianSet,
+    var: VariableIndex,
+    wanted: ExplicitValueIndex,
+) -> Option<Cut> {
+    (admits_value(state, var, wanted) && state.propositions()[var.index()].len() > 1)
+        .then_some(Cut::Propositional { var, wanted })
 }
 
 /// The cut at the bound of `wanted` that faces the disjoint interval
-/// `reached`, which must split `within` strictly.
+/// `reached`, `None` unless it splits `within` strictly.
 fn separate(
     var: VariableIndex,
     wanted: Interval,
     reached: Interval,
     within: Interval,
-) -> Result<Cut> {
+) -> Result<Option<Cut>> {
     ensure!(
         !wanted.intersects(&reached),
         "numeric variable {var}: the separated intervals {wanted:?} and {reached:?} overlap"
@@ -369,37 +463,36 @@ fn separate(
     } else {
         (wanted.upper, wanted.upper_closed)
     };
-    ensure!(
-        boundary.is_finite() && within.can_split_at(boundary, lower_includes_boundary),
-        "numeric variable {var}: cutting {within:?} at {boundary} does not separate {wanted:?} from {reached:?}"
-    );
-    Ok(Cut::Numeric {
-        var,
-        boundary,
-        lower_includes_boundary,
-        wanted_is_lower: !reached_is_lower,
-    })
+    Ok(
+        (boundary.is_finite() && within.can_split_at(boundary, lower_includes_boundary)).then_some(
+            Cut::Numeric {
+                var,
+                boundary,
+                lower_includes_boundary,
+                wanted_is_lower: !reached_is_lower,
+            },
+        ),
+    )
 }
 
 /// The cut right next to `value`, keeping `value` on the side away from
-/// `wanted`.
+/// `wanted`; `None` unless it splits `within` strictly.
 fn cut_next_to(
     var: VariableIndex,
     value: NumericValue,
     wanted: Interval,
     within: Interval,
-) -> Result<Cut> {
+) -> Option<Cut> {
     let value_is_lower = value < wanted.lower || (value == wanted.lower && !wanted.lower_closed);
     let lower_includes_boundary = value_is_lower;
-    if !within.can_split_at(value, lower_includes_boundary) {
-        bail!("numeric variable {var}: cutting {within:?} next to {value} is not strict");
-    }
-    Ok(Cut::Numeric {
-        var,
-        boundary: value,
-        lower_includes_boundary,
-        wanted_is_lower: !value_is_lower,
-    })
+    within
+        .can_split_at(value, lower_includes_boundary)
+        .then_some(Cut::Numeric {
+            var,
+            boundary: value,
+            lower_includes_boundary,
+            wanted_is_lower: !value_is_lower,
+        })
 }
 
 fn admits_value(state: &CartesianSet, var: VariableIndex, value: ExplicitValueIndex) -> bool {
@@ -593,6 +686,61 @@ pub(crate) mod test_tasks {
         })
     }
 
+    /// `o` requires `y >= 1` and increments `x`; the goal is `x >= 2` and
+    /// `y <= 0`, from `(0, 0)`. The goal regressed through `o` contradicts
+    /// its precondition on `y` and leaves `x >= 1`, which the initial state
+    /// violates. Numeric variables: `x`, `y`, `zero`, `one`, `two`.
+    pub(crate) fn blocked_task() -> NumericRootTask {
+        NumericRootTask::new(NumericRootTaskParts {
+            version: 1,
+            metric: Metric::new(true, None),
+            variables: vec![
+                comparison_variable("y-at-least-one"),
+                comparison_variable("x-at-least-two"),
+                comparison_variable("y-at-most-zero"),
+            ],
+            numeric_variables: vec![
+                NumericVariable::new("x".into(), NumericType::Regular, None),
+                NumericVariable::new("y".into(), NumericType::Regular, None),
+                NumericVariable::new("zero".into(), NumericType::Constant, None),
+                NumericVariable::new("one".into(), NumericType::Constant, None),
+                NumericVariable::new("two".into(), NumericType::Constant, None),
+            ],
+            goals: vec![
+                ExplicitFact::propositional(1, TRUE),
+                ExplicitFact::propositional(2, TRUE),
+            ],
+            mutexes: vec![],
+            state: vec![
+                ExplicitValueIndex::new(1),
+                ExplicitValueIndex::new(1),
+                ExplicitValueIndex::from_usize(TRUE),
+            ],
+            numeric_state: vec![
+                ZERO_VALUE,
+                ZERO_VALUE,
+                ZERO_VALUE,
+                ONE_VALUE,
+                NumericValue::new(2.0),
+            ],
+            operators: vec![Operator::new(
+                "o".into(),
+                vec![ExplicitFact::propositional(0, TRUE)],
+                vec![],
+                vec![add(0, 3)],
+                OperatorCost::new(1),
+            )],
+            axioms: vec![],
+            comparison_axioms: vec![
+                compare(0, 1, 3, ComparisonOperator::GreaterThanOrEqual),
+                compare(1, 0, 4, ComparisonOperator::GreaterThanOrEqual),
+                compare(2, 1, 2, ComparisonOperator::LessThanOrEqual),
+            ],
+            assignment_axioms: vec![],
+            global_constraint: ExplicitFact::propositional(0, 0),
+        })
+    }
+
     /// The corrected example for Theorem 4. `move_right` requires `x = y`
     /// and increments `x`; `move_down` decrements `y`. From `(0, 1)` the goal
     /// `x >= 1` takes `<move_down, move_right>`. Regression over single
@@ -659,6 +807,172 @@ pub(crate) mod test_tasks {
     }
 }
 
+/// Regression flaw search in `scope` on the optimal abstract plan from the
+/// abstract state of `refinement_root`. Without a flaw, the plan's operators
+/// are a concrete plan; with several, the split is selected among them.
+pub(crate) fn regression_plan_check(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
+    state_packer: &Arc<StatePacker>,
+    refinement_root: &ConcreteState,
+    scope: FlawScope,
+) -> Result<PlanCheck> {
+    let mut prop_values = Vec::new();
+    concrete_prop_values(
+        semantics.task(),
+        state_packer,
+        &refinement_root.propositions,
+        &mut prop_values,
+    );
+    let initial_state = view.abstract_state(&prop_values, &refinement_root.numeric)?;
+    if !view.goal_distance(initial_state).is_finite() {
+        return Ok(PlanCheck::AbstractDeadEnd);
+    }
+    let plan = abstract_plan(view, initial_state)?;
+    let state_ids = std::iter::once(initial_state)
+        .chain(plan.iter().map(|transition| transition.target))
+        .collect::<Vec<_>>();
+    let states = state_ids
+        .iter()
+        .map(|&state_id| view.region(state_id).into_owned())
+        .collect::<Vec<_>>();
+    let operator_ids = plan
+        .iter()
+        .map(|transition| transition.concrete_op_id)
+        .collect::<Vec<_>>();
+    let initial_cut = match semantics.split_kind() {
+        SplitKind::Concrete => InitialCut::Concrete,
+        SplitKind::Wanted => InitialCut::Wanted,
+    };
+    let flaws = find_regression_flaws(
+        semantics.task(),
+        semantics.coordinates(),
+        &states,
+        &operator_ids,
+        InitialState {
+            propositions: &prop_values,
+            numeric: &refinement_root.numeric,
+        },
+        initial_cut,
+        scope,
+    )?;
+    if flaws.is_empty() {
+        let cost = operator_ids
+            .iter()
+            .map(|op_id| semantics.operator_costs()[op_id.index()].value())
+            .sum();
+        return Ok(PlanCheck::ConcretePlan(ConcretePlan::new(
+            operator_ids,
+            cost,
+        )));
+    }
+    match scope {
+        FlawScope::First => {
+            let [flaw] = &flaws[..] else {
+                unreachable!("a first-flaw search reports {} flaws", flaws.len());
+            };
+            Ok(PlanCheck::Refine(flaw_split(
+                view, semantics, &state_ids, flaw,
+            )?))
+        }
+        FlawScope::EntirePlan => {
+            let mut candidates = Vec::with_capacity(flaws.len());
+            let mut identities = HashSet::with_capacity(flaws.len());
+            for flaw in &flaws {
+                push_unique_split(
+                    &mut candidates,
+                    &mut identities,
+                    flaw_split(view, semantics, &state_ids, flaw)?,
+                );
+            }
+            select_refinement(view, semantics, candidates)
+        }
+    }
+}
+
+/// The split of the abstract state `state_ids[flaw.state]` that `flaw` cuts.
+fn flaw_split(
+    view: &impl AbstractionView,
+    semantics: &CegarSemantics<'_>,
+    state_ids: &[usize],
+    flaw: &RegressionFlaw,
+) -> Result<Split> {
+    let state_id = state_ids[flaw.state];
+    let description = format!(
+        "regression flaw in abstract state {} of the plan",
+        flaw.state
+    );
+    Ok(match flaw.cut {
+        Cut::Numeric {
+            var,
+            boundary,
+            lower_includes_boundary,
+            wanted_is_lower,
+        } => {
+            let integer_lattice = semantics.numeric_integer_lattice()[var.index()];
+            let (lower, upper) = numeric_split_intervals(
+                view.region(state_id).numeric[var.index()],
+                boundary,
+                lower_includes_boundary,
+                integer_lattice,
+            )?;
+            Split::Numeric {
+                state_id,
+                var_id: var,
+                boundary,
+                lower_includes_boundary,
+                witness_value: interior_value(if wanted_is_lower { upper } else { lower }),
+                integer_lattice,
+                description,
+            }
+        }
+        Cut::Propositional { var, wanted } => {
+            let witness_value = *view.region(state_id).propositions()[var.index()]
+                .iter()
+                .find(|&&value| value != wanted)
+                .with_context(|| {
+                    format!("propositional cut of {var} at {wanted} in abstract state {state_id} is not strict")
+                })?;
+            Split::Propositional {
+                state_id,
+                var_id: var,
+                wanted: vec![wanted],
+                witness_value,
+                description,
+            }
+        }
+    })
+}
+
+/// The transitions of the optimal abstract plan from `initial_state`: the
+/// generating transitions of the shortest paths.
+fn abstract_plan(view: &impl AbstractionView, initial_state: usize) -> Result<Vec<TransitionKey>> {
+    let mut plan = Vec::new();
+    let mut state = initial_state;
+    while !view.is_goal(state)? {
+        ensure!(
+            plan.len() <= view.num_states(),
+            "optimal abstract transitions contain a cycle"
+        );
+        let transition = view.optimal_transition(state)?;
+        plan.push(transition);
+        state = transition.target;
+    }
+    Ok(plan)
+}
+
+/// A value of the non-empty interval `interval`.
+fn interior_value(interval: Interval) -> NumericValue {
+    match (interval.lower.is_finite(), interval.upper.is_finite()) {
+        (true, _) if interval.lower_closed => interval.lower,
+        (_, true) if interval.upper_closed => interval.upper,
+        (true, true) => NumericValue::new((interval.lower.value() + interval.upper.value()) / 2.0),
+        (true, false) => interval.lower + ONE_VALUE,
+        (false, true) => interval.upper - ONE_VALUE,
+        (false, false) => ZERO_VALUE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use planforge_sas::numeric_task::{
@@ -666,7 +980,7 @@ mod tests {
     };
     use planforge_sas::utils::interval::Interval;
 
-    use super::test_tasks::{diagonal_task, jump_task};
+    use super::test_tasks::{blocked_task, diagonal_task, jump_task};
     use super::*;
 
     const X: VariableIndex = VariableIndex::new(0);
@@ -715,17 +1029,18 @@ mod tests {
         )
     }
 
-    fn search(
+    fn search_in_scope(
         task: &dyn AbstractNumericTask,
         states: &[CartesianSet],
         operators: &[OperatorIndex],
         numeric: &[NumericValue],
         initial_cut: InitialCut,
-    ) -> Option<RegressionFlaw> {
+        scope: FlawScope,
+    ) -> Vec<RegressionFlaw> {
         let coordinates = Coordinates::new(task);
         ensure_regressable(task, &coordinates).unwrap();
         let propositions = task.get_initial_propositional_state_values();
-        find_regression_flaw(
+        find_regression_flaws(
             task,
             &coordinates,
             states,
@@ -735,8 +1050,28 @@ mod tests {
                 numeric,
             },
             initial_cut,
+            scope,
         )
         .unwrap()
+    }
+
+    fn search(
+        task: &dyn AbstractNumericTask,
+        states: &[CartesianSet],
+        operators: &[OperatorIndex],
+        numeric: &[NumericValue],
+        initial_cut: InitialCut,
+    ) -> Option<RegressionFlaw> {
+        let flaws = search_in_scope(
+            task,
+            states,
+            operators,
+            numeric,
+            initial_cut,
+            FlawScope::First,
+        );
+        assert!(flaws.len() <= 1, "a first-flaw search reports {flaws:?}");
+        flaws.into_iter().next()
     }
 
     const JUMP: OperatorIndex = OperatorIndex::new(1);
@@ -844,6 +1179,68 @@ mod tests {
                 }) if var == VariableIndex::new(2)
             ),
             "got {flaw:?}"
+        );
+    }
+
+    #[test]
+    fn whole_plan_regression_ignores_a_contradicted_precondition_and_goes_on() {
+        let task = blocked_task();
+        let unbounded = Interval::unbounded();
+        let constants = [0.0, 1.0, 2.0].map(|value| Interval::singleton(NumericValue::new(value)));
+        let with_constants = |x: Interval| {
+            let mut numeric = vec![x, unbounded];
+            numeric.extend(constants);
+            numeric
+        };
+        let trace = [
+            state(&task, with_constants(unbounded)),
+            state(&task, with_constants(at_least(2.0))),
+        ];
+        let init = [0.0, 0.0, 0.0, 1.0, 2.0].map(NumericValue::new);
+        let y = VariableIndex::new(1);
+        // y <= 0 regresses through o to y <= 0, which its precondition y >= 1
+        // contradicts in a_0.
+        let precondition_flaw = RegressionFlaw {
+            state: 0,
+            cut: Cut::Numeric {
+                var: y,
+                boundary: ZERO_VALUE,
+                lower_includes_boundary: true,
+                wanted_is_lower: true,
+            },
+        };
+        // Ignoring it, p_0 = {x >= 1, y <= 0}, and x = 0 violates x >= 1.
+        let initial_flaw = RegressionFlaw {
+            state: 0,
+            cut: Cut::Numeric {
+                var: X,
+                boundary: ONE_VALUE,
+                lower_includes_boundary: false,
+                wanted_is_lower: false,
+            },
+        };
+        let o = [OperatorIndex::new(0)];
+        assert_eq!(
+            search_in_scope(
+                &task,
+                &trace,
+                &o,
+                &init,
+                InitialCut::Wanted,
+                FlawScope::First
+            ),
+            vec![precondition_flaw.clone()]
+        );
+        assert_eq!(
+            search_in_scope(
+                &task,
+                &trace,
+                &o,
+                &init,
+                InitialCut::Wanted,
+                FlawScope::EntirePlan
+            ),
+            vec![precondition_flaw, initial_flaw]
         );
     }
 }

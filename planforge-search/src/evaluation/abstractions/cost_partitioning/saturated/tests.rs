@@ -145,7 +145,7 @@ pub(super) fn goal_cover_scp<'task>(
             variants_per_goal: 4,
             max_collection_states: 128,
             total_max_time: None,
-            progressive_goal_roots: true,
+            progress_states: true,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })

@@ -64,9 +64,9 @@ use planforge_search::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegarConfig,
 };
 use planforge_search::evaluation::abstractions::domain::config::CegarConfig;
+use planforge_search::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use planforge_search::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use planforge_search::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
-use planforge_search::evaluation::abstractions::domain::split_selection::FlawTreatmentVariants;
 use planforge_search::evaluation::evaluator::EvaluationState;
 use planforge_search::evaluation::heuristic::Heuristic;
 use planforge_search::search::{AStarSearch, SearchEngine, SearchStatus};
@@ -286,7 +286,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 
 /// The collection configuration every cost-partitioning test below shares:
 /// the goal-focused (`complementary`) collection, two variants per goal with
-/// progressive goal roots.
+/// progress states.
 ///
 /// No clock bounds it. The schedule builds a fixed member sequence, each
 /// member capped at 1_000 abstract states and the collection at 10_000, and
@@ -307,7 +307,7 @@ fn goal_focused_collection_config(
         flaw_kind: FlawKind::ExecuteEntirePlan,
         collection_strategy: CollectionStrategy::Complementary,
         variants_per_goal: 2,
-        progressive_goal_roots: true,
+        progress_states: true,
         random_seed: Some(seed),
         ..Default::default()
     }
@@ -418,19 +418,22 @@ fn numeric_var_id_by_name_parts(
 /// either direction is visible.
 ///
 /// The value is the one the clock-free [`goal_focused_collection_config`]
-/// collection reaches (11; the retired root-group collection reached 12).
+/// collection reaches (13 since the restricted task keeps unary comparisons
+/// as thresholds; 12 with them promoted to variables; 11 with condition
+/// variables as abstract dimensions).
 #[test]
 fn sailing_simple_multiboat_scp_falls_short_of_the_additive_optimum() {
     let optimum = optimum_of("prob_2b2p_x");
     let h = scp_initial_h("prob_2b2p_x");
     assert!(h <= optimum, "prob_2b2p_x: h={h} must be admissible");
-    assert_eq!(h, 11.0);
+    assert_eq!(h, 13.0);
 }
 
 /// Both persons' nearest boat is b0. Per-person abstractions cannot encode that
 /// one boat must perform the 10-move transfer between targets; with the current
-/// residual saturation the goal-focused collection retains 6 units at the
-/// initial state (the retired root-group collection retained 7).
+/// residual saturation the goal-focused collection retains 12 units at the
+/// initial state (7 with unary comparisons promoted to variables in the
+/// restricted task, 6 with condition variables as abstract dimensions).
 #[test]
 fn sailing_simple_assignment_gap() {
     let optimum = optimum_of("prob_2b2p_assign");
@@ -439,7 +442,7 @@ fn sailing_simple_assignment_gap() {
         h <= optimum,
         "prob_2b2p_assign: h={h} must be admissible against h*={optimum}"
     );
-    assert_eq!(h, 6.0);
+    assert_eq!(h, 12.0);
 }
 
 #[test]

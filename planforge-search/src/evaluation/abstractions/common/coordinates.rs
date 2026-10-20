@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-
 use anyhow::{Result, bail, ensure};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, INF_VALUE,
@@ -266,62 +264,6 @@ pub(crate) fn active_comparison_dimensions(
     dimensions
 }
 
-pub(crate) fn numeric_effect_deltas(
-    task: &dyn AbstractNumericTask,
-) -> HashMap<VariableIndex, Vec<NumericValue>> {
-    let mut deltas: HashMap<VariableIndex, Vec<NumericValue>> = HashMap::new();
-    for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
-        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
-        match numeric_var.get_type() {
-            NumericType::Regular => {
-                for operator in task.get_operators() {
-                    if let Some(delta) =
-                        regular_additive_delta_for_operator(task, numeric_var_id, operator)
-                        && delta.value().abs() >= EPSILON
-                    {
-                        deltas.entry(numeric_var_id).or_default().push(delta);
-                    }
-                }
-            }
-            NumericType::Derived => {
-                let Some(view) = analyze_additive_numeric_view(task, numeric_var_id) else {
-                    continue;
-                };
-                for delta in view.operator_deltas {
-                    if delta.value().abs() >= EPSILON {
-                        deltas.entry(numeric_var_id).or_default().push(delta);
-                    }
-                }
-            }
-            NumericType::Constant | NumericType::Cost => {}
-        }
-    }
-    for values in deltas.values_mut() {
-        values.sort_by(NumericValue::total_cmp);
-        values.dedup_by(|left, right| (left.value() - right.value()).abs() < EPSILON);
-    }
-    deltas
-}
-
-pub(crate) fn numeric_dimension_delta_for_operator(
-    task: &dyn AbstractNumericTask,
-    numeric_var_id: VariableIndex,
-    operator: &Operator,
-) -> Option<NumericValue> {
-    match task
-        .numeric_variables()
-        .get(numeric_var_id.index())?
-        .get_type()
-    {
-        NumericType::Regular => regular_additive_delta_for_operator(task, numeric_var_id, operator),
-        NumericType::Derived => {
-            let view = analyze_additive_numeric_view(task, numeric_var_id)?;
-            additive_view_delta_for_operator(task, &view.expression, operator)
-        }
-        NumericType::Constant | NumericType::Cost => None,
-    }
-}
-
 fn additive_view_delta_for_operator(
     task: &dyn AbstractNumericTask,
     expression: &LinearExpression,
@@ -423,9 +365,10 @@ impl<'task> Coordinates<'task> {
         })
     }
 
-    /// The values of `coordinate` before `op_id` whose image lies in
-    /// `target`, or `None` when no value's does because `op_id` assigns the
-    /// coordinate a value outside `target`.
+    /// The states whose coordinate `coordinate` `op_id` maps into `target`,
+    /// or `None` if there are none: the inverse of the operator's effects on
+    /// it, composed in reverse order. An assignment's preimage is everything
+    /// if `target` contains the assigned value and nothing otherwise.
     pub(crate) fn preimage(
         &self,
         target: Interval,
@@ -436,13 +379,14 @@ impl<'task> Coordinates<'task> {
         if let Some(view) = &self.views[coordinate.index()] {
             let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Ok(Some(preimage));
+            return Ok(Some(preimage.canonicalized()));
         }
         let initial = self.task.get_initial_numeric_state_values();
         for effect in self.task.get_operators()[op_id.index()]
             .assignment_effects()
             .iter()
             .filter(|effect| effect.affected_var_id() == coordinate)
+            .rev()
         {
             let rhs = float_tolerance::canonicalize(initial[effect.var_id().index()]);
             match effect.operation() {
@@ -452,19 +396,20 @@ impl<'task> Coordinates<'task> {
                     }
                     preimage = Interval::unbounded();
                 }
-                AssignmentOperation::Plus | AssignmentOperation::Minus => {
-                    preimage.apply_reverse_op(effect.operation(), &Interval::singleton(rhs));
+                AssignmentOperation::Times if rhs == ZERO_VALUE => {
+                    if !preimage.contains(ZERO_VALUE) {
+                        return Ok(None);
+                    }
+                    preimage = Interval::unbounded();
                 }
-                operation @ (AssignmentOperation::Times | AssignmentOperation::Divide) => bail!(
-                    "operator {op_id} has the non-additive effect {operation:?} on coordinate {coordinate}"
-                ),
+                operation => preimage.apply_reverse_op(operation, &Interval::singleton(rhs)),
             }
             preimage = preimage.canonicalized();
         }
         Ok(Some(preimage))
     }
 
-    /// The image of the interval `source` of `coordinate` under `op_id`.
+    /// The values `op_id` maps coordinate `coordinate` to from `source`.
     pub(crate) fn image(
         &self,
         source: Interval,
@@ -486,14 +431,7 @@ impl<'task> Coordinates<'task> {
             let rhs = Interval::singleton(float_tolerance::canonicalize(
                 initial[effect.var_id().index()],
             ));
-            match effect.operation() {
-                operation @ (AssignmentOperation::Assign
-                | AssignmentOperation::Plus
-                | AssignmentOperation::Minus) => image.apply_op(operation, &rhs),
-                operation @ (AssignmentOperation::Times | AssignmentOperation::Divide) => bail!(
-                    "operator {op_id} has the non-additive effect {operation:?} on coordinate {coordinate}"
-                ),
-            }
+            image.apply_op(effect.operation(), &rhs);
             image = image.canonicalized();
         }
         Ok(image)

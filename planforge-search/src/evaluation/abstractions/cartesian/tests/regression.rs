@@ -39,7 +39,7 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
     let first_numeric_boundary = |direction| {
         let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             max_states: 2,
-            refinement_direction: direction,
+            split_kind: direction,
             ..Default::default()
         })
         .unwrap()
@@ -57,17 +57,18 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
     };
 
     assert_eq!(
-        first_numeric_boundary(CartesianRefinementDirection::Progression),
+        first_numeric_boundary(SplitKind::Concrete),
         NumericValue::new(0.0)
     );
     assert_eq!(
-        first_numeric_boundary(CartesianRefinementDirection::Regression),
+        first_numeric_boundary(SplitKind::Wanted),
         NumericValue::new(3.0)
     );
 }
 
-/// CEGAR with regression flaws alone reaches a concrete optimal plan on the
-/// tasks where regression and progression differ, with both cut placements.
+/// CEGAR with regression flaws alone, first or whole-plan, reaches a concrete
+/// optimal plan on the tasks where regression and progression differ, with
+/// both split kinds.
 #[test]
 fn regression_cegar_solves_the_regression_tasks_optimally() {
     use crate::evaluation::abstractions::common::cegar::regression::test_tasks::{
@@ -78,29 +79,29 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         ("linear goal", linear_goal_task(), 2.0),
         ("diagonal", diagonal_task(), 2.0),
     ] {
-        for refinement_direction in [
-            CartesianRefinementDirection::Progression,
-            CartesianRefinementDirection::Regression,
-        ] {
-            let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-                max_states: 1_000,
-                flaw_kind: FlawKind::Regression,
-                refinement_direction,
-                ..Default::default()
-            })
-            .unwrap()
-            .generate(&task)
-            .unwrap();
-            assert_eq!(
-                abstraction.metadata.stop_reason,
-                CartesianStopReason::ConcretePlan,
-                "{name}, {refinement_direction:?}"
-            );
-            assert_eq!(
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
-                optimal_cost,
-                "{name}, {refinement_direction:?}"
-            );
+        for flaw_kind in [FlawKind::Regression, FlawKind::RegressEntirePlan] {
+            for split_kind in [SplitKind::Concrete, SplitKind::Wanted] {
+                let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+                    max_states: 1_000,
+                    flaw_kind,
+                    split_kind,
+                    ..Default::default()
+                })
+                .unwrap()
+                .generate(&task)
+                .unwrap();
+                assert_eq!(
+                    abstraction.metadata.stop_reason,
+                    CartesianStopReason::ConcretePlan,
+                    "{name}, {flaw_kind}, {split_kind:?}"
+                );
+                assert_eq!(
+                    abstraction.distance_table.distances
+                        [abstraction.distance_table.initial_state_hash],
+                    optimal_cost,
+                    "{name}, {flaw_kind}, {split_kind:?}"
+                );
+            }
         }
     }
 }

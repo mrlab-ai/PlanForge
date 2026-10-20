@@ -1,4 +1,10 @@
+pub(crate) mod fact_splits;
+pub(crate) mod progression;
 pub(crate) mod regression;
+pub(crate) mod selection;
+pub(crate) mod semantics;
+pub(crate) mod split;
+pub(crate) mod view;
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -10,12 +16,28 @@ use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use serde::{Deserialize, Serialize};
 
+/// Which flaws of an abstract plan CEGAR refines.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlawKind {
+    /// The first flaw of executing the plan from the refinement root.
     Progression,
+    /// The first flaw of regressing the goal through the plan.
     Regression,
+    /// Every flaw of executing the plan, which continues past a flaw by
+    /// applying the effects anyway.
     ExecuteEntirePlan,
+    /// Every flaw of regressing the goal through the plan, which continues
+    /// past a flaw by ignoring the contradicted condition and regressing the
+    /// effects anyway.
+    RegressEntirePlan,
+}
+
+impl FlawKind {
+    /// Whether flaws are found by regressing the goal.
+    pub fn regresses(self) -> bool {
+        matches!(self, Self::Regression | Self::RegressEntirePlan)
+    }
 }
 
 impl fmt::Display for FlawKind {
@@ -24,6 +46,7 @@ impl fmt::Display for FlawKind {
             Self::Progression => write!(f, "progression"),
             Self::Regression => write!(f, "regression"),
             Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
+            Self::RegressEntirePlan => write!(f, "regress_entire_plan"),
         }
     }
 }
@@ -34,11 +57,30 @@ impl crate::config::FromOptionValue for FlawKind {
             "progression" => Ok(Self::Progression),
             "regression" => Ok(Self::Regression),
             "execute_entire_plan" => Ok(Self::ExecuteEntirePlan),
+            "regress_entire_plan" => Ok(Self::RegressEntirePlan),
             other => Err(format!(
-                "invalid flaw_kind `{other}`; expected progression, regression or execute_entire_plan"
+                "invalid flaw_kind `{other}`; expected progression, regression, execute_entire_plan or regress_entire_plan"
             )),
         }
     }
+}
+
+/// Where a split cuts a numeric dimension when a concrete state violates a
+/// condition: next to the concrete value, or at the bound the condition
+/// wants (a constant of the task).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitKind {
+    Concrete,
+    Wanted,
+}
+
+/// How CEGAR chooses among the candidate splits of a flaw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitSelection {
+    /// The split that grows the abstraction least; ties by a seeded key.
+    MinGrowth,
+    /// A uniformly random split.
+    Random,
 }
 
 pub fn progress_concrete_state(
@@ -100,6 +142,9 @@ pub enum CegarStopReason {
     MemoryLimit,
     IterationLimit,
     NoRefinableFlaw,
+    /// The refinement root is an abstract dead end. Abstractions are
+    /// admissible, so it is a concrete dead end as well.
+    DeadEnd,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

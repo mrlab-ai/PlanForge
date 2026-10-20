@@ -23,8 +23,8 @@ impl CartesianAbstractionCollectionGenerator {
             "`single_goal_tasks=false` requires `collection_strategy=complementary`"
         );
         ensure!(
-            config.single_goal_tasks || !config.progressive_goal_roots,
-            "{FULL_TASK_PROGRESSIVE_ROOTS_ERROR}"
+            config.single_goal_tasks || !config.progress_states,
+            "{FULL_TASK_PROGRESS_STATES_ERROR}"
         );
         CartesianAbstractionGenerator::new(config.abstraction.clone())?;
         Ok(Self { config })
@@ -32,7 +32,7 @@ impl CartesianAbstractionCollectionGenerator {
 
     /// Builds the goal-focused collection of the task; see
     /// [`goal_focused`](crate::evaluation::abstractions::collections::goal_focused) for the
-    /// schedule, the progressive goal roots, and the stop rules.
+    /// schedule, the progress states, and the stop rules.
     ///
     /// Each member changes only the goal view. Operators, state mappings, and
     /// concrete operator IDs stay identical to the base task. Changing the
@@ -49,7 +49,7 @@ impl CartesianAbstractionCollectionGenerator {
                 random_seed: self.config.abstraction.random_seed,
                 max_collection_states: self.config.max_collection_states,
                 total_max_time: self.config.total_max_time,
-                progressive_goal_roots: self.config.progressive_goal_roots,
+                progress_states: self.config.progress_states,
                 alternate_split_kinds: self.config.alternate_split_kinds,
                 single_goal_tasks: self.config.single_goal_tasks,
             },
@@ -74,9 +74,9 @@ impl CartesianAbstractionCollectionGenerator {
         // Whichever of the two budgets exist bind; the tighter one wins.
         config.max_time = config.max_time.into_iter().chain(remaining_time).min();
         if let Some(direction) = variant.direction {
-            config.refinement_direction = match direction {
-                MemberDirection::Progression => CartesianRefinementDirection::Progression,
-                MemberDirection::Regression => CartesianRefinementDirection::Regression,
+            config.split_kind = match direction {
+                MemberDirection::Progression => SplitKind::Concrete,
+                MemberDirection::Regression => SplitKind::Wanted,
             };
         }
         if let Some(rank) = variant.tie_rank {
@@ -107,6 +107,7 @@ impl GoalFocusedBackend for CartesianAbstractionCollectionGenerator {
                 [abstraction.distance_table.initial_state_hash],
             num_states: abstraction.num_states(),
             concrete_plan: abstraction.metadata.concrete_plan_operator_ids.clone(),
+            root_is_dead_end: abstraction.metadata.stop_reason == CartesianStopReason::DeadEnd,
         };
         Ok((abstraction, report))
     }

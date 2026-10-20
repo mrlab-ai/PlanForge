@@ -7,8 +7,8 @@
 
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
-    CartesianRefinementDirection, CartesianSplitSelection,
 };
+use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
@@ -311,7 +311,22 @@ use abstraction_config::{
 #[derive(Debug)]
 pub enum HeuristicBuildError {
     ConstructionTimeout,
+    /// The task uses a feature the heuristic does not support.
+    Unsupported(String),
     Failure(String),
+}
+
+impl HeuristicBuildError {
+    /// The error building an abstraction source ended in, keeping whether
+    /// the task was unsupported.
+    pub(crate) fn from_source(error: anyhow::Error, context: String) -> Self {
+        let message = format!("{context}: {error:#}");
+        if crate::unsupported::is_unsupported_task(&error) {
+            Self::Unsupported(message)
+        } else {
+            Self::Failure(message)
+        }
+    }
 }
 
 impl HeuristicBuildError {
@@ -321,6 +336,9 @@ impl HeuristicBuildError {
                 std::io::ErrorKind::TimedOut,
                 "shared abstraction construction deadline exceeded",
             ),
+            Self::Unsupported(message) => {
+                std::io::Error::new(std::io::ErrorKind::Unsupported, message)
+            }
             Self::Failure(message) => std::io::Error::other(message),
         }
     }
@@ -332,7 +350,7 @@ impl std::fmt::Display for HeuristicBuildError {
             Self::ConstructionTimeout => {
                 formatter.write_str("shared abstraction construction deadline exceeded")
             }
-            Self::Failure(message) => formatter.write_str(message),
+            Self::Unsupported(message) | Self::Failure(message) => formatter.write_str(message),
         }
     }
 }
@@ -354,9 +372,9 @@ fn cartesian_config_from_cegar(config: &CegarConfig) -> CartesianAbstractionConf
         retain_transition_system: true,
         random_seed: config.random_seed,
         flaw_kind: config.flaw_kind,
-        refinement_direction: CartesianRefinementDirection::Progression,
+        split_kind: SplitKind::Concrete,
         split_selection_rank: None,
-        split_selection: CartesianSplitSelection::MinTransitionGrowth,
+        split_selection: SplitSelection::MinGrowth,
         debug: config.debug,
     }
 }

@@ -18,6 +18,11 @@ fn global_constraint_variable() -> ExplicitVariable {
 }
 
 fn affine_sum_task(operation: AssignmentOperation) -> NumericRootTask {
+    affine_sum_task_with_step(operation, 1.0)
+}
+
+/// `x`, `y` and the derived `x + y`; one operator changes `x` by `step`.
+fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> NumericRootTask {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
@@ -49,7 +54,7 @@ fn affine_sum_task(operation: AssignmentOperation) -> NumericRootTask {
             NumericValue::new(0.0),
             NumericValue::new(0.0),
             NumericValue::new(0.0),
-            NumericValue::new(1.0),
+            NumericValue::new(step),
         ],
         operators: vec![operator],
         axioms: vec![],
@@ -118,4 +123,21 @@ fn cost_dependent_expression_is_not_an_additive_view() {
     });
 
     assert!(analyze_additive_numeric_view(&task, VariableIndex::from_usize(2)).is_none());
+}
+
+#[test]
+fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
+    // -900 - 91.2 is -991.2 in f64, which is not canonical; the canonical
+    // source -991.1999999999999 reaches exactly -900, outside the open target.
+    let task = affine_sum_task_with_step(AssignmentOperation::Plus, 91.2);
+    let coordinates = Coordinates::new(&task);
+    let target = Interval::new(NumericValue::new(-900.0), INF_VALUE, false, false);
+
+    let preimage = coordinates
+        .preimage(target, OperatorIndex::new(0), VariableIndex::from_usize(2))
+        .unwrap()
+        .expect("an additive coordinate has a preimage");
+
+    assert_eq!(preimage, preimage.canonicalized());
+    assert!(!preimage.contains(float_tolerance::canonicalize(NumericValue::new(-991.2))));
 }

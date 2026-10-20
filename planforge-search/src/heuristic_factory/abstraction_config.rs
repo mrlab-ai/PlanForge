@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianRefinementDirection,
-    CartesianSplitSelection,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::{
     DomainAbstractionCollectionGeneratorMultipleCegar,
@@ -421,22 +421,22 @@ pub(crate) fn build_components<'task>(
                 // canonical, label SCP, and region SCP receive the same generation budget.
                 config.set_compute_source_sets(false);
                 info!("Building domain abstraction source {source_index}...");
-                let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-                    config,
-                )
-                .generate_collection(task)
-                .map_err(|error| {
-                    format!("failed to build domain abstraction source {source_index}: {error:#}")
-                })?;
+                let mut abstractions =
+                    DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+                        .generate_collection(task)
+                        .map_err(|error| {
+                            HeuristicBuildError::from_source(
+                                error,
+                                format!("failed to build domain abstraction source {source_index}"),
+                            )
+                        })?;
                 if component_use.needs_source_sets() {
                     for (component_index, abstraction) in abstractions.iter_mut().enumerate() {
                         abstraction
                             .ensure_abstract_source_sets(task)
                             .map_err(|error| {
-                                format!(
-                                    "failed to build regional operator regions for domain abstraction source {source_index}, component {component_index}: {error:#}"
-                                )
-                            })?;
+                    HeuristicBuildError::from_source(error, format!("failed to build regional operator regions for domain abstraction source {source_index}, component {component_index}"))
+                })?;
                     }
                 }
                 components.extend(abstractions.into_iter().enumerate().map(
@@ -454,13 +454,19 @@ pub(crate) fn build_components<'task>(
                 info!("Building Cartesian abstraction source {source_index}...");
                 let abstraction = CartesianAbstractionGenerator::new(config)
                     .map_err(|error| {
-                        format!(
-                            "failed to construct Cartesian abstraction source {source_index}: {error:#}"
+                        HeuristicBuildError::from_source(
+                            error,
+                            format!(
+                                "failed to construct Cartesian abstraction source {source_index}"
+                            ),
                         )
                     })?
                     .generate(task)
                     .map_err(|error| {
-                        format!("failed to build Cartesian abstraction source {source_index}: {error:#}")
+                        HeuristicBuildError::from_source(
+                            error,
+                            format!("failed to build Cartesian abstraction source {source_index}"),
+                        )
                     })?;
                 components.push(AbstractionComponent::cartesian(
                     Some(format!("cartesian_{source_index}")),
@@ -474,16 +480,12 @@ pub(crate) fn build_components<'task>(
                 info!("Building Cartesian abstraction collection source {source_index}...");
                 let abstractions = CartesianAbstractionCollectionGenerator::new(config)
                     .map_err(|error| {
-                        format!(
-                            "failed to construct Cartesian abstraction collection source {source_index}: {error:#}"
-                        )
-                    })?
+                    HeuristicBuildError::from_source(error, format!("failed to construct Cartesian abstraction collection source {source_index}"))
+                })?
                     .generate(task)
                     .map_err(|error| {
-                        format!(
-                            "failed to build Cartesian abstraction collection source {source_index}: {error:#}"
-                        )
-                    })?;
+                    HeuristicBuildError::from_source(error, format!("failed to build Cartesian abstraction collection source {source_index}"))
+                })?;
                 components.extend(abstractions.into_iter().enumerate().map(
                     |(goal_id, abstraction)| {
                         AbstractionComponent::cartesian(
@@ -715,9 +717,9 @@ fn apply_cartesian_source_options(
             }
             "refinement_direction" => {
                 let value = String::from_option_value(arg.value())?;
-                config.abstraction.refinement_direction = match value.as_str() {
-                    "progression" => CartesianRefinementDirection::Progression,
-                    "regression" | "target_centered" => CartesianRefinementDirection::Regression,
+                config.abstraction.split_kind = match value.as_str() {
+                    "progression" => SplitKind::Concrete,
+                    "regression" => SplitKind::Wanted,
                     _ => {
                         return Err(format!(
                             "invalid Cartesian refinement_direction `{value}`; expected progression or regression"
@@ -728,10 +730,8 @@ fn apply_cartesian_source_options(
             "split_selection" => {
                 let value = String::from_option_value(arg.value())?;
                 config.abstraction.split_selection = match value.as_str() {
-                    "min_transition_growth" | "min_growth" => {
-                        CartesianSplitSelection::MinTransitionGrowth
-                    }
-                    "random" => CartesianSplitSelection::Random,
+                    "min_transition_growth" | "min_growth" => SplitSelection::MinGrowth,
+                    "random" => SplitSelection::Random,
                     _ => {
                         return Err(format!(
                             "invalid Cartesian split_selection `{value}`; expected min_transition_growth or random"
@@ -749,8 +749,8 @@ fn apply_cartesian_source_options(
             "collection_strategy" if collection => {
                 config.collection_strategy = CollectionStrategy::from_option_value(arg.value())?;
             }
-            "progressive_goal_roots" if collection => {
-                config.progressive_goal_roots = bool::from_option_value(arg.value())?;
+            "progress_states" if collection => {
+                config.progress_states = bool::from_option_value(arg.value())?;
             }
             "alternate_split_kinds" if collection => {
                 config.alternate_split_kinds = bool::from_option_value(arg.value())?;
@@ -801,7 +801,7 @@ mod tests {
         ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
         remaining_construction_time, require_only_component_sources, split_component_sources,
     };
-    use crate::evaluation::abstractions::cartesian::CartesianSplitSelection;
+    use crate::evaluation::abstractions::common::cegar::SplitSelection;
 
     #[test]
     fn separates_component_sources_from_combinator_options() {
@@ -945,11 +945,8 @@ mod tests {
     #[test]
     fn parses_native_cartesian_split_selection() {
         for (name, expected) in [
-            (
-                "min_transition_growth",
-                CartesianSplitSelection::MinTransitionGrowth,
-            ),
-            ("random", CartesianSplitSelection::Random),
+            ("min_transition_growth", SplitSelection::MinGrowth),
+            ("random", SplitSelection::Random),
         ] {
             let args = vec![ConfigArg::new(
                 Some("split_selection".to_string()),

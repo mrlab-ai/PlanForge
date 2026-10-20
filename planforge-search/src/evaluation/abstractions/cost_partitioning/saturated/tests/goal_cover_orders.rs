@@ -28,7 +28,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
             variants_per_goal: 4,
             max_collection_states: 128,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -66,7 +66,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
     assert_ne!(goal(baseline[0]), goal(baseline[2]));
     let first = &abstractions[baseline[0]].metadata;
     let complement = &abstractions[baseline[1]].metadata;
-    assert_ne!(first.refinement_direction, complement.refinement_direction);
+    assert_ne!(first.split_kind, complement.split_kind);
     assert_eq!(first.split_selection_rank, complement.split_selection_rank);
 
     let other_goal = order(GoalCoverOrderVariant {
