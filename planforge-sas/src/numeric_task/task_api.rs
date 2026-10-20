@@ -1281,7 +1281,7 @@ fn evaluate_state_with_axiom_closure(
     propositional: &mut [ExplicitValueIndex],
     numeric: &mut [NumericValue],
 ) -> Result<(), String> {
-    let packer = Arc::new(abstract_propositional_packer(task));
+    let packer = Arc::new(StatePacker::propositional(task));
     let mut packed = vec![0u64; packer.num_bins()];
     for (var_id, value) in propositional.iter().enumerate() {
         packer.set(&mut packed, var_id, value.index() as u64);
@@ -1294,15 +1294,6 @@ fn evaluate_state_with_axiom_closure(
         &mut packed,
         &axiom_evaluator,
     )
-}
-
-fn abstract_propositional_packer<T: AbstractNumericTask + ?Sized>(task: &T) -> StatePacker {
-    let ranges: Vec<u64> = task
-        .variables()
-        .iter()
-        .map(|variable| variable.domain_size() as u64)
-        .collect();
-    StatePacker::new(&ranges)
 }
 
 fn finish_axiom_closure(

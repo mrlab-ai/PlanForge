@@ -35,6 +35,7 @@
 //! and to `a_{i-1}` when only the precondition and `p_i` disagree there.
 
 use anyhow::{Context, Result, ensure};
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, ONE_VALUE, OperatorIndex,
     VariableIndex, ZERO_VALUE,
@@ -42,9 +43,6 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::interval::Interval;
 
 use std::collections::HashSet;
-use std::sync::Arc;
-
-use planforge_sas::utils::state_packer::StatePacker;
 
 use super::progression::{ConcretePlan, PlanCheck};
 use super::selection::{push_unique_split, select_refinement};
@@ -54,9 +52,6 @@ use super::view::{AbstractionView, TransitionKey};
 use super::{FlawScope, SplitKind};
 use crate::ensure_supported;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::common::concrete_state::{
-    ConcreteState, concrete_prop_values,
-};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 
 /// The flaws found so far.
@@ -794,18 +789,11 @@ pub(crate) mod test_tasks {
 pub(crate) fn regression_plan_check(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
-    state_packer: &Arc<StatePacker>,
-    refinement_root: &ConcreteState,
+    refinement_root: &ExplicitState,
     scope: FlawScope,
 ) -> Result<PlanCheck> {
-    let mut prop_values = Vec::new();
-    concrete_prop_values(
-        semantics.task(),
-        state_packer,
-        &refinement_root.propositions,
-        &mut prop_values,
-    );
-    let initial_state = view.abstract_state(&prop_values, &refinement_root.numeric)?;
+    let initial_state =
+        view.abstract_state(&refinement_root.propositional, &refinement_root.numeric)?;
     if !view.goal_distance(initial_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd);
     }
@@ -827,7 +815,7 @@ pub(crate) fn regression_plan_check(
         &states,
         &operator_ids,
         InitialState {
-            propositions: &prop_values,
+            propositions: &refinement_root.propositional,
             numeric: &refinement_root.numeric,
         },
         semantics.split_kind(),

@@ -113,7 +113,7 @@ impl GoalFocusedBackend for CartesianAbstractionCollectionGenerator {
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
-        root: Option<&ConcreteState>,
+        root: Option<&ExplicitState>,
         variant: &GoalVariant,
         budget: MemberBudget,
     ) -> Result<(CartesianAbstraction, BuiltReport)> {

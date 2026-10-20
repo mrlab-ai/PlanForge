@@ -155,7 +155,7 @@ impl GoalFocusedBackend for ScriptedBackend {
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
-        root: Option<&ConcreteState>,
+        root: Option<&ExplicitState>,
         variant: &GoalVariant,
         budget: MemberBudget,
     ) -> Result<(Member, BuiltReport)> {
@@ -544,7 +544,7 @@ fn an_invalid_concrete_plan_is_an_error() {
         fn build(
             &self,
             task: &dyn AbstractNumericTask,
-            root: Option<&ConcreteState>,
+            root: Option<&ExplicitState>,
             variant: &GoalVariant,
             budget: MemberBudget,
         ) -> Result<(Member, BuiltReport)> {
@@ -616,28 +616,23 @@ fn an_exhausted_time_budget_still_builds_the_first_member() {
 #[test]
 fn concrete_states_replay_and_check_goals() {
     let task = counter_task(&[Bound::AtLeast(2.0), Bound::AtMost(1.0)]);
-    let initial = ConcreteState::initial(&task).unwrap();
-    assert_eq!(initial.satisfied_goal_count(&task).unwrap(), 1);
-    assert!(initial.satisfies_goal(&task, 1).unwrap());
+    let states = ExplicitStateSpace::new(&task);
+    let initial = states.initial_state().unwrap();
+    assert_eq!(states.satisfied_goal_count(&initial), 1);
+    assert!(states.satisfies_goal(&initial, 1));
 
-    let advanced = initial.replay(&task, &[OperatorIndex::new(0); 2]).unwrap();
+    let advanced = states
+        .replay(&initial, &[OperatorIndex::new(0); 2])
+        .unwrap();
     assert_eq!(advanced.numeric[0], NumericValue::new(2.0));
-    assert!(advanced.satisfies_goal(&task, 0).unwrap());
-    assert!(!advanced.satisfies_goal(&task, 1).unwrap());
+    assert!(states.satisfies_goal(&advanced, 0));
+    assert!(!states.satisfies_goal(&advanced, 1));
     assert_eq!(
-        advanced.propositional_values(&task).unwrap(),
+        advanced.propositional,
         vec![
             ExplicitValueIndex::from_usize(ConditionValue::True.as_usize()),
             ExplicitValueIndex::from_usize(ConditionValue::False.as_usize())
         ]
-    );
-    assert!(
-        initial.replay(&task, &[OperatorIndex::new(1)]).is_err(),
-        "operator 1 does not exist"
-    );
-    assert!(
-        initial.satisfies_goal(&task, 2).is_err(),
-        "goal 2 does not exist"
     );
 }
 

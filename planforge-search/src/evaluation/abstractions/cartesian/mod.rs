@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
-use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericType, NumericValue,
     OperatorIndex, VariableIndex,
@@ -75,9 +75,6 @@ use crate::evaluation::abstractions::collections::strategy::{
 };
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
-};
-use crate::evaluation::abstractions::common::concrete_state::{
-    ConcreteState, concrete_prop_values, get_initial_state, make_prop_state_packer,
 };
 use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
 use crate::evaluation::abstractions::common::task::AbstractionUse;

@@ -24,9 +24,9 @@ use crate::evaluation::abstractions::collections::strategy::{
 use crate::evaluation::abstractions::common::cegar::{
     CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
 };
-use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
+use planforge_sas::explicit_state::ExplicitState;
 
 use super::abstraction::compute_abstraction_size_u128;
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
@@ -450,7 +450,7 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
-        root: Option<&ConcreteState>,
+        root: Option<&ExplicitState>,
         variant: &GoalVariant,
         budget: MemberBudget,
     ) -> Result<(DomainAbstraction, BuiltReport)> {

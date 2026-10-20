@@ -7,22 +7,17 @@
 //! abstract state the concrete successor actually lies in.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
-use planforge_sas::axioms::AxiomEvaluator;
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::OperatorIndex;
-use planforge_sas::utils::state_packer::StatePacker;
 
+use super::FlawScope;
 use super::fact_splits::{DeviationWitness, split_deviation_candidates, split_failed_fact};
 use super::selection::{push_unique_split, select_refinement, select_refinement_split};
 use super::semantics::CegarSemantics;
 use super::split::{Split, approximately_equal};
 use super::view::AbstractionView;
-use super::{FlawScope, progress_concrete_state};
-use crate::evaluation::abstractions::common::concrete_state::{
-    ConcreteState, concrete_prop_values, fact_is_held,
-};
 
 #[derive(Debug)]
 pub(crate) struct ConcretePlan {
@@ -56,38 +51,14 @@ pub(crate) enum PlanCheck {
     Refine(Split),
 }
 
-fn concrete_is_goal(
-    semantics: &CegarSemantics<'_>,
-    state_packer: &StatePacker,
-    propositions: &[u64],
-) -> bool {
-    (0..semantics.task().get_num_goals()).all(|goal_id| {
-        fact_is_held(
-            semantics.task().get_goal_fact(goal_id),
-            state_packer,
-            propositions,
-        )
-    })
-}
-
 pub(crate) fn replay_plan(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
-    state_packer: &Arc<StatePacker>,
-    axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &ConcreteState,
+    refinement_root: &ExplicitState,
 ) -> Result<PlanCheck> {
-    let mut propositions = refinement_root.propositions.clone();
-    let mut numeric = refinement_root.numeric.clone();
-    let mut prop_values = Vec::new();
-    let mut successor_prop_values = Vec::new();
-    concrete_prop_values(
-        semantics.task(),
-        state_packer,
-        &propositions,
-        &mut prop_values,
-    );
-    let initial_abstract_state = view.abstract_state(&prop_values, &numeric)?;
+    let mut state = refinement_root.clone();
+    let mut successor = refinement_root.clone();
+    let initial_abstract_state = view.abstract_state(&state.propositional, &state.numeric)?;
     if !view.goal_distance(initial_abstract_state).is_finite() {
         return Ok(PlanCheck::AbstractDeadEnd);
     }
@@ -96,13 +67,7 @@ pub(crate) fn replay_plan(
     let mut concrete_cost = 0.0;
 
     loop {
-        concrete_prop_values(
-            semantics.task(),
-            state_packer,
-            &propositions,
-            &mut prop_values,
-        );
-        let abstract_state = view.abstract_state(&prop_values, &numeric)?;
+        let abstract_state = view.abstract_state(&state.propositional, &state.numeric)?;
         let abstract_distance = view.goal_distance(abstract_state);
         ensure!(
             approximately_equal(concrete_cost + abstract_distance, abstract_plan_cost),
@@ -110,7 +75,7 @@ pub(crate) fn replay_plan(
         );
 
         if view.is_goal(abstract_state)? {
-            if concrete_is_goal(semantics, state_packer, &propositions) {
+            if semantics.states().is_goal(&state) {
                 return Ok(PlanCheck::ConcretePlan(ConcretePlan {
                     operator_ids,
                     cost: concrete_cost,
@@ -118,7 +83,7 @@ pub(crate) fn replay_plan(
             }
             let failed_goals = (0..semantics.task().get_num_goals())
                 .map(|goal_id| semantics.task().get_goal_fact(goal_id))
-                .filter(|goal| !fact_is_held(goal, state_packer, &propositions))
+                .filter(|goal| !state.holds(goal))
                 .collect::<Vec<_>>();
             ensure!(
                 !failed_goals.is_empty(),
@@ -132,8 +97,8 @@ pub(crate) fn replay_plan(
                         semantics,
                         abstract_state,
                         goal,
-                        &prop_values,
-                        &numeric,
+                        &state.propositional,
+                        &state.numeric,
                         format!("goal {goal:?}"),
                     )
                 })
@@ -159,7 +124,7 @@ pub(crate) fn replay_plan(
             let failed_preconditions = op
                 .preconditions()
                 .iter()
-                .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
+                .filter(|fact| !state.holds(fact))
                 .collect::<Vec<_>>();
             if !failed_preconditions.is_empty() {
                 for failed in failed_preconditions {
@@ -168,30 +133,18 @@ pub(crate) fn replay_plan(
                         semantics,
                         abstract_state,
                         failed,
-                        &prop_values,
-                        &numeric,
+                        &state.propositional,
+                        &state.numeric,
                         format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
                     )?);
                 }
                 continue;
             }
-            let mut successor_propositions = propositions.clone();
-            let mut successor_numeric = numeric.clone();
-            progress_concrete_state(
-                op,
-                axiom_evaluator,
-                state_packer,
-                &mut successor_propositions,
-                &mut successor_numeric,
-            )?;
-            concrete_prop_values(
-                semantics.task(),
-                state_packer,
-                &successor_propositions,
-                &mut successor_prop_values,
-            );
+            semantics
+                .states()
+                .successor_into(&state, op, &mut successor)?;
             let concrete_target =
-                view.abstract_state(&successor_prop_values, &successor_numeric)?;
+                view.abstract_state(&successor.propositional, &successor.numeric)?;
             if concrete_target != transition.target {
                 deviation_splits.extend(split_deviation_candidates(
                     view,
@@ -200,17 +153,17 @@ pub(crate) fn replay_plan(
                         abstract_state,
                         transition.target,
                         op_id,
-                        &successor_prop_values,
-                        &numeric,
-                        &successor_numeric,
+                        &successor.propositional,
+                        &state.numeric,
+                        &successor.numeric,
                     ),
                 )?);
                 continue;
             }
-            executed = Some((op_id, successor_propositions, successor_numeric));
+            executed = Some(op_id);
             break;
         }
-        let Some((op_id, successor_propositions, successor_numeric)) = executed else {
+        let Some(op_id) = executed else {
             let (candidates, tag) = if precondition_splits.is_empty() {
                 (deviation_splits, DEVIATION_TAG)
             } else {
@@ -221,8 +174,8 @@ pub(crate) fn replay_plan(
                 view, semantics, candidates, tag,
             )?));
         };
-        propositions = successor_propositions;
-        numeric = successor_numeric;
+        // `successor` holds the executed operator's successor.
+        std::mem::swap(&mut state, &mut successor);
 
         let op_cost = semantics.operator_costs()[op_id.index()];
         ensure!(
@@ -243,26 +196,12 @@ pub(crate) fn replay_plan(
 pub(crate) fn progression_plan_check(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
-    state_packer: &Arc<StatePacker>,
-    axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &ConcreteState,
+    refinement_root: &ExplicitState,
     scope: FlawScope,
 ) -> Result<PlanCheck> {
     match scope {
-        FlawScope::First => replay_plan(
-            view,
-            semantics,
-            state_packer,
-            axiom_evaluator,
-            refinement_root,
-        ),
-        FlawScope::WholePlan => replay_whole_plan(
-            view,
-            semantics,
-            state_packer,
-            axiom_evaluator,
-            refinement_root,
-        ),
+        FlawScope::First => replay_plan(view, semantics, refinement_root),
+        FlawScope::WholePlan => replay_whole_plan(view, semantics, refinement_root),
     }
 }
 
@@ -273,14 +212,10 @@ pub(crate) fn progression_plan_check(
 fn replay_whole_plan(
     view: &impl AbstractionView,
     semantics: &CegarSemantics<'_>,
-    state_packer: &Arc<StatePacker>,
-    axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &ConcreteState,
+    refinement_root: &ExplicitState,
 ) -> Result<PlanCheck> {
-    let mut propositions = refinement_root.propositions.clone();
-    let mut numeric = refinement_root.numeric.clone();
-    let mut prop_values = Vec::new();
-    let mut successor_prop_values = Vec::new();
+    let mut state = refinement_root.clone();
+    let mut successor = refinement_root.clone();
     let mut operator_ids = Vec::new();
     let mut concrete_cost = 0.0;
     let mut candidates = Vec::new();
@@ -288,13 +223,7 @@ fn replay_whole_plan(
     let mut visited_abstract_states = HashSet::new();
 
     loop {
-        concrete_prop_values(
-            semantics.task(),
-            state_packer,
-            &propositions,
-            &mut prop_values,
-        );
-        let abstract_state = view.abstract_state(&prop_values, &numeric)?;
+        let abstract_state = view.abstract_state(&state.propositional, &state.numeric)?;
         if !visited_abstract_states.insert(abstract_state) {
             ensure!(
                 !candidates.is_empty(),
@@ -318,7 +247,7 @@ fn replay_whole_plan(
         }
 
         if view.is_goal(abstract_state)? {
-            if concrete_is_goal(semantics, state_packer, &propositions) {
+            if semantics.states().is_goal(&state) {
                 return if candidates.is_empty() {
                     Ok(PlanCheck::ConcretePlan(ConcretePlan {
                         operator_ids,
@@ -330,14 +259,14 @@ fn replay_whole_plan(
             }
             for goal_id in 0..semantics.task().get_num_goals() {
                 let goal = semantics.task().get_goal_fact(goal_id);
-                if !fact_is_held(goal, state_packer, &propositions) {
+                if !state.holds(goal) {
                     let split = split_failed_fact(
                         view,
                         semantics,
                         abstract_state,
                         goal,
-                        &prop_values,
-                        &numeric,
+                        &state.propositional,
+                        &state.numeric,
                         format!("goal {goal:?}"),
                     )?;
                     push_unique_split(&mut candidates, &mut candidate_identities, split);
@@ -372,7 +301,7 @@ fn replay_whole_plan(
             let failed_preconditions = op
                 .preconditions()
                 .iter()
-                .filter(|fact| !fact_is_held(fact, state_packer, &propositions))
+                .filter(|fact| !state.holds(fact))
                 .collect::<Vec<_>>();
             if failed_preconditions.is_empty() {
                 applicable = Some(op_id);
@@ -385,8 +314,8 @@ fn replay_whole_plan(
                     semantics,
                     abstract_state,
                     failed,
-                    &prop_values,
-                    &numeric,
+                    &state.propositional,
+                    &state.numeric,
                     format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
                 )?);
             }
@@ -397,21 +326,11 @@ fn replay_whole_plan(
         let op_id = applicable.unwrap_or(step_operators[0]);
         let op = &semantics.task().get_operators()[op_id.index()];
 
-        let source_numeric = numeric.clone();
-        progress_concrete_state(
-            op,
-            axiom_evaluator,
-            state_packer,
-            &mut propositions,
-            &mut numeric,
-        )?;
-        concrete_prop_values(
-            semantics.task(),
-            state_packer,
-            &propositions,
-            &mut successor_prop_values,
-        );
-        let concrete_target = view.abstract_state(&successor_prop_values, &numeric)?;
+        // Past a failed precondition the replay continues counterfactually.
+        semantics
+            .states()
+            .apply_effects_into(&state, op, &mut successor)?;
+        let concrete_target = view.abstract_state(&successor.propositional, &successor.numeric)?;
         if concrete_target != transition.target {
             for split in split_deviation_candidates(
                 view,
@@ -420,29 +339,30 @@ fn replay_whole_plan(
                     abstract_state,
                     transition.target,
                     op_id,
-                    &successor_prop_values,
-                    &source_numeric,
-                    &numeric,
+                    &successor.propositional,
+                    &state.numeric,
+                    &successor.numeric,
                 ),
             )? {
                 push_unique_split(&mut candidates, &mut candidate_identities, split);
             }
         }
+        std::mem::swap(&mut state, &mut successor);
 
         concrete_cost += semantics.operator_costs()[op_id.index()].value();
         operator_ids.push(op_id);
     }
 }
 
+/// Checks that `plan` reaches the goal from `refinement_root` at its recorded
+/// cost.
 pub(crate) fn validate_concrete_plan(
     semantics: &CegarSemantics<'_>,
-    state_packer: &Arc<StatePacker>,
-    axiom_evaluator: &AxiomEvaluator<'_>,
-    refinement_root: &ConcreteState,
+    refinement_root: &ExplicitState,
     plan: &ConcretePlan,
 ) -> Result<()> {
-    let mut propositions = refinement_root.propositions.clone();
-    let mut numeric = refinement_root.numeric.clone();
+    let mut state = refinement_root.clone();
+    let mut successor = refinement_root.clone();
     let mut cost = 0.0;
     for (step, &op_id) in plan.operator_ids.iter().enumerate() {
         let op = semantics
@@ -452,22 +372,19 @@ pub(crate) fn validate_concrete_plan(
             .with_context(|| format!("concrete plan step {step} has invalid operator {op_id}"))?;
         for precondition in op.preconditions() {
             ensure!(
-                fact_is_held(precondition, state_packer, &propositions),
+                state.holds(precondition),
                 "concrete plan operator {op_id} ({}) has false precondition {precondition:?} at step {step}",
                 op.name()
             );
         }
-        progress_concrete_state(
-            op,
-            axiom_evaluator,
-            state_packer,
-            &mut propositions,
-            &mut numeric,
-        )?;
+        semantics
+            .states()
+            .successor_into(&state, op, &mut successor)?;
+        std::mem::swap(&mut state, &mut successor);
         cost += semantics.operator_costs()[op_id.index()].value();
     }
     ensure!(
-        concrete_is_goal(semantics, state_packer, &propositions),
+        semantics.states().is_goal(&state),
         "replayed concrete plan does not satisfy the full goal"
     );
     ensure!(

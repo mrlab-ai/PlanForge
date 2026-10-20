@@ -3,6 +3,8 @@ use std::{
     hash::Hash,
 };
 
+use crate::utils::float_tolerance;
+
 pub const ZERO_OP_COST: OperatorCost = OperatorCost(0);
 pub const ZERO_VALUE: NumericValue = NumericValue(0.0);
 pub const ONE_VALUE: NumericValue = NumericValue(1.0);
@@ -737,6 +739,58 @@ impl Operator {
 
     pub(crate) fn repeated_assignment_targets(&self) -> &[RepeatedTarget] {
         &self.repeated_assignment_targets
+    }
+
+    /// Writes the successor of the explicit state (`propositional`,
+    /// `numeric`) under this operator into `successor_propositional` and
+    /// `successor_numeric`, before axioms.
+    ///
+    /// Effects apply simultaneously, as in
+    /// [`StateRegistry`](crate::state_registry::StateRegistry): effect
+    /// conditions and assignment operands read the parent state, and further
+    /// additive writes to one variable add up. Preconditions are the caller's
+    /// to check.
+    pub fn apply_to_explicit_state(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+        successor_propositional: &mut Vec<ExplicitValueIndex>,
+        successor_numeric: &mut Vec<NumericValue>,
+    ) {
+        let holds = |conditions: &[ExplicitFact]| {
+            conditions
+                .iter()
+                .all(|condition| propositional[condition.var()] == condition.value_index())
+        };
+        successor_propositional.clear();
+        successor_propositional.extend_from_slice(propositional);
+        successor_numeric.clear();
+        successor_numeric.extend_from_slice(numeric);
+        for effect in &self.effects {
+            if holds(effect.conditions()) {
+                successor_propositional[effect.var_id().index()] = effect.value();
+            }
+        }
+        for (effect, repeated_target) in self
+            .assignment_effects
+            .iter()
+            .zip(&self.repeated_assignment_targets)
+        {
+            if !holds(effect.conditions()) {
+                continue;
+            }
+            let affected = effect.affected_var_id().index();
+            let left = match repeated_target {
+                RepeatedTarget::First => numeric[affected],
+                RepeatedTarget::Additive => successor_numeric[affected],
+            };
+            successor_numeric[affected] =
+                float_tolerance::canonicalize(AssignmentOperation::apply(
+                    left,
+                    effect.operation(),
+                    numeric[effect.var_id().index()],
+                ));
+        }
     }
 
     pub fn preconditions(&self) -> &Vec<ExplicitFact> {

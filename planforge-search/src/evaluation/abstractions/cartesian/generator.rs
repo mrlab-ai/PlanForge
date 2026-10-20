@@ -17,7 +17,7 @@ impl CartesianAbstractionGenerator {
     pub(super) fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
-        refinement_root: Option<&ConcreteState>,
+        refinement_root: Option<&ExplicitState>,
     ) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
@@ -33,44 +33,14 @@ impl CartesianAbstractionGenerator {
                 working.add_transition(0, OperatorIndex::from_usize(op_id), 0);
             }
         }
-        let state_packer = Arc::new(make_prop_state_packer(task));
-        let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
-        let (initial_propositions, initial_numeric) =
-            get_initial_state(task, &state_packer, &axiom_evaluator)?;
-        let refinement_root = match refinement_root {
-            Some(root) => {
-                ensure!(
-                    root.propositions.len() == state_packer.num_bins(),
-                    "Cartesian refinement root has {} proposition bins, expected {}",
-                    root.propositions.len(),
-                    state_packer.num_bins()
-                );
-                ensure!(
-                    root.numeric.len() == task.numeric_variables().len(),
-                    "Cartesian refinement root has {} numeric values, expected {}",
-                    root.numeric.len(),
-                    task.numeric_variables().len()
-                );
-                root.clone()
-            }
-            None => ConcreteState {
-                propositions: initial_propositions.clone(),
-                numeric: initial_numeric.clone(),
-            },
-        };
+        let initial_state = semantics.cegar().states().initial_state()?;
+        let refinement_root = refinement_root.unwrap_or(&initial_state);
         if let Some(var) = self.config.initial_split_var {
-            let mut initial_prop_values = Vec::new();
-            concrete_prop_values(
-                task,
-                &state_packer,
-                &initial_propositions,
-                &mut initial_prop_values,
-            );
             apply_initial_split(
                 &mut working,
                 &semantics,
                 &self.config,
-                &initial_prop_values,
+                &initial_state.propositional,
                 var,
             )?;
         }
@@ -92,9 +62,7 @@ impl CartesianAbstractionGenerator {
                 semantics: semantics.cegar(),
                 flaw_kind: self.config.flaw_kind,
                 flaw_scope: self.config.flaw_scope,
-                state_packer: &state_packer,
-                axiom_evaluator: &axiom_evaluator,
-                refinement_root: &refinement_root,
+                refinement_root,
                 driver: CegarDriver::new(usize::MAX, self.config.max_time),
             },
             start,
@@ -108,16 +76,9 @@ impl CartesianAbstractionGenerator {
         let solved_plan = outcome.concrete_plan;
 
         let working_transition_count = working.active_transition_ids().count();
-        let mut initial_prop_values = Vec::new();
-        concrete_prop_values(
-            semantics.task(),
-            &state_packer,
-            &initial_propositions,
-            &mut initial_prop_values,
-        );
         let initial_state_hash = working
             .hierarchy
-            .map_state(&initial_prop_values, &initial_numeric)?;
+            .map_state(&initial_state.propositional, &initial_state.numeric)?;
         let (transition_system, distance_table, relevant_operator_ids, source_sets) =
             if self.config.retain_transition_system {
                 finalize_abstraction(
@@ -141,23 +102,10 @@ impl CartesianAbstractionGenerator {
             working_transition_count
         };
         if let Some(plan) = &solved_plan {
-            validate_concrete_plan(
-                semantics.cegar(),
-                &state_packer,
-                &axiom_evaluator,
-                &refinement_root,
-                plan,
-            )?;
-            let mut root_prop_values = Vec::new();
-            concrete_prop_values(
-                semantics.task(),
-                &state_packer,
-                &refinement_root.propositions,
-                &mut root_prop_values,
-            );
+            validate_concrete_plan(semantics.cegar(), refinement_root, plan)?;
             let root_state_id = working
                 .hierarchy
-                .map_state(&root_prop_values, &refinement_root.numeric)?;
+                .map_state(&refinement_root.propositional, &refinement_root.numeric)?;
             let h = distance_table.distances[root_state_id];
             ensure!(
                 (plan.cost() - h).abs() <= 1e-7,

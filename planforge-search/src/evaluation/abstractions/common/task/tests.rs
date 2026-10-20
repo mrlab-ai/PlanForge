@@ -7,9 +7,9 @@ use planforge_sas::numeric_task::{
 
 use super::*;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
-use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
+use planforge_sas::explicit_state::{ExplicitState, ExplicitStateSpace};
 
 const X: VariableIndex = VariableIndex::new(0);
 const ONE: VariableIndex = VariableIndex::new(1);
@@ -75,10 +75,13 @@ fn doubling_cost_task(bound: f64, at_most: bool) -> NumericRootTask {
     })
 }
 
-fn root_after(task: &NumericRootTask, increments: usize) -> ConcreteState {
-    ConcreteState::initial(task)
-        .unwrap()
-        .replay(task, &vec![OperatorIndex::new(0); increments])
+fn root_after(task: &NumericRootTask, increments: usize) -> ExplicitState {
+    let states = ExplicitStateSpace::new(task);
+    states
+        .replay(
+            &states.initial_state().unwrap(),
+            &vec![OperatorIndex::new(0); increments],
+        )
         .unwrap()
 }
 

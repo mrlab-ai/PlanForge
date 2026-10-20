@@ -10,11 +10,7 @@ pub(crate) mod view;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, ensure};
-use planforge_sas::axioms::AxiomEvaluator;
-use planforge_sas::numeric_task::{AssignmentOperation, NumericValue, Operator};
-use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::state_packer::StatePacker;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Generates the option-value parsing and display of a CEGAR option enum
@@ -113,57 +109,6 @@ option_enum!("split_selection", SplitSelection {
     MinGrowth => "min_growth",
     Random => "random",
 });
-
-pub fn progress_concrete_state(
-    op: &Operator,
-    axiom_evaluator: &AxiomEvaluator,
-    packer: &StatePacker,
-    prop_state: &mut [u64],
-    numeric_state: &mut [NumericValue],
-) -> Result<()> {
-    for effect in op.effects() {
-        if effect
-            .conditions()
-            .iter()
-            .all(|condition| packer.get(prop_state, condition.var()) == condition.value() as u64)
-        {
-            packer.set(
-                prop_state,
-                effect.var_id().index(),
-                effect.value().index() as u64,
-            );
-        }
-    }
-
-    for effect in op.assignment_effects() {
-        if effect.is_conditional()
-            && !effect.conditions().iter().all(|condition| {
-                packer.get(prop_state, condition.var()) == condition.value() as u64
-            })
-        {
-            continue;
-        }
-        let source_var = effect.var_id();
-        let affected_var = effect.affected_var_id();
-        ensure!(
-            source_var.index() < numeric_state.len() && affected_var.index() < numeric_state.len(),
-            "operator {} numeric effect references vars ({source_var}, {affected_var}) outside {} numeric variables",
-            op.name(),
-            numeric_state.len()
-        );
-        numeric_state[affected_var.index()] =
-            float_tolerance::canonicalize(AssignmentOperation::apply(
-                numeric_state[affected_var.index()],
-                effect.operation(),
-                numeric_state[source_var.index()],
-            ));
-    }
-
-    axiom_evaluator
-        .evaluate(prop_state, numeric_state)
-        .map_err(|error| anyhow::anyhow!("failed to evaluate axioms: {error:?}"))?;
-    Ok(())
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CegarStopReason {
