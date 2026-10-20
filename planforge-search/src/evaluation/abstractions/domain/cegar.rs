@@ -28,7 +28,7 @@ use crate::evaluation::abstractions::common::cegar::progression::{
     ConcretePlan, PlanCheck, replay_entire_optimal_abstract_trace, replay_optimal_abstract_trace,
 };
 use crate::evaluation::abstractions::common::cegar::regression::{
-    ensure_regressable, regression_plan_check,
+    FlawScope, ensure_regressable, regression_plan_check,
 };
 use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use crate::evaluation::abstractions::common::cegar::view::AbstractionView;
@@ -94,7 +94,7 @@ impl Cegar {
                 random_seed: config.random_seed,
             },
         )?;
-        if config.flaw_kind == FlawKind::Regression {
+        if config.flaw_kind.regresses() {
             ensure_regressable(task, semantics.coordinates())?;
         }
 
@@ -203,9 +203,20 @@ impl Cegar {
                         &axiom_evaluator,
                         &root,
                     )?,
-                    FlawKind::Regression => {
-                        regression_plan_check(&view, &semantics, &state_packer, &root)?
-                    }
+                    FlawKind::Regression => regression_plan_check(
+                        &view,
+                        &semantics,
+                        &state_packer,
+                        &root,
+                        FlawScope::First,
+                    )?,
+                    FlawKind::RegressEntirePlan => regression_plan_check(
+                        &view,
+                        &semantics,
+                        &state_packer,
+                        &root,
+                        FlawScope::EntirePlan,
+                    )?,
                 };
                 let split = match check {
                     PlanCheck::ConcretePlan(plan) => {

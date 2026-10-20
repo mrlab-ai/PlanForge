@@ -16,12 +16,28 @@ use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use serde::{Deserialize, Serialize};
 
+/// Which flaws of an abstract plan CEGAR refines.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlawKind {
+    /// The first flaw of executing the plan from the refinement root.
     Progression,
+    /// The first flaw of regressing the goal through the plan.
     Regression,
+    /// Every flaw of executing the plan, which continues past a flaw by
+    /// applying the effects anyway.
     ExecuteEntirePlan,
+    /// Every flaw of regressing the goal through the plan, which continues
+    /// past a flaw by ignoring the contradicted condition and regressing the
+    /// effects anyway.
+    RegressEntirePlan,
+}
+
+impl FlawKind {
+    /// Whether flaws are found by regressing the goal.
+    pub fn regresses(self) -> bool {
+        matches!(self, Self::Regression | Self::RegressEntirePlan)
+    }
 }
 
 impl fmt::Display for FlawKind {
@@ -30,6 +46,7 @@ impl fmt::Display for FlawKind {
             Self::Progression => write!(f, "progression"),
             Self::Regression => write!(f, "regression"),
             Self::ExecuteEntirePlan => write!(f, "execute_entire_plan"),
+            Self::RegressEntirePlan => write!(f, "regress_entire_plan"),
         }
     }
 }
@@ -40,8 +57,9 @@ impl crate::config::FromOptionValue for FlawKind {
             "progression" => Ok(Self::Progression),
             "regression" => Ok(Self::Regression),
             "execute_entire_plan" => Ok(Self::ExecuteEntirePlan),
+            "regress_entire_plan" => Ok(Self::RegressEntirePlan),
             other => Err(format!(
-                "invalid flaw_kind `{other}`; expected progression, regression or execute_entire_plan"
+                "invalid flaw_kind `{other}`; expected progression, regression, execute_entire_plan or regress_entire_plan"
             )),
         }
     }

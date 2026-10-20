@@ -381,7 +381,7 @@ fn backward_splits_build_goal_side_partitions() {
     }
 
     let task = one_dimensional_sailing_like_task();
-    let target_centered = Cegar::new(CegarConfig {
+    let backward = Cegar::new(CegarConfig {
         flaw_kind: FlawKind::Progression,
         split_direction: Some(SplitDirection::Backward),
         flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
@@ -391,7 +391,7 @@ fn backward_splits_build_goal_side_partitions() {
     })
     .unwrap()
     .build_abstraction(&task)
-    .expect("target-centered CEGAR should build goal-side partitions");
+    .expect("backward-split CEGAR should build goal-side partitions");
     let progression = Cegar::new(CegarConfig {
         flaw_kind: FlawKind::Progression,
         flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
@@ -403,7 +403,7 @@ fn backward_splits_build_goal_side_partitions() {
     .build_abstraction(&task)
     .expect("progression CEGAR should build start-side partitions");
 
-    let target_points = split_points(&target_centered);
+    let target_points = split_points(&backward);
     let progression_points = split_points(&progression);
     let target_goal_side = target_points
         .iter()
@@ -416,7 +416,7 @@ fn backward_splits_build_goal_side_partitions() {
 
     assert!(
         target_goal_side * 2 >= target_points.len(),
-        "target-centered splits should cluster near the goal side: {target_points:?}"
+        "backward splits should cluster near the goal side: {target_points:?}"
     );
     assert!(
         progression_start_side * 2 >= progression_points.len(),
@@ -523,6 +523,48 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
                 20.0 - x,
                 "x0={initial}, {partition_count} partitions: lookup of plan state x={x}"
             );
+        }
+    }
+}
+
+/// Domain-abstraction CEGAR with regression flaws alone, first or whole-plan,
+/// reaches a concrete optimal plan on the tasks where regression and
+/// progression differ, with both split directions.
+#[test]
+fn regression_cegar_solves_the_regression_tasks_optimally() {
+    use crate::evaluation::abstractions::common::cegar::regression::test_tasks::{
+        diagonal_task, jump_task, linear_goal_task,
+    };
+    use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
+
+    for (name, task, optimal_cost) in [
+        ("jump", jump_task(), 4.0),
+        ("linear goal", linear_goal_task(), 2.0),
+        ("diagonal", diagonal_task(), 2.0),
+    ] {
+        for flaw_kind in [FlawKind::Regression, FlawKind::RegressEntirePlan] {
+            for split_direction in [SplitDirection::Forward, SplitDirection::Backward] {
+                let abstraction = DomainAbstractionGenerator::new(CegarConfig {
+                    max_abstraction_size: 1_000,
+                    flaw_kind,
+                    split_direction: Some(split_direction),
+                    random_seed: Some(1),
+                    ..Default::default()
+                })
+                .unwrap()
+                .generate(&task)
+                .unwrap();
+                assert!(
+                    abstraction.metadata.solved_by_self,
+                    "{name}, {flaw_kind}, {split_direction}"
+                );
+                assert_eq!(
+                    abstraction.distance_table.distances
+                        [abstraction.distance_table.initial_state_hash],
+                    optimal_cost,
+                    "{name}, {flaw_kind}, {split_direction}"
+                );
+            }
         }
     }
 }

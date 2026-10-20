@@ -23,7 +23,7 @@ mod view;
 mod working;
 
 use super::common::cegar::progression::*;
-use super::common::cegar::regression::regression_plan_check;
+use super::common::cegar::regression::{FlawScope, regression_plan_check};
 use super::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use super::common::cegar::split::*;
 use super::common::cegar::view::{AbstractionView, TransitionKey};

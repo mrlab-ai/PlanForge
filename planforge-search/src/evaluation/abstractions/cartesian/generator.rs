@@ -83,6 +83,14 @@ impl CartesianAbstractionGenerator {
                         semantics.cegar(),
                         &state_packer,
                         &refinement_root,
+                        FlawScope::First,
+                    )?,
+                    FlawKind::RegressEntirePlan => regression_plan_check(
+                        &view,
+                        semantics.cegar(),
+                        &state_packer,
+                        &refinement_root,
+                        FlawScope::EntirePlan,
                     )?,
                     FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
                         &view,

@@ -188,7 +188,7 @@ fn complementary_rejects_options_the_schedule_decides_or_cannot_follow() {
         "without alternation the configured split direction applies to every variant"
     );
 
-    for flaw_kind in [FlawKind::Regression] {
+    for flaw_kind in [FlawKind::Regression, FlawKind::RegressEntirePlan] {
         let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
             flaw_kind,
             ..complementary.clone()
