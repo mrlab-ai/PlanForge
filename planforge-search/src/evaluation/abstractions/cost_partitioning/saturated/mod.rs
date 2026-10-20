@@ -63,7 +63,6 @@ struct ScpState {
     built: bool,
     cp_heuristics: Vec<CostPartitioningHeuristic>,
     goal_distances_by_abstraction: Vec<Vec<f64>>,
-    abstraction_lookup_tables: Vec<LookupTable>,
     stolen_costs_by_abstraction: Vec<f64>,
     rng: SmallRng,
     lookup_mask: Vec<bool>,
@@ -77,7 +76,6 @@ impl ScpState {
             built: false,
             cp_heuristics: Vec::new(),
             goal_distances_by_abstraction: Vec::new(),
-            abstraction_lookup_tables: Vec::new(),
             stolen_costs_by_abstraction: Vec::new(),
             rng: SmallRng::seed_from_u64(seed),
             lookup_mask: Vec::new(),
@@ -289,8 +287,8 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             "label"
         };
         info!(
-            "scp: building {mode} cost partitionings, h={}, order_len={}, saturator={}",
-            Self::compute_max_h(state, abstract_state_ids),
+            "scp: building {mode} cost partitionings, max abstraction h={}, order_len={}, saturator={}",
+            max_abstraction_heuristic(state, abstract_state_ids),
             order.len(),
             self.config.saturator,
         );
@@ -356,16 +354,15 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
         if built {
             return Ok(Self::compute_max_h(&state, abstract_state_ids));
         }
-        let max_h = Self::compute_max_h(&state, abstract_state_ids);
-        if max_h.is_infinite() {
-            // The first state is an abstract dead end; there is nothing to
-            // partition for.
-            return Ok(max_h);
+        if max_abstraction_heuristic(&state, abstract_state_ids).is_infinite() {
+            // The first state is an abstract dead end, which every cost
+            // partitioning reports too; there is nothing to partition for.
+            return Ok(f64::INFINITY);
         }
 
         let cost_partitionings =
             self.build_cost_partitionings(eval_state.task(), &mut state, abstract_state_ids)?;
-        Self::retain_abstraction_lookup_tables(&mut state);
+        state.goal_distances_by_abstraction = Vec::new();
         for cp in cost_partitionings {
             Self::retain_cp(&mut state, cp);
         }

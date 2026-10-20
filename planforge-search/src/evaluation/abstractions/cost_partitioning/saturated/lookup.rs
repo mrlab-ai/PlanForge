@@ -145,28 +145,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         Ok(())
     }
 
+    /// The heuristic: the maximum over the retained cost partitionings
+    /// (Seipp et al. 2020).
     pub(super) fn compute_max_h(state: &ScpState, ids: &[Option<usize>]) -> f64 {
-        let partitioned = state
+        state
             .cp_heuristics
             .iter()
             .map(|cp| cp.compute_heuristic(ids))
-            .fold(0.0, f64::max);
-        let constructing_standalone = max_abstraction_heuristic(state, ids);
-        let retained_standalone = state
-            .abstraction_lookup_tables
-            .iter()
-            .map(|table| {
-                lookup_distance(
-                    table.abstraction_id,
-                    &table.distances,
-                    table.unknown_value,
-                    ids,
-                )
-            })
-            .fold(0.0, f64::max);
-        partitioned
-            .max(constructing_standalone)
-            .max(retained_standalone)
+            .fold(0.0, f64::max)
     }
 
     pub(super) fn compute_lookup_mask(state: &ScpState, component_count: usize) -> Vec<bool> {
@@ -175,12 +161,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .iter()
             .flat_map(|cp| cp.lookup_tables.iter().map(|table| table.abstraction_id))
             .collect();
-        ids.extend(
-            state
-                .abstraction_lookup_tables
-                .iter()
-                .map(|table| table.abstraction_id),
-        );
         ids.sort_unstable();
         ids.dedup();
         let mut mask = vec![false; component_count];
@@ -190,31 +170,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 .expect("retained lookup table must reference an existing component") = true;
         }
         mask
-    }
-
-    /// Keeps the goal distance table of every abstraction with a positive
-    /// entry, for the maximum over the abstraction heuristics.
-    pub(super) fn retain_abstraction_lookup_tables(state: &mut ScpState) {
-        assert!(
-            state.abstraction_lookup_tables.is_empty(),
-            "the abstraction lookup tables are retained exactly once"
-        );
-        state.abstraction_lookup_tables = std::mem::take(&mut state.goal_distances_by_abstraction)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(abstraction_id, distances)| {
-                distances
-                    .iter()
-                    .any(|value| *value > 0.0)
-                    .then_some(LookupTable {
-                        abstraction_id,
-                        distances,
-                        // See max_abstraction_heuristic: a miss is unknown,
-                        // not unreachable, so it contributes nothing.
-                        unknown_value: 0.0,
-                    })
-            })
-            .collect();
     }
 }
 
@@ -259,16 +214,6 @@ pub(super) fn max_abstraction_heuristic(
             lookup_distance(abstraction_id, distances, 0.0, abstract_state_ids)
         })
         .fold(0.0, f64::max)
-}
-
-pub(super) fn abstraction_lookup_tables_size_kb(tables: &[Vec<f64>]) -> usize {
-    tables
-        .iter()
-        .filter(|distances| distances.iter().any(|value| *value > 0.0))
-        .map(Vec::len)
-        .sum::<usize>()
-        .saturating_mul(std::mem::size_of::<f64>())
-        / 1024
 }
 
 /// What a lookup table contributes for a component without an abstract state

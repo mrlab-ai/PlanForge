@@ -215,12 +215,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         by_collection.sort_by_key(|&id| abstraction_collection_iteration(components, id));
         orders.push((None, by_collection));
 
-        for seed_offset in 0..3 {
+        for seed_offset in 0..self.config.random_orders as u64 {
             let mut random_order = base_order.to_vec();
             random_order.shuffle(&mut SmallRng::seed_from_u64(
                 self.config
                     .random_seed
-                    .unwrap_or(0x5C9_0A11)
+                    .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED)
                     .wrapping_add(seed_offset),
             ));
             orders.push((None, random_order));

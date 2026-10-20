@@ -1,0 +1,5 @@
+(define (problem load-dependent-cost-1)
+  (:domain load-dependent-cost)
+  (:init (= (load) 3) (= (total-cost) 0))
+  (:goal (delivered))
+  (:metric minimize (total-cost)))

@@ -26,11 +26,12 @@ impl NumericPartitions {
             .map(|(i, v)| match v.get_type() {
                 NumericType::Constant => {
                     let value = float_tolerance::canonicalize(initial_numeric_values[i]);
-                    if value.is_finite() {
-                        vec![Interval::singleton(value)]
-                    } else {
-                        vec![Interval::unbounded()]
-                    }
+                    assert!(
+                        value.is_finite(),
+                        "constant numeric variable {} has the non-finite value {value}",
+                        v.name()
+                    );
+                    vec![Interval::singleton(value)]
                 }
                 _ => vec![Interval::unbounded()],
             })

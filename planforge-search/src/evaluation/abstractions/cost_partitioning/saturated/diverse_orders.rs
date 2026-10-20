@@ -19,30 +19,25 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .is_finite()
             .then(|| Instant::now() + Duration::from_secs_f64(self.config.max_time.max(0.0)));
         let deadline = earliest_deadline(table_deadline, diversification_deadline);
-        let initial_h = initial_candidates[0]
-            .compute_heuristic(initial_abstract_state_ids)
-            .max(max_abstraction_heuristic(state, initial_abstract_state_ids));
+        let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
         self.sample_states(state, initial_h, deadline)?;
         assert!(
             !state.sample_abstract_state_ids.is_empty(),
             "offline diversification must retain at least the initial state sample"
         );
 
-        let mut sample_best = state
-            .sample_abstract_state_ids
-            .iter()
-            .map(|ids| max_abstraction_heuristic(state, ids))
-            .collect::<Vec<_>>();
+        // The heuristic is the maximum over the retained orders, so every
+        // sample starts at 0 and the mandatory orders below are part of it:
+        // max_orders only bounds the diversified orders added after them.
+        let mut sample_best = vec![0.0; state.sample_abstract_state_ids.len()];
         let mut selected = Vec::new();
-        // The standalone envelope and the mandatory orders below are part of
-        // the heuristic, not optional extras: max_orders and max_size only
-        // bound the diversified orders added after them.
-        let abstraction_tables_size_kb =
-            abstraction_lookup_tables_size_kb(&state.goal_distances_by_abstraction);
-        let mut selected_size_kb = abstraction_tables_size_kb;
+        let mut selected_size_kb = 0;
         let mut evaluated_orders = initial_candidates.len();
-        let required_indices =
-            best_goal_cover_order_indices(&initial_candidates, &state.sample_abstract_state_ids);
+        let required_indices = best_goal_cover_order_indices(
+            &initial_candidates,
+            &state.sample_abstract_state_ids,
+            self.config.goal_cover_orders_per_goal,
+        );
         let represented_goal_count = required_indices
             .iter()
             .filter_map(|&index| initial_candidates[index].goal_cover_goal_id)
@@ -79,7 +74,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             );
         }
         info!(
-            "scp: reserved {abstraction_tables_size_kb} KiB for the abstraction heuristics and retained the best order plus {goal_cover_order_count} goal-cover orders of {represented_goal_count} goals"
+            "scp: retained the best order plus {goal_cover_order_count} goal-cover orders of {represented_goal_count} goals"
         );
 
         for candidate in initial_candidates.into_iter().flatten() {
@@ -185,9 +180,9 @@ pub(super) fn retain_if_improving_some_sample(
 pub(super) fn best_goal_cover_order_indices(
     candidates: &[CostPartitioningHeuristic],
     sample_ids: &[Vec<Option<usize>>],
+    orders_per_goal: usize,
 ) -> Vec<usize> {
     assert!(!candidates.is_empty());
-    pub(super) const GOAL_COVER_ORDERS_PER_GOAL: usize = 4;
     let mut candidates_by_goal = HashMap::<usize, Vec<(usize, f64)>>::new();
     for (index, candidate) in candidates.iter().enumerate() {
         let Some(goal_id) = candidate.goal_cover_goal_id else {
@@ -217,7 +212,7 @@ pub(super) fn best_goal_cover_order_indices(
         indices.extend(
             goal_candidates
                 .into_iter()
-                .take(GOAL_COVER_ORDERS_PER_GOAL)
+                .take(orders_per_goal)
                 .map(|(index, _)| index)
                 .filter(|&index| index != 0),
         );
