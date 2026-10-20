@@ -8,6 +8,7 @@ use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{
     ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue, ONE_VALUE, VariableIndex,
 };
+use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
@@ -104,9 +105,9 @@ impl From<&Split> for SplitIdentity {
             } => Self::Numeric {
                 state_id: *state_id,
                 var_id: *var_id,
-                boundary_bits: boundary.to_bits(),
+                boundary_bits: float_tolerance::canonical_bits(*boundary),
                 lower_includes_boundary: *lower_includes_boundary,
-                witness_bits: witness_value.to_bits(),
+                witness_bits: float_tolerance::canonical_bits(*witness_value),
                 integer_lattice: *integer_lattice,
             },
         }

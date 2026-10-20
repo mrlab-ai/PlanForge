@@ -319,7 +319,9 @@ fn comparison_refinement(
         }
         boundaries.push(witness_value);
         boundaries.sort_by(NumericValue::total_cmp);
-        boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        boundaries.dedup_by(|left, right| {
+            float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
+        });
 
         let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         for boundary in boundaries {

@@ -73,7 +73,9 @@ impl<'task> CegarSemantics<'task> {
             .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
         target_split_boundaries.sort_by(NumericValue::total_cmp);
-        target_split_boundaries.dedup_by(|left, right| left.to_bits() == right.to_bits());
+        target_split_boundaries.dedup_by(|left, right| {
+            float_tolerance::canonical_bits(*left) == float_tolerance::canonical_bits(*right)
+        });
         let random_split_rng = (split_options.selection == SplitSelection::Random).then(|| {
             RefCell::new(SmallRng::seed_from_u64(
                 split_options.random_seed.unwrap_or(RANDOM_SPLIT_SEED),
