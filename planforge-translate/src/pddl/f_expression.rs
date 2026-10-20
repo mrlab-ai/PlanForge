@@ -327,6 +327,32 @@ impl fmt::Display for FunctionalExpression {
     }
 }
 
+/// The derived function that stands for the constant `value`, with its
+/// defining axiom grounded into `new_constant_axioms`.
+pub fn constant_function(
+    value: f64,
+    fluent_functions: &HashSet<PrimitiveNumericExpression>,
+    init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+    task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
+    new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
+) -> PrimitiveNumericExpression {
+    let constant_expr = FunctionalExpression::NumericConstant(NumericConstant::new(value));
+    let derived = task_function_admin.get_derived_function(&constant_expr);
+    let axiom = task_function_admin
+        .axiom_named(&derived.symbol)
+        .cloned()
+        .expect("a constant's derived function is defined by an axiom");
+    let instantiated_axiom = axiom.instantiate(
+        &super::tasks::VarMapping::default(),
+        fluent_functions,
+        init_function_vals,
+        task_function_admin,
+        new_constant_axioms,
+    );
+    new_constant_axioms.insert(instantiated_axiom);
+    derived
+}
+
 /// Helper: Instantiate a functional expression
 pub fn instantiate_expression(
     expr: &FunctionalExpression,
@@ -342,21 +368,14 @@ pub fn instantiate_expression(
             let instantiated = pne.substituted(var_mapping);
             let is_fluent = fluent_functions.contains(&instantiated);
             if !is_fluent && !instantiated.symbol.starts_with("derived!") {
-                if let Some(value) = init_function_vals.get(&instantiated) {
-                    let constant_expr =
-                        FunctionalExpression::NumericConstant(NumericConstant::new(*value));
-                    let derived = task_function_admin.get_derived_function(&constant_expr);
-                    if let Some(axiom) = task_function_admin.axiom_named(&derived.symbol).cloned() {
-                        let instantiated_axiom = axiom.instantiate(
-                            &super::tasks::VarMapping::default(),
-                            fluent_functions,
-                            init_function_vals,
-                            task_function_admin,
-                            new_constant_axioms,
-                        );
-                        new_constant_axioms.insert(instantiated_axiom);
-                    }
-                    FunctionalExpression::PrimitiveNumericExpression(derived)
+                if let Some(&value) = init_function_vals.get(&instantiated) {
+                    FunctionalExpression::PrimitiveNumericExpression(constant_function(
+                        value,
+                        fluent_functions,
+                        init_function_vals,
+                        task_function_admin,
+                        new_constant_axioms,
+                    ))
                 } else {
                     FunctionalExpression::PrimitiveNumericExpression(instantiated)
                 }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::conditions::{Atom, Condition};
 use super::effects::Effect;
 use super::f_expression::{
-    FunctionAssignment, FunctionalExpression, NumericConstant, PrimitiveNumericExpression,
+    FunctionAssignment, FunctionalExpression, PrimitiveNumericExpression, constant_function,
 };
 use super::pddl_types::TypedObject;
 use crate::tools::OrderedSet;
@@ -214,6 +214,13 @@ impl Action {
             );
             assign_effects.push((eff_condition, instantiated_assignment));
         }
+        let assign_effects = fold_additive_constant_effects(
+            assign_effects,
+            fluent_functions,
+            init_function_vals,
+            task_function_admin,
+            new_constant_axioms,
+        );
 
         // Instantiate cost
         let cost = if let Some(ref c) = self.cost {
@@ -226,18 +233,13 @@ impl Action {
             ))
         } else {
             // Default cost: increase(total-cost, 1)
-            let constant_expr = FunctionalExpression::NumericConstant(NumericConstant::new(1.0));
-            let derived = task_function_admin.get_derived_function(&constant_expr);
-            if let Some(axiom) = task_function_admin.axiom_named(&derived.symbol).cloned() {
-                let instantiated_axiom = axiom.instantiate(
-                    &super::tasks::VarMapping::default(),
-                    fluent_functions,
-                    init_function_vals,
-                    task_function_admin,
-                    new_constant_axioms,
-                );
-                new_constant_axioms.insert(instantiated_axiom);
-            }
+            let derived = constant_function(
+                1.0,
+                fluent_functions,
+                init_function_vals,
+                task_function_admin,
+                new_constant_axioms,
+            );
             Some(FunctionAssignment::new(
                 "+".to_string(),
                 PrimitiveNumericExpression::with_type("total-cost".to_string(), vec![], 'I'),
@@ -254,6 +256,93 @@ impl Action {
             cost,
         })
     }
+}
+
+/// Folds the unconditional increase and decrease effects with constant
+/// arguments that a ground action has on one fluent into a single effect.
+///
+/// Grounding a transfer such as `(decrease (x ?a) c) (increase (x ?b) c)` with
+/// `?a = ?b` gives two additive effects on one fluent. Their sum is the
+/// action's effect, since additive effects on one fluent accumulate, and one
+/// effect per fluent is what abstractions and the restricted task consume. The
+/// folded effect sits where the fluent's first effect was; effects that cancel
+/// out leave none.
+fn fold_additive_constant_effects(
+    assign_effects: Vec<(Vec<Condition>, FunctionAssignment)>,
+    fluent_functions: &std::collections::HashSet<PrimitiveNumericExpression>,
+    init_function_vals: &HashMap<PrimitiveNumericExpression, f64>,
+    task_function_admin: &mut super::tasks::DerivedFunctionAdministrator,
+    new_constant_axioms: &mut OrderedSet<super::axioms::InstantiatedNumericAxiom>,
+) -> Vec<(Vec<Condition>, FunctionAssignment)> {
+    // The signed constant each effect adds, for the foldable ones.
+    let deltas: Vec<Option<f64>> = assign_effects
+        .iter()
+        .map(|(conditions, assignment)| {
+            let sign = match assignment.symbol.as_str() {
+                "+" => 1.0,
+                "-" => -1.0,
+                _ => return None,
+            };
+            if !conditions.is_empty() {
+                return None;
+            }
+            let argument = assignment.expression.as_pne()?;
+            Some(sign * task_function_admin.constant_value(argument)?)
+        })
+        .collect();
+    let mut foldable_by_fluent: HashMap<&PrimitiveNumericExpression, Vec<f64>> = HashMap::new();
+    for ((_, assignment), delta) in assign_effects.iter().zip(&deltas) {
+        if let Some(delta) = delta {
+            foldable_by_fluent
+                .entry(&assignment.fluent)
+                .or_default()
+                .push(*delta);
+        }
+    }
+    let sums: HashMap<PrimitiveNumericExpression, f64> = foldable_by_fluent
+        .into_iter()
+        .filter(|(_, deltas)| deltas.len() > 1)
+        .map(|(fluent, deltas)| {
+            let sum = planforge_sas::utils::float_tolerance::canonicalize(
+                planforge_sas::numeric_task::NumericValue::new(deltas.iter().sum()),
+            );
+            (fluent.clone(), sum.value())
+        })
+        .collect();
+    if sums.is_empty() {
+        return assign_effects;
+    }
+    let mut folded = Vec::with_capacity(assign_effects.len());
+    let mut emitted = std::collections::HashSet::new();
+    for ((conditions, assignment), delta) in assign_effects.into_iter().zip(deltas) {
+        let sum = match (delta, sums.get(&assignment.fluent)) {
+            (Some(_), Some(&sum)) => sum,
+            _ => {
+                folded.push((conditions, assignment));
+                continue;
+            }
+        };
+        if sum == 0.0 || !emitted.insert(assignment.fluent.clone()) {
+            continue;
+        }
+        let symbol = if sum > 0.0 { "+" } else { "-" };
+        let argument = constant_function(
+            sum.abs(),
+            fluent_functions,
+            init_function_vals,
+            task_function_admin,
+            new_constant_axioms,
+        );
+        folded.push((
+            conditions,
+            FunctionAssignment::new(
+                symbol.to_string(),
+                assignment.fluent,
+                FunctionalExpression::PrimitiveNumericExpression(argument),
+            ),
+        ));
+    }
+    folded
 }
 
 /// A ground action with propositional preconditions and effects.
