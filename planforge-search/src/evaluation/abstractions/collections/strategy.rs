@@ -2,10 +2,7 @@
 
 use std::fmt;
 
-use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
-
-use crate::evaluation::abstractions::common::cegar::FlawKind;
 
 /// How a collection chooses its members.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -58,66 +55,6 @@ impl crate::config::FromOptionValue for CollectionStrategy {
             )),
         }
     }
-}
-
-/// The collection options both representations share.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct CollectionOptions {
-    pub(crate) strategy: CollectionStrategy,
-    pub(crate) variants_per_goal: usize,
-    pub(crate) max_collection_size: usize,
-    pub(crate) progress_states: bool,
-    pub(crate) alternate_split_kinds: Option<bool>,
-    pub(crate) single_goal_tasks: bool,
-    /// Whether the configuration fixes the split kind of every member.
-    pub(crate) fixed_split_kind: bool,
-    pub(crate) flaw_kind: FlawKind,
-}
-
-/// Rejects options the strategy does not follow.
-pub(crate) fn validate_collection_options(options: CollectionOptions) -> Result<()> {
-    let CollectionOptions {
-        strategy,
-        variants_per_goal,
-        max_collection_size,
-        progress_states,
-        alternate_split_kinds,
-        single_goal_tasks,
-        fixed_split_kind,
-        flaw_kind,
-    } = options;
-    ensure!(max_collection_size > 0, "`max_collection_size` must be > 0");
-    ensure!(variants_per_goal > 0, "`variants_per_goal` must be > 0");
-    ensure!(
-        variants_per_goal == 1 || strategy != CollectionStrategy::Standard,
-        "`variants_per_goal` requires `collection_strategy=per_goal` or `goal_focused`"
-    );
-    ensure!(
-        !progress_states || strategy != CollectionStrategy::Standard,
-        "`progress_states=true` requires `collection_strategy=per_goal` or `goal_focused`"
-    );
-    ensure!(
-        !progress_states || flaw_kind == FlawKind::Progression,
-        "progress states advance along executed concrete plans and need flaw_kind=progression, not flaw_kind={flaw_kind}"
-    );
-    ensure!(
-        single_goal_tasks || strategy.is_goal_focused(),
-        "`single_goal_tasks=false` requires `collection_strategy=goal_focused`"
-    );
-    ensure!(
-        single_goal_tasks || !progress_states,
-        "{}",
-        super::goal_focused::FULL_TASK_PROGRESS_STATES_ERROR
-    );
-    ensure!(
-        alternate_split_kinds != Some(true) || strategy != CollectionStrategy::PerGoal,
-        "`alternate_split_kinds=true` requires `collection_strategy=standard` or `goal_focused`"
-    );
-    ensure!(
-        !strategy.alternates_split_kinds(alternate_split_kinds) || !fixed_split_kind,
-        "`alternate_split_kinds` chooses the split kind per member; it cannot be combined with a fixed `split_kind`"
-    );
-    Ok(())
 }
 
 pub(crate) fn mix_seed(mut value: u64) -> u64 {

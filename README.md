@@ -89,6 +89,21 @@ older flat positional source form remains accepted. PDB sources
 select their generator explicitly with `patterns=systematic(...)` or
 `patterns=greedy(...)`.
 
+Domain and Cartesian abstractions take the same CEGAR options, by name:
+`max_states`, `max_iterations`, `max_time` (seconds, or `infinity`),
+`combine_labels`, `random_seed`, `flaw_kind=progression|regression`,
+`flaw_scope=first|whole_plan`, `split_kind=concrete|wanted`,
+`split_selection=min_growth|random`, `split_selection_rank` and `debug`;
+`domain(...)` also takes `use_wildcard_plans`. Their defaults differ by
+representation. `domain_collection(...)` and `cartesian_collection(...)` take
+the options of their members, where `max_states` and `max_time` bound each
+member, and the collection options `collection_strategy=standard|per_goal|goal_focused`,
+`variants_per_goal`, `max_collection_size`, `total_max_time`, `progress_states`,
+`alternate_split_kinds`, `single_goal_tasks`, `split_kind` (the members' fixed
+split kind), `random_seed` (the seed members derive theirs from),
+`stagnation_limit`, `blacklist_trigger_percentage` and
+`enable_blacklist_on_stagnation`.
+
 `icaps26_cartesian` accepts `pick=random|min_unwanted|max_unwanted` and requires
 `--restrict-task`. It reproduces the artifact semantics on integer restricted
 tasks; the dedicated affine restriction and continuous-split extensions cover
@@ -144,9 +159,10 @@ Workspace crates:
   Adding a heuristic is a change to `planforge-search` alone: the heuristic's own
   module, and one arm of `heuristic_factory::build_heuristic_from_spec`.
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
-  `proc-macro` crate is its own compilation unit. It serves 7 config structs and
-  112 `--search` options, and derives each config's positional-argument order
-  from its field order.
+  `proc-macro` crate is its own compilation unit. It derives each config's
+  positional-argument order from its field order; a config that flattens shared
+  options, such as the CEGAR options domain and Cartesian abstractions share,
+  takes named options only.
 - `planforge-cplex` — small checked native CPLEX ownership and sparse-LP layer.
 - `tests` — integration tests.
 

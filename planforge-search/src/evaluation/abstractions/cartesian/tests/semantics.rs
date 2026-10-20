@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 /// A goal on a comparison variable is refined until the comparison holds.
 ///
@@ -59,7 +60,10 @@ fn refines_through_a_comparison_goal() {
     });
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 16,
+        cegar: CegarOptions {
+            max_states: 16,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         ..Default::default()
     })
     .unwrap()

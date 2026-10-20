@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn operator_bitsets_preserve_exact_membership_and_intersections() {
@@ -197,8 +198,11 @@ fn native_random_selector_is_seeded() {
     ];
 
     let random_config = CartesianAbstractionConfig {
-        split_selection: SplitSelection::Random,
-        random_seed: Some(7),
+        cegar: CegarOptions {
+            split_selection: SplitSelection::Random,
+            random_seed: Some(7),
+            ..CartesianAbstractionConfig::default().cegar
+        },
         ..CartesianAbstractionConfig::default()
     };
     let random_a = CartesianSemantics::new(&task, &random_config).unwrap();

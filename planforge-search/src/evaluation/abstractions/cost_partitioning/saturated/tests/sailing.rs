@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -55,22 +56,26 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
         .into_task();
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 1_000,
-                max_time: Some(Duration::from_secs(5)),
-                combine_labels: false,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 1_000,
+                    max_time: Some(Duration::from_secs(5)),
+                    combine_labels: false,
+                    random_seed: Some(1),
+                    debug: false,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 compute_source_sets: true,
-                random_seed: Some(1),
-                debug: false,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
-            max_collection_states: 10_000,
+            max_collection_size: 10_000,
             total_max_time: Some(Duration::from_secs(15)),
             progress_states: false,
             alternate_split_kinds: Some(true),
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })

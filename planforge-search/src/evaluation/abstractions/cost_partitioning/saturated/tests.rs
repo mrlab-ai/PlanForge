@@ -1,4 +1,5 @@
 use super::diverse_orders::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 use super::orders::*;
 
@@ -86,12 +87,15 @@ pub(super) fn independent_goals_task() -> NumericRootTask {
 
 pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstraction {
     CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 16,
-        max_time: None,
-        combine_labels: false,
+        cegar: CegarOptions {
+            max_states: 16,
+            max_time: None,
+            combine_labels: false,
+            random_seed: None,
+            debug: false,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         compute_source_sets: true,
-        random_seed: None,
-        debug: false,
         ..Default::default()
     })
     .unwrap()
@@ -132,22 +136,26 @@ pub(super) fn goal_cover_scp<'task>(
 ) -> (SaturatedCostPartitioningHeuristic<'task>, HashSet<usize>) {
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 16,
-                max_time: None,
-                combine_labels: false,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 16,
+                    max_time: None,
+                    combine_labels: false,
+                    random_seed: Some(1),
+                    debug: false,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 compute_source_sets: true,
-                random_seed: Some(1),
-                debug: false,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
-            max_collection_states: 128,
+            max_collection_size: 128,
             total_max_time: None,
             progress_states: true,
             alternate_split_kinds: Some(true),
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })

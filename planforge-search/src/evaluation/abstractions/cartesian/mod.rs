@@ -45,7 +45,7 @@ use working::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
@@ -64,15 +64,13 @@ use super::common::cegar::regression::ensure_regressable;
 use super::common::cegar::{CegarDriver, CegarStopReason, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, GoalFocusedBackend, GoalFocusedSchedule, GoalVariant,
-    MemberBudget, build_goal_focused_collection,
+    BuiltReport, CollectionMembership, GoalFocusedBackend, GoalVariant, MemberBudget,
+    build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::standard::{
-    StandardBackend, StandardMember, StandardSchedule, build_standard_collection,
+    StandardBackend, StandardMember, build_standard_collection,
 };
-use crate::evaluation::abstractions::collections::strategy::{
-    CollectionOptions, CollectionStrategy, validate_collection_options,
-};
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };

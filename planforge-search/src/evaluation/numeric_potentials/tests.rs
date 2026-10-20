@@ -520,8 +520,11 @@ fn ocp_retains_stuttering_action_constraints() {
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
     let cegar_config = DomainAbstractionConfig {
-        max_states: 1,
-        max_iterations: 1,
+        cegar: CegarOptions {
+            max_states: 1,
+            max_iterations: 1,
+            ..DomainAbstractionConfig::default().cegar
+        },
         compute_source_sets: false,
         ..DomainAbstractionConfig::default()
     };

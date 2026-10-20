@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 /// A goal on a derived variable is refused, by name.
 ///
@@ -60,7 +61,10 @@ fn a_derived_goal_is_refused_by_name() {
     });
 
     let error = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 64,
+        cegar: CegarOptions {
+            max_states: 64,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         ..Default::default()
     })
     .unwrap()
@@ -121,7 +125,10 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
     );
 
     let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-        max_states: 1,
+        cegar: CegarOptions {
+            max_states: 1,
+            ..CartesianAbstractionConfig::default().cegar
+        },
         compute_source_sets: false,
         ..Default::default()
     })

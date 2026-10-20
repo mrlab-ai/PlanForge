@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitState;
 
-use super::progression::{ConcretePlan, PlanCheck, progression_plan_check};
+use super::progression::{ConcretePlan, PlanCheck, progression_plan_check, validate_concrete_plan};
 use super::regression::regression_plan_check;
 use super::semantics::CegarSemantics;
 use super::split::Split;
@@ -87,6 +87,7 @@ pub(crate) fn refine<R: Refinable>(
             };
             let split = match check_abstract_plan(&view, run)? {
                 PlanCheck::ConcretePlan(plan) => {
+                    validate_concrete_plan(run.semantics, run.refinement_root, &plan)?;
                     concrete_plan = Some(plan);
                     return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
                 }

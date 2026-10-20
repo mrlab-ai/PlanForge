@@ -8,14 +8,17 @@ use super::{
     ExternalHeuristic, RequiredBackend, TaskRequirements, abstraction_config, heuristic_names,
     register_external_heuristics,
 };
-use crate::config::{ApplyOptions, HeuristicSpec, parse_heuristic_spec};
+use crate::config::{ApplyOptions, ConfigArg, HeuristicSpec, configure, parse_heuristic_spec};
+use crate::evaluation::abstractions::cartesian::{
+    CartesianAbstractionCollectionConfig, CartesianAbstractionConfig,
+};
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::cegar::{FlawScope, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     CostPartitioningMethod, OrderGenerator, ScpConfig,
 };
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionConfig;
+use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::icaps26::Icaps26SplitSelection;
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -43,10 +46,10 @@ fn parses_astar_domain_abstraction_with_named_options() {
 
     let mut cfg = DomainAbstractionConfig::default();
     cfg.apply_options(&h.args).unwrap();
-    assert_eq!(cfg.max_states, 10_000);
+    assert_eq!(cfg.cegar.max_states, 10_000);
     assert!(!cfg.use_wildcard_plans);
-    assert!(cfg.combine_labels);
-    assert_eq!(cfg.random_seed, Some(7));
+    assert!(cfg.cegar.combine_labels);
+    assert_eq!(cfg.cegar.random_seed, Some(7));
 }
 
 /// The domain collection options of a combinator's single source.
@@ -55,20 +58,53 @@ fn domain_collection_source(spec: &str) -> DomainAbstractionCollectionConfig {
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "domain_collection");
-    let mut config = DomainAbstractionCollectionConfig::default();
-    ApplyOptions::apply_options(&mut config, sources[0].args()).unwrap();
-    config
+    configure(
+        "domain_collection",
+        DomainAbstractionCollectionConfig::default(),
+        sources[0].args(),
+    )
+    .unwrap()
 }
 
 /// The error the domain collection options of a combinator's single source give.
 fn domain_collection_source_error(spec: &str) -> String {
     let h = astar_heuristic(spec);
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    ApplyOptions::apply_options(
-        &mut DomainAbstractionCollectionConfig::default(),
+    configure(
+        "domain_collection",
+        DomainAbstractionCollectionConfig::default(),
         sources[0].args(),
     )
     .unwrap_err()
+}
+
+/// The `cartesian_collection(...)` options `args` for a component used as
+/// `component_use`.
+fn cartesian_collection_config(
+    args: &[ConfigArg],
+    component_use: abstraction_config::ComponentUse,
+) -> Result<CartesianAbstractionCollectionConfig, String> {
+    configure(
+        "cartesian_collection",
+        CartesianAbstractionCollectionConfig {
+            member: abstraction_config::cartesian_config(component_use),
+            ..Default::default()
+        },
+        args,
+    )
+}
+
+/// The `cartesian(...)` options `args` for a component used as
+/// `component_use`.
+fn cartesian_source_config(
+    args: &[ConfigArg],
+    component_use: abstraction_config::ComponentUse,
+) -> Result<CartesianAbstractionConfig, String> {
+    configure(
+        "cartesian",
+        abstraction_config::cartesian_config(component_use),
+        args,
+    )
 }
 
 #[test]
@@ -78,10 +114,13 @@ fn parses_canonical_domain_collection_with_named_options() {
     );
 
     assert_eq!(cfg.max_collection_size, 123);
-    assert_eq!(cfg.total_max_time, 4.5);
-    assert!(!cfg.use_wildcard_plans);
-    assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::Progression);
+    assert_eq!(
+        cfg.total_max_time,
+        Some(std::time::Duration::from_secs_f64(4.5))
+    );
+    assert!(!cfg.member.use_wildcard_plans);
+    assert!(cfg.member.cegar.combine_labels);
+    assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(cfg.random_seed, Some(7));
 }
 
@@ -135,7 +174,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "cartesian_collection");
     assert_eq!(options.len(), 2);
-    let config = abstraction_config::apply_cartesian_collection_options(
+    let config = cartesian_collection_config(
         sources[0].args(),
         abstraction_config::ComponentUse::RegionalCostPartitioning,
     )
@@ -145,9 +184,9 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert!(config.progress_states);
     assert_eq!(config.alternate_split_kinds, Some(false));
     assert!(config.single_goal_tasks);
-    assert_eq!(config.abstraction.flaw_kind, FlawKind::Progression);
-    assert_eq!(config.abstraction.flaw_scope, FlawScope::WholePlan);
-    assert!(config.abstraction.compute_source_sets);
+    assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
+    assert_eq!(config.member.cegar.flaw_scope, FlawScope::WholePlan);
+    assert!(config.member.compute_source_sets);
 }
 
 #[test]
@@ -244,12 +283,12 @@ fn icaps26_cartesian_rejects_native_refinement_options() {
 fn hierarchical_cartesian_collection_preserves_first_flaw_default() {
     let h = astar_heuristic("astar(canonical(cartesian_collection(max_states=1000)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let config = abstraction_config::apply_cartesian_collection_options(
+    let config = cartesian_collection_config(
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
     )
     .unwrap();
-    assert_eq!(config.abstraction.flaw_kind, FlawKind::Progression);
+    assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
 }
 
 #[test]
@@ -257,7 +296,7 @@ fn cartesian_sources_reject_unknown_flaw_kinds() {
     let h =
         astar_heuristic("astar(canonical(cartesian_collection(flaw_kind=sequence_regression)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let error = abstraction_config::apply_cartesian_collection_options(
+    let error = cartesian_collection_config(
         sources[0].args(),
         abstraction_config::ComponentUse::Standalone,
     )
@@ -268,11 +307,8 @@ fn cartesian_sources_reject_unknown_flaw_kinds() {
     );
 
     let h = astar_heuristic("astar(cartesian_abstraction(flaw_kind=sequence_regression))");
-    let error = abstraction_config::apply_cartesian_options(
-        &h.args,
-        abstraction_config::ComponentUse::Standalone,
-    )
-    .unwrap_err();
+    let error =
+        cartesian_source_config(&h.args, abstraction_config::ComponentUse::Standalone).unwrap_err();
     assert!(
         error.contains("invalid flaw_kind `sequence_regression`"),
         "got `{error}`"
@@ -281,15 +317,41 @@ fn cartesian_sources_reject_unknown_flaw_kinds() {
 
 #[test]
 fn cartesian_abstraction_rejects_domain_abstraction_options() {
-    for option in ["max_iterations=10", "use_wildcard_plans=true"] {
-        let h = astar_heuristic(&format!("astar(cartesian_abstraction({option}))"));
-        let error = abstraction_config::apply_cartesian_options(
-            &h.args,
-            abstraction_config::ComponentUse::Standalone,
-        )
-        .unwrap_err();
-        assert!(error.contains("unknown option"), "got `{error}`");
-    }
+    let h = astar_heuristic("astar(cartesian_abstraction(use_wildcard_plans=true))");
+    let error =
+        cartesian_source_config(&h.args, abstraction_config::ComponentUse::Standalone).unwrap_err();
+    assert_eq!(error, "cartesian(...): unknown option `use_wildcard_plans`");
+}
+
+#[test]
+fn both_representations_take_the_same_cegar_options() {
+    let options = "max_states=7, max_iterations=3, max_time=2, combine_labels=true, \
+                   random_seed=5, flaw_kind=regression, flaw_scope=whole_plan, split_kind=wanted, \
+                   split_selection=random, split_selection_rank=1, debug=true";
+    let domain = astar_heuristic(&format!("astar(domain_abstraction({options}))"));
+    let domain = configure("domain", DomainAbstractionConfig::default(), &domain.args).unwrap();
+    let cartesian = astar_heuristic(&format!("astar(cartesian_abstraction({options}))"));
+    let cartesian = cartesian_source_config(
+        &cartesian.args,
+        abstraction_config::ComponentUse::Standalone,
+    )
+    .unwrap();
+    assert_eq!(domain.cegar, cartesian.cegar);
+    assert_eq!(
+        domain.cegar.max_time,
+        Some(std::time::Duration::from_secs(2))
+    );
+}
+
+#[test]
+fn configs_with_shared_options_take_named_options_only() {
+    let h = astar_heuristic("astar(cartesian_abstraction(10))");
+    let error =
+        cartesian_source_config(&h.args, abstraction_config::ComponentUse::Standalone).unwrap_err();
+    assert_eq!(
+        error,
+        "cartesian(...): options must be named, as in `key=value`"
+    );
 }
 
 #[test]
@@ -311,8 +373,8 @@ fn parses_whole_plan_regression_flaws() {
     let cfg = domain_collection_source(
         "astar(canonical(domain_collection(flaw_kind=regression, flaw_scope=whole_plan)))",
     );
-    assert_eq!(cfg.flaw_kind, FlawKind::Regression);
-    assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Regression);
+    assert_eq!(cfg.member.cegar.flaw_scope, FlawScope::WholePlan);
 }
 
 #[test]
@@ -322,13 +384,16 @@ fn parses_single_domain_abstraction_time_limit() {
     );
     let mut cfg = DomainAbstractionConfig::default();
     cfg.apply_options(&h.args).unwrap();
-    assert_eq!(cfg.max_states, 1000);
-    assert_eq!(cfg.max_time, Some(std::time::Duration::from_secs(900)));
-    assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(cfg.cegar.max_states, 1000);
+    assert_eq!(
+        cfg.cegar.max_time,
+        Some(std::time::Duration::from_secs(900))
+    );
+    assert_eq!(cfg.cegar.flaw_scope, FlawScope::WholePlan);
 
     let h = astar_heuristic("astar(domain_abstraction(max_time=infinity))");
     cfg.apply_options(&h.args).unwrap();
-    assert_eq!(cfg.max_time, None);
+    assert_eq!(cfg.cegar.max_time, None);
 }
 
 #[test]
@@ -344,9 +409,12 @@ fn parses_full_task_interleaved_domain_collection() {
 
     assert_eq!(source.collection_strategy, CollectionStrategy::Standard);
     assert_eq!(source.alternate_split_kinds, Some(true));
-    assert_eq!(source.flaw_kind, FlawKind::Progression);
-    assert_eq!(source.flaw_scope, FlawScope::WholePlan);
-    assert_eq!(source.split_selection, SplitSelection::MinGrowth);
+    assert_eq!(source.member.cegar.flaw_kind, FlawKind::Progression);
+    assert_eq!(source.member.cegar.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(
+        source.member.cegar.split_selection,
+        SplitSelection::MinGrowth
+    );
 }
 
 #[test]
@@ -453,14 +521,17 @@ fn parses_max_domain_collection_with_named_options() {
         "astar(max(domain_collection(max_collection_size=123, total_max_time=4.5, use_wildcard_plans=false, combine_labels=true, flaw_kind=progression, flaw_scope=whole_plan, collection_strategy=goal_focused, random_seed=7, debug=true)))",
     );
     assert_eq!(cfg.max_collection_size, 123);
-    assert_eq!(cfg.total_max_time, 4.5);
-    assert!(!cfg.use_wildcard_plans);
-    assert!(cfg.combine_labels);
-    assert_eq!(cfg.flaw_kind, FlawKind::Progression);
-    assert_eq!(cfg.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(
+        cfg.total_max_time,
+        Some(std::time::Duration::from_secs_f64(4.5))
+    );
+    assert!(!cfg.member.use_wildcard_plans);
+    assert!(cfg.member.cegar.combine_labels);
+    assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Progression);
+    assert_eq!(cfg.member.cegar.flaw_scope, FlawScope::WholePlan);
     assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
     assert_eq!(cfg.random_seed, Some(7));
-    assert!(cfg.debug);
+    assert!(cfg.member.cegar.debug);
 }
 
 #[test]
@@ -472,7 +543,7 @@ fn parses_full_task_goal_focused_options() {
     let mut domain = DomainAbstractionCollectionConfig::default();
     ApplyOptions::apply_options(&mut domain, sources[0].args()).unwrap();
     assert!(!domain.single_goal_tasks);
-    let cartesian = abstraction_config::apply_cartesian_collection_options(
+    let cartesian = cartesian_collection_config(
         sources[1].args(),
         abstraction_config::ComponentUse::RegionalCostPartitioning,
     )
@@ -583,10 +654,10 @@ fn domain_source_is_one_domain_abstraction_with_its_own_options() {
     assert_eq!(sources[0].name(), "domain");
     let mut config = DomainAbstractionConfig::default();
     config.apply_options(sources[0].args()).unwrap();
-    assert_eq!(config.max_states, 500);
-    assert_eq!(config.flaw_kind, FlawKind::Regression);
-    assert_eq!(config.flaw_scope, FlawScope::WholePlan);
-    assert_eq!(config.split_kind, SplitKind::Wanted);
+    assert_eq!(config.cegar.max_states, 500);
+    assert_eq!(config.cegar.flaw_kind, FlawKind::Regression);
+    assert_eq!(config.cegar.flaw_scope, FlawScope::WholePlan);
+    assert_eq!(config.cegar.split_kind, SplitKind::Wanted);
 
     let h = astar_heuristic("astar(canonical(domain(max_collection_size=10)))");
     let (sources, _) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();

@@ -196,9 +196,9 @@ impl<'a> DomainRefinement<'a> {
             task,
             factory,
             limits,
-            combine_labels: config.combine_labels,
+            combine_labels: config.cegar.combine_labels,
             wildcard_plans: config.use_wildcard_plans,
-            debug: config.debug,
+            debug: config.cegar.debug,
             built: None,
             iteration: 0,
         }

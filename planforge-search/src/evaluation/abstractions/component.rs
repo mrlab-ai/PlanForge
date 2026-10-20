@@ -278,7 +278,7 @@ impl<'task> AbstractionComponent<'task> {
                     .map(|membership| GoalFocusedMember {
                         membership,
                         split_kind: metadata.split_kind,
-                        tie_rank: metadata.flaw_selection_rank,
+                        tie_rank: metadata.split_selection_rank,
                         retained_transitions: abstraction.abstract_operators.len(),
                     })
             }

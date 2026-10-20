@@ -97,9 +97,9 @@ pub(super) fn apply_initial_goal_splits(
     });
     candidate_var_ids.dedup();
     let initial_max_states = if config.init_split_var_ids.is_some() {
-        (config.max_states / 2).max(1)
+        (config.cegar.max_states / 2).max(1)
     } else {
-        config.max_states
+        config.cegar.max_states
     };
 
     for var_id in candidate_var_ids {

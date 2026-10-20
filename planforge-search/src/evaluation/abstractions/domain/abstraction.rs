@@ -155,7 +155,7 @@ pub struct DomainAbstractionMetadata {
     /// The split kind CEGAR refined with.
     pub split_kind: SplitKind,
     /// The rank CEGAR used among tied best flaws, if any.
-    pub flaw_selection_rank: Option<usize>,
+    pub split_selection_rank: Option<usize>,
     /// Operator ids of the concrete plan CEGAR executed when it solved the task
     /// from its refinement root.
     pub concrete_plan_operator_ids: Option<Vec<OperatorIndex>>,

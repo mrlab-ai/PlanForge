@@ -32,7 +32,7 @@ mod abstraction_config;
 #[cfg(test)]
 mod tests;
 
-use crate::config::{ApplyOptions, ConfigArg, HeuristicSpec};
+use crate::config::{ConfigArg, HeuristicSpec, configure};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredBackend {
@@ -408,9 +408,11 @@ fn build_scp_from_sources<'task>(
         .into());
     }
     validate_scp_combinator_options(options)?;
-    let mut config =
-        crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig::default();
-    ApplyOptions::apply_options(&mut config, options)?;
+    let mut config = configure(
+        name,
+        crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig::default(),
+        options,
+    )?;
     let component_use = if config.partitioning.uses_regions() {
         ComponentUse::RegionalCostPartitioning
     } else {
@@ -530,11 +532,16 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             info!("Building domain abstraction (CEGAR)...");
-            let mut cfg = DomainAbstractionConfig::default();
-            cfg.apply_options(&spec.args)?;
             // Single DA reads only the distance table; operator regions are
             // SCP-specific. Skip the per-concrete-op CartesianSet cost.
-            cfg.compute_source_sets = false;
+            let cfg = configure(
+                &spec.name,
+                DomainAbstractionConfig {
+                    compute_source_sets: false,
+                    ..DomainAbstractionConfig::default()
+                },
+                &spec.args,
+            )?;
             let generator = DomainAbstractionGenerator::new(cfg)
                 .map_err(|e| format!("failed to construct DomainAbstractionGenerator: {e:#}"))?;
             let abstraction = generator
@@ -554,9 +561,10 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             info!("Building Cartesian abstraction (CEGAR)...");
-            let cfg = abstraction_config::apply_cartesian_options(
+            let cfg = configure(
+                &spec.name,
+                abstraction_config::cartesian_config(abstraction_config::ComponentUse::Standalone),
                 &spec.args,
-                abstraction_config::ComponentUse::Standalone,
             )?;
             let generator = CartesianAbstractionGenerator::new(cfg)
                 .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
@@ -578,11 +586,12 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-                use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionConfig;
-                let mut cfg = DomainAbstractionCollectionConfig::default();
-                ApplyOptions::apply_options(&mut cfg, &spec.args)?;
-                cfg.set_compute_source_sets(false);
-                let generator = DomainAbstractionCollectionGenerator::new(cfg);
+                use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
+                let mut cfg =
+                    configure(&spec.name, DomainAbstractionCollectionConfig::default(), &spec.args)?;
+                cfg.member.compute_source_sets = false;
+                let generator = DomainAbstractionCollectionGenerator::new(cfg)
+                    .map_err(|e| format!("invalid posthoc_optimization collection: {e:#}"))?;
                 info!("Building posthoc_optimization domain abstractions (CEGAR)...");
                 let abstractions = generator.generate(task).map_err(|e| {
                     format!("failed to build posthoc_optimization domain abstractions: {e:#}")
@@ -676,16 +685,21 @@ heuristic_registry! {
                         .into(),
                 );
             }
-            let mut da_config = DomainAbstractionConfig::default();
-            da_config.apply_options(&da_args)?;
-            da_config.compute_source_sets = false;
+            let da_config = configure(
+                abstraction_call.name(),
+                DomainAbstractionConfig {
+                    compute_source_sets: false,
+                    ..DomainAbstractionConfig::default()
+                },
+                &da_args,
+            )?;
             info!("Building recorded domain abstraction for pot_da_ocp...");
             let abstraction = DomainAbstractionGenerator::new(da_config)
                 .map_err(|error| format!("failed to construct pot_da_ocp abstraction: {error:#}"))?
                 .generate(task)
                 .map_err(|error| format!("failed to build pot_da_ocp abstraction: {error:#}"))?;
-            let mut potential_config = NumericPotentialConfig::default();
-            potential_config.apply_options(&potential_args)?;
+            let potential_config =
+                configure(&spec.name, NumericPotentialConfig::default(), &potential_args)?;
             let heuristic = PotentialAbstractionOcpHeuristic::new(
                 task,
                 sampling_task,
@@ -720,8 +734,7 @@ heuristic_registry! {
                 NumericPotentialConfig, NumericPotentialHeuristic,
             };
 
-            let mut config = NumericPotentialConfig::default();
-            config.apply_options(&spec.args)?;
+            let config = configure(&spec.name, NumericPotentialConfig::default(), &spec.args)?;
             let heuristic = NumericPotentialHeuristic::from_config(task, sampling_task, config)
                 .map_err(|error| {
                     format!("failed to construct numeric_potential heuristic: {error}")
@@ -787,8 +800,11 @@ heuristic_registry! {
         requirements: any_task,
         nested: no_nested_heuristics,
         build: {
-            let mut cfg = crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig::default();
-            ApplyOptions::apply_options(&mut cfg, &spec.args)?;
+            let cfg = configure(
+                &spec.name,
+                crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig::default(),
+                &spec.args,
+            )?;
             let h = LandmarkCutNumericHeuristic::from_config(task, cfg)
                 .map_err(|e| format!("failed to build lmcutnumeric heuristic: {e}"))?;
             Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))

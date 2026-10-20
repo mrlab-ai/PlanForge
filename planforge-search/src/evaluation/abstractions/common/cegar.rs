@@ -1,4 +1,5 @@
 pub(crate) mod fact_splits;
+pub mod options;
 pub(crate) mod progression;
 pub(crate) mod refine;
 pub(crate) mod regression;

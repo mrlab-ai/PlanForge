@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn regression_splits_at_comparison_target_while_progression_splits_at_witness() {
@@ -38,8 +39,11 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
 
     let first_numeric_boundary = |direction| {
         let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-            max_states: 2,
-            split_kind: direction,
+            cegar: CegarOptions {
+                max_states: 2,
+                split_kind: direction,
+                ..CartesianAbstractionConfig::default().cegar
+            },
             ..Default::default()
         })
         .unwrap()
@@ -82,10 +86,13 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
         for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
             for split_kind in [SplitKind::Concrete, SplitKind::Wanted] {
                 let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
-                    max_states: 1_000,
-                    flaw_kind: FlawKind::Regression,
-                    flaw_scope,
-                    split_kind,
+                    cegar: CegarOptions {
+                        max_states: 1_000,
+                        flaw_kind: FlawKind::Regression,
+                        flaw_scope,
+                        split_kind,
+                        ..CartesianAbstractionConfig::default().cegar
+                    },
                     ..Default::default()
                 })
                 .unwrap()

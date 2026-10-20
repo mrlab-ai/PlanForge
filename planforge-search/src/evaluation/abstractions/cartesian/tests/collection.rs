@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
 fn goal_collection_builds_every_goal_with_source_sets() {
@@ -81,18 +82,22 @@ fn goal_collection_builds_every_goal_with_source_sets() {
 
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 compute_source_sets: true,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
-            max_collection_states: 384,
+            max_collection_size: 384,
             total_max_time: None,
             progress_states: false,
             alternate_split_kinds: Some(true),
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -203,17 +208,21 @@ fn goal_collection_builds_every_goal_with_source_sets() {
 
     let standard =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 3,
-            max_collection_states: 384,
+            max_collection_size: 384,
             total_max_time: None,
             progress_states: false,
             alternate_split_kinds: None,
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -229,17 +238,21 @@ fn goal_collection_builds_every_goal_with_source_sets() {
 
     let bounded =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
-            max_collection_states: 4,
+            max_collection_size: 4,
             total_max_time: None,
             progress_states: false,
             alternate_split_kinds: Some(true),
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -314,17 +327,21 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
 
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
-            max_collection_states: 128,
+            max_collection_size: 128,
             total_max_time: None,
             progress_states: true,
             alternate_split_kinds: None,
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -476,17 +493,21 @@ fn progress_states_complete_after_reaching_the_full_goal() {
 
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
-            max_collection_states: 192,
+            max_collection_size: 192,
             total_max_time: None,
             progress_states: true,
             alternate_split_kinds: None,
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -593,17 +614,21 @@ fn progress_states_complete_after_a_dead_progress_state() {
 
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
-            max_collection_states: 192,
+            max_collection_size: 192,
             total_max_time: None,
             progress_states: true,
             alternate_split_kinds: None,
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -731,17 +756,21 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
 
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 3,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 3,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
-            max_collection_states: 9,
+            max_collection_size: 9,
             total_max_time: None,
             progress_states: true,
             alternate_split_kinds: None,
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,
@@ -907,17 +936,21 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
 
     let abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
-            abstraction: CartesianAbstractionConfig {
-                max_states: 64,
+            member: CartesianAbstractionConfig {
+                cegar: CegarOptions {
+                    max_states: 64,
+                    ..CartesianAbstractionConfig::default().cegar
+                },
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
-            max_collection_states: 192,
+            max_collection_size: 192,
             total_max_time: Some(Duration::ZERO),
             progress_states: false,
             alternate_split_kinds: Some(true),
-            fixed_split_kind: false,
+            split_kind: None,
+            random_seed: None,
             single_goal_tasks: true,
             stagnation_limit: 20.0,
             blacklist_trigger_percentage: 0.75,

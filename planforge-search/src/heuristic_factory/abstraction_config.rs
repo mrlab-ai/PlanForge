@@ -1,19 +1,16 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigValue, FromOptionValue};
+use crate::config::{ConfigArg, ConfigCall, ConfigValue, FromOptionValue, configure};
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
-use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
-use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use crate::evaluation::abstractions::component::AbstractionComponent;
-use crate::evaluation::abstractions::domain::collection::{
-    DomainAbstractionCollectionConfig, DomainAbstractionCollectionGenerator,
+use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
+use crate::evaluation::abstractions::domain::config::{
+    DomainAbstractionCollectionConfig, DomainAbstractionConfig,
 };
-use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -87,8 +84,7 @@ struct PdbSourceConfig {
 impl PdbSourceConfig {
     fn from_args(args: &[ConfigArg]) -> Result<Self, String> {
         let Some(patterns_arg) = args.iter().find(|arg| arg.key() == Some("patterns")) else {
-            let mut legacy = CanonicalNumericPdbConfig::default();
-            legacy.apply_options(args)?;
+            let legacy = configure("pdb", CanonicalNumericPdbConfig::default(), args)?;
             return Ok(Self {
                 patterns: PdbPatternsConfig::Systematic(SystematicPatternGeneratorConfig {
                     max_pdb_states: legacy.max_pdb_states,
@@ -153,16 +149,16 @@ impl PdbSourceConfig {
             }
         };
         match name {
-            "systematic" => {
-                let mut config = SystematicPatternGeneratorConfig::default();
-                config.apply_options(args)?;
-                Ok(PdbPatternsConfig::Systematic(config))
-            }
-            "greedy" => {
-                let mut config = GreedyPatternGeneratorConfig::default();
-                config.apply_options(args)?;
-                Ok(PdbPatternsConfig::Greedy(config))
-            }
+            "systematic" => Ok(PdbPatternsConfig::Systematic(configure(
+                name,
+                SystematicPatternGeneratorConfig::default(),
+                args,
+            )?)),
+            "greedy" => Ok(PdbPatternsConfig::Greedy(configure(
+                name,
+                GreedyPatternGeneratorConfig::default(),
+                args,
+            )?)),
             other => Err(format!(
                 "unknown PDB pattern strategy `{other}`; expected `systematic(...)` or `greedy(...)`"
             )),
@@ -411,10 +407,15 @@ pub(crate) fn build_components<'task>(
         let before = components.len();
         match source.name() {
             "domain" => {
-                let mut config = DomainAbstractionConfig::default();
-                config.apply_options(source.args())?;
-                cap_duration(&mut config.max_time, remaining);
-                config.compute_source_sets = component_use.needs_source_sets();
+                let mut config = configure(
+                    "domain",
+                    DomainAbstractionConfig {
+                        compute_source_sets: component_use.needs_source_sets(),
+                        ..DomainAbstractionConfig::default()
+                    },
+                    source.args(),
+                )?;
+                cap_duration(&mut config.cegar.max_time, remaining);
                 info!("Building domain abstraction source {source_index}...");
                 let abstraction = DomainAbstractionGenerator::new(config)
                     .and_then(|generator| generator.generate(task))
@@ -430,20 +431,21 @@ pub(crate) fn build_components<'task>(
                 ));
             }
             "domain_collection" => {
-                let mut config = DomainAbstractionCollectionConfig::default();
-                config.apply_options(source.args())?;
+                let mut config = configure(
+                    "domain_collection",
+                    DomainAbstractionCollectionConfig::default(),
+                    source.args(),
+                )?;
                 if let Some(remaining) = remaining {
-                    config.cap_construction_time(remaining.as_secs_f64());
+                    config.cap_construction_time(remaining);
                 }
                 // Operator regions do not influence CEGAR. Build them after the collection so
                 // canonical, label SCP, and region SCP receive the same generation budget.
-                config.set_compute_source_sets(false);
+                config.member.compute_source_sets = false;
                 info!("Building domain abstraction collection source {source_index}...");
-                let mut abstractions = DomainAbstractionCollectionGenerator::new(
-                    config,
-                )
-                .generate(task)
-                .map_err(|error| {
+                let mut abstractions = DomainAbstractionCollectionGenerator::new(config)
+                    .and_then(|generator| generator.generate(task))
+                    .map_err(|error| {
                     HeuristicBuildError::from_source(
                         error,
                         format!(
@@ -470,8 +472,9 @@ pub(crate) fn build_components<'task>(
                 ));
             }
             "cartesian" => {
-                let mut config = apply_cartesian_options(source.args(), component_use)?;
-                cap_duration(&mut config.max_time, remaining);
+                let mut config =
+                    configure("cartesian", cartesian_config(component_use), source.args())?;
+                cap_duration(&mut config.cegar.max_time, remaining);
                 info!("Building Cartesian abstraction source {source_index}...");
                 let abstraction = CartesianAbstractionGenerator::new(config)
                     .map_err(|error| {
@@ -495,9 +498,17 @@ pub(crate) fn build_components<'task>(
                 ));
             }
             "cartesian_collection" => {
-                let mut config = apply_cartesian_collection_options(source.args(), component_use)?;
-                cap_duration(&mut config.total_max_time, remaining);
-                cap_duration(&mut config.abstraction.max_time, remaining);
+                let mut config = configure(
+                    "cartesian_collection",
+                    CartesianAbstractionCollectionConfig {
+                        member: cartesian_config(component_use),
+                        ..CartesianAbstractionCollectionConfig::default()
+                    },
+                    source.args(),
+                )?;
+                if let Some(remaining) = remaining {
+                    config.cap_construction_time(remaining);
+                }
                 info!("Building Cartesian abstraction collection source {source_index}...");
                 let abstractions = CartesianAbstractionCollectionGenerator::new(config)
                     .map_err(|error| {
@@ -508,9 +519,9 @@ pub(crate) fn build_components<'task>(
                     HeuristicBuildError::from_source(error, format!("failed to build Cartesian abstraction collection source {source_index}"))
                 })?;
                 components.extend(abstractions.into_iter().enumerate().map(
-                    |(goal_id, abstraction)| {
+                    |(component_index, abstraction)| {
                         AbstractionComponent::cartesian(
-                            Some(format!("cartesian_{source_index}_goal_{goal_id}")),
+                            Some(format!("cartesian_{source_index}_{component_index}")),
                             abstraction,
                         )
                     },
@@ -650,147 +661,24 @@ pub(crate) fn apply_icaps26_cartesian_options(
     args: &[ConfigArg],
     component_use: ComponentUse,
 ) -> Result<Icaps26CartesianConfig, String> {
-    let mut config = Icaps26CartesianConfig {
+    configure(
+        "icaps26_cartesian",
+        Icaps26CartesianConfig {
+            compute_source_sets: component_use.needs_source_sets(),
+            retain_transition_system: component_use.needs_transition_system(),
+            ..Icaps26CartesianConfig::default()
+        },
+        args,
+    )
+}
+
+/// The Cartesian defaults for a component used as `component_use`.
+pub(crate) fn cartesian_config(component_use: ComponentUse) -> CartesianAbstractionConfig {
+    CartesianAbstractionConfig {
         compute_source_sets: component_use.needs_source_sets(),
         retain_transition_system: component_use.needs_transition_system(),
-        ..Icaps26CartesianConfig::default()
-    };
-    config.apply_options(args)?;
-    Ok(config)
-}
-
-pub(crate) fn apply_cartesian_options(
-    args: &[ConfigArg],
-    component_use: ComponentUse,
-) -> Result<CartesianAbstractionConfig, String> {
-    Ok(apply_cartesian_source_options(args, component_use, false)?.abstraction)
-}
-
-pub(crate) fn apply_cartesian_collection_options(
-    args: &[ConfigArg],
-    component_use: ComponentUse,
-) -> Result<CartesianAbstractionCollectionConfig, String> {
-    apply_cartesian_source_options(args, component_use, true)
-}
-
-fn apply_cartesian_source_options(
-    args: &[ConfigArg],
-    component_use: ComponentUse,
-    collection: bool,
-) -> Result<CartesianAbstractionCollectionConfig, String> {
-    const POSITIONAL_ORDER: &[&str] = &["max_states", "max_time", "combine_labels", "debug"];
-
-    let source = if collection {
-        "cartesian_collection"
-    } else {
-        "cartesian"
-    };
-    let mut config = CartesianAbstractionCollectionConfig::default();
-    let mut seen = HashSet::new();
-    let mut next_positional = 0;
-    for arg in args {
-        let key = match arg.key() {
-            Some(key) => key,
-            None => {
-                let key = POSITIONAL_ORDER.get(next_positional).ok_or_else(|| {
-                    format!(
-                        "too many positional arguments for `{source}` (maximum {})",
-                        POSITIONAL_ORDER.len()
-                    )
-                })?;
-                next_positional += 1;
-                key
-            }
-        };
-        if !seen.insert(key.to_string()) {
-            return Err(format!("duplicate option `{key}` for `{source}`"));
-        }
-        match key {
-            "max_states" => {
-                config.abstraction.max_states = usize::from_option_value(arg.value())?;
-            }
-            "max_time" => {
-                let seconds = f64::from_option_value(arg.value())?;
-                config.abstraction.max_time = if seconds.is_infinite() {
-                    None
-                } else {
-                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
-                        format!("invalid Cartesian max_time {seconds}: {error}")
-                    })?)
-                };
-            }
-            "combine_labels" => {
-                config.abstraction.combine_labels = bool::from_option_value(arg.value())?;
-            }
-            "debug" => {
-                config.abstraction.debug = bool::from_option_value(arg.value())?;
-            }
-            "random_seed" => {
-                config.abstraction.random_seed = Some(u64::from_option_value(arg.value())?);
-            }
-            "flaw_kind" => {
-                config.abstraction.flaw_kind = FlawKind::from_option_value(arg.value())?;
-            }
-            "flaw_scope" => {
-                config.abstraction.flaw_scope = FlawScope::from_option_value(arg.value())?;
-            }
-            "split_kind" => {
-                config.abstraction.split_kind = SplitKind::from_option_value(arg.value())?;
-                config.fixed_split_kind = collection;
-            }
-            "split_selection" => {
-                config.abstraction.split_selection =
-                    SplitSelection::from_option_value(arg.value())?;
-            }
-            "split_selection_rank" => {
-                config.abstraction.split_selection_rank =
-                    Some(usize::from_option_value(arg.value())?);
-            }
-            "variants_per_goal" if collection => {
-                config.variants_per_goal = usize::from_option_value(arg.value())?;
-            }
-            "collection_strategy" if collection => {
-                config.collection_strategy = CollectionStrategy::from_option_value(arg.value())?;
-            }
-            "progress_states" if collection => {
-                config.progress_states = bool::from_option_value(arg.value())?;
-            }
-            "alternate_split_kinds" if collection => {
-                config.alternate_split_kinds = Some(bool::from_option_value(arg.value())?);
-            }
-            "single_goal_tasks" if collection => {
-                config.single_goal_tasks = bool::from_option_value(arg.value())?;
-            }
-            "stagnation_limit" if collection => {
-                config.stagnation_limit = f64::from_option_value(arg.value())?;
-            }
-            "blacklist_trigger_percentage" if collection => {
-                config.blacklist_trigger_percentage = f64::from_option_value(arg.value())?;
-            }
-            "enable_blacklist_on_stagnation" if collection => {
-                config.enable_blacklist_on_stagnation = bool::from_option_value(arg.value())?;
-            }
-            "max_collection_size" if collection => {
-                config.max_collection_states = usize::from_option_value(arg.value())?;
-            }
-            "total_max_time" if collection => {
-                let seconds = f64::from_option_value(arg.value())?;
-                config.total_max_time = if seconds.is_infinite() {
-                    None
-                } else {
-                    Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
-                        format!("invalid Cartesian total_max_time {seconds}: {error}")
-                    })?)
-                };
-            }
-            other => {
-                return Err(format!("unknown option `{other}` for `{source}`"));
-            }
-        }
+        ..CartesianAbstractionConfig::default()
     }
-    config.abstraction.compute_source_sets = component_use.needs_source_sets();
-    config.abstraction.retain_transition_system = component_use.needs_transition_system();
-    Ok(config)
 }
 
 fn format_config_value(value: &ConfigValue) -> String {
@@ -810,7 +698,7 @@ mod tests {
     use super::HeuristicBuildError;
 
     use super::{
-        ComponentUse, PdbPatternsConfig, PdbSourceConfig, apply_cartesian_options,
+        ComponentUse, PdbPatternsConfig, PdbSourceConfig, cartesian_config, configure,
         remaining_construction_time, require_only_component_sources, split_component_sources,
     };
     use crate::evaluation::abstractions::common::cegar::SplitSelection;
@@ -964,8 +852,13 @@ mod tests {
                 Some("split_selection".to_string()),
                 ConfigValue::Atom(name.to_string()),
             )];
-            let config = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap();
-            assert_eq!(config.split_selection, expected);
+            let config = configure(
+                "cartesian",
+                cartesian_config(ComponentUse::Standalone),
+                &args,
+            )
+            .unwrap();
+            assert_eq!(config.cegar.split_selection, expected);
         }
     }
 
@@ -975,7 +868,15 @@ mod tests {
             Some("split_selection".to_string()),
             ConfigValue::Atom("magic".to_string()),
         )];
-        let error = apply_cartesian_options(&args, ComponentUse::Standalone).unwrap_err();
-        assert!(error.contains("invalid split_selection `magic`"), "{error}");
+        let error = configure(
+            "cartesian",
+            cartesian_config(ComponentUse::Standalone),
+            &args,
+        )
+        .unwrap_err();
+        assert!(
+            error.starts_with("cartesian(...): invalid split_selection `magic`"),
+            "{error}"
+        );
     }
 }

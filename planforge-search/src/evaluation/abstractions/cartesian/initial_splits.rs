@@ -29,6 +29,7 @@ pub(super) fn apply_initial_split(
     if task.numeric_conditions().is_condition_var(var) {
         let mut rng = SmallRng::seed_from_u64(
             config
+                .cegar
                 .random_seed
                 .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
         );
