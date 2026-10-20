@@ -124,6 +124,9 @@ pub enum CegarStopReason {
     MemoryLimit,
     IterationLimit,
     NoRefinableFlaw,
+    /// The refinement root is an abstract dead end. Abstractions are
+    /// admissible, so it is a concrete dead end as well.
+    DeadEnd,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

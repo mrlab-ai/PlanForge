@@ -35,34 +35,6 @@ use super::portfolio::{CollectionStrategy, derive_variant_seed};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 
-/// The concrete refinement root a member was asked to refine from maps to an
-/// abstract dead end of the member's abstraction.
-///
-/// Backends return this as a typed error so the collection can rebuild the
-/// member from the task initial state and make the lane terminal.
-#[derive(Debug)]
-pub(crate) struct RefinementRootDeadEnd {
-    detail: String,
-}
-
-impl RefinementRootDeadEnd {
-    pub(crate) fn new(detail: String) -> Self {
-        Self { detail }
-    }
-}
-
-impl std::fmt::Display for RefinementRootDeadEnd {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "concrete refinement root maps to an abstract dead end: {}",
-            self.detail
-        )
-    }
-}
-
-impl std::error::Error for RefinementRootDeadEnd {}
-
 /// The direction a member refines in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberDirection {
@@ -120,6 +92,9 @@ pub(crate) struct BuiltReport {
     /// Operator ids of the concrete plan that solved the member's goal task
     /// from its refinement root, if refinement found one.
     pub(crate) concrete_plan: Option<Vec<OperatorIndex>>,
+    /// Refinement stopped because the root is an abstract dead end, and so
+    /// a dead end of the member's goal task.
+    pub(crate) root_is_dead_end: bool,
 }
 
 /// The collection-level facts recorded on every goal-focused member.
@@ -141,7 +116,7 @@ pub(crate) trait GoalFocusedBackend {
     /// Build one member for `task` (the member's single-goal view, or the full
     /// task when it has no goal), refining from `root`, or from the task
     /// initial state when `root` is `None`. A root that is an abstract dead end
-    /// must be reported as [`RefinementRootDeadEnd`].
+    /// stops refinement and is reported in [`BuiltReport::root_is_dead_end`].
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
@@ -430,41 +405,34 @@ fn build_member<B: GoalFocusedBackend>(
     let built_from_initial_root =
         is_specialist || refinement_root.is_none() || !state.lane_root_advanced(member.variant_id);
 
-    let (mut built, report, reset_progressive_root) = match backend.build(
-        member_task,
-        refinement_root,
-        variant,
-        budget,
-    ) {
-        Ok((built, report)) => (built, report, false),
-        Err(error)
-            if refinement_root.is_some()
-                && error.downcast_ref::<RefinementRootDeadEnd>().is_some() =>
-        {
-            info!(
-                "{} collection: progressive root is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
-                B::NAME,
-                member.goal_id,
-                member.variant_id
-            );
-            let (built, report) = backend
-                    .build(member_task, None, variant, budget)
-                    .with_context(|| {
-                        format!(
-                            "failed to rebuild {} collection abstraction {abstraction_id} from the task initial state",
-                            B::NAME
-                        )
-                    })?;
-            (built, report, true)
-        }
-        Err(error) => {
-            return Err(error).with_context(|| {
+    let (built, report) = backend
+        .build(member_task, refinement_root, variant, budget)
+        .with_context(|| {
+            format!(
+                "failed to build {} collection abstraction {abstraction_id}",
+                B::NAME
+            )
+        })?;
+    // A dead progressive root says nothing about the initial state, so the
+    // member is rebuilt from there; a dead initial state is a result.
+    let reset_progressive_root = refinement_root.is_some() && report.root_is_dead_end;
+    let (mut built, report) = if reset_progressive_root {
+        info!(
+            "{} collection: progressive root is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
+            B::NAME,
+            member.goal_id,
+            member.variant_id
+        );
+        backend
+            .build(member_task, None, variant, budget)
+            .with_context(|| {
                 format!(
-                    "failed to build {} collection abstraction {abstraction_id}",
+                    "failed to rebuild {} collection abstraction {abstraction_id} from the task initial state",
                     B::NAME
                 )
-            });
-        }
+            })?
+    } else {
+        (built, report)
     };
 
     let membership = (!variant.full_task).then(|| CollectionMembership {

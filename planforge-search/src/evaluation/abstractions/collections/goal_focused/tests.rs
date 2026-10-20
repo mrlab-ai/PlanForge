@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 
-use anyhow::bail;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
@@ -178,6 +177,7 @@ impl GoalFocusedBackend for ScriptedBackend {
                 initial_h: 0.0,
                 num_states: 1,
                 concrete_plan: Some(Vec::new()),
+                root_is_dead_end: false,
             };
             return Ok((
                 Member {
@@ -209,23 +209,18 @@ impl GoalFocusedBackend for ScriptedBackend {
                 .collect::<Option<Vec<_>>>()
                 .map(|lengths| lengths.into_iter().max().expect("a member has a goal"))
         };
-        let Some(length) = plan_length(call.root_x.unwrap_or(0.0)) else {
-            bail!(RefinementRootDeadEnd::new(format!(
-                "scripted goal {goal_id} from x={:?}",
-                call.root_x
-            )));
-        };
+        let length = plan_length(call.root_x.unwrap_or(0.0));
         let initial_h = match &self.initial_h {
             Some(initial_h) => initial_h[goal_id],
-            None => {
-                plan_length(0.0).expect("scripted goals are solvable from the initial state") as f64
-            }
+            None => plan_length(0.0).map_or(f64::INFINITY, |length| length as f64),
         };
         let report = BuiltReport {
             initial_h,
             num_states: self.states_per_member.min(budget.remaining_states),
-            concrete_plan: (!self.unsolved_calls.contains(&call_index))
-                .then(|| vec![OperatorIndex::new(0); length]),
+            concrete_plan: length
+                .filter(|_| !self.unsolved_calls.contains(&call_index))
+                .map(|length| vec![OperatorIndex::new(0); length]),
+            root_is_dead_end: length.is_none(),
         };
         Ok((
             Member {
@@ -486,20 +481,30 @@ fn a_dead_lane_root_is_rebuilt_from_the_initial_state_and_ends_the_lane() {
 }
 
 #[test]
-fn a_dead_initial_state_is_an_error() {
+fn a_member_whose_initial_state_is_dead_is_kept() {
+    // `x <= -1` is unreachable from x=0 by increments: the member proves the
+    // task unsolvable, so the collection keeps it instead of rebuilding.
     let bounds = [Bound::AtLeast(1.0), Bound::AtMost(-1.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
-    let error = build_goal_focused_collection(
+    let members = build_goal_focused_collection(
         &task,
         &schedule(CollectionStrategy::Standard, 1, false),
         &backend,
     )
-    .unwrap_err();
+    .unwrap();
 
     assert!(
-        error.downcast_ref::<RefinementRootDeadEnd>().is_some(),
-        "{error:#}"
+        members.iter().any(|member| member.call.goal_id == Some(1)),
+        "the dead goal's member is part of the collection"
+    );
+    assert!(
+        backend
+            .calls
+            .borrow()
+            .iter()
+            .all(|call| call.root_x.is_none()),
+        "a dead initial state is never rebuilt"
     );
 }
 

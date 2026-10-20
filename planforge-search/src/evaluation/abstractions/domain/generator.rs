@@ -9,6 +9,7 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use super::cegar::Cegar;
 use super::config::CegarConfig;
 use super::factory::DistanceTableOptions;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
 
@@ -95,9 +96,11 @@ impl DomainAbstractionGenerator {
                     distance_table.distances.len()
                 )
             })?;
+        // The refinement root is reachable from the initial state, so a dead
+        // initial state means a dead root, which is where CEGAR stops.
         ensure!(
-            initial_h.is_finite(),
-            "domain abstraction initial state is abstract-dead after CEGAR; initial_hash={}, states={}, abstract_ops={}, prop_domains={:?}, numeric_domains={:?}",
+            initial_h.is_finite() || stop_reason == CegarStopReason::DeadEnd,
+            "domain abstraction initial state is abstract-dead, but CEGAR stopped with {stop_reason:?}; initial_hash={}, states={}, abstract_ops={}, prop_domains={:?}, numeric_domains={:?}",
             distance_table.initial_state_hash,
             distance_table.distances.len(),
             abstract_operators.len(),
@@ -123,6 +126,7 @@ impl DomainAbstractionGenerator {
             combine_labels: self.config.combine_labels,
             relevant_operator_ids,
             abstract_operators,
+            transition_data_retained: true,
             abstract_source_sets,
             interval_transition_system: RefCell::new(None),
             metadata: DomainAbstractionMetadata {

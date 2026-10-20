@@ -6,6 +6,8 @@ pub enum CartesianStopReason {
     StateLimit,
     TimeLimit,
     MemoryLimit,
+    /// The refinement root is an abstract dead end.
+    DeadEnd,
 }
 
 #[derive(Debug, Clone)]

@@ -107,6 +107,7 @@ impl GoalFocusedBackend for CartesianAbstractionCollectionGenerator {
                 [abstraction.distance_table.initial_state_hash],
             num_states: abstraction.num_states(),
             concrete_plan: abstraction.metadata.concrete_plan_operator_ids.clone(),
+            root_is_dead_end: abstraction.metadata.stop_reason == CartesianStopReason::DeadEnd,
         };
         Ok((abstraction, report))
     }

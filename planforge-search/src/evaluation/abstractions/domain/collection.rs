@@ -18,7 +18,7 @@ use crate::evaluation::abstractions::collections::goal_focused::{
     GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::FlawKind;
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
 use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::domain::abstract_operators::DomainMapping;
@@ -415,9 +415,10 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
     }
 
     /// Full-task members with random restarts until the size, time,
-    /// stagnation, or memory limit, or until a member's abstract plan is a
-    /// concrete plan: that member is perfect along an optimal plan, so no
-    /// further member can help the search.
+    /// stagnation, or memory limit, or until a member settles the task: its
+    /// abstract plan is a concrete plan, so it is perfect along an optimal
+    /// plan, or the initial state is an abstract dead end, so the task is
+    /// unsolvable. No further member can help the search then.
     fn generate_standard_collection(
         &self,
         task: &dyn AbstractNumericTask,
@@ -532,7 +533,13 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
             )
             .unwrap_or(u128::MAX);
 
-            let solved = abstraction.metadata.solved_by_self;
+            let settled_by = if abstraction.metadata.solved_by_self {
+                Some("concrete plan")
+            } else if abstraction.metadata.stop_reason == Some(CegarStopReason::DeadEnd) {
+                Some("initial state is a dead end")
+            } else {
+                None
+            };
             let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
             let elapsed_after_generation = start.elapsed().as_secs_f64();
             if generated_keys.insert(abstraction_key) {
@@ -559,8 +566,8 @@ impl DomainAbstractionCollectionGeneratorMultipleCegar {
                 );
             }
 
-            if solved {
-                stop_reason = "concrete plan";
+            if let Some(reason) = settled_by {
+                stop_reason = reason;
                 break;
             }
             let stagnated = elapsed_after_generation - time_point_of_last_new_abstraction
@@ -730,6 +737,7 @@ impl GoalFocusedBackend for GoalFocusedDomainBackend<'_> {
                 [abstraction.distance_table.initial_state_hash],
             num_states: abstraction.distance_table.distances.len(),
             concrete_plan: abstraction.metadata.concrete_plan_operator_ids.clone(),
+            root_is_dead_end: abstraction.metadata.stop_reason == Some(CegarStopReason::DeadEnd),
         };
         Ok((abstraction, report))
     }

@@ -63,8 +63,7 @@ use super::common::cegar::{CegarDriver, CegarIterationResult, CegarStopReason, F
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, FULL_TASK_PROGRESSIVE_ROOTS_ERROR, GoalFocusedBackend,
-    GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, RefinementRootDeadEnd,
-    build_goal_focused_collection,
+    GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cartesian_set::{

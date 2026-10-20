@@ -443,6 +443,7 @@ fn build_handcrafted_abstraction(
         combine_labels: false,
         relevant_operator_ids,
         abstract_operators,
+        transition_data_retained: true,
         abstract_source_sets,
         interval_transition_system: RefCell::new(None),
         metadata: DomainAbstractionMetadata::default(),

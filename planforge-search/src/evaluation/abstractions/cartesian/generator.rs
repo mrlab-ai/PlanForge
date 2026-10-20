@@ -97,11 +97,8 @@ impl CartesianAbstractionGenerator {
                         solved_plan = Some(plan);
                         Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan))
                     }
-                    PlanCheck::AbstractDeadEnd(abstract_state_id) => {
-                        Err(RefinementRootDeadEnd::new(format!(
-                            "Cartesian abstract state {abstract_state_id}"
-                        ))
-                        .into())
+                    PlanCheck::AbstractDeadEnd => {
+                        Ok(CegarIterationResult::Stop(CegarStopReason::DeadEnd))
                     }
                     PlanCheck::Refine(split) => {
                         if working.states.len() >= self.config.max_states {
@@ -143,6 +140,7 @@ impl CartesianAbstractionGenerator {
             CegarStopReason::SizeLimit => CartesianStopReason::StateLimit,
             CegarStopReason::TimeLimit => CartesianStopReason::TimeLimit,
             CegarStopReason::MemoryLimit => CartesianStopReason::MemoryLimit,
+            CegarStopReason::DeadEnd => CartesianStopReason::DeadEnd,
             CegarStopReason::IterationLimit | CegarStopReason::NoRefinableFlaw => {
                 unreachable!("Cartesian CEGAR driver returned unsupported stop reason")
             }

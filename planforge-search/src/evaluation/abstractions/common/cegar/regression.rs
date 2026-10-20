@@ -690,7 +690,7 @@ pub(crate) fn regression_plan_check(
     );
     let initial_state = view.abstract_state(&prop_values, &refinement_root.numeric)?;
     if !view.goal_distance(initial_state).is_finite() {
-        return Ok(PlanCheck::AbstractDeadEnd(initial_state));
+        return Ok(PlanCheck::AbstractDeadEnd);
     }
     let plan = abstract_plan(view, initial_state)?;
     let state_ids = std::iter::once(initial_state)

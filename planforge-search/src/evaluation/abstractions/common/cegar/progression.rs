@@ -51,7 +51,8 @@ const DEVIATION_TAG: u64 = 0x4445_5649;
 
 pub(crate) enum PlanCheck {
     ConcretePlan(ConcretePlan),
-    AbstractDeadEnd(usize),
+    /// The refinement root is an abstract dead end.
+    AbstractDeadEnd,
     Refine(Split),
 }
 
@@ -88,7 +89,7 @@ pub(crate) fn replay_optimal_abstract_trace(
     );
     let initial_abstract_state = view.abstract_state(&prop_values, &numeric)?;
     if !view.goal_distance(initial_abstract_state).is_finite() {
-        return Ok(PlanCheck::AbstractDeadEnd(initial_abstract_state));
+        return Ok(PlanCheck::AbstractDeadEnd);
     }
     let abstract_plan_cost = view.goal_distance(initial_abstract_state);
     let mut operator_ids: Vec<OperatorIndex> = Vec::new();
@@ -275,7 +276,13 @@ pub(crate) fn replay_entire_optimal_abstract_trace(
         let abstract_distance = view.goal_distance(abstract_state);
         if !abstract_distance.is_finite() {
             return if candidates.is_empty() {
-                Ok(PlanCheck::AbstractDeadEnd(abstract_state))
+                // Without a flaw the replay is still on the optimal abstract
+                // plan, whose states all reach the goal: this is the root.
+                assert!(
+                    operator_ids.is_empty(),
+                    "flawless whole-plan replay reached an abstract dead end"
+                );
+                Ok(PlanCheck::AbstractDeadEnd)
             } else {
                 select_refinement(view, semantics, candidates)
             };

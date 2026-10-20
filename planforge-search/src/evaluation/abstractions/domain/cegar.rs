@@ -24,7 +24,6 @@ use super::initial_splits::{
 };
 use super::partitions::NumericPartitions;
 use super::view::{DomainView, RefinementLimits};
-use crate::evaluation::abstractions::collections::goal_focused::RefinementRootDeadEnd;
 use crate::evaluation::abstractions::common::cegar::progression::{
     ConcretePlan, PlanCheck, replay_entire_optimal_abstract_trace, replay_optimal_abstract_trace,
 };
@@ -213,11 +212,8 @@ impl Cegar {
                         solved_plan = Some(plan);
                         return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
                     }
-                    PlanCheck::AbstractDeadEnd(state) => {
-                        return Err(RefinementRootDeadEnd::new(format!(
-                            "domain abstract state {state} at CEGAR iteration {iteration}"
-                        ))
-                        .into());
+                    PlanCheck::AbstractDeadEnd => {
+                        return Ok(CegarIterationResult::Stop(CegarStopReason::DeadEnd));
                     }
                     PlanCheck::Refine(split) => split,
                 };
