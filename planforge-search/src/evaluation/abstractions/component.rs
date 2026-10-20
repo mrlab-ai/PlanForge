@@ -8,6 +8,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionHeuristic,
 };
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
@@ -227,24 +228,21 @@ impl<'task> AbstractionComponent<'task> {
                 if !abstraction.relevant_operator_ids.is_empty() {
                     abstraction.relevant_operator_ids.clone()
                 } else {
-                    let abstraction_task = abstraction.task_for_factory(task);
                     let mut generator = abstraction
                         .factory
-                        .make_operator_generator(abstraction_task, abstraction.combine_labels)
+                        .make_operator_generator(task, abstraction.combine_labels)
                         .map_err(|error| {
                             format!(
                                 "failed to build domain abstraction operator generator: {error:#}"
                             )
                         })?;
-                    let operators = generator
-                        .build_abstract_operators(abstraction_task)
-                        .map_err(|error| {
-                            format!("failed to build domain abstraction operators: {error:#}")
-                        })?;
+                    let operators = generator.build_abstract_operators(task).map_err(|error| {
+                        format!("failed to build domain abstraction operators: {error:#}")
+                    })?;
                     abstraction
                         .factory
                         .relevant_operator_ids_from_operators(
-                            abstraction_task,
+                            task,
                             abstraction.combine_labels,
                             &operators,
                             DistanceTableOptions::default(),

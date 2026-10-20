@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 /// A goal on a derived variable is refused, by name.
@@ -137,7 +138,7 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
     .unwrap();
     let h = abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
     assert!(h <= 2.0);
-    assert!(!abstraction.metadata.solved_by_self);
+    assert!(!abstraction.metadata.solved_by_self());
     assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::SizeLimit);
     assert!(abstraction.metadata.pending_flaw.is_some());
     assert!(abstraction.abstract_source_sets.is_empty());

@@ -242,11 +242,10 @@ pub(super) fn abstraction_collection_iteration(
     components: &[AbstractionComponent<'_>],
     component_id: usize,
 ) -> usize {
-    components
-        .get(component_id)
-        .and_then(AbstractionComponent::as_domain)
-        .and_then(|abstraction| abstraction.metadata.collection_iteration)
-        .unwrap_or(usize::MAX)
+    components[component_id]
+        .as_domain()
+        .and_then(|abstraction| abstraction.metadata.collection)
+        .map_or(usize::MAX, |record| record.iteration)
 }
 
 pub(super) fn max_heuristic_greedy_order(

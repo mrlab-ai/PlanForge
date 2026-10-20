@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -89,7 +90,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             "unexpected initial h for {flaw_scope}"
         );
         assert!(
-            abstraction.metadata.solved_by_self,
+            abstraction.metadata.solved_by_self(),
             "{flaw_scope} progression failed to produce a concrete plan"
         );
         assert_eq!(

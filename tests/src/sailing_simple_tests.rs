@@ -45,6 +45,7 @@
 //! [`BlindCost`]. CI covers them in the `release tests` job; locally,
 //! `cargo test -p tests --release`.
 
+use planforge_search::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -257,7 +258,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     .generate(&task)
     .expect("unrestricted domain abstraction should solve sailing-simple");
     assert!(
-        domain_abstraction.metadata.solved_by_self,
+        domain_abstraction.metadata.solved_by_self(),
         "unrestricted domain abstraction stopped without a real plan: metadata={:?}, prop_domains={:?}, numeric_domains={:?}",
         domain_abstraction.metadata,
         domain_abstraction.factory.domain_sizes(),
@@ -281,7 +282,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     .expect("unrestricted Cartesian abstraction generator should construct")
     .generate(&task)
     .expect("unrestricted Cartesian abstraction should solve sailing-simple");
-    assert!(cartesian_abstraction.metadata.solved_by_self);
+    assert!(cartesian_abstraction.metadata.solved_by_self());
     assert_exact_single_abstraction_search(
         &task,
         CartesianAbstractionHeuristic::new(None, cartesian_abstraction),
@@ -468,10 +469,15 @@ fn sailing_simple_ratchet_equilibrium() {
     let saved_p0_group_counts = abstractions
         .iter()
         .filter_map(|abstraction| {
-            if abstraction.metadata.full_goal_task != Some(false) {
+            if abstraction
+                .metadata
+                .collection
+                .map(|record| record.full_task)
+                != Some(false)
+            {
                 return None;
             }
-            let factory_task = abstraction.task_for_factory(&task);
+            let factory_task = &task;
             let near_x = numeric_var_id_by_name_parts(
                 factory_task,
                 &["difference", "x(?boat_0)", "(b0, p0)"],
@@ -569,9 +575,11 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
         );
     }
     assert!(
-        abstractions
-            .iter()
-            .all(|abstraction| abstraction.metadata.full_goal_task == Some(false)),
+        abstractions.iter().all(|abstraction| abstraction
+            .metadata
+            .collection
+            .map(|record| record.full_task)
+            == Some(false)),
         "multi-goal goal-focused collection must not generate full-goal abstractions"
     );
 }

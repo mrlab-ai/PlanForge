@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use planforge_sas::numeric_task::VariableIndex;
 
 use crate::evaluation::abstractions::collections::config::{
-    CollectionConfig, CollectionMember, MemberSpecialization,
+    CollectionConfig, MemberConfig, MemberSpecialization,
 };
 use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
 use crate::evaluation::abstractions::collections::standard::StandardMember;
@@ -66,7 +66,7 @@ impl Default for DomainAbstractionConfig {
     }
 }
 
-impl CollectionMember for DomainAbstractionConfig {
+impl MemberConfig for DomainAbstractionConfig {
     fn cegar(&self) -> &CegarOptions {
         &self.cegar
     }

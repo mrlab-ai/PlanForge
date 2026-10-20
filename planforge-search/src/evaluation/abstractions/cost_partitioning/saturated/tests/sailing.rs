@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -14,11 +15,14 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
-use crate::evaluation::abstractions::common::cegar::SplitKind;
-use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::abstraction::{
-    DomainAbstractionMetadata, compute_hash_multipliers,
+use crate::evaluation::abstractions::common::abstraction::{
+    AbstractionMetadata, AbstractionUse, CollectionRecord,
 };
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
+use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
+use crate::evaluation::abstractions::common::task::SingleGoalTask;
+use crate::evaluation::abstractions::domain::abstraction::compute_hash_multipliers;
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
@@ -87,7 +91,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
     assert_eq!(
         abstractions
             .iter()
-            .map(CartesianAbstraction::num_states)
+            .map(CegarAbstraction::num_states)
             .sum::<usize>(),
         8_000
     );
@@ -229,14 +233,10 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
         let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
-        abstraction.metadata = DomainAbstractionMetadata {
-            collection_iteration: Some(index + 1),
-            collection_strategy: Some("handcrafted_full_task_sailing".to_string()),
-            flaw_kind: None,
-            full_goal_task: Some(false),
-            max_states: Some(10_000),
-            ..DomainAbstractionMetadata::default()
-        };
+        abstraction.metadata.collection = Some(CollectionRecord {
+            iteration: index + 1,
+            full_task: false,
+        });
         let states = abstraction.distance_table.distances.len();
         assert!(
             states <= 10_000,
@@ -454,7 +454,19 @@ fn build_handcrafted_abstraction(
         transition_data_retained: true,
         abstract_source_sets,
         interval_transition_system: RefCell::new(None),
-        metadata: DomainAbstractionMetadata::default(),
+        metadata: AbstractionMetadata {
+            abstraction_use: AbstractionUse::CollectionMember,
+            ..AbstractionMetadata::standalone(
+                CegarOutcome {
+                    stop_reason: CegarStopReason::SizeLimit,
+                    concrete_plan: None,
+                    pending_flaw: None,
+                    refinements: 0,
+                },
+                SplitKind::Concrete,
+                None,
+            )
+        },
     })
 }
 
@@ -477,7 +489,7 @@ fn initial_abstract_state_ids(
             AbstractionComponent::Cartesian(cartesian) => Some(
                 cartesian
                     .abstraction()
-                    .abstract_state_id(prop, numeric)
+                    .abstract_state(prop, numeric)
                     .expect("failed to map initial Cartesian state"),
             ),
             AbstractionComponent::PatternDatabase(pdb) => pdb

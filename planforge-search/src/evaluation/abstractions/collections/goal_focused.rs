@@ -33,7 +33,9 @@ use planforge_sas::explicit_state::{ExplicitState, ExplicitStateSpace};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
+use super::member::{BuiltReport, CollectionMember};
 use super::strategy::{CollectionStrategy, derive_variant_seed};
+use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 
@@ -51,7 +53,7 @@ pub(crate) enum MemberKind {
 
 /// How the collection wants one member constructed.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct GoalVariant {
+pub struct GoalVariant {
     /// The goal the member is scheduled under; `None` for a goal-free task.
     pub(crate) goal_id: Option<usize>,
     /// The member abstracts the full task: a goal-free task, or a collection
@@ -71,23 +73,9 @@ pub(crate) struct GoalVariant {
 /// What is left of the collection's state and time budget when one member is
 /// about to be built.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemberBudget {
+pub struct MemberBudget {
     pub(crate) remaining_states: usize,
     pub(crate) remaining_time: Option<Duration>,
-}
-
-/// What the collection needs to know about a built member.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct BuiltReport {
-    /// `h(s0)` of the member, computed on the un-rooted goal task.
-    pub(crate) initial_h: f64,
-    pub(crate) num_states: usize,
-    /// Operator ids of the concrete plan that solved the member's goal task
-    /// from its refinement root, if refinement found one.
-    pub(crate) concrete_plan: Option<Vec<OperatorIndex>>,
-    /// Refinement stopped because the root is an abstract dead end, and so
-    /// a dead end of the member's goal task.
-    pub(crate) root_is_dead_end: bool,
 }
 
 /// The collection-level facts recorded on every goal-focused member.
@@ -101,7 +89,7 @@ pub struct CollectionMembership {
 
 /// One abstraction backend of a goal-focused collection.
 pub(crate) trait GoalFocusedBackend {
-    type Member;
+    type Member: CollectionMember;
 
     /// Backend name used in log and error messages.
     const NAME: &'static str;
@@ -116,15 +104,7 @@ pub(crate) trait GoalFocusedBackend {
         root: Option<&ExplicitState>,
         variant: &GoalVariant,
         budget: MemberBudget,
-    ) -> Result<(Self::Member, BuiltReport)>;
-
-    /// Tag a finished member as part of the collection. `membership` is `None`
-    /// for the single member of a goal-free task.
-    fn record_membership(
-        &self,
-        member: &mut Self::Member,
-        membership: Option<CollectionMembership>,
-    );
+    ) -> Result<Self::Member>;
 }
 
 /// Why `single_goal_tasks=false` and `progress_states=true` are
@@ -402,7 +382,7 @@ fn build_member<B: GoalFocusedBackend>(
         || refinement_root.is_none()
         || !state.progress_state_is_advanced(member.variant_id);
 
-    let (built, report) = backend
+    let built = backend
         .build(member_task, refinement_root, variant, budget)
         .with_context(|| {
             format!(
@@ -412,8 +392,8 @@ fn build_member<B: GoalFocusedBackend>(
         })?;
     // A dead progress state says nothing about the initial state, so the
     // member is rebuilt from there; a dead initial state is a result.
-    let reset_progress_state = refinement_root.is_some() && report.root_is_dead_end;
-    let (mut built, report) = if reset_progress_state {
+    let reset_progress_state = refinement_root.is_some() && built.report().root_is_dead_end;
+    let mut built = if reset_progress_state {
         info!(
             "{} collection: progress state is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
             B::NAME,
@@ -429,7 +409,7 @@ fn build_member<B: GoalFocusedBackend>(
                 )
             })?
     } else {
-        (built, report)
+        built
     };
 
     let membership = (!variant.full_task).then(|| CollectionMembership {
@@ -440,11 +420,17 @@ fn build_member<B: GoalFocusedBackend>(
             && state.progress_state_is_advanced(member.variant_id)
             && !reset_progress_state,
     });
-    backend.record_membership(&mut built, membership);
+    built.record(
+        CollectionRecord {
+            iteration: abstraction_id + 1,
+            full_task: variant.full_task,
+        },
+        membership,
+    );
 
     Ok(BuiltMember {
+        report: built.report(),
         member: built,
-        report,
         built_from_initial_root,
         reset_progress_state,
     })

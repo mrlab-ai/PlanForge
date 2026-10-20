@@ -209,18 +209,18 @@ impl Icaps26CartesianGenerator {
             transition_system,
             relevant_operator_ids,
             abstract_source_sets: source_sets,
-            metadata: CartesianAbstractionMetadata {
-                solved_by_self: solved_plan.is_some(),
+            metadata: AbstractionMetadata {
                 abstraction_use: AbstractionUse::Standalone,
                 stop_reason,
+                concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
                 pending_flaw,
                 refinements,
-                collection_member: None,
                 split_kind: SplitKind::Wanted,
                 split_selection_rank: None,
-                concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
-                transition_count,
+                collection: None,
+                collection_member: None,
             },
+            transition_count,
         })
     }
 }

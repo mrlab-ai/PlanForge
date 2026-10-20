@@ -72,13 +72,12 @@ impl ComponentSaturation<'_, '_> {
         match (self.component, self.cost_space) {
             (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Label) => {
                 let abstraction = heuristic.abstraction();
-                let abstraction_task = abstraction.task_for_factory(self.task);
                 let operator_costs = residual.operator_costs_for_label_cp();
                 let (distances, saturated) = if let Some(state_id) = cap_state_id {
                     let table = abstraction
                         .factory
                         .build_goal_distances_for_goals(
-                            abstraction_task,
+                            self.task,
                             self.combine_labels,
                             &operator_costs,
                             &abstraction.distance_table.goal_facts,
@@ -96,7 +95,7 @@ impl ComponentSaturation<'_, '_> {
                     })?;
                     SaturatedCostPartitioningHeuristic::saturate_domain_perim(
                         abstraction,
-                        abstraction_task,
+                        self.task,
                         self.combine_labels,
                         &operator_costs,
                         h_cap,
@@ -104,7 +103,7 @@ impl ComponentSaturation<'_, '_> {
                 } else {
                     SaturatedCostPartitioningHeuristic::saturate_domain(
                         abstraction,
-                        abstraction_task,
+                        self.task,
                         self.combine_labels,
                         &operator_costs,
                         deadline,
@@ -114,9 +113,8 @@ impl ComponentSaturation<'_, '_> {
             }
             (AbstractionComponent::Domain(heuristic), SaturationCostSpace::Interval) => {
                 let abstraction = heuristic.abstraction();
-                let abstraction_task = abstraction.task_for_factory(self.task);
                 let transition_system = abstraction
-                    .interval_transition_system(abstraction_task, deadline)
+                    .interval_transition_system(self.task, deadline)
                     .map_err(|error| {
                         SaturatedCostPartitioningHeuristic::construction_error(
                             "failed to build domain regional transition system",

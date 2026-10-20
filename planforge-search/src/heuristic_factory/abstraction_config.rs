@@ -6,6 +6,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
 use crate::evaluation::abstractions::domain::config::{
@@ -604,7 +605,7 @@ pub(crate) fn build_components<'task>(
     let cartesian_transitions = components
         .iter()
         .filter_map(AbstractionComponent::as_cartesian)
-        .map(|abstraction| abstraction.metadata.transition_count)
+        .map(|abstraction| abstraction.transition_count)
         .try_fold(0usize, |total, transitions| {
             total
                 .checked_add(transitions)

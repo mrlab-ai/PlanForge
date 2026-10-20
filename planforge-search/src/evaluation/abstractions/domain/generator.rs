@@ -18,24 +18,23 @@ use super::initial_splits::{
 };
 use super::partitions::NumericPartitions;
 use super::view::{DomainRefinement, RefinementLimits};
-use crate::evaluation::abstractions::common::cegar::progression::ConcretePlan;
-use crate::evaluation::abstractions::common::cegar::refine::{CegarRun, refine};
+use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
+use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
 use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
-use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
+use crate::evaluation::abstractions::common::task::RootedTask;
 
-use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata, compute_hash_multipliers};
+use super::abstraction::{DomainAbstraction, compute_hash_multipliers};
+use super::collection::AbstractionKey;
 use super::debug_dump::log_final_abstraction;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 
 /// The domain abstraction CEGAR refined, before its distances are finalized.
 #[derive(Debug)]
 pub(super) struct DomainRefinementOutcome {
     pub(super) factory: DomainAbstractionFactory,
-    pub(super) stop_reason: CegarStopReason,
-    /// The concrete plan from the task initial state, exactly when CEGAR
-    /// stopped with [`CegarStopReason::ConcretePlan`].
-    pub(super) concrete_plan: Option<ConcretePlan>,
+    pub(super) outcome: CegarOutcome,
 }
 
 /// Refines a domain abstraction of `task` by CEGAR from the initial state of
@@ -118,11 +117,7 @@ pub(super) fn refine_domain_abstraction(
     if config.cegar.debug {
         log_final_abstraction(task, &factory);
     }
-    Ok(DomainRefinementOutcome {
-        factory,
-        stop_reason: outcome.stop_reason,
-        concrete_plan: outcome.concrete_plan,
-    })
+    Ok(DomainRefinementOutcome { factory, outcome })
 }
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
@@ -131,37 +126,31 @@ pub struct DomainAbstractionGenerator {
     config: DomainAbstractionConfig,
 }
 
-impl DomainAbstractionGenerator {
-    pub fn new(config: DomainAbstractionConfig) -> Result<Self> {
-        ensure!(config.cegar.max_states > 0, "max_states must be > 0");
-        ensure!(
-            config.cegar.max_iterations > 0,
-            "max_iterations must be > 0"
-        );
+impl AbstractionGenerator for DomainAbstractionGenerator {
+    type Config = DomainAbstractionConfig;
+    type Abstraction = DomainAbstraction;
+    type Key = AbstractionKey;
+
+    const NAME: &'static str = "domain";
+
+    fn new(config: DomainAbstractionConfig) -> Result<Self> {
+        config.cegar.validate()?;
         Ok(Self { config })
     }
 
-    pub fn config(&self) -> &DomainAbstractionConfig {
-        &self.config
+    fn key(abstraction: &DomainAbstraction) -> AbstractionKey {
+        AbstractionKey::from_abstraction(abstraction)
     }
 
-    /// Builds a domain abstraction and its abstract distance table.
-    pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<DomainAbstraction> {
-        self.generate_from_root(task, None)
-    }
-
-    /// Builds a domain abstraction whose CEGAR loop searches for flaws from
-    /// `refinement_root` instead of the task initial state.
-    ///
     /// The root only chooses counterexamples. The abstraction still partitions
     /// the full state space of `task`, operator costs stay those of `task`, and
     /// the distance table's initial state is the initial state of `task`.
-    pub(crate) fn generate_from_root(
+    fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
     ) -> Result<DomainAbstraction> {
-        let outcome = match refinement_root {
+        let DomainRefinementOutcome { factory, outcome } = match refinement_root {
             Some(root) => {
                 let rooted_task = RootedTask::new(task, root)?;
                 refine_domain_abstraction(&self.config, &rooted_task)
@@ -169,10 +158,7 @@ impl DomainAbstractionGenerator {
             None => refine_domain_abstraction(&self.config, task),
         }
         .context("CEGAR failed to build abstraction")?;
-        let solved_by_self = outcome.concrete_plan.is_some();
         let stop_reason = outcome.stop_reason;
-        let concrete_plan_operator_ids = outcome.concrete_plan.map(ConcretePlan::into_operator_ids);
-        let factory = outcome.factory;
         let mut operator_generator =
             factory.make_operator_generator(task, self.config.cegar.combine_labels)?;
         let abstract_operators = operator_generator
@@ -184,10 +170,9 @@ impl DomainAbstractionGenerator {
                 .context("failed to build abstract-operator regions")?
         } else {
             // Heuristics that read only the distance table (canonical, max,
-            // single domain abstraction) do not consume operator regions; skipping
-            // saves ~12 GB on minecraft-sword-advanced/prob_30x30_5. SCP /
-            // Callers that need regional SCP can construct operator regions from
-            // the finalized abstraction after collection generation.
+            // single domain abstraction) do not consume operator regions;
+            // skipping them saves ~12 GB on minecraft-sword-advanced/prob_30x30_5.
+            // Regional SCP builds them from the finished abstraction.
             Vec::new()
         };
         let distance_table = factory
@@ -242,15 +227,11 @@ impl DomainAbstractionGenerator {
             transition_data_retained: true,
             abstract_source_sets,
             interval_transition_system: RefCell::new(None),
-            metadata: DomainAbstractionMetadata {
-                solved_by_self,
-                abstraction_use: AbstractionUse::Standalone,
-                stop_reason: Some(stop_reason),
-                split_kind: self.config.cegar.split_kind,
-                split_selection_rank: self.config.cegar.split_selection_rank,
-                concrete_plan_operator_ids,
-                ..DomainAbstractionMetadata::default()
-            },
+            metadata: AbstractionMetadata::standalone(
+                outcome,
+                self.config.cegar.split_kind,
+                self.config.cegar.split_selection_rank,
+            ),
         })
     }
 }

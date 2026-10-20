@@ -155,8 +155,9 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
     };
 
     let outcome = refine_domain_abstraction(&config, &task).unwrap();
-    assert!(outcome.concrete_plan.is_some());
+    assert!(outcome.outcome.concrete_plan.is_some());
     let plan = outcome
+        .outcome
         .concrete_plan
         .expect("a solved abstraction has a plan")
         .into_operator_ids();
@@ -211,7 +212,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
     )
     .unwrap();
 
-    assert_eq!(outcome.stop_reason, CegarStopReason::SizeLimit);
+    assert_eq!(outcome.outcome.stop_reason, CegarStopReason::SizeLimit);
     assert_eq!(outcome.factory.domain_sizes(), [1]);
 }
 #[test]
@@ -245,7 +246,10 @@ fn blacklisted_propositional_vars_are_not_refined() {
         .insert(VariableIndex::from_usize(0));
     let outcome = refine_domain_abstraction(&config, &task).unwrap();
 
-    assert_eq!(outcome.stop_reason, CegarStopReason::NoRefinableFlaw);
+    assert_eq!(
+        outcome.outcome.stop_reason,
+        CegarStopReason::NoRefinableFlaw
+    );
     assert_eq!(outcome.factory.domain_sizes(), [1]);
 }
 
@@ -457,7 +461,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
         .unwrap()
         .generate(&task)
         .unwrap();
-        assert!(abstraction.metadata.solved_by_self, "x0={initial}");
+        assert!(abstraction.metadata.solved_by_self(), "x0={initial}");
         let partition_count = abstraction.factory.numeric_domain_sizes()[0];
         // Both sides of the old small/large lookup split are covered.
         assert_eq!(
@@ -524,7 +528,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 .generate(&task)
                 .unwrap();
                 assert!(
-                    abstraction.metadata.solved_by_self,
+                    abstraction.metadata.solved_by_self(),
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(

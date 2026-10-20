@@ -70,7 +70,7 @@ impl Heuristic for CartesianAbstractionHeuristic {
     }
 
     fn proves_initial_state_optimal(&self) -> bool {
-        self.abstraction.metadata.solved_by_self
+        self.abstraction.metadata.solved_by_self()
             && self
                 .abstraction
                 .metadata

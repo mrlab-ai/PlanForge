@@ -17,6 +17,7 @@
 //! proofs, whether its support graph is cyclic. That is what says the corpus
 //! reaches those code paths at all, rather than merely passing.
 
+use planforge_search::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;

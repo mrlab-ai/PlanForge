@@ -1,4 +1,5 @@
 use super::diverse_orders::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 use super::orders::*;

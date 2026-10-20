@@ -7,15 +7,13 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
+};
 
 use super::abstract_operators::AbstractOperator;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
-use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
-use crate::evaluation::abstractions::common::cegar::{
-    CegarStopReason, FlawKind, FlawScope, SplitKind,
-};
-use crate::evaluation::abstractions::common::task::AbstractionUse;
+use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransitionSystem,
@@ -36,38 +34,37 @@ pub struct DomainAbstraction {
     pub transition_data_retained: bool,
     pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
     pub(crate) interval_transition_system: RefCell<Option<AbstractTransitionSystem>>,
-    pub metadata: DomainAbstractionMetadata,
+    pub metadata: AbstractionMetadata,
+}
+
+impl CegarAbstraction for DomainAbstraction {
+    fn abstract_state(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Result<usize> {
+        self.factory.abstract_state_hash(
+            propositional,
+            numeric,
+            &self.distance_table.numeric_domain_sizes,
+            &self.distance_table.hash_multipliers,
+        )
+    }
+
+    fn distance_table(&self) -> &AbstractDistanceTable {
+        &self.distance_table
+    }
+
+    fn metadata(&self) -> &AbstractionMetadata {
+        &self.metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
+        &mut self.metadata
+    }
 }
 
 impl DomainAbstraction {
-    pub fn lookup_only(
-        factory: DomainAbstractionFactory,
-        distance_table: AbstractDistanceTable,
-        hash_multipliers: Vec<usize>,
-        combine_labels: bool,
-        metadata: DomainAbstractionMetadata,
-    ) -> Self {
-        Self {
-            factory,
-            distance_table,
-            hash_multipliers,
-            combine_labels,
-            relevant_operator_ids: Vec::new(),
-            abstract_operators: Vec::new(),
-            transition_data_retained: false,
-            abstract_source_sets: Vec::new(),
-            interval_transition_system: RefCell::new(None),
-            metadata,
-        }
-    }
-
-    pub fn task_for_factory<'task>(
-        &'task self,
-        fallback: &'task dyn AbstractNumericTask,
-    ) -> &'task dyn AbstractNumericTask {
-        fallback
-    }
-
     pub fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
         self.transition_data_retained = false;
@@ -130,37 +127,6 @@ impl DomainAbstraction {
             },
         ))
     }
-
-    pub fn lookup_clone(&self) -> Self {
-        let mut abstraction = self.clone();
-        abstraction.discard_transition_data();
-        abstraction
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct DomainAbstractionMetadata {
-    pub collection_iteration: Option<usize>,
-    pub collection_strategy: Option<String>,
-    pub flaw_kind: Option<FlawKind>,
-    pub flaw_scope: Option<FlawScope>,
-    pub full_goal_task: Option<bool>,
-    pub abstraction_use: AbstractionUse,
-    pub stop_reason: Option<CegarStopReason>,
-    pub max_states: Option<usize>,
-    /// CEGAR exited because the wildcard plan has no flaws. This proves
-    /// `h(init)` optimal only when `abstraction_use` is `Standalone`;
-    /// collection combinators deliberately do not expose that search shortcut.
-    pub solved_by_self: bool,
-    /// The split kind CEGAR refined with.
-    pub split_kind: SplitKind,
-    /// The rank CEGAR used among tied best flaws, if any.
-    pub split_selection_rank: Option<usize>,
-    /// Operator ids of the concrete plan CEGAR executed when it solved the task
-    /// from its refinement root.
-    pub concrete_plan_operator_ids: Option<Vec<OperatorIndex>>,
-    /// Set when the abstraction is a member of a goal-focused collection.
-    pub collection_member: Option<CollectionMembership>,
 }
 
 /// Computes mixed-radix hash multipliers for propositional and numeric variables.

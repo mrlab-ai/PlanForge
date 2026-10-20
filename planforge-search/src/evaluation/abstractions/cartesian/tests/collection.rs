@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
@@ -420,9 +421,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             ("checkpoint-rooted", &abstractions[1]),
             ("initial-root specialist", &abstractions[2]),
         ] {
-            let state_id = abstraction
-                .abstract_state_id(&propositions, &numeric)
-                .unwrap();
+            let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
             let h = abstraction.distance_table.distances[state_id];
             assert!(
                 h <= true_distance,
@@ -828,9 +827,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
                 NumericValue::new(4.0),
                 NumericValue::new(2.0),
             ];
-            let state_id = abstraction
-                .abstract_state_id(&propositions, &numeric)
-                .unwrap();
+            let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
             let h = abstraction.distance_table.distances[state_id];
             let goal = abstraction
                 .metadata
@@ -881,7 +878,7 @@ fn goal_collection_preserves_empty_goal_tasks() {
         abstractions[0].distance_table.distances[abstractions[0].distance_table.initial_state_hash],
         0.0
     );
-    assert!(abstractions[0].metadata.solved_by_self);
+    assert!(abstractions[0].metadata.solved_by_self());
     assert_eq!(
         abstractions[0]
             .metadata

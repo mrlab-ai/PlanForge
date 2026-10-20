@@ -33,6 +33,7 @@ mod abstraction_config;
 mod tests;
 
 use crate::config::{ConfigArg, HeuristicSpec, configure};
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredBackend {
