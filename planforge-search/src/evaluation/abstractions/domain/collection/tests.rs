@@ -1,11 +1,13 @@
+use std::time::Instant;
+
 use super::*;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericValue, NumericVariable,
-    Operator, OperatorCost, OperatorIndex,
+    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
+    NumericVariable, Operator, OperatorCost, OperatorIndex,
 };
 
 use crate::evaluation::abstractions::cartesian::{
@@ -121,20 +123,11 @@ fn standard_can_alternate_split_kinds_on_the_full_task() {
         alternate_split_kinds: Some(true),
         ..Default::default()
     };
-    let generator = DomainAbstractionCollectionGenerator::new(config);
+    let schedule = DomainAbstractionCollectionGenerator::new(config).standard_schedule();
 
-    assert_eq!(
-        generator.split_kind_for_iteration(1),
-        Some(SplitKind::Concrete)
-    );
-    assert_eq!(
-        generator.split_kind_for_iteration(2),
-        Some(SplitKind::Wanted)
-    );
-    assert_eq!(
-        generator.split_kind_for_iteration(3),
-        Some(SplitKind::Concrete)
-    );
+    assert_eq!(schedule.split_kind(1), Some(SplitKind::Concrete));
+    assert_eq!(schedule.split_kind(2), Some(SplitKind::Wanted));
+    assert_eq!(schedule.split_kind(3), Some(SplitKind::Concrete));
 }
 
 fn validation_error(config: DomainAbstractionCollectionConfig) -> String {

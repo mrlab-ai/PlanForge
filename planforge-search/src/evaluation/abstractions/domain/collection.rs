@@ -3,19 +3,20 @@ mod tests;
 
 use std::collections::HashSet;
 use std::fmt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
-use rand::seq::SliceRandom;
-use rand::{RngCore, SeedableRng, rngs::SmallRng};
+use planforge_sas::numeric_task::{AbstractNumericTask, VariableIndex};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, GoalFocusedBackend, GoalFocusedSchedule, GoalVariant,
     MemberBudget, build_goal_focused_collection,
+};
+use crate::evaluation::abstractions::collections::standard::{
+    StandardBackend, StandardMember, StandardSchedule, build_standard_collection,
 };
 use crate::evaluation::abstractions::collections::strategy::{
     CollectionOptions, CollectionStrategy, validate_collection_options,
@@ -31,7 +32,6 @@ use super::abstraction::compute_abstraction_size_u128;
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata};
 use super::config::DomainAbstractionConfig;
 use super::generator::DomainAbstractionGenerator;
-use crate::resource_limits;
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
@@ -90,24 +90,6 @@ pub struct DomainAbstractionCollectionConfig {
     /// Set internally by heuristic construction; not exposed as a CLI option.
     #[option(skip)]
     pub compute_source_sets: bool,
-    /// Cap on the number of comparison-axiom propositional vars a single
-    /// CEGAR run may refine into its pattern. `None` = unbounded (the
-    /// historical behavior). When set, the refinement loop rejects any
-    /// split that would introduce a new comparison-axiom prop var beyond
-    /// this cap; `max_refined_single_atom` falls through to the next
-    /// candidate (typically a numeric split). The cap exists to keep
-    /// canonical-DA additive-subset diversity: when every abstraction
-    /// refines every comparison var, cascade-relevance covers all
-    /// numerics those comparisons depend on, every operator that
-    /// modifies any of those numerics is marked relevant, and Bron-
-    /// Kerbosch returns singleton subsets — canonical degenerates to
-    /// `max h_i`. On counters/pfile4 with this cap unset, initial h=14
-    /// and the search OOMs at 8 GB; numeric-fd with the same CEGAR
-    /// config naturally yields abstractions with 3-5 refined comparison
-    /// vars per pattern, gets initial h=21, and fits in 7.4 GB.
-    /// Not currently exposed as a CLI option.
-    #[option(skip)]
-    pub max_refined_comparison_vars_per_abstraction: Option<usize>,
 }
 
 impl Default for DomainAbstractionCollectionConfig {
@@ -134,7 +116,6 @@ impl Default for DomainAbstractionCollectionConfig {
             single_goal_tasks: true,
             split_kind: None,
             compute_source_sets: true,
-            max_refined_comparison_vars_per_abstraction: None,
         }
     }
 }
@@ -175,10 +156,6 @@ fn optional_duration(option: &str, seconds: f64) -> Result<Option<Duration>> {
     Duration::try_from_secs_f64(seconds)
         .map(Some)
         .with_context(|| format!("invalid domain abstraction collection {option}={seconds}"))
-}
-
-fn is_generation_deadline_error(error: &anyhow::Error) -> bool {
-    crate::resource_limits::is_deadline_exceeded(error)
 }
 
 impl fmt::Display for DomainAbstractionCollectionConfig {
@@ -229,13 +206,6 @@ impl fmt::Display for DomainAbstractionCollectionConfig {
     }
 }
 
-/// Which variables one standard collection member may split.
-struct MemberVariableChoice {
-    init_split_var_ids: Option<HashSet<VariableIndex>>,
-    blacklisted_prop_var_ids: HashSet<VariableIndex>,
-    blacklisted_numeric_var_ids: HashSet<VariableIndex>,
-}
-
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionCollectionGenerator {
     config: DomainAbstractionCollectionConfig,
@@ -263,50 +233,27 @@ impl DomainAbstractionCollectionGenerator {
         })
     }
 
-    fn create_rng(&self) -> SmallRng {
-        SmallRng::seed_from_u64(
-            self.config
-                .random_seed
-                .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
-        )
-    }
-
-    fn build_cegar_config(
-        &self,
-        max_states: usize,
-        remaining_time: f64,
-        variable_choice: MemberVariableChoice,
-        random_seed: u64,
-        split_kind: Option<SplitKind>,
-    ) -> DomainAbstractionConfig {
-        let MemberVariableChoice {
-            init_split_var_ids,
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
-        } = variable_choice;
+    /// Configuration for one restart of a standard collection.
+    fn standard_member_config(&self, member: &StandardMember) -> DomainAbstractionConfig {
         DomainAbstractionConfig {
-            max_states,
+            max_states: member.max_states,
             max_iterations: DomainAbstractionConfig::default().max_iterations,
-            max_time: if remaining_time.is_finite() {
-                Some(Duration::from_secs_f64(remaining_time.max(0.0)))
-            } else {
-                None
-            },
+            max_time: member
+                .max_time
+                .is_finite()
+                .then(|| Duration::from_secs_f64(member.max_time.max(0.0))),
             use_wildcard_plans: self.config.use_wildcard_plans,
             combine_labels: self.config.combine_labels,
             debug: self.config.debug,
-            random_seed: Some(random_seed),
+            random_seed: Some(member.seed),
             flaw_kind: self.config.flaw_kind,
             flaw_scope: self.config.flaw_scope,
-            split_kind: split_kind.unwrap_or(SplitKind::Concrete),
+            split_kind: member.split_kind.unwrap_or(SplitKind::Concrete),
             split_selection: self.config.split_selection,
-            init_split_var_ids,
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
+            init_split_var_ids: Some(member.initial_split_var.into_iter().collect()),
+            blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
+            blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
             compute_source_sets: self.config.compute_source_sets,
-            max_refined_comparison_vars_per_abstraction: self
-                .config
-                .max_refined_comparison_vars_per_abstraction,
             flaw_selection_rank: None,
         }
     }
@@ -360,256 +307,93 @@ impl DomainAbstractionCollectionGenerator {
         Ok(abstractions)
     }
 
-    /// Full-task members with random restarts until the size, time,
-    /// stagnation, or memory limit, or until a member settles the task: its
-    /// abstract plan is a concrete plan, so it is perfect along an optimal
-    /// plan, or the initial state is an abstract dead end, so the task is
-    /// unsolvable. No further member can help the search then.
+    /// The standard collection of `task`; see
+    /// [`standard`](crate::evaluation::abstractions::collections::standard).
     fn generate_standard_collection(
         &self,
         task: &dyn AbstractNumericTask,
     ) -> Result<Vec<DomainAbstraction>> {
-        let mut rng = self.create_rng();
-        let blacklist_candidates = collect_initial_split_candidate_var_ids(task);
-
-        let start = Instant::now();
-        let mut remaining_collection_size = self.config.max_collection_size;
-        let mut generated_keys: HashSet<AbstractionKey> = HashSet::new();
-        let mut generated_abstractions: Vec<DomainAbstraction> = Vec::new();
-        let mut time_point_of_last_new_abstraction = 0.0f64;
-        let mut blacklisting = false;
-        let blacklist_start_time =
-            self.config.total_max_time * self.config.blacklist_trigger_percentage;
-        let mut iteration = 1usize;
-        let stop_reason: &str;
-        loop {
-            let elapsed = start.elapsed().as_secs_f64();
-            if !blacklisting && elapsed > blacklist_start_time {
-                blacklisting = true;
-                time_point_of_last_new_abstraction = elapsed;
-            }
-
-            let remaining_total_time = if self.config.total_max_time.is_finite() {
-                (self.config.total_max_time - elapsed).max(0.0)
-            } else {
-                f64::INFINITY
-            };
-            let remaining_generation_time = self.config.max_time.min(remaining_total_time);
-            let remaining_abstraction_size = remaining_collection_size.min(self.config.max_states);
-
-            if remaining_abstraction_size == 0 {
-                stop_reason = "collection size limit";
-                break;
-            }
-            // Numeric FD constructs one abstraction before checking
-            // collection-level limits. A collection must never silently
-            // become an empty successful heuristic.
-            if remaining_generation_time <= 0.0 && !generated_abstractions.is_empty() {
-                stop_reason = "collection time limit";
-                break;
-            }
-
-            let blacklisted_var_ids = if blacklisting {
-                sample_blacklisted_variables(&blacklist_candidates, &mut rng)
-            } else {
-                HashSet::new()
-            };
-            let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
-                split_blacklisted_variables(task, blacklisted_var_ids);
-            let split_kind = self.split_kind_for_iteration(iteration);
-            let cegar_config = self.build_cegar_config(
-                remaining_abstraction_size,
-                remaining_generation_time,
-                MemberVariableChoice {
-                    init_split_var_ids: self.initial_split_var_ids(task, iteration),
-                    blacklisted_prop_var_ids,
-                    blacklisted_numeric_var_ids,
-                },
-                rng.next_u64(),
-                split_kind,
-            );
-            let generator = DomainAbstractionGenerator::new(cegar_config)
-                .context("failed to construct single-abstraction CEGAR generator")?;
-            let generation_start = Instant::now();
-            debug!(
-                "domain abstraction collection: starting CEGAR generation iteration {}, remaining_generation_time={:.2}s, flaw_kind={}, flaw_scope={}, split_kind={:?}",
-                iteration,
-                remaining_generation_time,
-                self.config.flaw_kind,
-                self.config.flaw_scope,
-                split_kind,
-            );
-            let mut abstraction = match generator.generate(task) {
-                Ok(abstraction) => abstraction,
-                Err(error) if is_generation_deadline_error(&error) => {
-                    info!(
-                        "domain abstraction collection: generation deadline expired at iteration {}; keeping {} abstractions built so far",
-                        iteration,
-                        generated_abstractions.len()
-                    );
-                    stop_reason = "abstraction generation deadline";
-                    break;
-                }
-                Err(error) => {
-                    return Err(error).with_context(|| {
-                        format!(
-                            "failed to generate abstraction for collection iteration {iteration}"
-                        )
-                    });
-                }
-            };
-            debug!(
-                "domain abstraction collection: finished CEGAR generation iteration {} in {:.3}s",
-                iteration,
-                generation_start.elapsed().as_secs_f64()
-            );
-            abstraction.metadata = DomainAbstractionMetadata {
-                collection_iteration: Some(iteration),
-                collection_strategy: Some(self.config.collection_strategy.to_string()),
-                flaw_kind: Some(self.config.flaw_kind),
-                flaw_scope: Some(self.config.flaw_scope),
-                full_goal_task: Some(true),
-                abstraction_use: AbstractionUse::CollectionMember,
-                max_states: Some(remaining_abstraction_size),
-                ..std::mem::take(&mut abstraction.metadata)
-            };
-
-            let abstraction_size = compute_abstraction_size_u128(
-                abstraction.factory.domain_sizes(),
-                abstraction.factory.numeric_domain_sizes(),
-            )
-            .unwrap_or(u128::MAX);
-
-            let settled_by = if abstraction.metadata.solved_by_self {
-                Some("concrete plan")
-            } else if abstraction.metadata.stop_reason == Some(CegarStopReason::DeadEnd) {
-                Some("initial state is a dead end")
-            } else {
-                None
-            };
-            let abstraction_key = AbstractionKey::from_abstraction(&abstraction);
-            let elapsed_after_generation = start.elapsed().as_secs_f64();
-            if generated_keys.insert(abstraction_key) {
-                time_point_of_last_new_abstraction = elapsed_after_generation;
-                let consumed = abstraction_size.min(remaining_collection_size as u128) as usize;
-                remaining_collection_size = remaining_collection_size.saturating_sub(consumed);
-                if self.config.debug {
-                    log_collection_abstraction_debug(
-                        generated_abstractions.len(),
-                        &abstraction,
-                        task,
-                    );
-                }
-                generated_abstractions.push(abstraction);
-                debug!(
-                    "domain abstraction collection: added abstraction at iteration {}, abstraction_size={}, elapsed={:.2}s, remaining_collection_size={}, next_max_abstraction_size={}, remaining_generation_time={:.2}s, blacklisting={}",
-                    iteration,
-                    abstraction_size,
-                    start.elapsed().as_secs_f64(),
-                    remaining_collection_size,
-                    remaining_collection_size.min(self.config.max_states),
-                    remaining_generation_time,
-                    blacklisting
-                );
-            }
-
-            if let Some(reason) = settled_by {
-                stop_reason = reason;
-                break;
-            }
-            let stagnated = elapsed_after_generation - time_point_of_last_new_abstraction
-                > self.config.stagnation_limit;
-            if remaining_collection_size == 0 {
-                stop_reason = "collection size limit";
-                break;
-            }
-            if self.config.total_max_time.is_finite()
-                && elapsed_after_generation >= self.config.total_max_time
-            {
-                stop_reason = "collection time limit";
-                break;
-            }
-            if stagnated && (!self.config.enable_blacklist_on_stagnation || blacklisting) {
-                stop_reason = "stagnation limit";
-                break;
-            }
-            // Release the reserved padding before the process reaches its hard limit,
-            // leaving enough memory for search to report a useful result.
-            if !resource_limits::poll_and_release_if_exceeded() {
-                info!(
-                    "domain abstraction collection: stopping at iteration {iteration} \
-                     because the memory padding was released (RSS limit reached)"
-                );
-                stop_reason = "memory limit";
-                break;
-            }
-            if stagnated && self.config.enable_blacklist_on_stagnation {
-                blacklisting = true;
-                time_point_of_last_new_abstraction = elapsed;
-            }
-
-            iteration += 1;
-        }
-
-        if generated_abstractions.is_empty() {
-            bail!(
-                "the domain collection failed to generate its mandatory first abstraction ({stop_reason})"
-            )
-        }
-        let total_states = generated_abstractions.iter().try_fold(
-            0u128,
-            |total, abstraction| -> Result<u128> {
-                let size = compute_abstraction_size_u128(
-                    abstraction.factory.domain_sizes(),
-                    abstraction.factory.numeric_domain_sizes(),
-                )
-                .context("domain abstraction size overflow in collection summary")?;
-                total
-                    .checked_add(size)
-                    .context("domain abstraction collection state count overflow")
-            },
+        let abstractions = build_standard_collection(
+            task,
+            &self.standard_schedule(),
+            &StandardDomainBackend { generator: self },
         )?;
-        info!(
-            "domain abstraction collection finished: abstractions={}, states={}, elapsed={:.3}s, stop_reason={}",
-            generated_abstractions.len(),
-            total_states,
-            start.elapsed().as_secs_f64(),
-            stop_reason
-        );
-        Ok(generated_abstractions)
+        if self.config.debug {
+            for (index, abstraction) in abstractions.iter().enumerate() {
+                log_collection_abstraction_debug(index, abstraction, task);
+            }
+        }
+        Ok(abstractions)
     }
 
-    /// The variable member `iteration` splits initially: the candidates take
-    /// turns.
-    fn initial_split_var_ids(
+    fn standard_schedule(&self) -> StandardSchedule {
+        StandardSchedule {
+            max_states: self.config.max_states,
+            max_collection_size: self.config.max_collection_size,
+            max_time: self.config.max_time,
+            total_max_time: self.config.total_max_time,
+            stagnation_limit: self.config.stagnation_limit,
+            blacklist_trigger_percentage: self.config.blacklist_trigger_percentage,
+            enable_blacklist_on_stagnation: self.config.enable_blacklist_on_stagnation,
+            random_seed: self.config.random_seed,
+            alternate_split_kinds: self
+                .config
+                .collection_strategy
+                .alternates_split_kinds(self.config.alternate_split_kinds),
+            split_kind: self.config.split_kind,
+        }
+    }
+}
+
+/// Builds the restarts of a standard domain collection.
+struct StandardDomainBackend<'a> {
+    generator: &'a DomainAbstractionCollectionGenerator,
+}
+
+impl StandardBackend for StandardDomainBackend<'_> {
+    type Member = DomainAbstraction;
+    type Key = AbstractionKey;
+
+    const NAME: &'static str = "domain";
+
+    fn build(
         &self,
         task: &dyn AbstractNumericTask,
-        iteration: usize,
-    ) -> Option<HashSet<VariableIndex>> {
-        let candidate_var_ids = collect_initial_split_candidate_var_ids(task);
-        Some(
-            candidate_var_ids
-                .get(iteration % candidate_var_ids.len().max(1))
-                .copied()
-                .into_iter()
-                .collect(),
-        )
+        member: &StandardMember,
+    ) -> Result<DomainAbstraction> {
+        let config = &self.generator.config;
+        let mut abstraction =
+            DomainAbstractionGenerator::new(self.generator.standard_member_config(member))?
+                .generate(task)?;
+        abstraction.metadata = DomainAbstractionMetadata {
+            collection_iteration: Some(member.iteration),
+            collection_strategy: Some(config.collection_strategy.to_string()),
+            flaw_kind: Some(config.flaw_kind),
+            flaw_scope: Some(config.flaw_scope),
+            full_goal_task: Some(true),
+            abstraction_use: AbstractionUse::CollectionMember,
+            max_states: Some(member.max_states),
+            ..std::mem::take(&mut abstraction.metadata)
+        };
+        Ok(abstraction)
     }
 
-    fn split_kind_for_iteration(&self, iteration: usize) -> Option<SplitKind> {
-        if !self
-            .config
-            .collection_strategy
-            .alternates_split_kinds(self.config.alternate_split_kinds)
-        {
-            return self.config.split_kind;
-        }
-        assert!(iteration > 0, "collection iterations are one-based");
-        Some(if iteration % 2 == 1 {
-            SplitKind::Concrete
+    fn key(&self, abstraction: &DomainAbstraction) -> AbstractionKey {
+        AbstractionKey::from_abstraction(abstraction)
+    }
+
+    fn num_states(&self, abstraction: &DomainAbstraction) -> usize {
+        abstraction.distance_table.distances.len()
+    }
+
+    fn settles(&self, abstraction: &DomainAbstraction) -> Option<&'static str> {
+        if abstraction.metadata.solved_by_self {
+            Some("concrete plan")
+        } else if abstraction.metadata.stop_reason == Some(CegarStopReason::DeadEnd) {
+            Some("initial state is a dead end")
         } else {
-            SplitKind::Wanted
-        })
+            None
+        }
     }
 }
 
@@ -653,9 +437,6 @@ impl GoalFocusedDomainBackend<'_> {
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
             compute_source_sets: self.config.compute_source_sets,
-            max_refined_comparison_vars_per_abstraction: self
-                .config
-                .max_refined_comparison_vars_per_abstraction,
             flaw_selection_rank: variant.tie_rank,
         }
     }
@@ -827,87 +608,6 @@ fn partition_preview(parts: &[Interval]) -> String {
         entries.push(format!("{interval:?}"));
     }
     entries.join(" ")
-}
-
-fn collect_logic_axiom_effect_vars(task: &dyn AbstractNumericTask) -> HashSet<VariableIndex> {
-    task.axioms().iter().map(|axiom| axiom.var_id()).collect()
-}
-
-/// The propositional variables the goal names.
-///
-/// This used to be the bodies of the rules deriving a derived goal, keyed by the
-/// goal's variable, and dropped the goal entirely when no rule derived that value.
-/// `validate_abstractable_goal` refuses such a goal, so what is left is the goal
-/// variables themselves -- and for a numeric goal that is the comparison variable
-/// the rule body used to hold.
-fn goal_var_ids(task: &dyn AbstractNumericTask) -> HashSet<VariableIndex> {
-    (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var_index())
-        .collect()
-}
-
-/// The variables initial splits and blacklisting choose from: every
-/// propositional variable no axiom writes, except condition variables that no
-/// goal mentions, and every regular numeric variable (encoded after the
-/// propositional ones).
-fn collect_initial_split_candidate_var_ids(task: &dyn AbstractNumericTask) -> Vec<VariableIndex> {
-    let goal_related = goal_var_ids(task);
-    let logic_axiom_effect_vars = collect_logic_axiom_effect_vars(task);
-    let mut candidates: Vec<VariableIndex> = (0..task.variables().len())
-        .map(VariableIndex::from_usize)
-        .filter(|var_id| {
-            !logic_axiom_effect_vars.contains(var_id)
-                && (!task.numeric_conditions().is_condition_var(*var_id)
-                    || goal_related.contains(var_id))
-        })
-        .collect();
-    let encoded_numeric_offset = task.variables().len();
-    candidates.extend(
-        task.numeric_variables()
-            .iter()
-            .enumerate()
-            .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
-            .map(|(numeric_var_id, _)| {
-                VariableIndex::from_usize(encoded_numeric_offset + numeric_var_id)
-            }),
-    );
-    candidates
-}
-
-fn split_blacklisted_variables(
-    task: &dyn AbstractNumericTask,
-    encoded_var_ids: HashSet<VariableIndex>,
-) -> (HashSet<VariableIndex>, HashSet<VariableIndex>) {
-    let num_prop_vars = task.variables().len();
-    let mut blacklisted_prop_var_ids = HashSet::new();
-    let mut blacklisted_numeric_var_ids = HashSet::new();
-
-    for encoded_var_id in encoded_var_ids {
-        if encoded_var_id.index() < num_prop_vars {
-            blacklisted_prop_var_ids.insert(encoded_var_id);
-        } else {
-            let numeric_var_id = encoded_var_id.index() - num_prop_vars;
-            if numeric_var_id < task.numeric_variables().len() {
-                blacklisted_numeric_var_ids.insert(VariableIndex::from_usize(numeric_var_id));
-            }
-        }
-    }
-
-    (blacklisted_prop_var_ids, blacklisted_numeric_var_ids)
-}
-
-fn sample_blacklisted_variables<R: rand::Rng + ?Sized>(
-    candidates: &[VariableIndex],
-    rng: &mut R,
-) -> HashSet<VariableIndex> {
-    if candidates.is_empty() {
-        return HashSet::new();
-    }
-
-    let blacklist_size = rng.gen_range(1..=candidates.len());
-    let mut shuffled = candidates.to_vec();
-    shuffled.shuffle(rng);
-    shuffled.into_iter().take(blacklist_size).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

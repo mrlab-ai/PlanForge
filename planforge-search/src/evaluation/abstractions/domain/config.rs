@@ -33,18 +33,6 @@ pub struct DomainAbstractionConfig {
     /// can be large (~12 GB of `CartesianSet`s on
     /// minecraft-sword-advanced/prob_30x30_5).
     pub compute_source_sets: bool,
-    /// Maximum number of comparison-axiom propositional vars this CEGAR run
-    /// may refine into its pattern. `None` = unbounded. When the cap is
-    /// reached, the refinement loop refuses to introduce additional
-    /// comparison-axiom prop vars: `max_refined_single_atom` (and its
-    /// siblings) fall through to alternative split candidates (typically
-    /// a numeric split on a comparison-axiom dependency). If no eligible
-    /// candidates remain, the CEGAR run terminates and the collection
-    /// generator starts the next iteration with a different init seed.
-    /// Exists to preserve canonical-DA additive-subset diversity (see
-    /// `DomainAbstractionCollectionConfig::max_refined_comparison_vars_per_abstraction`
-    /// for the longer rationale).
-    pub max_refined_comparison_vars_per_abstraction: Option<usize>,
     /// Which of the tied best splits to take: `split_selection` scores the
     /// candidates, the best-scoring ones are sorted by a deterministic key,
     /// and the one at `rank % ties` is taken. `None` breaks ties with the
@@ -70,7 +58,6 @@ impl Default for DomainAbstractionConfig {
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
             compute_source_sets: true,
-            max_refined_comparison_vars_per_abstraction: None,
             flaw_selection_rank: None,
         }
     }
