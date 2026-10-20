@@ -1,31 +1,150 @@
 //! Builds a domain abstraction with CEGAR.
 
+#[cfg(test)]
+mod tests;
+
 use std::cell::RefCell;
+use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
-
+use planforge_sas::axioms::AxiomEvaluator;
 use planforge_sas::numeric_task::AbstractNumericTask;
+use rand::{SeedableRng, rngs::SmallRng};
 
-use super::cegar::Cegar;
 use super::config::CegarConfig;
-use super::factory::DistanceTableOptions;
-use crate::evaluation::abstractions::common::cegar::CegarStopReason;
-use crate::evaluation::abstractions::common::concrete_state::ConcreteState;
+use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
+use super::initial_splits::{
+    RefinementState, apply_initial_goal_splits, trivial_domain_mapping_and_sizes,
+};
+use super::partitions::NumericPartitions;
+use super::view::{DomainRefinement, RefinementLimits};
+use crate::evaluation::abstractions::common::cegar::progression::ConcretePlan;
+use crate::evaluation::abstractions::common::cegar::refine::{CegarRun, refine};
+use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
+use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
+use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason};
+use crate::evaluation::abstractions::common::concrete_state::{
+    ConcreteState, make_prop_state_packer,
+};
 use crate::evaluation::abstractions::common::task::{AbstractionUse, RootedTask};
 
 use super::abstraction::{DomainAbstraction, DomainAbstractionMetadata, compute_hash_multipliers};
+use super::debug_dump::log_final_abstraction;
+
+/// The domain abstraction CEGAR refined, before its distances are finalized.
+#[derive(Debug)]
+pub(super) struct DomainRefinementOutcome {
+    pub(super) factory: DomainAbstractionFactory,
+    pub(super) stop_reason: CegarStopReason,
+    /// The concrete plan from the task initial state, exactly when CEGAR
+    /// stopped with [`CegarStopReason::ConcretePlan`].
+    pub(super) concrete_plan: Option<ConcretePlan>,
+}
+
+/// Refines a domain abstraction of `task` by CEGAR from the initial state of
+/// `task`: the trivial abstraction split on the goal variables, refined until
+/// the abstract plan is concrete or a limit is reached.
+pub(super) fn refine_domain_abstraction(
+    config: &CegarConfig,
+    task: &dyn AbstractNumericTask,
+) -> Result<DomainRefinementOutcome> {
+    let semantics = CegarSemantics::new(
+        task,
+        SplitOptions {
+            kind: config.split_kind(),
+            selection: config.flaw_treatment.split_selection(),
+            rank: config.flaw_selection_rank,
+            random_seed: config.random_seed,
+        },
+    )?;
+    if config.flaw_kind.regresses() {
+        ensure_regressable(task, semantics.coordinates())?;
+    }
+
+    let start = Instant::now();
+    // The run is a function of its configuration alone: collection
+    // generators hand every member its own seed.
+    let mut rng = SmallRng::seed_from_u64(
+        config
+            .random_seed
+            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+    );
+    let (mut domain_mapping, mut domain_sizes) =
+        trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
+    let mut partitions = NumericPartitions::trivial(task);
+    let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
+    let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
+    let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
+    apply_initial_goal_splits(
+        task,
+        config,
+        semantics.numeric_integer_lattice(),
+        &mut rng,
+        RefinementState {
+            domain_mapping: &mut domain_mapping,
+            domain_sizes: &mut domain_sizes,
+            partitions: &mut partitions,
+            numeric_domain_sizes: &mut numeric_domain_sizes,
+            blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
+        },
+    )?;
+    let factory = DomainAbstractionFactory::new(
+        task,
+        domain_mapping,
+        domain_sizes,
+        partitions,
+        numeric_domain_sizes,
+    )
+    .context("failed to construct the initial domain abstraction")?;
+
+    let state_packer = Arc::new(make_prop_state_packer(task));
+    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), state_packer.clone());
+    let root = ConcreteState::initial(task)?;
+    let limits = RefinementLimits {
+        max_states: config.max_abstraction_size,
+        blacklisted_prop_var_ids: &blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids: &blacklisted_numeric_var_ids,
+    };
+    let mut refinement = DomainRefinement::new(task, factory, limits, config);
+    let outcome = refine(
+        &mut refinement,
+        &CegarRun {
+            semantics: &semantics,
+            flaw_kind: config.flaw_kind,
+            state_packer: &state_packer,
+            axiom_evaluator: &axiom_evaluator,
+            refinement_root: &root,
+            driver: CegarDriver::new(config.max_iterations, config.max_time),
+        },
+        start,
+    )?;
+    let factory = refinement.into_factory();
+    if config.debug {
+        log_final_abstraction(task, &factory);
+    }
+    Ok(DomainRefinementOutcome {
+        factory,
+        stop_reason: outcome.stop_reason,
+        concrete_plan: outcome.concrete_plan,
+    })
+}
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionGenerator {
-    cegar: Cegar,
     config: CegarConfig,
 }
 
 impl DomainAbstractionGenerator {
     pub fn new(config: CegarConfig) -> Result<Self> {
-        let cegar = Cegar::new(config.clone()).context("failed to construct CEGAR")?;
-        Ok(Self { cegar, config })
+        ensure!(
+            config.max_abstraction_size > 0,
+            "max_abstraction_size must be > 0"
+        );
+        ensure!(config.max_iterations > 0, "max_iterations must be > 0");
+        Ok(Self { config })
     }
 
     pub fn config(&self) -> &CegarConfig {
@@ -51,15 +170,15 @@ impl DomainAbstractionGenerator {
         let outcome = match refinement_root {
             Some(root) => {
                 let rooted_task = RootedTask::new(task, root)?;
-                self.cegar.build_abstraction(&rooted_task)
+                refine_domain_abstraction(&self.config, &rooted_task)
             }
-            None => self.cegar.build_abstraction(task),
+            None => refine_domain_abstraction(&self.config, task),
         }
         .context("CEGAR failed to build abstraction")?;
-        let solved_by_self = outcome.solved_by_self;
+        let solved_by_self = outcome.concrete_plan.is_some();
         let stop_reason = outcome.stop_reason;
-        let concrete_plan_operator_ids = outcome.concrete_plan_operator_ids;
-        let factory = outcome.final_state.factory;
+        let concrete_plan_operator_ids = outcome.concrete_plan.map(ConcretePlan::into_operator_ids);
+        let factory = outcome.factory;
         let mut operator_generator =
             factory.make_operator_generator(task, self.config.combine_labels)?;
         let abstract_operators = operator_generator

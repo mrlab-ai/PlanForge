@@ -1,20 +1,10 @@
 use super::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CartesianStopReason {
-    ConcretePlan,
-    StateLimit,
-    TimeLimit,
-    MemoryLimit,
-    /// The refinement root is an abstract dead end.
-    DeadEnd,
-}
-
 #[derive(Debug, Clone)]
 pub struct CartesianAbstractionMetadata {
     pub solved_by_self: bool,
     pub abstraction_use: AbstractionUse,
-    pub stop_reason: CartesianStopReason,
+    pub stop_reason: CegarStopReason,
     pub pending_flaw: Option<String>,
     pub refinements: usize,
     /// Set when the abstraction is a member of a goal-focused collection.

@@ -898,7 +898,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
     assert_eq!(abstractions.len(), 1);
     assert_eq!(
         abstractions[0].metadata.stop_reason,
-        CartesianStopReason::TimeLimit
+        CegarStopReason::TimeLimit
     );
     assert_eq!(
         abstractions[0]

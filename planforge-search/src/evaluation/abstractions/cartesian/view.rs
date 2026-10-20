@@ -8,6 +8,51 @@ pub(super) struct CartesianView<'a> {
     pub(super) working: &'a WorkingAbstraction,
     pub(super) semantics: &'a CartesianSemantics<'a>,
     pub(super) shortest_paths: &'a ShortestPaths,
+    pub(super) max_states: usize,
+}
+
+/// The working abstraction under refinement, with the shortest paths CEGAR
+/// keeps up to date across splits.
+pub(super) struct CartesianRefinement<'a> {
+    pub(super) working: WorkingAbstraction,
+    pub(super) shortest_paths: ShortestPaths,
+    pub(super) semantics: &'a CartesianSemantics<'a>,
+    pub(super) max_states: usize,
+    pub(super) debug: bool,
+}
+
+impl Refinable for CartesianRefinement<'_> {
+    type View<'b>
+        = CartesianView<'b>
+    where
+        Self: 'b;
+
+    fn view(&mut self, _deadline: Option<Instant>) -> Result<CartesianView<'_>> {
+        Ok(CartesianView {
+            working: &self.working,
+            semantics: self.semantics,
+            shortest_paths: &self.shortest_paths,
+            max_states: self.max_states,
+        })
+    }
+
+    fn apply_split(&mut self, split: Split) -> Result<()> {
+        if self.debug {
+            info!(
+                "Cartesian refinement at {} states: {split:?}",
+                self.working.states.len()
+            );
+        }
+        let old_state_id = split.state_id();
+        let new_state_id = self.working.apply_split(self.semantics, split)?;
+        update_shortest_paths_after_split(
+            &self.working,
+            self.semantics,
+            &mut self.shortest_paths,
+            old_state_id,
+            new_state_id,
+        )
+    }
 }
 
 impl AbstractionView for CartesianView<'_> {
@@ -51,6 +96,11 @@ impl AbstractionView for CartesianView<'_> {
 
     fn growth(&self, split: &Split) -> Result<usize> {
         projected_transition_count(self.working, self.semantics, split)
+    }
+
+    /// Every split adds one state.
+    fn refinement_limit(&self, _split: &Split) -> Option<CegarStopReason> {
+        (self.working.states().len() >= self.max_states).then_some(CegarStopReason::SizeLimit)
     }
 }
 

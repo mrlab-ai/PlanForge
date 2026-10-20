@@ -92,7 +92,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 .unwrap();
                 assert_eq!(
                     abstraction.metadata.stop_reason,
-                    CartesianStopReason::ConcretePlan,
+                    CegarStopReason::ConcretePlan,
                     "{name}, {flaw_kind}, {split_kind:?}"
                 );
                 assert_eq!(

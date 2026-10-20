@@ -73,7 +73,7 @@ fn refines_through_a_comparison_goal() {
     assert!(abstraction.metadata.solved_by_self);
     assert_eq!(
         abstraction.metadata.stop_reason,
-        CartesianStopReason::ConcretePlan
+        CegarStopReason::ConcretePlan
     );
 }
 

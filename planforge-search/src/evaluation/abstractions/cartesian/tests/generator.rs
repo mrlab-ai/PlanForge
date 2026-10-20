@@ -131,10 +131,7 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
     let h = abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
     assert!(h <= 2.0);
     assert!(!abstraction.metadata.solved_by_self);
-    assert_eq!(
-        abstraction.metadata.stop_reason,
-        CartesianStopReason::StateLimit
-    );
+    assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::SizeLimit);
     assert!(abstraction.metadata.pending_flaw.is_some());
     assert!(abstraction.abstract_source_sets.is_empty());
 }

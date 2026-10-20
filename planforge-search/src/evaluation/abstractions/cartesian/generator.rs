@@ -58,101 +58,33 @@ impl CartesianAbstractionGenerator {
                 numeric: initial_numeric.clone(),
             },
         };
-        let mut refinements: usize = 0;
-        let mut shortest_paths = compute_shortest_paths(&working, &semantics)?;
-        let mut pending_flaw = None;
-        let mut solved_plan = None;
-        let run = CegarDriver::new(usize::MAX, None).run_from_zero_based(
-            start,
-            |_iteration, _deadline| {
-                let view = CartesianView {
-                    working: &working,
-                    semantics: &semantics,
-                    shortest_paths: &shortest_paths,
-                };
-                let check = match self.config.flaw_kind {
-                    FlawKind::Progression => replay_optimal_abstract_trace(
-                        &view,
-                        semantics.cegar(),
-                        &state_packer,
-                        &axiom_evaluator,
-                        &refinement_root,
-                    )?,
-                    FlawKind::Regression => regression_plan_check(
-                        &view,
-                        semantics.cegar(),
-                        &state_packer,
-                        &refinement_root,
-                        FlawScope::First,
-                    )?,
-                    FlawKind::RegressEntirePlan => regression_plan_check(
-                        &view,
-                        semantics.cegar(),
-                        &state_packer,
-                        &refinement_root,
-                        FlawScope::EntirePlan,
-                    )?,
-                    FlawKind::ExecuteEntirePlan => replay_entire_optimal_abstract_trace(
-                        &view,
-                        semantics.cegar(),
-                        &state_packer,
-                        &axiom_evaluator,
-                        &refinement_root,
-                    )?,
-                };
-                match check {
-                    PlanCheck::ConcretePlan(plan) => {
-                        solved_plan = Some(plan);
-                        Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan))
-                    }
-                    PlanCheck::AbstractDeadEnd => {
-                        Ok(CegarIterationResult::Stop(CegarStopReason::DeadEnd))
-                    }
-                    PlanCheck::Refine(split) => {
-                        if working.states.len() >= self.config.max_states {
-                            pending_flaw = Some(split.description().to_string());
-                            return Ok(CegarIterationResult::Stop(CegarStopReason::SizeLimit));
-                        }
-                        if self
-                            .config
-                            .max_time
-                            .is_some_and(|max_time| start.elapsed() >= max_time)
-                        {
-                            pending_flaw = Some(split.description().to_string());
-                            return Ok(CegarIterationResult::Stop(CegarStopReason::TimeLimit));
-                        }
-                        if self.config.debug {
-                            info!(
-                                "Cartesian refinement {} at {} states: {split:?}",
-                                refinements,
-                                working.states.len()
-                            );
-                        }
-                        let old_state_id = split.state_id();
-                        let new_state_id = working.apply_split(&semantics, split)?;
-                        update_shortest_paths_after_split(
-                            &working,
-                            &semantics,
-                            &mut shortest_paths,
-                            old_state_id,
-                            new_state_id,
-                        )?;
-                        refinements += 1;
-                        Ok(CegarIterationResult::Continue)
-                    }
-                }
-            },
-        )?;
-        let stop_reason = match run.stop_reason {
-            CegarStopReason::ConcretePlan => CartesianStopReason::ConcretePlan,
-            CegarStopReason::SizeLimit => CartesianStopReason::StateLimit,
-            CegarStopReason::TimeLimit => CartesianStopReason::TimeLimit,
-            CegarStopReason::MemoryLimit => CartesianStopReason::MemoryLimit,
-            CegarStopReason::DeadEnd => CartesianStopReason::DeadEnd,
-            CegarStopReason::IterationLimit | CegarStopReason::NoRefinableFlaw => {
-                unreachable!("Cartesian CEGAR driver returned unsupported stop reason")
-            }
+        let shortest_paths = compute_shortest_paths(&working, &semantics)?;
+        let mut refinement = CartesianRefinement {
+            working,
+            shortest_paths,
+            semantics: &semantics,
+            max_states: self.config.max_states,
+            debug: self.config.debug,
         };
+        let outcome = refine(
+            &mut refinement,
+            &CegarRun {
+                semantics: semantics.cegar(),
+                flaw_kind: self.config.flaw_kind,
+                state_packer: &state_packer,
+                axiom_evaluator: &axiom_evaluator,
+                refinement_root: &refinement_root,
+                driver: CegarDriver::new(usize::MAX, self.config.max_time),
+            },
+            start,
+        )?;
+        let CartesianRefinement {
+            working,
+            shortest_paths,
+            ..
+        } = refinement;
+        let stop_reason = outcome.stop_reason;
+        let solved_plan = outcome.concrete_plan;
 
         let working_transition_count = working.active_transition_ids().count();
         let mut initial_prop_values = Vec::new();
@@ -216,7 +148,7 @@ impl CartesianAbstractionGenerator {
             "Cartesian abstraction: states={}, transitions={}, refinements={}, h(init)={}, stop={stop_reason:?}, elapsed={:.3}s",
             distance_table.distances.len(),
             transition_count,
-            refinements,
+            outcome.refinements,
             distance_table.distances[distance_table.initial_state_hash],
             start.elapsed().as_secs_f64()
         );
@@ -230,8 +162,8 @@ impl CartesianAbstractionGenerator {
                 solved_by_self: solved_plan.is_some(),
                 abstraction_use: AbstractionUse::Standalone,
                 stop_reason,
-                pending_flaw,
-                refinements,
+                pending_flaw: outcome.pending_flaw,
+                refinements: outcome.refinements,
                 collection_member: None,
                 split_kind: self.config.split_kind,
                 split_selection_rank: self.config.split_selection_rank,

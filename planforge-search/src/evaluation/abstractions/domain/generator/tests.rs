@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use planforge_sas::numeric_conditions::ConditionValue;
 
+use planforge_sas::utils::float_tolerance;
+
 use super::*;
+use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::domain::config::FlawTreatmentVariants;
 use crate::evaluation::abstractions::domain::config::SplitDirection;
 use crate::evaluation::abstractions::domain::initial_splits::initial_split_mapping;
@@ -12,7 +15,7 @@ use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, OperatorIndex,
+    NumericVariable, Operator, OperatorCost, OperatorIndex, VariableIndex,
 };
 
 fn one_dimensional_sailing_like_task() -> NumericRootTask {
@@ -147,65 +150,13 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
         ..Default::default()
     };
 
-    let outcome = Cegar::new(config)
-        .unwrap()
-        .build_abstraction(&task)
-        .unwrap();
-    assert!(outcome.solved_by_self);
+    let outcome = refine_domain_abstraction(&config, &task).unwrap();
+    assert!(outcome.concrete_plan.is_some());
     let plan = outcome
-        .concrete_plan_operator_ids
-        .expect("a solved abstraction has a plan");
+        .concrete_plan
+        .expect("a solved abstraction has a plan")
+        .into_operator_ids();
     assert!(plan == [OperatorIndex::new(0)] || plan == [OperatorIndex::new(1)]);
-}
-
-#[test]
-fn empty_wildcard_plan_is_real_exactly_when_initial_state_is_goal() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "v".into(),
-        vec!["v0".into(), "v1".into()],
-        None,
-        ExplicitValueIndex::new(0),
-    )];
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables: variables.clone(),
-        numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(0, 0)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![],
-        operators: vec![],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-    let empty_plan = WildcardPlanResult {
-        wildcard_plan: vec![],
-        abstract_state_hashes: vec![0],
-        abstract_prop_states: vec![vec![0]],
-        abstract_numeric_states: vec![vec![]],
-    };
-    assert!(wildcard_plan_is_real(&task, &empty_plan).unwrap());
-
-    let non_goal_task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables: vec![],
-        goals: vec![ExplicitFact::propositional(0, 1)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![],
-        operators: vec![],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 1),
-    });
-    assert!(!wildcard_plan_is_real(&non_goal_task, &empty_plan).unwrap());
 }
 
 #[test]
@@ -247,16 +198,17 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let outcome = Cegar::new(CegarConfig {
-        max_abstraction_size: 1,
-        ..Default::default()
-    })
-    .unwrap()
-    .build_abstraction(&task)
+    let outcome = refine_domain_abstraction(
+        &CegarConfig {
+            max_abstraction_size: 1,
+            ..Default::default()
+        },
+        &task,
+    )
     .unwrap();
 
-    assert_eq!(outcome.stop_reason, CegarStopReason::NoRefinableFlaw);
-    assert_eq!(outcome.final_state.factory.domain_sizes(), [1]);
+    assert_eq!(outcome.stop_reason, CegarStopReason::SizeLimit);
+    assert_eq!(outcome.factory.domain_sizes(), [1]);
 }
 #[test]
 fn blacklisted_propositional_vars_are_not_refined() {
@@ -287,13 +239,10 @@ fn blacklisted_propositional_vars_are_not_refined() {
     config
         .blacklisted_prop_var_ids
         .insert(VariableIndex::from_usize(0));
-    let outcome = Cegar::new(config)
-        .unwrap()
-        .build_abstraction(&task)
-        .unwrap();
+    let outcome = refine_domain_abstraction(&config, &task).unwrap();
 
     assert_eq!(outcome.stop_reason, CegarStopReason::NoRefinableFlaw);
-    assert_eq!(outcome.final_state.factory.domain_sizes(), [1]);
+    assert_eq!(outcome.factory.domain_sizes(), [1]);
 }
 
 #[test]
@@ -345,13 +294,10 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
         ..Default::default()
     };
 
-    let outcome = Cegar::new(config)
-        .unwrap()
-        .build_abstraction(&task)
+    let outcome = refine_domain_abstraction(&config, &task)
         .expect("normal one-dimensional CEGAR run should make progress");
 
     let x_partitions = outcome
-        .final_state
         .factory
         .partitions()
         .partitions(VariableIndex::from_usize(0))
@@ -364,9 +310,8 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
 
 #[test]
 fn backward_splits_build_goal_side_partitions() {
-    fn split_points(outcome: &CegarOutcome) -> Vec<NumericValue> {
+    fn split_points(outcome: &DomainRefinementOutcome) -> Vec<NumericValue> {
         let mut points = outcome
-            .final_state
             .factory
             .partitions()
             .partitions(VariableIndex::from_usize(0))
@@ -376,31 +321,35 @@ fn backward_splits_build_goal_side_partitions() {
             .filter(|value| value.is_finite())
             .collect::<Vec<_>>();
         points.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        points.dedup_by(|a, b| a.to_bits() == b.to_bits());
+        points.dedup_by(|a, b| {
+            float_tolerance::canonical_bits(*a) == float_tolerance::canonical_bits(*b)
+        });
         points
     }
 
     let task = one_dimensional_sailing_like_task();
-    let backward = Cegar::new(CegarConfig {
-        flaw_kind: FlawKind::Progression,
-        split_direction: Some(SplitDirection::Backward),
-        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
-        max_iterations: 5,
-        random_seed: Some(7),
-        ..Default::default()
-    })
-    .unwrap()
-    .build_abstraction(&task)
+    let backward = refine_domain_abstraction(
+        &CegarConfig {
+            flaw_kind: FlawKind::Progression,
+            split_direction: Some(SplitDirection::Backward),
+            flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+            max_iterations: 5,
+            random_seed: Some(7),
+            ..Default::default()
+        },
+        &task,
+    )
     .expect("backward-split CEGAR should build goal-side partitions");
-    let progression = Cegar::new(CegarConfig {
-        flaw_kind: FlawKind::Progression,
-        flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
-        max_iterations: 5,
-        random_seed: Some(7),
-        ..Default::default()
-    })
-    .unwrap()
-    .build_abstraction(&task)
+    let progression = refine_domain_abstraction(
+        &CegarConfig {
+            flaw_kind: FlawKind::Progression,
+            flaw_treatment: FlawTreatmentVariants::MinGrowthSingleAtom,
+            max_iterations: 5,
+            random_seed: Some(7),
+            ..Default::default()
+        },
+        &task,
+    )
     .expect("progression CEGAR should build start-side partitions");
 
     let target_points = split_points(&backward);

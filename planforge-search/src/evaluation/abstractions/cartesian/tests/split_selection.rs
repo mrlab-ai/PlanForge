@@ -142,6 +142,7 @@ fn min_growth_uses_projected_transition_count() {
         working: &working,
         semantics: &semantics,
         shortest_paths: &paths,
+        max_states: usize::MAX,
     };
     retain_min_growth_splits(&view, &mut candidates, |candidate| candidate).unwrap();
     assert_eq!(candidates.len(), 1);
@@ -218,6 +219,7 @@ fn native_random_selector_is_seeded() {
             working: &working,
             semantics,
             shortest_paths: &paths,
+            max_states: usize::MAX,
         };
         (0..32)
             .map(|_| {

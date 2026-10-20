@@ -15,8 +15,8 @@ use planforge_sas::numeric_task::{
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
-    CartesianStopReason, CartesianView, FlawKind, OperatorBitSet, RefinementNode, ShortestPaths,
-    Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianView, CegarStopReason, FlawKind, OperatorBitSet, RefinementNode, ShortestPaths, Split,
+    SplitDimension, TransitionKey, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::selection::{
@@ -89,7 +89,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
         );
         assert_eq!(
             abstraction.metadata.stop_reason,
-            CartesianStopReason::ConcretePlan
+            CegarStopReason::ConcretePlan
         );
         assert_eq!(
             abstraction.abstract_source_sets.len(),

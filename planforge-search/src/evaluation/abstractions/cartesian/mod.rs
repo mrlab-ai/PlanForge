@@ -23,7 +23,7 @@ mod view;
 mod working;
 
 use super::common::cegar::progression::*;
-use super::common::cegar::regression::{FlawScope, regression_plan_check};
+use super::common::cegar::refine::{CegarRun, Refinable, refine};
 use super::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use super::common::cegar::split::*;
 use super::common::cegar::view::{AbstractionView, TransitionKey};
@@ -59,7 +59,7 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 
 use super::common::cegar::regression::ensure_regressable;
-use super::common::cegar::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind};
+use super::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
     BuiltReport, CollectionMembership, FULL_TASK_PROGRESS_STATES_ERROR, GoalFocusedBackend,
