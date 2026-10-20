@@ -239,7 +239,7 @@ impl GoalFocusedBackend for ScriptedBackend {
 fn schedule(
     strategy: CollectionStrategy,
     variants_per_goal: usize,
-    progressive_goal_roots: bool,
+    progress_states: bool,
 ) -> GoalFocusedSchedule {
     GoalFocusedSchedule {
         strategy,
@@ -247,14 +247,14 @@ fn schedule(
         random_seed: Some(5),
         max_collection_states: 1_000,
         total_max_time: None,
-        progressive_goal_roots,
+        progress_states,
         alternate_split_kinds: true,
         single_goal_tasks: true,
     }
 }
 
-/// `(goal, variant, kind, root x, progressive root)` per member.
-fn lanes(members: &[Member]) -> Vec<(usize, usize, MemberKind, Option<f64>, bool)> {
+/// `(goal, variant, kind, root x, from a progress state)` per member.
+fn progress(members: &[Member]) -> Vec<(usize, usize, MemberKind, Option<f64>, bool)> {
     members
         .iter()
         .map(|member| {
@@ -266,7 +266,7 @@ fn lanes(members: &[Member]) -> Vec<(usize, usize, MemberKind, Option<f64>, bool
                 membership.variant_id,
                 member.call.kind,
                 member.call.root_x,
-                membership.progressive_root,
+                membership.from_progress_state,
             )
         })
         .collect()
@@ -400,7 +400,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
 }
 
 #[test]
-fn lanes_advance_through_concrete_plans_and_add_initial_root_specialists() {
+fn progress_states_advance_through_concrete_plans_and_add_initial_root_specialists() {
     let bounds = [Bound::AtLeast(2.0), Bound::AtLeast(4.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
@@ -412,7 +412,7 @@ fn lanes_advance_through_concrete_plans_and_add_initial_root_specialists() {
     .unwrap();
 
     assert_eq!(
-        lanes(&members),
+        progress(&members),
         vec![
             (0, 0, MemberKind::Scheduled, Some(0.0), false),
             (1, 0, MemberKind::Scheduled, Some(2.0), true),
@@ -422,7 +422,7 @@ fn lanes_advance_through_concrete_plans_and_add_initial_root_specialists() {
 }
 
 #[test]
-fn a_lane_reaching_the_full_goal_becomes_terminal() {
+fn a_progress_state_reaching_the_full_goal_completes_its_variant() {
     let bounds = [Bound::AtLeast(4.0), Bound::AtLeast(2.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
@@ -434,7 +434,7 @@ fn a_lane_reaching_the_full_goal_becomes_terminal() {
     .unwrap();
 
     assert_eq!(
-        lanes(&members),
+        progress(&members),
         vec![
             (0, 0, MemberKind::Scheduled, Some(0.0), false),
             (1, 0, MemberKind::Scheduled, None, false),
@@ -443,7 +443,7 @@ fn a_lane_reaching_the_full_goal_becomes_terminal() {
 }
 
 #[test]
-fn a_dead_lane_root_is_rebuilt_from_the_initial_state_and_ends_the_lane() {
+fn a_dead_progress_state_is_rebuilt_from_the_initial_state_and_completes_its_variant() {
     let bounds = [Bound::AtLeast(1.0), Bound::AtMost(0.0), Bound::AtLeast(3.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
@@ -455,12 +455,12 @@ fn a_dead_lane_root_is_rebuilt_from_the_initial_state_and_ends_the_lane() {
     .unwrap();
 
     assert_eq!(
-        lanes(&members),
+        progress(&members),
         vec![
             (0, 0, MemberKind::Scheduled, Some(0.0), false),
             // Built from the dead root x=1, then rebuilt from the initial state.
             (1, 0, MemberKind::Scheduled, None, false),
-            // The lane is terminal: later members start from the initial state.
+            // The variant is complete: later members start from the initial state.
             (2, 0, MemberKind::Scheduled, None, false),
         ]
     );
@@ -509,7 +509,7 @@ fn a_member_whose_initial_state_is_dead_is_kept() {
 }
 
 #[test]
-fn an_advanced_lane_retries_goals_it_reopened() {
+fn an_advanced_progress_state_retries_goals_it_reopened() {
     let bounds = [Bound::AtLeast(4.0), Bound::AtLeast(2.0)];
     let task = counter_task(&bounds);
     let mut backend = ScriptedBackend::new(&bounds);
@@ -522,7 +522,7 @@ fn an_advanced_lane_retries_goals_it_reopened() {
     .unwrap();
 
     assert_eq!(
-        lanes(&members),
+        progress(&members),
         vec![
             (0, 0, MemberKind::Scheduled, Some(0.0), false),
             (1, 0, MemberKind::Scheduled, Some(0.0), false),
@@ -732,7 +732,7 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
 
 #[test]
 #[should_panic(expected = "full-task members require")]
-fn full_task_members_reject_progressive_goal_roots() {
+fn full_task_members_reject_progress_states() {
     let bounds = [Bound::AtLeast(1.0)];
     let task = counter_task(&bounds);
     let _ = build_goal_focused_collection(

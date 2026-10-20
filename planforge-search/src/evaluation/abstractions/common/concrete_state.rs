@@ -70,14 +70,12 @@ impl ConcreteState {
             let operator = task
                 .get_operators()
                 .get(operator_id.index())
-                .with_context(|| {
-                    format!("progressive plan step {step} has invalid operator {operator_id}")
-                })?;
+                .with_context(|| format!("plan step {step} has invalid operator {operator_id}"))?;
             ensure!(
                 operator.preconditions().iter().all(|fact| fact.is_held(
                     ConcreteStateView::from_decoded(&state_packer, &next.propositions, &[])
                 )),
-                "progressive plan operator {operator_id} ({}) is inapplicable at step {step}",
+                "plan operator {operator_id} ({}) is inapplicable at step {step}",
                 operator.name()
             );
             progress_concrete_state(

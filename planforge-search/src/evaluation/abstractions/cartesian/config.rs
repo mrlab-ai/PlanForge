@@ -41,7 +41,7 @@ pub struct CartesianAbstractionCollectionConfig {
     pub variants_per_goal: usize,
     pub max_collection_states: usize,
     pub total_max_time: Option<Duration>,
-    pub progressive_goal_roots: bool,
+    pub progress_states: bool,
     /// Complementary collections only: alternate progression and regression
     /// by variant parity. When false, every variant refines in the configured
     /// `refinement_direction`.
@@ -49,7 +49,7 @@ pub struct CartesianAbstractionCollectionConfig {
     /// Complementary collections only: build every member on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
-    /// and carry no collection membership. Excludes `progressive_goal_roots`.
+    /// and carry no collection membership. Excludes `progress_states`.
     pub single_goal_tasks: bool,
 }
 
@@ -61,7 +61,7 @@ impl Default for CartesianAbstractionCollectionConfig {
             variants_per_goal: 1,
             max_collection_states: 10_000_000,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         }

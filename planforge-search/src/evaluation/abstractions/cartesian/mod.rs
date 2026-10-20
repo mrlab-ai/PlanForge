@@ -62,7 +62,7 @@ use super::common::cegar::regression::ensure_regressable;
 use super::common::cegar::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, FULL_TASK_PROGRESSIVE_ROOTS_ERROR, GoalFocusedBackend,
+    BuiltReport, CollectionMembership, FULL_TASK_PROGRESS_STATES_ERROR, GoalFocusedBackend,
     GoalFocusedSchedule, GoalVariant, MemberBudget, MemberDirection, build_goal_focused_collection,
 };
 use crate::evaluation::abstractions::collections::portfolio::CollectionStrategy;

@@ -215,24 +215,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         by_collection.sort_by_key(|&id| abstraction_collection_iteration(components, id));
         orders.push((None, by_collection));
 
-        let mut concrete_splits_first = base_order.to_vec();
-        concrete_splits_first.sort_by(|&left, &right| {
-            uses_wanted_splits(components, left)
-                .cmp(&uses_wanted_splits(components, right))
-                .then_with(|| abstraction_h[right].total_cmp(&abstraction_h[left]))
-                .then_with(|| left.cmp(&right))
-        });
-        orders.push((None, concrete_splits_first));
-
-        let mut wanted_splits_first = base_order.to_vec();
-        wanted_splits_first.sort_by(|&left, &right| {
-            uses_wanted_splits(components, right)
-                .cmp(&uses_wanted_splits(components, left))
-                .then_with(|| abstraction_h[right].total_cmp(&abstraction_h[left]))
-                .then_with(|| left.cmp(&right))
-        });
-        orders.push((None, wanted_splits_first));
-
         for seed_offset in 0..3 {
             let mut random_order = base_order.to_vec();
             random_order.shuffle(&mut SmallRng::seed_from_u64(
@@ -281,17 +263,6 @@ pub(super) fn max_heuristic_greedy_order(
         right_h.total_cmp(&left_h).then_with(|| left.cmp(&right))
     });
     order
-}
-
-pub(super) fn uses_wanted_splits(
-    components: &[AbstractionComponent<'_>],
-    component_id: usize,
-) -> bool {
-    components
-        .get(component_id)
-        .and_then(AbstractionComponent::as_domain)
-        .and_then(|abstraction| abstraction.metadata.flaw_kind.as_deref())
-        .is_some_and(|flaw_kind| flaw_kind == "target_centered")
 }
 
 pub(super) fn deduplicate_orders(orders: Vec<Vec<usize>>) -> Vec<Vec<usize>> {

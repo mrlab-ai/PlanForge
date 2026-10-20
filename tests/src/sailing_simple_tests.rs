@@ -286,7 +286,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 
 /// The collection configuration every cost-partitioning test below shares:
 /// the goal-focused (`complementary`) collection, two variants per goal with
-/// progressive goal roots.
+/// progress states.
 ///
 /// No clock bounds it. The schedule builds a fixed member sequence, each
 /// member capped at 1_000 abstract states and the collection at 10_000, and
@@ -307,7 +307,7 @@ fn goal_focused_collection_config(
         flaw_kind: FlawKind::ExecuteEntirePlan,
         collection_strategy: CollectionStrategy::Complementary,
         variants_per_goal: 2,
-        progressive_goal_roots: true,
+        progress_states: true,
         random_seed: Some(seed),
         ..Default::default()
     }

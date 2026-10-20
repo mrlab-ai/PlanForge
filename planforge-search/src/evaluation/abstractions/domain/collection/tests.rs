@@ -26,7 +26,7 @@ fn standard_collection_defaults_match_numeric_fd_canonical_configuration() {
     assert_eq!(config.flaw_kind, FlawKind::ExecuteEntirePlan);
     assert!(!config.interleave_split_directions);
     assert_eq!(config.variants_per_goal, 1);
-    assert!(!config.progressive_goal_roots);
+    assert!(!config.progress_states);
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn standard_rejects_goal_focused_options() {
     );
 
     let error = validation_error(DomainAbstractionCollectionGeneratorMultipleCegarConfig {
-        progressive_goal_roots: true,
+        progress_states: true,
         ..Default::default()
     });
     assert!(
@@ -410,7 +410,7 @@ fn one_counter_task(first: f64, second: f64, upper_second: bool) -> NumericRootT
 
 fn domain_goal_focused_config(
     variants_per_goal: usize,
-    progressive_goal_roots: bool,
+    progress_states: bool,
 ) -> DomainAbstractionCollectionGeneratorMultipleCegarConfig {
     DomainAbstractionCollectionGeneratorMultipleCegarConfig {
         collection_strategy: CollectionStrategy::Complementary,
@@ -419,7 +419,7 @@ fn domain_goal_focused_config(
         max_collection_size: 10_000,
         total_max_time: f64::INFINITY,
         variants_per_goal,
-        progressive_goal_roots,
+        progress_states,
         random_seed: Some(1),
         compute_source_sets: false,
         ..Default::default()
@@ -451,7 +451,7 @@ fn domain_members(
 fn cartesian_members(
     task: &NumericRootTask,
     variants_per_goal: usize,
-    progressive_goal_roots: bool,
+    progress_states: bool,
 ) -> Vec<MemberSummary> {
     cartesian_members_with(
         task,
@@ -465,7 +465,7 @@ fn cartesian_members(
             variants_per_goal,
             max_collection_states: 10_000,
             total_max_time: None,
-            progressive_goal_roots,
+            progress_states,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         },
@@ -537,7 +537,7 @@ fn complementary_domain_collection_follows_the_cartesian_member_sequence() {
 }
 
 #[test]
-fn progressive_domain_collection_follows_the_cartesian_lanes() {
+fn domain_progress_states_follow_the_cartesian_variants() {
     let task = one_counter_task(2.0, 4.0, false);
     let domain = domain_members(&task, domain_goal_focused_config(2, true));
     let cartesian = cartesian_members(&task, 2, true);
@@ -546,13 +546,13 @@ fn progressive_domain_collection_follows_the_cartesian_lanes() {
     assert!(
         schedule_view(&domain)
             .iter()
-            .any(|(member, _, _)| member.membership.progressive_root),
-        "a lane must refine from an advanced root"
+            .any(|(member, _, _)| member.membership.from_progress_state),
+        "a variant must refine from an advanced progress state"
     );
 }
 
 #[test]
-fn a_dead_progressive_domain_root_is_rebuilt_from_the_initial_state() {
+fn a_dead_domain_progress_state_is_rebuilt_from_the_initial_state() {
     let task = one_counter_task(1.0, 0.0, true);
     let members = schedule_view(&domain_members(&task, domain_goal_focused_config(1, true)));
 
@@ -561,7 +561,7 @@ fn a_dead_progressive_domain_root_is_rebuilt_from_the_initial_state() {
             .iter()
             .map(|(member, _, plan)| (
                 member.membership.goal_id,
-                member.membership.progressive_root,
+                member.membership.from_progress_state,
                 plan.clone()
             ))
             .collect::<Vec<_>>(),
@@ -598,7 +598,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             variants_per_goal: 3,
             max_collection_states: 10_000,
             total_max_time: None,
-            progressive_goal_roots: true,
+            progress_states: true,
             alternate_split_kinds: false,
             single_goal_tasks: true,
         },
@@ -660,7 +660,7 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             variants_per_goal: 2,
             max_collection_states: 10_000,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: false,
         })
@@ -731,9 +731,9 @@ fn full_task_members_are_rejected_where_they_are_ill_defined() {
         single_goal_tasks: false,
         ..domain_goal_focused_config(2, true)
     });
-    assert!(error.contains("progressive_goal_roots=true"), "{error}");
+    assert!(error.contains("progress_states=true"), "{error}");
 
-    for (collection_strategy, progressive_goal_roots, expected) in [
+    for (collection_strategy, progress_states, expected) in [
         (
             CollectionStrategy::Standard,
             false,
@@ -742,13 +742,13 @@ fn full_task_members_are_rejected_where_they_are_ill_defined() {
         (
             CollectionStrategy::Complementary,
             true,
-            "progressive_goal_roots=true",
+            "progress_states=true",
         ),
     ] {
         let error =
             CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
                 collection_strategy,
-                progressive_goal_roots,
+                progress_states,
                 single_goal_tasks: false,
                 ..Default::default()
             })

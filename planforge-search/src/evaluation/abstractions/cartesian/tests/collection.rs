@@ -90,7 +90,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             variants_per_goal: 3,
             max_collection_states: 384,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -207,7 +207,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             variants_per_goal: 3,
             max_collection_states: 384,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -229,7 +229,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             variants_per_goal: 3,
             max_collection_states: 4,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -242,7 +242,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
 }
 
 #[test]
-fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
+fn progress_states_refine_from_reachable_concrete_checkpoints() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 2,
         metric: Metric::new(true, None),
@@ -310,7 +310,7 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
             variants_per_goal: 1,
             max_collection_states: 128,
             total_max_time: None,
-            progressive_goal_roots: true,
+            progress_states: true,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -359,7 +359,7 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
         !abstractions[2]
             .metadata
             .collection_member
-            .is_some_and(|member| member.progressive_root)
+            .is_some_and(|member| member.from_progress_state)
     );
     assert_eq!(
         abstractions[2]
@@ -400,7 +400,7 @@ fn progressive_goal_roots_refine_from_reachable_concrete_checkpoints() {
 }
 
 #[test]
-fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
+fn progress_states_complete_after_reaching_the_full_goal() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 2,
         metric: Metric::new(true, None),
@@ -468,7 +468,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             variants_per_goal: 1,
             max_collection_states: 192,
             total_max_time: None,
-            progressive_goal_roots: true,
+            progress_states: true,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -499,7 +499,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             })
             .collect::<Vec<_>>(),
         vec![4, 2],
-        "members after a completed progressive lane must start independently from the initial state"
+        "members after a variant completed its progress must start independently from the initial state"
     );
     assert_eq!(
         abstractions
@@ -507,15 +507,15 @@ fn progressive_goal_roots_make_a_lane_terminal_after_reaching_the_full_goal() {
             .map(|abstraction| abstraction
                 .metadata
                 .collection_member
-                .is_some_and(|member| member.progressive_root))
+                .is_some_and(|member| member.from_progress_state))
             .collect::<Vec<_>>(),
         vec![false, false],
-        "a completed lane must not be progressed or retried again"
+        "a variant with complete progress must not advance or be retried again"
     );
 }
 
 #[test]
-fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
+fn progress_states_complete_after_a_dead_progress_state() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 2,
         metric: Metric::new(true, None),
@@ -581,7 +581,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
             variants_per_goal: 1,
             max_collection_states: 192,
             total_max_time: None,
-            progressive_goal_roots: true,
+            progress_states: true,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -607,7 +607,7 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
                 abstraction
                     .metadata
                     .collection_member
-                    .is_some_and(|member| member.progressive_root),
+                    .is_some_and(|member| member.from_progress_state),
                 abstraction.metadata.stop_reason,
                 abstraction.metadata.concrete_plan_operator_ids.as_deref(),
             ))
@@ -642,12 +642,12 @@ fn progressive_goal_roots_make_a_lane_terminal_after_a_dead_root() {
         !abstractions[1]
             .metadata
             .collection_member
-            .is_some_and(|member| member.progressive_root)
+            .is_some_and(|member| member.from_progress_state)
     );
 }
 
 #[test]
-fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
+fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 2,
         metric: Metric::new(true, None),
@@ -715,7 +715,7 @@ fn progressive_goal_roots_retry_an_earlier_unsatisfied_goal_after_advancing() {
             variants_per_goal: 1,
             max_collection_states: 9,
             total_max_time: None,
-            progressive_goal_roots: true,
+            progress_states: true,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
@@ -887,7 +887,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             variants_per_goal: 3,
             max_collection_states: 192,
             total_max_time: Some(Duration::ZERO),
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })

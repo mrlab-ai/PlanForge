@@ -28,7 +28,7 @@ fn compact_goal_cover_orders_pair_complementary_anchor_variants() {
             variants_per_goal: 4,
             max_collection_states: 128,
             total_max_time: None,
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })

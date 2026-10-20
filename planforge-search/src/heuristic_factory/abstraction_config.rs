@@ -719,7 +719,7 @@ fn apply_cartesian_source_options(
                 let value = String::from_option_value(arg.value())?;
                 config.abstraction.split_kind = match value.as_str() {
                     "progression" => SplitKind::Concrete,
-                    "regression" | "target_centered" => SplitKind::Wanted,
+                    "regression" => SplitKind::Wanted,
                     _ => {
                         return Err(format!(
                             "invalid Cartesian refinement_direction `{value}`; expected progression or regression"
@@ -749,8 +749,8 @@ fn apply_cartesian_source_options(
             "collection_strategy" if collection => {
                 config.collection_strategy = CollectionStrategy::from_option_value(arg.value())?;
             }
-            "progressive_goal_roots" if collection => {
-                config.progressive_goal_roots = bool::from_option_value(arg.value())?;
+            "progress_states" if collection => {
+                config.progress_states = bool::from_option_value(arg.value())?;
             }
             "alternate_split_kinds" if collection => {
                 config.alternate_split_kinds = bool::from_option_value(arg.value())?;

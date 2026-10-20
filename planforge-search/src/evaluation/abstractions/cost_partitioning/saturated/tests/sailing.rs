@@ -68,7 +68,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             variants_per_goal: 4,
             max_collection_states: 10_000,
             total_max_time: Some(Duration::from_secs(15)),
-            progressive_goal_roots: false,
+            progress_states: false,
             alternate_split_kinds: true,
             single_goal_tasks: true,
         })
