@@ -20,9 +20,7 @@ use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
-use crate::evaluation::abstractions::domain::abstraction::{
-    DomainAbstraction, compute_hash_multipliers,
-};
+use crate::evaluation::abstractions::domain::abstraction::{DomainAbstraction, hash_multipliers};
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 
@@ -94,8 +92,8 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         vec![],
     )
     .unwrap();
-    let hash_multipliers =
-        compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).unwrap();
+    let multipliers =
+        hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).unwrap();
 
     DomainAbstraction {
         factory,
@@ -104,10 +102,9 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             generating_op_ids: vec![None; 4],
             initial_state_hash: 0,
             goal_facts: vec![],
-            hash_multipliers: hash_multipliers.clone(),
+            hash_multipliers: multipliers,
             numeric_domain_sizes: vec![],
         },
-        hash_multipliers,
         combine_labels: false,
         relevant_operator_ids: Vec::new(),
         abstract_operators: Vec::new(),

@@ -16,11 +16,12 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianLimits, CartesianSemantics,
-    CartesianSet, CartesianView, CegarStopReason, FlawKind, FlawScope, OperatorBitSet,
-    RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
+    CartesianView, FlawKind, FlawScope, OperatorBitSet, RefinementLimits, RefinementNode,
+    ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::selection::{
     push_unique_split, retain_min_growth_splits, select_refinement_split,
 };

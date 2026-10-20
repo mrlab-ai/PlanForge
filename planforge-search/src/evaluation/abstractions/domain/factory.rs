@@ -15,6 +15,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::float_tolerance;
 
 use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator, DomainMapping};
+use super::abstraction::abstract_state_count;
 use super::abstraction_numeric_var;
 use super::comparison_inputs::{
     AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,

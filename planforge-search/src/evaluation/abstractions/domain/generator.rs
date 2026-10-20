@@ -17,15 +17,16 @@ use super::initial_splits::{
     RefinementState, apply_initial_goal_splits, trivial_domain_mapping_and_sizes,
 };
 use super::partitions::NumericPartitions;
-use super::view::{DomainRefinement, RefinementLimits};
+use super::view::DomainRefinement;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
 use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
+use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
 use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::task::RootedTask;
 
-use super::abstraction::{DomainAbstraction, compute_hash_multipliers};
+use super::abstraction::DomainAbstraction;
 use super::collection::AbstractionKey;
 use super::debug_dump::log_final_abstraction;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
@@ -205,9 +206,6 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             factory.domain_sizes(),
             factory.numeric_domain_sizes()
         );
-        let hash_multipliers =
-            compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())
-                .context("failed to compute hash multipliers")?;
         let relevant_operator_ids = factory
             .relevant_operator_ids_from_operators(
                 task,
@@ -220,7 +218,6 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         Ok(DomainAbstraction {
             factory,
             distance_table,
-            hash_multipliers,
             combine_labels: self.config.cegar.combine_labels,
             relevant_operator_ids,
             abstract_operators,

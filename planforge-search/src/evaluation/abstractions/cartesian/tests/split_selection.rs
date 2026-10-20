@@ -239,10 +239,10 @@ fn native_random_selector_is_seeded() {
     assert!(sequence.contains(&SplitDimension::Propositional(VariableIndex::from_usize(1))));
 }
 
-fn unlimited() -> CartesianLimits<'static> {
+fn unlimited() -> RefinementLimits<'static> {
     static NONE: std::sync::LazyLock<HashSet<VariableIndex>> =
         std::sync::LazyLock::new(HashSet::new);
-    CartesianLimits {
+    RefinementLimits {
         max_states: usize::MAX,
         blacklisted_prop_var_ids: &NONE,
         blacklisted_numeric_var_ids: &NONE,

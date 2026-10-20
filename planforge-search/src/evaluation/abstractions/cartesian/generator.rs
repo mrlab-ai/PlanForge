@@ -56,12 +56,11 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             working,
             shortest_paths,
             semantics: &semantics,
-            limits: CartesianLimits {
+            limits: RefinementLimits {
                 max_states: self.config.cegar.max_states,
                 blacklisted_prop_var_ids: &self.config.blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids: &self.config.blacklisted_numeric_var_ids,
             },
-            debug: self.config.cegar.debug,
         };
         let outcome = refine(
             &mut refinement,

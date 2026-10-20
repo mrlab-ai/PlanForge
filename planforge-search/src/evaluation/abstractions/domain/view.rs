@@ -2,26 +2,23 @@
 //! it.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
 
 use std::time::Instant;
 
-use tracing::debug;
-
 use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator};
 use super::config::DomainAbstractionConfig;
-use super::debug_dump::debug_print_abstraction_stats;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::refine::Refinable;
 use crate::evaluation::abstractions::common::cegar::split::Split;
-use crate::evaluation::abstractions::common::cegar::view::{AbstractionView, TransitionKey};
+use crate::evaluation::abstractions::common::cegar::view::{
+    AbstractionView, RefinementLimits, TransitionKey,
+};
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 
 pub(super) struct DomainView<'a> {
@@ -35,25 +32,6 @@ pub(super) struct DomainView<'a> {
     /// Plan steps execute any label of their abstract operator, not just
     /// the first.
     pub(super) wildcard_plans: bool,
-}
-
-/// What a domain abstraction may still refine: a split must keep it within
-/// `max_states` abstract states and leave the blacklisted variables alone.
-#[derive(Clone, Copy)]
-pub(super) struct RefinementLimits<'a> {
-    pub(super) max_states: usize,
-    pub(super) blacklisted_prop_var_ids: &'a HashSet<VariableIndex>,
-    pub(super) blacklisted_numeric_var_ids: &'a HashSet<VariableIndex>,
-}
-
-impl DomainView<'_> {
-    /// The abstract state count, which splitting a dimension of `values`
-    /// values multiplies by `(values + 1) / values`.
-    fn size_after_splitting_dimension_of(&self, values: usize) -> u128 {
-        let states = self.table.distances.len() as u128;
-        let values = values as u128;
-        states / values * (values + 1)
-    }
 }
 
 impl AbstractionView for DomainView<'_> {
@@ -126,11 +104,21 @@ impl AbstractionView for DomainView<'_> {
     }
 
     fn growth(&self, split: &Split) -> Result<u128> {
+        Ok(self.states_after(split))
+    }
+
+    fn limits(&self) -> RefinementLimits<'_> {
+        self.limits
+    }
+
+    /// Splitting a dimension of `values` values multiplies the abstract state
+    /// count by `(values + 1) / values`.
+    fn states_after(&self, split: &Split) -> u128 {
         let values = match split {
             Split::Propositional { var_id, .. } => self.factory.domain_sizes()[var_id.index()],
             Split::Numeric { var_id, .. } => self.numeric_domain_sizes[var_id.index()],
-        };
-        Ok(self.size_after_splitting_dimension_of(values))
+        } as u128;
+        self.table.distances.len() as u128 / values * (values + 1)
     }
 
     fn step_operators(&self, transition: TransitionKey) -> Vec<OperatorIndex> {
@@ -143,25 +131,6 @@ impl AbstractionView for DomainView<'_> {
         labels.sort_unstable();
         labels.dedup();
         labels
-    }
-
-    fn refinement_limit(&self, split: &Split) -> Option<CegarStopReason> {
-        let (blacklisted, values) = match split {
-            Split::Propositional { var_id, .. } => (
-                self.limits.blacklisted_prop_var_ids.contains(var_id),
-                self.factory.domain_sizes()[var_id.index()],
-            ),
-            Split::Numeric { var_id, .. } => (
-                self.limits.blacklisted_numeric_var_ids.contains(var_id),
-                self.numeric_domain_sizes[var_id.index()],
-            ),
-        };
-        if blacklisted {
-            Some(CegarStopReason::NoRefinableFlaw)
-        } else {
-            (self.size_after_splitting_dimension_of(values) > self.limits.max_states as u128)
-                .then_some(CegarStopReason::SizeLimit)
-        }
     }
 }
 
@@ -182,7 +151,6 @@ pub(super) struct DomainRefinement<'a> {
         Vec<AbstractOperator>,
         AbstractDistanceTable,
     )>,
-    iteration: usize,
 }
 
 impl<'a> DomainRefinement<'a> {
@@ -200,7 +168,6 @@ impl<'a> DomainRefinement<'a> {
             wildcard_plans: config.use_wildcard_plans,
             debug: config.cegar.debug,
             built: None,
-            iteration: 0,
         }
     }
 
@@ -216,14 +183,6 @@ impl Refinable for DomainRefinement<'_> {
         Self: 'b;
 
     fn view(&mut self, deadline: Option<Instant>) -> Result<DomainView<'_>> {
-        self.iteration += 1;
-        if self.debug {
-            debug_print_abstraction_stats(
-                self.iteration,
-                self.factory.domain_sizes(),
-                self.factory.numeric_domain_sizes(),
-            );
-        }
         let mut generator = self
             .factory
             .make_operator_generator(self.task, self.combine_labels)?;
@@ -250,9 +209,6 @@ impl Refinable for DomainRefinement<'_> {
     }
 
     fn apply_split(&mut self, split: Split) -> Result<()> {
-        if self.debug {
-            debug!("domain CEGAR iteration {}: {split:?}", self.iteration);
-        }
         self.built = None;
         self.factory.apply_split(self.task, &split)
     }

@@ -22,7 +22,6 @@ use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::abstraction::compute_hash_multipliers;
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
@@ -443,12 +442,9 @@ fn build_handcrafted_abstraction(
         &abstract_operators,
         DistanceTableOptions::default(),
     )?;
-    let hash_multipliers =
-        compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())?;
     Ok(DomainAbstraction {
         factory,
         distance_table,
-        hash_multipliers,
         combine_labels: false,
         relevant_operator_ids,
         abstract_operators,

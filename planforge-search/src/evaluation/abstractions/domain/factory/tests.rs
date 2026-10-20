@@ -431,8 +431,9 @@ fn first_plan_step(
     use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
     use crate::evaluation::abstractions::common::cegar::refine::Refinable;
     use crate::evaluation::abstractions::common::cegar::view::AbstractionView;
+    use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
     use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
-    use crate::evaluation::abstractions::domain::view::{DomainRefinement, RefinementLimits};
+    use crate::evaluation::abstractions::domain::view::DomainRefinement;
 
     let config = DomainAbstractionConfig {
         cegar: CegarOptions {

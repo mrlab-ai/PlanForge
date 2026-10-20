@@ -25,7 +25,7 @@ mod working;
 use super::common::cegar::refine::{CegarRun, Refinable, refine};
 use super::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use super::common::cegar::split::*;
-use super::common::cegar::view::{AbstractionView, TransitionKey};
+use super::common::cegar::view::{AbstractionView, RefinementLimits, TransitionKey};
 use super::common::cegar::{SplitKind, SplitSelection};
 pub use abstraction::*;
 pub use collection::*;
@@ -55,7 +55,7 @@ use planforge_sas::utils::float_tolerance;
 use tracing::info;
 
 use super::common::cegar::regression::ensure_regressable;
-use super::common::cegar::{CegarDriver, CegarStopReason, FlawKind, FlawScope};
+use super::common::cegar::{CegarDriver, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};

@@ -24,7 +24,6 @@ use crate::evaluation::abstractions::common::transition_system::{
 pub struct DomainAbstraction {
     pub factory: DomainAbstractionFactory,
     pub distance_table: AbstractDistanceTable,
-    pub hash_multipliers: Vec<usize>,
     pub combine_labels: bool,
     pub relevant_operator_ids: Vec<OperatorIndex>,
     pub abstract_operators: Vec<AbstractOperator>,
@@ -129,61 +128,35 @@ impl DomainAbstraction {
     }
 }
 
-/// Computes mixed-radix hash multipliers for propositional and numeric variables.
-///
-/// This mirrors the hashing scheme used by `AbstractOperatorGenerator`.
-pub fn compute_hash_multipliers(
+/// The mixed-radix multipliers of abstract state hashes: one digit per
+/// variable, propositional variables first, the first digit least
+/// significant.
+pub(crate) fn hash_multipliers(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
 ) -> Result<Vec<usize>> {
-    let total = domain_sizes
-        .len()
-        .checked_add(numeric_domain_sizes.len())
-        .context("variable count overflow")?;
-    ensure!(total > 0, "cannot compute hash multipliers for 0 variables");
-
-    let mut multipliers: Vec<usize> = vec![0; total];
-    let mut mult: usize = 1;
-    for idx in 0..total {
-        multipliers[idx] = mult;
-
-        let radix: usize = if idx < domain_sizes.len() {
-            domain_sizes[idx]
-        } else {
-            let n = idx - domain_sizes.len();
-            *numeric_domain_sizes
-                .get(n)
-                .context("numeric domain size out of range")?
-        };
-
-        mult = mult
-            .checked_mul(radix)
-            .context("hash multiplier overflow")?;
+    let mut multipliers = Vec::with_capacity(domain_sizes.len() + numeric_domain_sizes.len());
+    let mut states: usize = 1;
+    for &size in domain_sizes.iter().chain(numeric_domain_sizes) {
+        multipliers.push(states);
+        states = states
+            .checked_mul(size)
+            .context("the abstract state space does not fit usize")?;
     }
-
     Ok(multipliers)
 }
 
-/// The number of abstract states of an abstraction with these domain
-/// sizes, or `None` if it does not fit `u128`.
-pub(crate) fn compute_abstraction_size_u128(
+/// The number of abstract states of an abstraction with these domain sizes,
+/// or `None` if it does not fit `u128`.
+pub(crate) fn abstract_state_count(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
 ) -> Option<u128> {
-    let mut size: u128 = 1;
-    for &d in domain_sizes.iter() {
-        let du = u128::try_from(d).ok()?;
-        if du == 0 {
-            return Some(0);
-        }
-        size = size.checked_mul(du)?;
-    }
-    for &p in numeric_domain_sizes.iter() {
-        let pu = u128::try_from(p).ok()?;
-        if pu == 0 {
-            return Some(0);
-        }
-        size = size.checked_mul(pu)?;
-    }
-    Some(size)
+    domain_sizes
+        .iter()
+        .chain(numeric_domain_sizes)
+        .try_fold(1_u128, |states, &size| {
+            assert!(size > 0, "abstract domain sizes are positive");
+            states.checked_mul(size as u128)
+        })
 }

@@ -92,19 +92,9 @@ pub(super) fn compute_num_states(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
 ) -> Result<usize> {
-    let mut num: usize = 1;
-    for (i, &s) in domain_sizes.iter().enumerate() {
-        ensure!(s > 0, "domain size for var {i} must be > 0, got {s}");
-        num = num
-            .checked_mul(s)
-            .context("abstract state space too large (overflow)")?;
-    }
-    for &s in numeric_domain_sizes.iter() {
-        num = num
-            .checked_mul(s)
-            .context("abstract state space too large (overflow)")?;
-    }
-    Ok(num)
+    abstract_state_count(domain_sizes, numeric_domain_sizes)
+        .and_then(|states| usize::try_from(states).ok())
+        .context("the abstract state space does not fit usize")
 }
 
 impl DomainAbstractionFactory {
