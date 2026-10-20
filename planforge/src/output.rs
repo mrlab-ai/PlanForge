@@ -12,6 +12,9 @@ use tracing::info;
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_OUT_OF_MEMORY: i32 = 6;
 pub const EXIT_TIMEOUT: i32 = 7;
+/// The task uses a feature the configured heuristic does not support; Fast
+/// Downward's `SEARCH_UNSUPPORTED`.
+pub const EXIT_UNSUPPORTED: i32 = 34;
 
 pub fn exit_code_for_search_status(status: &SearchStatus) -> i32 {
     match status {

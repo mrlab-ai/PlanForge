@@ -36,3 +36,4 @@ pub mod search;
 pub mod state_space;
 pub mod successor_generator;
 pub mod task_restriction;
+pub mod unsupported;

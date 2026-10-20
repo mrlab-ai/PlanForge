@@ -39,6 +39,7 @@ use super::progression::{ConcretePlan, PlanCheck};
 use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::{AbstractionView, TransitionKey};
+use crate::ensure_supported;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::concrete_state::{
     ConcreteState, concrete_prop_values,
@@ -100,13 +101,13 @@ pub(crate) fn ensure_regressable(
     }
     let check = |fact: &ExplicitFact, context: &dyn Fn() -> String| -> Result<()> {
         if task.numeric_conditions().is_condition_var(fact.var_index()) {
-            ensure!(
+            ensure_supported!(
                 coordinates.requirement(fact).is_some(),
                 "regression flaws need conditions over one coordinate, but {} has {fact:?}; --restrict-task compiles every linear condition into one",
                 context()
             );
         } else {
-            ensure!(
+            ensure_supported!(
                 !derived[fact.var()],
                 "regression flaws cannot regress {} fact {fact:?}: its variable is derived by axioms",
                 context()

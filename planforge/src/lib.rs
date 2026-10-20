@@ -17,8 +17,8 @@ pub mod portfolio;
 mod tests;
 
 pub use output::{
-    EXIT_TIMEOUT, exit_code_for_search_status, print_plan_result, print_search_result,
-    write_plan_file,
+    EXIT_TIMEOUT, EXIT_UNSUPPORTED, exit_code_for_search_status, print_plan_result,
+    print_search_result, write_plan_file,
 };
 pub use portfolio::PortfolioOptions;
 
@@ -122,6 +122,10 @@ pub fn run_with_heuristics(extra: Vec<ExternalHeuristic>) -> std::io::Result<()>
         Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
             tracing::info!("Time limit reached during heuristic construction.");
             std::process::exit(EXIT_TIMEOUT);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+            tracing::error!("{error}");
+            std::process::exit(EXIT_UNSUPPORTED);
         }
         Err(error) => Err(error),
     }

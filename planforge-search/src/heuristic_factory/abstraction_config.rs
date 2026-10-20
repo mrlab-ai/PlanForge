@@ -421,22 +421,22 @@ pub(crate) fn build_components<'task>(
                 // canonical, label SCP, and region SCP receive the same generation budget.
                 config.set_compute_source_sets(false);
                 info!("Building domain abstraction source {source_index}...");
-                let mut abstractions = DomainAbstractionCollectionGeneratorMultipleCegar::new(
-                    config,
-                )
-                .generate_collection(task)
-                .map_err(|error| {
-                    format!("failed to build domain abstraction source {source_index}: {error:#}")
-                })?;
+                let mut abstractions =
+                    DomainAbstractionCollectionGeneratorMultipleCegar::new(config)
+                        .generate_collection(task)
+                        .map_err(|error| {
+                            HeuristicBuildError::from_source(
+                                error,
+                                format!("failed to build domain abstraction source {source_index}"),
+                            )
+                        })?;
                 if component_use.needs_source_sets() {
                     for (component_index, abstraction) in abstractions.iter_mut().enumerate() {
                         abstraction
                             .ensure_abstract_source_sets(task)
                             .map_err(|error| {
-                                format!(
-                                    "failed to build regional operator regions for domain abstraction source {source_index}, component {component_index}: {error:#}"
-                                )
-                            })?;
+                    HeuristicBuildError::from_source(error, format!("failed to build regional operator regions for domain abstraction source {source_index}, component {component_index}"))
+                })?;
                     }
                 }
                 components.extend(abstractions.into_iter().enumerate().map(
@@ -454,13 +454,19 @@ pub(crate) fn build_components<'task>(
                 info!("Building Cartesian abstraction source {source_index}...");
                 let abstraction = CartesianAbstractionGenerator::new(config)
                     .map_err(|error| {
-                        format!(
-                            "failed to construct Cartesian abstraction source {source_index}: {error:#}"
+                        HeuristicBuildError::from_source(
+                            error,
+                            format!(
+                                "failed to construct Cartesian abstraction source {source_index}"
+                            ),
                         )
                     })?
                     .generate(task)
                     .map_err(|error| {
-                        format!("failed to build Cartesian abstraction source {source_index}: {error:#}")
+                        HeuristicBuildError::from_source(
+                            error,
+                            format!("failed to build Cartesian abstraction source {source_index}"),
+                        )
                     })?;
                 components.push(AbstractionComponent::cartesian(
                     Some(format!("cartesian_{source_index}")),
@@ -474,16 +480,12 @@ pub(crate) fn build_components<'task>(
                 info!("Building Cartesian abstraction collection source {source_index}...");
                 let abstractions = CartesianAbstractionCollectionGenerator::new(config)
                     .map_err(|error| {
-                        format!(
-                            "failed to construct Cartesian abstraction collection source {source_index}: {error:#}"
-                        )
-                    })?
+                    HeuristicBuildError::from_source(error, format!("failed to construct Cartesian abstraction collection source {source_index}"))
+                })?
                     .generate(task)
                     .map_err(|error| {
-                        format!(
-                            "failed to build Cartesian abstraction collection source {source_index}: {error:#}"
-                        )
-                    })?;
+                    HeuristicBuildError::from_source(error, format!("failed to build Cartesian abstraction collection source {source_index}"))
+                })?;
                 components.extend(abstractions.into_iter().enumerate().map(
                     |(goal_id, abstraction)| {
                         AbstractionComponent::cartesian(

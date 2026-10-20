@@ -1,4 +1,6 @@
 use anyhow::{Context, Result, ensure};
+
+use crate::ensure_supported;
 use planforge_sas::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
 use std::sync::Arc;
 
@@ -483,11 +485,12 @@ pub(crate) fn validate_abstraction_operator(
             operator.name(),
             effect.var_id()
         );
-        ensure!(
+        ensure_supported!(
             effect.conditions().is_empty(),
-            "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstraction generation"
+            "operator {operator_id} ({}) has a conditional propositional effect",
+            operator.name()
         );
-        ensure!(
+        ensure_supported!(
             propositional_effect_by_var[effect.var_id().index()]
                 .replace(effect_id)
                 .is_none(),
@@ -501,9 +504,10 @@ pub(crate) fn validate_abstraction_operator(
     let initial_numeric = task.get_initial_numeric_state_values();
     let mut numeric_effect_by_var = vec![None; numeric_variables.len()];
     for (effect_id, effect) in operator.assignment_effects().iter().enumerate() {
-        ensure!(
+        ensure_supported!(
             !effect.is_conditional() && effect.conditions().is_empty(),
-            "numeric-fd parity: conditional propositional or numeric effects are unsupported in abstraction generation"
+            "operator {operator_id} ({}) has a conditional numeric effect",
+            operator.name()
         );
         ensure!(
             effect.affected_var_id().index() < numeric_variables.len(),
@@ -511,7 +515,7 @@ pub(crate) fn validate_abstraction_operator(
             operator.name(),
             effect.affected_var_id()
         );
-        ensure!(
+        ensure_supported!(
             numeric_effect_by_var[effect.affected_var_id().index()]
                 .replace(effect_id)
                 .is_none(),
@@ -520,7 +524,7 @@ pub(crate) fn validate_abstraction_operator(
             effect.affected_var_id()
         );
         let affected_type = numeric_variables[effect.affected_var_id().index()].get_type();
-        ensure!(
+        ensure_supported!(
             matches!(affected_type, NumericType::Regular | NumericType::Cost),
             "operator {operator_id} ({}) numeric effect {effect_id} targets {:?} variable {}",
             operator.name(),
@@ -534,11 +538,11 @@ pub(crate) fn validate_abstraction_operator(
                 operator.name()
             )
         })?;
-        ensure!(
+        ensure_supported!(
             rhs_variable.get_type() == &NumericType::Constant,
-            "numeric-fd parity: assignment effects require constant RHS, got {:?} for numeric var {}",
-            rhs_variable.get_type(),
-            rhs_var_id
+            "operator {operator_id} ({}) numeric effect {effect_id} has a {:?} argument, not a constant",
+            operator.name(),
+            rhs_variable.get_type()
         );
         let rhs = *initial_numeric.get(rhs_var_id.index()).with_context(|| {
             format!("missing initial value for constant numeric variable {rhs_var_id}")
