@@ -236,7 +236,7 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
     let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
             max_states: 16,
-            max_time: None,
+            max_time: None.into(),
             combine_labels: false,
             random_seed: None,
             debug: false,

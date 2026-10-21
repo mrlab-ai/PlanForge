@@ -208,7 +208,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let budget = self.construction_deadline.earliest(deadline_from_now(
             "table_construction_max_time",
-            self.config.table_construction_max_time,
+            self.config
+                .table_construction_max_time
+                .duration()
+                .map_err(EvaluationError::ComputationFailed)?,
         )?);
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
@@ -242,7 +245,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             collection,
             &mut order,
             budget,
-            self.config.initial_order_generation_max_time,
+            self.config
+                .initial_order_generation_max_time
+                .duration()
+                .map_err(EvaluationError::ComputationFailed)?,
         )?;
         let best = candidates.partitions.swap_remove(candidates.best_index);
         if best.is_empty() {

@@ -84,7 +84,7 @@ fn parses_canonical_domain_collection_with_named_options() {
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(
         cfg.total_max_time,
-        Some(std::time::Duration::from_secs_f64(4.5))
+        Some(std::time::Duration::from_secs_f64(4.5)).into()
     );
     assert!(!cfg.member.use_wildcard_plans);
     assert!(cfg.member.cegar.combine_labels);
@@ -174,7 +174,7 @@ fn both_representations_take_the_same_cegar_options() {
     assert_eq!(domain.cegar, cartesian.cegar);
     assert_eq!(
         domain.cegar.max_time,
-        Some(std::time::Duration::from_secs(2))
+        Some(std::time::Duration::from_secs(2)).into()
     );
 }
 
@@ -208,13 +208,13 @@ fn parses_single_domain_abstraction_time_limit() {
     assert_eq!(cfg.cegar.max_states, 1000);
     assert_eq!(
         cfg.cegar.max_time,
-        Some(std::time::Duration::from_secs(900))
+        Some(std::time::Duration::from_secs(900)).into()
     );
     assert_eq!(cfg.cegar.flaw_scope, FlawScope::WholePlan);
 
     let h = astar_heuristic("astar(domain_abstraction(max_time=infinity))");
     cfg.apply_options(&h.args).unwrap();
-    assert_eq!(cfg.cegar.max_time, None);
+    assert_eq!(cfg.cegar.max_time, None.into());
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn parses_max_domain_collection_with_named_options() {
     assert_eq!(cfg.max_collection_size, 123);
     assert_eq!(
         cfg.total_max_time,
-        Some(std::time::Duration::from_secs_f64(4.5))
+        Some(std::time::Duration::from_secs_f64(4.5)).into()
     );
     assert!(!cfg.member.use_wildcard_plans);
     assert!(cfg.member.cegar.combine_labels);
@@ -430,12 +430,12 @@ fn collection_seeds_split_kinds_and_stagnation_limits_parse_once() {
     assert_eq!(cfg.member.cegar.random_seed, None);
     assert_eq!(cfg.split_kind, Some(SplitKind::Wanted));
     assert_eq!(cfg.member.cegar.split_kind, SplitKind::Concrete);
-    assert_eq!(cfg.stagnation_limit, None);
+    assert_eq!(cfg.stagnation_limit, None.into());
 
     let cfg = domain_collection_source("astar(max(domain_collection(stagnation_limit=2.5)))");
     assert_eq!(
         cfg.stagnation_limit,
-        Some(std::time::Duration::from_millis(2500))
+        Some(std::time::Duration::from_millis(2500)).into()
     );
 
     let error =

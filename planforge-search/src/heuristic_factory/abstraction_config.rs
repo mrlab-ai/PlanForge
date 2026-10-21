@@ -301,7 +301,7 @@ impl SourcesConfig {
     }
 
     pub(crate) fn deadline(&self) -> Result<Deadline, HeuristicBuildError> {
-        Deadline::after(Instant::now(), self.construction_max_time.0)
+        Deadline::after(Instant::now(), self.construction_max_time.duration()?)
             .map_err(|error| format!("invalid construction_max_time: {error}").into())
     }
 }
@@ -385,7 +385,7 @@ where
 {
     let cegar = config.cegar_mut();
     cegar.keep_transitions = purpose.needs_transition_system();
-    cegar.max_time = min_time_limit(cegar.max_time, remaining);
+    cegar.max_time = min_time_limit(cegar.max_time.duration()?, remaining).into();
     info!("Building {} source...", G::KIND);
     let abstraction = G::new(config)
         .and_then(|generator| generator.generate(task))
@@ -407,7 +407,9 @@ where
 {
     config.member.cegar_mut().keep_transitions = purpose.needs_transition_system();
     if let Some(remaining) = remaining {
-        config.cap_construction_time(remaining);
+        config
+            .cap_construction_time(remaining)
+            .map_err(|error| format!("invalid construction time: {error}"))?;
     }
     info!("Building {} collection source...", G::KIND);
     let abstractions = CollectionGenerator::<G>::new(config)

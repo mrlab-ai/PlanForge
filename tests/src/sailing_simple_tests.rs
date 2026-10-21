@@ -315,7 +315,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
 fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfig {
     DomainAbstractionCollectionConfig {
         max_collection_size: 10_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 2,
         progress_states: true,
@@ -323,7 +323,7 @@ fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfi
             cegar: CegarOptions {
                 random_seed: Some(seed),
                 max_states: 1_000,
-                max_time: None,
+                max_time: None.into(),
                 split_selection: SplitSelection::MinGrowth,
                 combine_labels: false,
                 flaw_kind: FlawKind::Progression,
@@ -358,8 +358,8 @@ fn scp_initial_h_for_collection(
     abstractions: Vec<DomainAbstraction>,
 ) -> f64 {
     let config = ScpConfig {
-        max_time: Some(Duration::from_secs(100)),
-        table_construction_max_time: Some(Duration::from_secs(100)),
+        max_time: Some(Duration::from_secs(100)).into(),
+        table_construction_max_time: Some(Duration::from_secs(100)).into(),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
@@ -401,8 +401,8 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         .generate(&task)
         .expect("scp domain abstractions should build");
     let config = ScpConfig {
-        max_time: Some(Duration::from_secs(100)),
-        table_construction_max_time: Some(Duration::from_secs(100)),
+        max_time: Some(Duration::from_secs(100)).into(),
+        table_construction_max_time: Some(Duration::from_secs(100)).into(),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };

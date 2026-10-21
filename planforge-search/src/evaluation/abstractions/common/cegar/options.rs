@@ -1,7 +1,7 @@
 //! The options of one CEGAR run, the same for domain and Cartesian
 //! abstractions.
 
-use std::time::Duration;
+use crate::config::TimeLimit;
 
 use super::{FlawKind, FlawScope, SplitKind, SplitSelection};
 use crate::evaluation::seed::RANDOM_SPLIT_SEED;
@@ -14,9 +14,9 @@ pub struct CegarOptions {
     /// The most refinements.
     #[option(positional)]
     pub max_iterations: usize,
-    /// How long refinement may take; unbounded when `None`.
+    /// How long refinement may take; unbounded for `infinity`.
     #[option(positional)]
-    pub max_time: Option<Duration>,
+    pub max_time: TimeLimit,
     /// Merge the operators that induce the same abstract transitions into one
     /// label.
     #[option(positional)]
@@ -55,7 +55,7 @@ impl Default for CegarOptions {
         Self {
             max_states: 100_000,
             max_iterations: usize::MAX,
-            max_time: None,
+            max_time: TimeLimit::UNLIMITED,
             combine_labels: true,
             random_seed: Some(RANDOM_SPLIT_SEED),
             flaw_kind: FlawKind::Progression,
@@ -74,6 +74,7 @@ impl CegarOptions {
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(self.max_states > 0, "`max_states` must be > 0");
         anyhow::ensure!(self.max_iterations > 0, "`max_iterations` must be > 0");
+        self.max_time.duration().map_err(anyhow::Error::msg)?;
         Ok(())
     }
 }

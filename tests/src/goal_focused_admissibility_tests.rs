@@ -110,7 +110,7 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
 fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
     DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 3_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         progress_states: true,
@@ -118,7 +118,7 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
             cegar: CegarOptions {
                 random_seed: Some(1),
                 max_states: 300,
-                max_time: None,
+                max_time: None.into(),
                 flaw_kind: FlawKind::Progression,
                 flaw_scope: FlawScope::WholePlan,
                 ..DomainAbstractionCollectionConfig::default().member.cegar
@@ -144,12 +144,12 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         max_collection_size: 3_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         progress_states: true,
         alternate_split_kinds: None,
         split_kind: None,
         single_goal_tasks: true,
-        stagnation_limit: Some(Duration::from_secs(20)),
+        stagnation_limit: Some(Duration::from_secs(20)).into(),
         blacklist_trigger_percentage: 0.75,
         enable_blacklist_on_stagnation: true,
     })
@@ -160,8 +160,8 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
 
 fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
     ScpConfig {
-        max_time: Some(Duration::from_secs(100)),
-        table_construction_max_time: Some(Duration::from_secs(100)),
+        max_time: Some(Duration::from_secs(100)).into(),
+        table_construction_max_time: Some(Duration::from_secs(100)).into(),
         random_seed: 1,
         partitioning,
         ..Default::default()

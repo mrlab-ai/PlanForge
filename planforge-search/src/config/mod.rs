@@ -13,14 +13,13 @@
 //!   enum definition.
 
 use std::collections::HashSet;
-use std::time::Duration;
 
 pub use parser::{parse_call, parse_heuristic_spec};
 pub use planforge_config_derive::{ApplyOptions, FromOptionValue};
 
 mod parser;
 mod search;
-mod time_limit;
+pub(crate) mod time_limit;
 pub use search::{SearchConfig, parse_search_spec};
 pub use time_limit::TimeLimit;
 
@@ -424,13 +423,6 @@ impl<T: FromOptionValue> FromOptionValue for Vec<T> {
             ConfigValue::List(values) => values.iter().map(T::from_option_value).collect(),
             value => T::from_option_value(value).map(|value| vec![value]),
         }
-    }
-}
-
-/// A time limit in seconds; `infinity` is none.
-impl FromOptionValue for Option<Duration> {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        TimeLimit::from_option_value(value).map(|limit| limit.0)
     }
 }
 

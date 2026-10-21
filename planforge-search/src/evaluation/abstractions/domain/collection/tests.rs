@@ -88,7 +88,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
     ] {
         let config = DomainAbstractionCollectionConfig {
             max_collection_size: 100,
-            total_max_time: Some(Duration::ZERO),
+            total_max_time: Some(Duration::ZERO).into(),
             collection_strategy,
             member: member_config(10, Some(Duration::ZERO)),
             ..Default::default()
@@ -115,8 +115,8 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
     // until the collection time limit.
     let config = DomainAbstractionCollectionConfig {
         max_collection_size: 100_000,
-        total_max_time: Some(Duration::from_secs(600)),
-        stagnation_limit: Some(Duration::from_secs(600)),
+        total_max_time: Some(Duration::from_secs(600)).into(),
+        stagnation_limit: Some(Duration::from_secs(600)).into(),
         member: member_config(1_000, Some(Duration::from_secs(600))),
         ..Default::default()
     };
@@ -138,7 +138,7 @@ fn member_config(max_states: usize, max_time: Option<Duration>) -> DomainAbstrac
     DomainAbstractionConfig {
         cegar: CegarOptions {
             max_states,
-            max_time,
+            max_time: max_time.into(),
             ..member.cegar
         },
         ..member
@@ -264,7 +264,7 @@ fn goal_focused_collections_reject_the_options_of_standard_collections() {
         assert!(goal_focused.validate().is_ok());
         for config in [
             DomainAbstractionCollectionConfig {
-                stagnation_limit: None,
+                stagnation_limit: None.into(),
                 ..goal_focused.clone()
             },
             DomainAbstractionCollectionConfig {
@@ -343,7 +343,7 @@ fn a_member_construction_sets_exactly_the_options_it_names() {
         DomainAbstractionConfig {
             cegar: CegarOptions {
                 max_states: 30,
-                max_time: Some(Duration::from_secs(5)),
+                max_time: Some(Duration::from_secs(5)).into(),
                 random_seed: Some(9),
                 split_kind: SplitKind::Wanted,
                 split_selection_rank: Some(2),
@@ -481,7 +481,7 @@ fn domain_goal_focused_config(
     DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::GoalFocused,
         max_collection_size: 10_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         variants_per_goal,
         progress_states,
         member: seeded_member_config(64, 1),
@@ -529,7 +529,7 @@ fn cartesian_members(
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal,
             max_collection_size: 10_000,
-            total_max_time: None,
+            total_max_time: None.into(),
             progress_states,
             alternate_split_kinds: Some(true),
             single_goal_tasks: true,
@@ -664,7 +664,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
             max_collection_size: 10_000,
-            total_max_time: None,
+            total_max_time: None.into(),
             progress_states: true,
             alternate_split_kinds: Some(false),
             single_goal_tasks: true,
@@ -728,12 +728,12 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 2,
             max_collection_size: 10_000,
-            total_max_time: None,
+            total_max_time: None.into(),
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
             single_goal_tasks: false,
-            stagnation_limit: Some(Duration::from_secs(20)),
+            stagnation_limit: Some(Duration::from_secs(20)).into(),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -856,7 +856,7 @@ fn both_representations_build_one_per_goal_member_per_goal() {
     let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         collection_strategy: CollectionStrategy::PerGoal,
         max_collection_size: 10_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         member: seeded_member_config(64, 1),
         ..Default::default()
     })
@@ -888,7 +888,7 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     let task = two_counter_task();
     let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 100_000,
-        total_max_time: None,
+        total_max_time: None.into(),
         member: seeded_member_config(1_000, 1),
         ..Default::default()
     })

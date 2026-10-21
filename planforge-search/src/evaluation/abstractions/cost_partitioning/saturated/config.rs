@@ -1,3 +1,4 @@
+use crate::config::TimeLimit;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -113,11 +114,13 @@ pub struct ScpConfig {
     /// Time for diversification, from its start: sampling and the orders
     /// built for the samples (Seipp et al. 2020).
     #[option(positional)]
-    pub max_time: Option<Duration>,
+    #[serde(with = "crate::config::time_limit::duration")]
+    pub max_time: TimeLimit,
     /// Time for building every cost partitioning, from the first evaluated
     /// state on.
     #[option(positional)]
-    pub table_construction_max_time: Option<Duration>,
+    #[serde(with = "crate::config::time_limit::duration")]
+    pub table_construction_max_time: TimeLimit,
     /// Choose orders over random-walk samples (Seipp et al. 2020).
     #[option(positional)]
     pub diversify: bool,
@@ -133,7 +136,8 @@ pub struct ScpConfig {
     /// Time for the candidate orders of the evaluated state, from their
     /// start.
     #[option(positional)]
-    pub initial_order_generation_max_time: Option<Duration>,
+    #[serde(with = "crate::config::time_limit::duration")]
+    pub initial_order_generation_max_time: TimeLimit,
     /// Goal-cover orders per goal that every diversified collection keeps
     /// (AAMAS 2027), in addition to the best order.
     #[option(positional)]
@@ -155,13 +159,13 @@ pub struct ScpConfig {
 impl Default for ScpConfig {
     fn default() -> Self {
         Self {
-            max_time: Some(Duration::from_secs(200)),
-            table_construction_max_time: None,
+            max_time: TimeLimit::from(Some(Duration::from_secs(200))),
+            table_construction_max_time: TimeLimit::UNLIMITED,
             diversify: false,
             samples: 1_000,
             max_orders: usize::MAX,
             order_generator: OrderGenerator::Greedy,
-            initial_order_generation_max_time: Some(Duration::from_secs(10)),
+            initial_order_generation_max_time: TimeLimit::from(Some(Duration::from_secs(10))),
             goal_cover_orders_per_goal: 4,
             random_orders: 3,
             saturator: Saturator::All,
@@ -176,6 +180,9 @@ impl ScpConfig {
     /// samples, so `has_sampling_task` tells whether the heuristic has a task
     /// to sample from.
     pub(super) fn validate(&self, has_sampling_task: bool) -> Result<(), String> {
+        self.max_time.duration()?;
+        self.table_construction_max_time.duration()?;
+        self.initial_order_generation_max_time.duration()?;
         let fail = |message: &str| Err(message.to_string());
         if self.order_generator == OrderGenerator::Diverse && !self.diversify {
             return fail("diverse SCP orders require diversify=true");

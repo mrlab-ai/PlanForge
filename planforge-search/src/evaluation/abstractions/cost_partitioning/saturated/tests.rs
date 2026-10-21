@@ -106,7 +106,7 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
     let mut abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
             max_states: 16,
-            max_time: None,
+            max_time: None.into(),
             combine_labels: false,
             random_seed: None,
             debug: false,
@@ -124,8 +124,8 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
 
 pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpConfig {
     ScpConfig {
-        max_time: Some(Duration::from_secs(10)),
-        table_construction_max_time: Some(Duration::from_secs(10)),
+        max_time: Some(Duration::from_secs(10)).into(),
+        table_construction_max_time: Some(Duration::from_secs(10)).into(),
         saturator,
         random_seed: 1,
         partitioning: if abstract_operator {
@@ -158,7 +158,7 @@ pub(super) fn goal_cover_scp<'task>(
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 16,
-                    max_time: None,
+                    max_time: None.into(),
                     combine_labels: false,
                     random_seed: Some(1),
                     debug: false,
@@ -168,7 +168,7 @@ pub(super) fn goal_cover_scp<'task>(
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
             max_collection_size: 128,
-            total_max_time: None,
+            total_max_time: None.into(),
             progress_states: true,
             alternate_split_kinds: Some(true),
             split_kind: None,
@@ -200,7 +200,7 @@ pub(super) fn goal_cover_scp<'task>(
     config.diversify = true;
     config.samples = 16;
     config.max_orders = max_orders(expected_goals.len());
-    config.initial_order_generation_max_time = Some(Duration::from_secs(10));
+    config.initial_order_generation_max_time = Some(Duration::from_secs(10)).into();
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,

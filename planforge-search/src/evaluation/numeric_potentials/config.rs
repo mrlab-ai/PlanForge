@@ -1,3 +1,4 @@
+use crate::config::TimeLimit;
 use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
@@ -52,7 +53,7 @@ pub struct NumericPotentialConfig {
     #[option(positional)]
     pub num_heuristics: usize,
     #[option(positional)]
-    pub max_diverse_generation_time: f64,
+    pub max_diverse_generation_time: TimeLimit,
     #[option(positional)]
     pub include_initial_state_potential: bool,
     #[option(positional)]
@@ -62,7 +63,7 @@ pub struct NumericPotentialConfig {
     #[option(positional)]
     pub rays: usize,
     #[option(positional)]
-    pub max_ray_generation_time: f64,
+    pub max_ray_generation_time: TimeLimit,
     #[option(positional)]
     pub ray_epsilon: f64,
     #[option(positional)]
@@ -86,7 +87,7 @@ pub struct NumericPotentialConfig {
     #[option(positional)]
     pub num_goal_conditioned_samples: usize,
     #[option(positional)]
-    pub max_conditioned_generation_time: f64,
+    pub max_conditioned_generation_time: TimeLimit,
     #[option(rename = "max_online_heuristics")]
     #[option(positional)]
     pub max_online_functions: usize,
@@ -123,12 +124,12 @@ impl Default for NumericPotentialConfig {
             opt: OptimizeFor::InitialState,
             num_samples: 1000,
             num_heuristics: 4,
-            max_diverse_generation_time: 30.0,
+            max_diverse_generation_time: TimeLimit(30.0),
             include_initial_state_potential: true,
             include_all_states_potential: false,
             diverse_fallback: DiverseFallback::LargestGap,
             rays: 0,
-            max_ray_generation_time: 30.0,
+            max_ray_generation_time: TimeLimit(30.0),
             ray_epsilon: 0.000_001,
             ray_certificate_file: "numeric_potential_ray_certificate.json".to_string(),
             max_potential: 1e8,
@@ -140,7 +141,7 @@ impl Default for NumericPotentialConfig {
             num_goal_cost_partitions: 4,
             num_goal_conditioned_heuristics: 1,
             num_goal_conditioned_samples: 100,
-            max_conditioned_generation_time: 120.0,
+            max_conditioned_generation_time: TimeLimit(120.0),
             max_online_functions: 100,
             online_reoptimization_interval: 50,
             max_consecutive_online_misses: 20,
@@ -174,14 +175,17 @@ impl NumericPotentialConfig {
         for (name, value) in [
             (
                 "max_diverse_generation_time",
-                self.max_diverse_generation_time,
+                self.max_diverse_generation_time.seconds(),
             ),
-            ("max_ray_generation_time", self.max_ray_generation_time),
+            (
+                "max_ray_generation_time",
+                self.max_ray_generation_time.seconds(),
+            ),
             ("ray_epsilon", self.ray_epsilon),
             ("max_potential", self.max_potential),
             (
                 "max_conditioned_generation_time",
-                self.max_conditioned_generation_time,
+                self.max_conditioned_generation_time.seconds(),
             ),
             ("precision", self.precision),
             ("epsilon", self.epsilon),

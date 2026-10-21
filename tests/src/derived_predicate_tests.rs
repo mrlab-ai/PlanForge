@@ -420,7 +420,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
 
     let collection = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 10_000,
-        stagnation_limit: Some(Duration::ZERO),
+        stagnation_limit: Some(Duration::ZERO).into(),
         enable_blacklist_on_stagnation: false,
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
