@@ -72,22 +72,20 @@ fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> Numer
 #[test]
 fn affine_sum_is_an_exact_additive_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Plus);
-    let view = analyze_additive_numeric_view(&task, VariableIndex::from_usize(2))
+    let coordinates = Coordinates::new(&task);
+    let view = coordinates.views()[2]
+        .as_ref()
         .expect("x+y should be additive");
 
     assert_eq!(view.expression.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
-    assert_eq!(
-        view.operator_delta(OperatorIndex::new(0)).unwrap(),
-        ONE_VALUE
-    );
+    assert_eq!(view.operator_delta(OperatorIndex::new(0)), ONE_VALUE);
 }
 
 #[test]
 fn non_additive_effect_rejects_affine_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Assign);
 
-    assert!(analyze_additive_numeric_view(&task, VariableIndex::from_usize(2)).is_none());
-    assert!(AdditiveNumericViews::for_active_dimensions(&task, &[1, 1, 2, 1]).is_err());
+    assert!(Coordinates::new(&task).views()[2].is_none());
 }
 
 #[test]
@@ -122,7 +120,7 @@ fn cost_dependent_expression_is_not_an_additive_view() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    assert!(analyze_additive_numeric_view(&task, VariableIndex::from_usize(2)).is_none());
+    assert!(Coordinates::new(&task).views()[2].is_none());
 }
 
 #[test]
@@ -135,7 +133,6 @@ fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
 
     let preimage = coordinates
         .preimage(target, OperatorIndex::new(0), VariableIndex::from_usize(2))
-        .unwrap()
         .expect("an additive coordinate has a preimage");
 
     assert_eq!(preimage, preimage.canonicalized());

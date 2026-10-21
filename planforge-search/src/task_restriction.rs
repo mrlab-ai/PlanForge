@@ -8,8 +8,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
-    NumericValue, NumericVariable, ONE_VALUE, Operator, VariableIndex, ZERO_VALUE,
-    metric_operator_cost_from_initial_values,
+    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
@@ -354,8 +353,7 @@ pub fn build_icaps26_restricted_task(
     for operator in task.get_operators() {
         used_comparison_vars.extend(operator.preconditions().iter().map(ExplicitFact::var_index));
     }
-    used_comparison_vars
-        .extend((0..task.get_num_goals()).map(|goal_id| task.get_goal_fact(goal_id).var_index()));
+    used_comparison_vars.extend(task.goals().iter().map(ExplicitFact::var_index));
     for axiom in task.axioms() {
         used_comparison_vars.extend(axiom.conditions().iter().map(ExplicitFact::var_index));
     }
@@ -528,9 +526,7 @@ pub fn build_icaps26_restricted_task(
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
-        goals: (0..task.get_num_goals())
-            .map(|goal_id| *task.get_goal_fact(goal_id))
-            .collect(),
+        goals: task.goals().to_vec(),
         mutexes: vec![],
         state: task.get_initial_propositional_state_values().to_vec(),
         numeric_state: numeric_initial,
@@ -678,9 +674,7 @@ fn build_task(
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
-        goals: (0..task.get_num_goals())
-            .map(|goal_id| *task.get_goal_fact(goal_id))
-            .collect(),
+        goals: task.goals().to_vec(),
         mutexes: vec![],
         state: task.get_initial_propositional_state_values().to_vec(),
         numeric_state: numeric_initial,
@@ -732,15 +726,10 @@ fn ensure_operator_costs_unchanged(
         source_task.get_operators().len() == transformed_task.get_operators().len(),
         "restricted task changed the operator count"
     );
-    for (operator_id, (source, transformed)) in source_task
-        .get_operators()
-        .iter()
-        .zip(transformed_task.get_operators())
-        .enumerate()
-    {
-        let source_cost = metric_operator_cost_from_initial_values(source_task, source);
-        let transformed_cost =
-            metric_operator_cost_from_initial_values(transformed_task, transformed);
+    for (operator_id, source) in source_task.get_operators().iter().enumerate() {
+        let operator_index = OperatorIndex::from_usize(operator_id);
+        let source_cost = source_task.abstract_operator_cost(operator_index);
+        let transformed_cost = transformed_task.abstract_operator_cost(operator_index);
         ensure!(
             approx_eq(source_cost, transformed_cost),
             "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",
@@ -1160,7 +1149,7 @@ impl Linearizer<'_> {
 }
 
 fn approx_eq(lhs: NumericValue, rhs: NumericValue) -> bool {
-    (lhs - rhs).abs().value() <= 1e-12
+    (lhs - rhs).abs().value() <= float_tolerance::ABS_EPSILON
 }
 
 fn restricted_shape_prefix(expr: &AffineExpression) -> String {

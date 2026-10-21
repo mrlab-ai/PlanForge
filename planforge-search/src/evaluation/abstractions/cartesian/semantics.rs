@@ -2,7 +2,14 @@
 //! and for every split dimension the operators whose transitions it can
 //! change, which lets a split update only the transitions it affects.
 
-use super::*;
+use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, OperatorIndex};
+use planforge_sas::utils::float_tolerance;
+
+use super::config::CartesianAbstractionConfig;
+use super::working::OperatorBitSet;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 
 mod transitions;
 
@@ -23,7 +30,7 @@ pub(super) fn mark_fact_split_dependencies(
     let var_id = fact.var_index();
     if let Some(condition) = task.numeric_conditions().for_var(var_id) {
         let mut dimensions = condition.regular_numeric_var_dependencies().to_vec();
-        dimensions.extend(comparison_refinement_dimensions(task, condition));
+        dimensions.extend(regions.coordinates().refinement_dimensions(condition));
         dimensions.sort_unstable();
         dimensions.dedup();
         for numeric_var_id in dimensions {
@@ -77,18 +84,7 @@ impl<'task> CartesianSemantics<'task> {
         task: &'task dyn AbstractNumericTask,
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
-        let cegar = CegarSemantics::new(
-            task,
-            SplitOptions {
-                kind: config.cegar.split_kind,
-                selection: config.cegar.split_selection,
-                rank: config.cegar.split_selection_rank,
-                random_seed: config.cegar.random_seed,
-            },
-        )?;
-        if config.cegar.flaw_kind == FlawKind::Regression {
-            ensure_regressable(task, cegar.coordinates())?;
-        }
+        let cegar = CegarSemantics::for_options(task, &config.cegar)?;
         let regions = cegar.regions();
         let additive_numeric_views = cegar.coordinates().views();
         let operator_count = task.get_operators().len();
@@ -129,7 +125,9 @@ impl<'task> CartesianSemantics<'task> {
             for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
                 if view.as_ref().is_some_and(|view| {
                     view.operator_delta(OperatorIndex::from_usize(op_id))
-                        .is_ok_and(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON)
+                        .value()
+                        .abs()
+                        > float_tolerance::SEARCH_EPSILON
                 }) {
                     numeric_dependencies[numeric_var_id] = true;
                 }

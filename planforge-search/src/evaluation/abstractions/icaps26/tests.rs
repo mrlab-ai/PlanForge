@@ -8,6 +8,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_conditions::ConditionValue;
 
 use super::*;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 
 #[test]
 fn icaps_rng_matches_std_mt19937_uniform_integer_distribution() {
@@ -523,11 +524,8 @@ fn desired_region_uses_additive_snp_coordinate() {
     .generate(&task)
     .unwrap();
 
-    assert_eq!(
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
-        1.0
-    );
-    assert!(abstraction.metadata.solved_by_self());
+    assert_eq!(abstraction.initial_h(), 1.0);
+    assert!(abstraction.metadata().solved_by_self());
 }
 
 #[test]

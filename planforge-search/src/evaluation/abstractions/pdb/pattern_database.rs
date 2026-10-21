@@ -20,12 +20,12 @@ use tracing::info;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
+use crate::config::option_enum;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use crate::successor_generator::GroundedSuccessorGenerator;
 
 use super::projected_task::{PatternLookupProjection, ProjectedTask};
-//use super::utils;
 
 #[inline]
 fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -85,16 +85,17 @@ fn build_prop_hash_multipliers(task: &ProjectedTask<'_>) -> Vec<usize> {
 }
 
 #[inline]
-fn compute_prop_hash(propositional: &[ExplicitValueIndex], multipliers: &[usize]) -> Option<usize> {
-    if propositional.len() != multipliers.len() {
-        return None;
-    }
-
+fn compute_prop_hash(propositional: &[ExplicitValueIndex], multipliers: &[usize]) -> usize {
+    assert_eq!(
+        propositional.len(),
+        multipliers.len(),
+        "one hash multiplier per propositional value"
+    );
     let mut hash = 0usize;
     for (value, multiplier) in propositional.iter().zip(multipliers.iter()) {
         hash = hash.saturating_add(value.index().saturating_mul(*multiplier));
     }
-    Some(hash)
+    hash
 }
 
 #[inline]
@@ -116,17 +117,18 @@ fn compute_projected_compact_prop_hash(
     propositional: &[ExplicitValueIndex],
     pattern_regular_ids: &[usize],
     multipliers: &[usize],
-) -> Option<usize> {
-    if pattern_regular_ids.len() != multipliers.len() {
-        return None;
-    }
-
+) -> usize {
+    assert_eq!(
+        pattern_regular_ids.len(),
+        multipliers.len(),
+        "one hash multiplier per pattern variable"
+    );
     let mut hash = 0usize;
     for (&projected_var_id, &multiplier) in pattern_regular_ids.iter().zip(multipliers.iter()) {
-        let value = propositional.get(projected_var_id).copied()?;
+        let value = propositional[projected_var_id];
         hash = hash.saturating_add(value.index().saturating_mul(multiplier));
     }
-    Some(hash)
+    hash
 }
 
 #[inline]
@@ -174,12 +176,9 @@ impl FrozenPackedDistanceRegistry {
         let hash = fast_hash_bins(bins);
         let candidates = self.state_index.get(&hash)?;
         candidates.iter().copied().find_map(|entry_id| {
-            let start = entry_id.checked_mul(self.bin_count)?;
-            let end = start.checked_add(self.bin_count)?;
-            let entry_bins = self.state_bins.get(start..end)?;
-            (entry_bins == bins)
-                .then(|| self.distances.get(entry_id).copied())
-                .flatten()
+            let start = entry_id * self.bin_count;
+            (self.state_bins[start..start + self.bin_count] == *bins)
+                .then(|| self.distances[entry_id])
         })
     }
 
@@ -249,13 +248,13 @@ impl CompactNumericDistanceIndex {
             Self::Empty => None,
             Self::One(index) => {
                 let [prop_hash, value] = *bins else {
-                    return None;
+                    panic!("compact numeric key has {} bins, expected 2", bins.len());
                 };
                 index.get(&(prop_hash, value)).copied()
             }
             Self::Two(index) => {
                 let [prop_hash, first, second] = *bins else {
-                    return None;
+                    panic!("compact numeric key has {} bins, expected 3", bins.len());
                 };
                 index.get(&(prop_hash, first, second)).copied()
             }
@@ -268,14 +267,14 @@ impl CompactNumericDistanceIndex {
             Self::Empty => {}
             Self::One(index) => {
                 let [prop_hash, value] = *bins else {
-                    return;
+                    panic!("compact numeric key has {} bins, expected 2", bins.len());
                 };
                 let slot = index.entry((prop_hash, value)).or_insert(distance);
                 *slot = slot.min(distance);
             }
             Self::Two(index) => {
                 let [prop_hash, first, second] = *bins else {
-                    return;
+                    panic!("compact numeric key has {} bins, expected 3", bins.len());
                 };
                 let slot = index.entry((prop_hash, first, second)).or_insert(distance);
                 *slot = slot.min(distance);
@@ -314,26 +313,11 @@ pub enum PdbInternalHeuristic {
     Lmcut,
 }
 
-impl fmt::Display for PdbInternalHeuristic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Zero => write!(f, "zero"),
-            Self::Blind => write!(f, "blind"),
-            Self::Lmcut => write!(f, "lmcut"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for PdbInternalHeuristic {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "zero" => Ok(Self::Zero),
-            "blind" => Ok(Self::Blind),
-            "lmcut" => Ok(Self::Lmcut),
-            other => Err(format!("invalid PdbInternalHeuristic `{other}`")),
-        }
-    }
-}
+option_enum!("PDB internal heuristic", PdbInternalHeuristic {
+    Zero => "zero",
+    Blind => "blind",
+    Lmcut => "lmcut",
+});
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PdbHeuristicConfig {
@@ -446,7 +430,6 @@ pub struct PatternDatabase<'task> {
     goal_state_ids: Vec<usize>,
     transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
     pub(super) min_operator_cost: f64,
-    pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
     exhausted_abstract_state_space: bool,
     pub(super) frontier_states: Vec<usize>,
@@ -455,7 +438,6 @@ pub struct PatternDatabase<'task> {
     compact_prop_distances: Vec<f64>,
     pattern_lookup_packer: StatePacker,
     compact_numeric_registry: CompactNumericDistanceIndex,
-    state_dependent_numeric_projected_ids: Vec<usize>,
     failed_lookup_cache: RefCell<HashMap<u64, f64>>,
     projection_prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
     projection_numeric_scratch: RefCell<Vec<NumericValue>>,
@@ -501,7 +483,6 @@ impl<'task> PatternDatabase<'task> {
             goal_state_ids: Vec::new(),
             transition_predecessors: Vec::new(),
             min_operator_cost,
-            reached_goal_states: 0,
             truncated: false,
             exhausted_abstract_state_space: false,
             frontier_states: Vec::new(),
@@ -513,7 +494,6 @@ impl<'task> PatternDatabase<'task> {
                 compact_numeric_bin_count.saturating_sub(1),
                 max_states,
             ),
-            state_dependent_numeric_projected_ids: Vec::new(),
             failed_lookup_cache: RefCell::new(HashMap::default()),
             projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
             projection_numeric_scratch: RefCell::new(Vec::with_capacity(
@@ -525,11 +505,7 @@ impl<'task> PatternDatabase<'task> {
             failed_lookup_lmcut_task: RefCell::new(None),
         };
         pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
-        pdb.state_dependent_numeric_projected_ids =
-            pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
-        // NOTE: Uncomment to print summary of the built PDB.
-        // utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
@@ -555,16 +531,16 @@ impl<'task> PatternDatabase<'task> {
             && !pattern_numeric_ids.is_empty()
             && propositional.len() == pattern_regular_ids.len()
             && numeric.len() == pattern_numeric_ids.len()
-            && let Some(prop_hash) =
-                compute_prop_hash(propositional, &self.compact_prop_hash_multipliers)
-            && let Some(distance) =
-                self.lookup_compact_numeric_distance_from_compact_values(prop_hash, numeric)
+            && let Some(distance) = self.lookup_compact_numeric_distance_from_compact_values(
+                compute_prop_hash(propositional, &self.compact_prop_hash_multipliers),
+                numeric,
+            )
         {
             return Some(distance);
         }
 
         if full_state_lookup {
-            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers)?;
+            let prop_hash = compute_prop_hash(propositional, &self.full_prop_hash_multipliers);
             let candidates = self.full_prop_index.get(&prop_hash)?;
             return candidates
                 .iter()
@@ -578,7 +554,7 @@ impl<'task> PatternDatabase<'task> {
                             .zip(numeric.iter())
                             .all(|(lhs, rhs)| float_tolerance::equal(*lhs, *rhs))
                 })
-                .filter_map(|state_id| self.distances.get(state_id).copied())
+                .map(|state_id| self.distances[state_id])
                 .min_by(|lhs, rhs| lhs.total_cmp(rhs));
         }
 
@@ -616,7 +592,7 @@ impl<'task> PatternDatabase<'task> {
                                     .map(|value| float_tolerance::canonical_bits(*value))
                         })
             })
-            .filter_map(|state_id| self.distances.get(state_id).copied())
+            .map(|state_id| self.distances[state_id])
             .min_by(|lhs, rhs| lhs.total_cmp(rhs))
     }
 
@@ -640,11 +616,8 @@ impl<'task> PatternDatabase<'task> {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Option<f64> {
-        if propositional.len() != self.task.variables().len()
-            || numeric.len() != self.task.numeric_variables().len()
-        {
-            return self.lookup(propositional, numeric);
-        }
+        assert_eq!(propositional.len(), self.task.variables().len());
+        assert_eq!(numeric.len(), self.task.numeric_variables().len());
 
         if numeric.is_empty()
             && self.task.pattern_numeric_projected_ids().is_empty()
@@ -655,9 +628,10 @@ impl<'task> PatternDatabase<'task> {
 
         if !numeric.is_empty()
             && !self.task.pattern_numeric_projected_ids().is_empty()
-            && let Some(prop_hash) = self.lookup_projected_compact_prop_hash(propositional)
-            && let Some(distance) =
-                self.lookup_compact_numeric_distance_from_projected_values(prop_hash, numeric)
+            && let Some(distance) = self.lookup_compact_numeric_distance_from_projected_values(
+                self.lookup_projected_compact_prop_hash(propositional),
+                numeric,
+            )
         {
             return Some(distance);
         }
@@ -665,10 +639,7 @@ impl<'task> PatternDatabase<'task> {
         self.lookup_packed_pattern_distance_from_projected_values(propositional, numeric)
     }
 
-    fn lookup_projected_compact_prop_hash(
-        &self,
-        propositional: &[ExplicitValueIndex],
-    ) -> Option<usize> {
+    fn lookup_projected_compact_prop_hash(&self, propositional: &[ExplicitValueIndex]) -> usize {
         compute_projected_compact_prop_hash(
             propositional,
             self.task.pattern_regular_projected_ids(),
@@ -680,7 +651,7 @@ impl<'task> PatternDatabase<'task> {
         if self.compact_prop_distances.is_empty() {
             return None;
         }
-        let index = compute_prop_hash(propositional, &self.compact_prop_hash_multipliers)?;
+        let index = compute_prop_hash(propositional, &self.compact_prop_hash_multipliers);
         self.lookup_compact_prop_distance_by_hash(index)
     }
 
@@ -698,7 +669,7 @@ impl<'task> PatternDatabase<'task> {
         if self.compact_prop_distances.is_empty() {
             return None;
         }
-        let index = self.lookup_projected_compact_prop_hash(propositional)?;
+        let index = self.lookup_projected_compact_prop_hash(propositional);
         self.lookup_compact_prop_distance_by_hash(index)
     }
 
@@ -747,12 +718,15 @@ impl<'task> PatternDatabase<'task> {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
         bins: &mut Vec<u64>,
-    ) -> Option<()> {
-        if propositional.len() != self.task.pattern_regular_projected_ids().len()
-            || numeric.len() != self.task.pattern_numeric_projected_ids().len()
-        {
-            return None;
-        }
+    ) {
+        assert_eq!(
+            propositional.len(),
+            self.task.pattern_regular_projected_ids().len()
+        );
+        assert_eq!(
+            numeric.len(),
+            self.task.pattern_numeric_projected_ids().len()
+        );
 
         bins.clear();
         bins.resize(self.pattern_lookup_packer.num_bins(), 0);
@@ -769,8 +743,6 @@ impl<'task> PatternDatabase<'task> {
                 self.pattern_lookup_packer.pack_double(*value),
             );
         }
-
-        Some(())
     }
 
     fn pack_pattern_projected_values_into_bins(
@@ -778,13 +750,7 @@ impl<'task> PatternDatabase<'task> {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
         bins: &mut Vec<u64>,
-    ) -> Option<()> {
-        if propositional.len() != self.task.variables().len()
-            || numeric.len() != self.task.numeric_variables().len()
-        {
-            return None;
-        }
-
+    ) {
         bins.clear();
         bins.resize(self.pattern_lookup_packer.num_bins(), 0);
 
@@ -808,8 +774,6 @@ impl<'task> PatternDatabase<'task> {
                     .pack_double(numeric[projected_numeric_id]),
             );
         }
-
-        Some(())
     }
 
     fn lookup_packed_pattern_distance(&self, bins: &[u64]) -> Option<f64> {
@@ -822,7 +786,7 @@ impl<'task> PatternDatabase<'task> {
         numeric: &[NumericValue],
     ) -> Option<f64> {
         let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
-        self.pack_pattern_values_into_bins(propositional, numeric, &mut bins)?;
+        self.pack_pattern_values_into_bins(propositional, numeric, &mut bins);
         self.lookup_packed_pattern_distance(&bins)
     }
 
@@ -832,7 +796,7 @@ impl<'task> PatternDatabase<'task> {
         numeric: &[NumericValue],
     ) -> Option<f64> {
         let mut bins = self.pattern_lookup_bins_scratch.borrow_mut();
-        self.pack_pattern_projected_values_into_bins(propositional, numeric, &mut bins)?;
+        self.pack_pattern_projected_values_into_bins(propositional, numeric, &mut bins);
         self.lookup_packed_pattern_distance(&bins)
     }
 
@@ -1068,24 +1032,13 @@ impl<'task> PatternDatabase<'task> {
         self.states.len()
     }
 
-    pub fn distance_for_state_id(&self, state_id: usize) -> Result<f64, String> {
-        self.distances.get(state_id).copied().ok_or_else(|| {
-            format!(
-                "PDB abstract state id {state_id} out of bounds for {} states",
-                self.distances.len()
-            )
-        })
-    }
-
     pub fn relevant_operator_ids(&self) -> Vec<OperatorIndex> {
         let mut relevant = if self.exhausted_abstract_state_space {
             self.transition_predecessors
                 .iter()
                 .flatten()
                 .map(|&(_, projected_operator_id)| {
-                    self.task
-                        .base_operator_id(projected_operator_id)
-                        .expect("projected operator must retain its base operator ID")
+                    self.task.base_operator_id(projected_operator_id)
                 })
                 .collect()
         } else {
@@ -1106,29 +1059,21 @@ impl<'task> PatternDatabase<'task> {
         Ok((distances, saturated_costs))
     }
 
-    /// Builds goal distances using the supplied operator costs without computing
-    /// saturated costs.  Used by the SCP online order generator.
-    pub fn build_goal_distances(&self, operator_costs: &[f64]) -> Result<Vec<f64>, String> {
+    /// The goal distances of the enumerated states under `operator_costs`,
+    /// seeded at zero from the goal states and, when truncated, the frontier.
+    fn build_goal_distances(&self, operator_costs: &[f64]) -> Result<Vec<f64>, String> {
         let mut distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
 
         for &goal_state_id in &self.goal_state_ids {
-            if goal_state_id < distances.len() {
-                distances[goal_state_id] = 0.0;
-                heap.push((
-                    Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
-                    goal_state_id,
-                ));
-            }
+            distances[goal_state_id] = 0.0;
+            heap.push((Reverse(NotNan::new(0.0).unwrap()), goal_state_id));
         }
         if self.truncated {
             for &frontier_state_id in &self.frontier_states {
-                if frontier_state_id < distances.len() && distances[frontier_state_id] > 0.0 {
+                if distances[frontier_state_id] > 0.0 {
                     distances[frontier_state_id] = 0.0;
-                    heap.push((
-                        Reverse(NotNan::new(0.0).map_err(|err| err.to_string())?),
-                        frontier_state_id,
-                    ));
+                    heap.push((Reverse(NotNan::new(0.0).unwrap()), frontier_state_id));
                 }
             }
         }
@@ -1139,10 +1084,7 @@ impl<'task> PatternDatabase<'task> {
                 continue;
             }
             for &(parent_id, projected_operator_id) in &self.transition_predecessors[state_id] {
-                let base_operator_id = self
-                    .task
-                    .base_operator_id(projected_operator_id)
-                    .ok_or_else(|| format!("missing base operator id for projected operator {projected_operator_id}"))?;
+                let base_operator_id = self.task.base_operator_id(projected_operator_id);
                 let operator_cost =
                     *operator_costs
                         .get(base_operator_id.index())
@@ -1163,7 +1105,8 @@ impl<'task> PatternDatabase<'task> {
         Ok(distances)
     }
 
-    /// Builds a PERIM cost-partitioned distance table.
+    /// Builds a PERIM cost-partitioned distance table, capped at the goal
+    /// distance of `cap_state_id` under `operator_costs`.
     ///
     /// The perimeter table is used only to derive saturated costs. The returned
     /// lookup table is recomputed globally from the nonnegative saturated costs,
@@ -1172,9 +1115,15 @@ impl<'task> PatternDatabase<'task> {
     pub fn build_cost_partitioned_distance_table_capped(
         &self,
         operator_costs: &[f64],
-        h_cap: f64,
+        cap_state_id: usize,
     ) -> Result<(Vec<f64>, Vec<f64>), String> {
         let mut distances = self.build_goal_distances(operator_costs)?;
+        assert!(
+            cap_state_id < distances.len(),
+            "PERIM cap state {cap_state_id} out of range for a PDB with {} states",
+            distances.len()
+        );
+        let h_cap = distances[cap_state_id];
 
         if h_cap.is_finite() {
             for h in &mut distances {
@@ -1186,14 +1135,7 @@ impl<'task> PatternDatabase<'task> {
 
         let saturated_costs =
             self.saturated_costs_from_distances(&distances, operator_costs.len())?;
-
-        let mut lookup_costs = saturated_costs.clone();
-        for cost in &mut lookup_costs {
-            if !cost.is_finite() {
-                *cost = 0.0;
-            }
-        }
-        let global_distances = self.build_goal_distances(&lookup_costs)?;
+        let global_distances = self.build_goal_distances(&saturated_costs)?;
 
         Ok((global_distances, saturated_costs))
     }
@@ -1214,14 +1156,7 @@ impl<'task> PatternDatabase<'task> {
                 if !parent_h.is_finite() {
                     continue;
                 }
-                let base_operator_id = self
-                    .task
-                    .base_operator_id(projected_operator_id)
-                    .ok_or_else(|| {
-                        format!(
-                            "missing base operator id for projected operator {projected_operator_id}"
-                        )
-                    })?;
+                let base_operator_id = self.task.base_operator_id(projected_operator_id);
                 let slot = saturated_costs.get_mut(base_operator_id.index()).ok_or_else(|| {
                     format!(
                         "base operator id {base_operator_id} out of bounds for {num_operators} operators"
@@ -1231,38 +1166,21 @@ impl<'task> PatternDatabase<'task> {
             }
         }
 
+        // An operator on no transition between two finite distances saturates
+        // nothing; every other cost is a maximum of nonnegative differences.
         for cost in &mut saturated_costs {
             if *cost == f64::NEG_INFINITY {
                 *cost = 0.0;
             }
         }
+        assert!(
+            saturated_costs
+                .iter()
+                .all(|cost| cost.is_finite() && *cost >= 0.0),
+            "PDB saturated costs must be finite and nonnegative"
+        );
 
         Ok(saturated_costs)
-    }
-
-    pub fn abstract_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        self.task.project_state_values(propositional, numeric)
-    }
-
-    pub fn lookup_projected_or_fallback_from_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<f64, String> {
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-        self.task.project_state_values_into(
-            propositional,
-            numeric,
-            &mut projected_prop,
-            &mut projected_num,
-        )?;
-
-        Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
     }
 
     pub fn lookup_projected_or_fallback_from_source_state_values(
@@ -1331,24 +1249,20 @@ impl<'task> PatternDatabase<'task> {
         let mut packed_bins = vec![0; self.pattern_lookup_packer.num_bins()];
         let mut compact_numeric_bins = vec![0; 1 + pattern_numeric_ids.len()];
 
-        let compact_prop_table_len = if pattern_numeric_ids.is_empty()
-            && !self.compact_prop_hash_multipliers.is_empty()
-        {
-            let last_var_id = *pattern_regular_ids.last().unwrap_or(&0);
-            self.compact_prop_hash_multipliers
-                .last()
-                .copied()
-                .and_then(|last_multiplier| {
-                    self.task
-                        .variables()
-                        .get(last_var_id)
-                        .map(|var| last_multiplier.saturating_mul(var.domain_size()))
-                })
-                .filter(|&len| len > 0 && len <= self.states.len().saturating_mul(8).max(1024))
-        } else if pattern_numeric_ids.is_empty() && self.compact_prop_hash_multipliers.is_empty() {
-            Some(1)
-        } else {
+        // A purely propositional pattern gets a dense table with one slot per
+        // assignment to its variables, if that fits a few slots per state.
+        let compact_prop_table_len = if !pattern_numeric_ids.is_empty() {
             None
+        } else if let Some(&last_var_id) = pattern_regular_ids.last() {
+            let last_multiplier = *self
+                .compact_prop_hash_multipliers
+                .last()
+                .expect("one hash multiplier per pattern variable");
+            last_multiplier
+                .checked_mul(self.task.variables()[last_var_id].domain_size())
+                .filter(|&len| len > 0 && len <= (self.states.len() * 8).max(1024))
+        } else {
+            Some(1)
         };
 
         if let Some(table_len) = compact_prop_table_len {
@@ -1362,14 +1276,13 @@ impl<'task> PatternDatabase<'task> {
                 .or_insert_with(|| Vec::with_capacity(1))
                 .push(state_id);
 
-            if let Some(prop_hash) =
-                compute_prop_hash(&state.propositional, &self.full_prop_hash_multipliers)
-            {
-                self.full_prop_index
-                    .entry(prop_hash)
-                    .or_insert_with(|| Vec::with_capacity(1))
-                    .push(state_id);
-            }
+            self.full_prop_index
+                .entry(compute_prop_hash(
+                    &state.propositional,
+                    &self.full_prop_hash_multipliers,
+                ))
+                .or_insert_with(|| Vec::with_capacity(1))
+                .push(state_id);
 
             let pattern_key = hash_pattern_components(
                 &state.propositional,
@@ -1388,16 +1301,12 @@ impl<'task> PatternDatabase<'task> {
                 &self.compact_prop_hash_multipliers,
             );
 
-            if !self.compact_prop_distances.is_empty()
-                && let Some(compact_prop_hash) = compact_prop_hash
-                && let Some(slot) = self.compact_prop_distances.get_mut(compact_prop_hash)
-            {
+            if !self.compact_prop_distances.is_empty() {
+                let slot = &mut self.compact_prop_distances[compact_prop_hash];
                 *slot = slot.min(self.distances[state_id]);
             }
 
-            if !pattern_numeric_ids.is_empty()
-                && let Some(compact_prop_hash) = compact_prop_hash
-            {
+            if !pattern_numeric_ids.is_empty() {
                 compact_numeric_bins.fill(0);
                 compact_numeric_bins[0] = compact_prop_hash as u64;
                 for (numeric_index, &projected_numeric_id) in pattern_numeric_ids.iter().enumerate()
@@ -1439,7 +1348,6 @@ impl<'task> PatternDatabase<'task> {
         self.distances = table.distances;
         self.goal_state_ids = table.goal_state_ids;
         self.transition_predecessors = table.transition_predecessors;
-        self.reached_goal_states = table.reached_goal_states;
         self.frontier_states = table.frontier_states;
         self.truncated = table.truncated;
         self.exhausted_abstract_state_space = table.exhausted_abstract_state_space;
@@ -1483,11 +1391,9 @@ impl<'task> PatternDatabase<'task> {
             &mut heap,
         );
 
-        let reached_goal_states = exploration.goal_states.len();
         Ok(PdbDistanceTable {
             states,
             distances,
-            reached_goal_states,
             goal_state_ids: exploration.goal_states,
             frontier_states,
             transition_predecessors: exploration.predecessors,
@@ -1652,7 +1558,7 @@ impl<'task> PatternDatabase<'task> {
             if exploration.is_closed(state_id) {
                 continue;
             }
-            if state_id >= seen_frontier.len() || seen_frontier[state_id] {
+            if seen_frontier[state_id] {
                 continue;
             }
             seen_frontier[state_id] = true;
@@ -1708,7 +1614,6 @@ impl<'task> PatternDatabase<'task> {
 struct PdbDistanceTable {
     states: Vec<PdbState>,
     distances: Vec<f64>,
-    reached_goal_states: usize,
     goal_state_ids: Vec<usize>,
     frontier_states: Vec<usize>,
     transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
@@ -1733,13 +1638,10 @@ struct PdbExploration {
 
 impl PdbExploration {
     fn is_closed(&self, state_id: usize) -> bool {
-        self.closed.get(state_id).copied().unwrap_or(false)
+        self.closed[state_id]
     }
 
     fn mark_closed(&mut self, state_id: usize) {
-        if state_id >= self.closed.len() {
-            self.closed.resize(state_id + 1, false);
-        }
         self.closed[state_id] = true;
     }
 
@@ -1758,12 +1660,8 @@ impl PdbExploration {
         }
         self.representative_states.push(state);
         self.predecessors.push(Vec::new());
-        if state_id >= self.closed.len() {
-            self.closed.resize(state_id + 1, false);
-        }
-        if state_id >= self.seen_or_closed.len() {
-            self.seen_or_closed.resize(state_id + 1, false);
-        }
+        self.closed.push(false);
+        self.seen_or_closed.push(false);
         Ok(())
     }
 }

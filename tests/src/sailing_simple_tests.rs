@@ -48,20 +48,25 @@
 use planforge_search::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::abstractions::cartesian::CartesianAbstraction;
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
-use planforge_search::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
+use planforge_search::evaluation::abstractions::common::abstraction::{
+    AbstractionHeuristic, CegarAbstraction,
+};
 use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_search::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitSelection,
 };
+use planforge_search::evaluation::abstractions::component::AbstractionComponent;
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
-    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig,
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
@@ -251,18 +256,17 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
             random_seed: Some(1),
             ..DomainAbstractionConfig::default().cegar
         },
-        compute_source_sets: false,
         ..Default::default()
     })
     .expect("unrestricted domain abstraction generator should construct")
     .generate(&task)
     .expect("unrestricted domain abstraction should solve sailing-simple");
     assert!(
-        domain_abstraction.metadata.solved_by_self(),
+        domain_abstraction.metadata().solved_by_self(),
         "unrestricted domain abstraction stopped without a real plan: metadata={:?}, prop_domains={:?}, numeric_domains={:?}",
-        domain_abstraction.metadata,
-        domain_abstraction.factory.domain_sizes(),
-        domain_abstraction.factory.numeric_domain_sizes()
+        domain_abstraction.metadata(),
+        domain_abstraction.function().domain_sizes(),
+        domain_abstraction.function().numeric_domain_sizes()
     );
     assert_exact_single_abstraction_search(
         &task,
@@ -276,13 +280,11 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
             max_states: usize::MAX,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: false,
-        ..Default::default()
     })
     .expect("unrestricted Cartesian abstraction generator should construct")
     .generate(&task)
     .expect("unrestricted Cartesian abstraction should solve sailing-simple");
-    assert!(cartesian_abstraction.metadata.solved_by_self());
+    assert!(cartesian_abstraction.metadata().solved_by_self());
     assert_exact_single_abstraction_search(
         &task,
         AbstractionHeuristic::new("abstraction", cartesian_abstraction),
@@ -307,9 +309,9 @@ fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfi
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 2,
         progress_states: true,
-        random_seed: Some(seed),
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
+                random_seed: Some(seed),
                 max_states: 1_000,
                 max_time: None,
                 split_selection: SplitSelection::MinGrowth,
@@ -319,7 +321,6 @@ fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfi
                 ..DomainAbstractionCollectionConfig::default().member.cegar
             },
             use_wildcard_plans: true,
-            ..DomainAbstractionCollectionConfig::default().member
         },
         ..Default::default()
     }
@@ -347,14 +348,14 @@ fn scp_initial_h_for_collection(
     abstractions: Vec<DomainAbstraction>,
 ) -> f64 {
     let config = ScpConfig {
-        max_time: 100.0,
-        table_construction_max_time: 100.0,
+        max_time: Some(Duration::from_secs(100)),
+        table_construction_max_time: Some(Duration::from_secs(100)),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        components(abstractions, Vec::new()),
         config,
         task,
         Default::default(),
@@ -390,14 +391,14 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         .generate(&task)
         .expect("scp domain abstractions should build");
     let config = ScpConfig {
-        max_time: 100.0,
-        table_construction_max_time: 100.0,
+        max_time: Some(Duration::from_secs(100)),
+        table_construction_max_time: Some(Duration::from_secs(100)),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        components(abstractions, Vec::new()),
         config,
         &task,
         Default::default(),
@@ -469,14 +470,7 @@ fn sailing_simple_ratchet_equilibrium() {
     let saved_p0_group_counts = abstractions
         .iter()
         .filter_map(|abstraction| {
-            if abstraction
-                .metadata
-                .collection
-                .map(|record| record.full_task)
-                != Some(false)
-            {
-                return None;
-            }
+            abstraction.metadata().collection_membership()?;
             let factory_task = &task;
             let near_x = numeric_var_id_by_name_parts(
                 factory_task,
@@ -487,14 +481,14 @@ fn sailing_simple_ratchet_equilibrium() {
                 &["difference", "x(?boat_0)", "(b1, p0)"],
             )?;
             let near_count = abstraction
-                .factory
+                .function()
                 .partitions()
-                .partitions(VariableIndex::from_usize(near_x))?
+                .partitions(VariableIndex::from_usize(near_x))
                 .len();
             let far_count = abstraction
-                .factory
+                .function()
                 .partitions()
-                .partitions(VariableIndex::from_usize(far_x))?
+                .partitions(VariableIndex::from_usize(far_x))
                 .len();
             (near_count > 1 && far_count > 1).then_some((near_count, far_count))
         })
@@ -564,9 +558,12 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
     for goal_id in 0..task.get_num_goals() {
         let variants = abstractions
             .iter()
-            .filter_map(|abstraction| abstraction.metadata.collection_member)
-            .filter(|member| member.goal_id == goal_id && member.variant_id < 2)
-            .map(|member| member.variant_id)
+            .filter_map(|abstraction| abstraction.metadata().collection_membership())
+            .filter_map(|member| {
+                member
+                    .variant_id
+                    .filter(|&variant_id| member.goal_id == goal_id && variant_id < 2)
+            })
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             variants,
@@ -575,11 +572,22 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
         );
     }
     assert!(
-        abstractions.iter().all(|abstraction| abstraction
-            .metadata
-            .collection
-            .map(|record| record.full_task)
-            == Some(false)),
+        abstractions
+            .iter()
+            .all(|abstraction| abstraction.metadata().collection_membership().is_some()),
         "multi-goal goal-focused collection must not generate full-goal abstractions"
     );
+}
+
+/// The collection heuristics' components: the domain abstractions, then the
+/// Cartesian ones.
+fn components<'task>(
+    domain: Vec<DomainAbstraction>,
+    cartesian: Vec<CartesianAbstraction>,
+) -> Vec<AbstractionComponent<'task>> {
+    domain
+        .into_iter()
+        .map(AbstractionComponent::from)
+        .chain(cartesian.into_iter().map(AbstractionComponent::from))
+        .collect()
 }

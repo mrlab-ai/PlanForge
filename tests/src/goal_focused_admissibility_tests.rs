@@ -9,6 +9,7 @@
 //! state is as much a failure as an overestimate.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
@@ -20,8 +21,9 @@ use planforge_search::evaluation::abstractions::collections::strategy::Collectio
 use planforge_search::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
 use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_search::evaluation::abstractions::common::cegar::{FlawKind, FlawScope};
+use planforge_search::evaluation::abstractions::component::AbstractionComponent;
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
-    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig,
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
@@ -106,9 +108,9 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         progress_states: true,
-        random_seed: Some(1),
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
+                random_seed: Some(1),
                 max_states: 300,
                 max_time: None,
                 flaw_kind: FlawKind::Progression,
@@ -132,7 +134,6 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
                 random_seed: Some(1),
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         },
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
@@ -141,9 +142,8 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         progress_states: true,
         alternate_split_kinds: None,
         split_kind: None,
-        random_seed: Some(1),
         single_goal_tasks: true,
-        stagnation_limit: 20.0,
+        stagnation_limit: Some(Duration::from_secs(20)),
         blacklist_trigger_percentage: 0.75,
         enable_blacklist_on_stagnation: true,
     })
@@ -154,9 +154,9 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
 
 fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
     ScpConfig {
-        max_time: 100.0,
-        table_construction_max_time: 100.0,
-        random_seed: Some(1),
+        max_time: Some(Duration::from_secs(100)),
+        table_construction_max_time: Some(Duration::from_secs(100)),
+        random_seed: 1,
         partitioning,
         ..Default::default()
     }
@@ -222,7 +222,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     "domain",
                     SaturatedCostPartitioningHeuristic::new(
                         None,
-                        collection_components(domain.clone(), Vec::new(), vec![]),
+                        components(domain.clone(), Vec::new()),
                         scp_config(partitioning),
                         &task,
                         Default::default(),
@@ -232,7 +232,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     "Cartesian",
                     SaturatedCostPartitioningHeuristic::new(
                         None,
-                        collection_components(vec![], cartesian.clone(), vec![]),
+                        components(vec![], cartesian.clone()),
                         scp_config(partitioning),
                         &task,
                         Default::default(),
@@ -242,7 +242,7 @@ fn assert_goal_focused_collections_admissible(folder: &str, stem: &str) {
                     "mixed",
                     SaturatedCostPartitioningHeuristic::new(
                         None,
-                        collection_components(domain.clone(), cartesian.clone(), vec![]),
+                        components(domain.clone(), cartesian.clone()),
                         scp_config(partitioning),
                         &task,
                         Default::default(),
@@ -305,4 +305,17 @@ admissibility_tests! {
     counters_sym: "counters-sym" / "problem_2",
     fn_counters_small: "fn-counters-small_instances" / "problem_2",
     plant_watering: "plant-watering" / "prob_4_1_1",
+}
+
+/// The collection heuristics' components: the domain abstractions, then the
+/// Cartesian ones.
+fn components<'task>(
+    domain: Vec<DomainAbstraction>,
+    cartesian: Vec<CartesianAbstraction>,
+) -> Vec<AbstractionComponent<'task>> {
+    domain
+        .into_iter()
+        .map(AbstractionComponent::from)
+        .chain(cartesian.into_iter().map(AbstractionComponent::from))
+        .collect()
 }

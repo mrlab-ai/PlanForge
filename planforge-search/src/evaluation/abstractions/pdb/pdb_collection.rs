@@ -3,7 +3,7 @@ mod tests;
 
 use super::pattern_collection::PatternCollection;
 use super::pattern_database::{PatternDatabase, PdbHeuristicConfig};
-use super::projected_task::{Pattern, ProjectedTask};
+use super::projected_task::ProjectedTask;
 use super::utils;
 use crate::task_restriction::validate_restricted_task;
 use planforge_sas::numeric_task::AbstractNumericTask;
@@ -63,23 +63,11 @@ impl<'task> PdbCollection<'task> {
         &self.patterns
     }
 
-    pub fn pattern(&self, index: usize) -> Option<&Pattern> {
-        self.patterns.as_slice().get(index)
-    }
-
     pub fn pdbs(&self) -> &[PatternDatabase<'task>] {
         &self.pdbs
     }
 
     pub fn into_pdbs(self) -> Vec<PatternDatabase<'task>> {
         self.pdbs
-    }
-
-    pub fn pdb(&self, index: usize) -> Option<&PatternDatabase<'task>> {
-        self.pdbs.get(index)
-    }
-
-    pub fn singleton_additive_subsets(&self) -> Vec<Vec<usize>> {
-        (0..self.pdbs.len()).map(|index| vec![index]).collect()
     }
 }

@@ -1,24 +1,13 @@
-use anyhow::{Context, Result, ensure};
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex, ZERO_VALUE};
-use planforge_sas::utils::float_tolerance;
+//! The intervals numeric conditions are evaluated over in an abstract state.
 
-use super::abstraction_numeric_var;
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex, ZERO_VALUE};
+
+use super::layout::StateLayout;
 use super::partitions::NumericPartitions;
 use planforge_sas::numeric_conditions::NumericCondition;
 use planforge_sas::utils::interval::Interval;
 
-pub fn seed_numeric_intervals_from_initial_state(task: &dyn AbstractNumericTask) -> Vec<Interval> {
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals: Vec<Interval> =
-        vec![Interval::unbounded(); task.numeric_variables().len()];
-    for (i, v) in task.numeric_variables().iter().enumerate() {
-        if v.get_type() == &NumericType::Constant {
-            numeric_intervals[i] =
-                Interval::singleton(float_tolerance::canonicalize(initial_numeric_values[i]));
-        }
-    }
-    numeric_intervals
-}
+use crate::evaluation::abstractions::common::regions::trivial_interval;
 
 /// Propagate every comparison tree's arithmetic nodes into the intervals of the
 /// derived numeric variables they define.
@@ -36,139 +25,62 @@ pub fn fill_derived_numeric_intervals_from_comparison_trees(
     }
 }
 
-pub fn prepare_comparison_tree_inputs_from_initial_state(
+/// Fills `out` with the interval of every numeric variable that numeric
+/// conditions are evaluated over: a refined coordinate at the interval
+/// `refined` gives it, an unrefined derived variable through the comparison
+/// trees defining it, and every other variable at its trivial interval. A
+/// derived variable no tree defines, or one its operands leave undefined, is
+/// unbounded.
+pub(super) fn fill_condition_intervals(
     task: &dyn AbstractNumericTask,
-    comparison_trees: &[NumericCondition],
-) -> Result<Vec<Interval>> {
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_intervals: Vec<Interval> = Vec::with_capacity(initial_numeric_values.len());
-    for (numeric_var_id, &raw_value) in initial_numeric_values.iter().enumerate() {
-        if task.numeric_variables()[numeric_var_id].get_type() == &NumericType::Derived {
-            numeric_intervals.push(Interval::new(ZERO_VALUE, ZERO_VALUE, false, false));
-            continue;
-        }
-        let value = float_tolerance::canonicalize(raw_value);
-        ensure!(
-            value.is_finite() && !value.is_nan(),
-            "initial numeric value for var {numeric_var_id} must be finite, got {value}"
-        );
-        numeric_intervals.push(Interval::singleton(value));
-    }
-    fill_derived_numeric_intervals_from_comparison_trees(comparison_trees, &mut numeric_intervals);
-    Ok(numeric_intervals)
-}
-
-pub fn prepare_comparison_tree_inputs_from_abstract_state(
-    task: &dyn AbstractNumericTask,
-    comparison_trees: &[NumericCondition],
-    partitions: &NumericPartitions,
-    state: AbstractStateHash<'_>,
-) -> Result<Vec<Interval>> {
-    let mut buf = Vec::new();
-    prepare_comparison_tree_inputs_from_abstract_state_into(
-        task,
-        comparison_trees,
-        partitions,
-        state,
-        &mut buf,
-    )?;
-    Ok(buf)
-}
-
-/// One abstract state, plus the mixed-radix layout needed to read the
-/// variables back out of its hash.
-#[derive(Clone, Copy)]
-pub struct AbstractStateHash<'a> {
-    pub hash: usize,
-    /// Propositional variables precede the numeric ones in the abstraction's
-    /// variable order, so this is where the numeric ones start.
-    pub num_props: usize,
-    pub numeric_domain_sizes: &'a [usize],
-    pub hash_multipliers: &'a [usize],
-}
-
-/// Resize-and-fill variant for callers that re-evaluate this on many states
-/// and want to reuse one `Vec<Interval>` across the loop.
-pub fn prepare_comparison_tree_inputs_from_abstract_state_into(
-    task: &dyn AbstractNumericTask,
-    comparison_trees: &[NumericCondition],
-    partitions: &NumericPartitions,
-    state: AbstractStateHash<'_>,
+    refined: impl Fn(VariableIndex) -> Option<Interval>,
     out: &mut Vec<Interval>,
-) -> Result<()> {
-    let AbstractStateHash {
-        hash: state_hash,
-        num_props,
-        numeric_domain_sizes,
-        hash_multipliers,
-    } = state;
-    let num_numeric_vars = task.numeric_variables().len();
-    ensure!(
-        numeric_domain_sizes.len() == num_numeric_vars,
-        "numeric_domain_sizes length mismatch: {} != {num_numeric_vars}",
-        numeric_domain_sizes.len()
-    );
-
-    let initial_numeric_values = task.get_initial_numeric_state_values();
+) {
+    let is_unrefined_derived = |var_id: VariableIndex| {
+        task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
+            && refined(var_id).is_none()
+    };
     out.clear();
-    out.resize(
-        num_numeric_vars,
-        Interval::new(ZERO_VALUE, ZERO_VALUE, false, false),
+    out.extend(
+        (0..task.numeric_variables().len())
+            .map(VariableIndex::from_usize)
+            .map(|var_id| {
+                if is_unrefined_derived(var_id) {
+                    // Empty until the comparison trees fill it in.
+                    Interval::new(ZERO_VALUE, ZERO_VALUE, false, false)
+                } else {
+                    refined(var_id).unwrap_or_else(|| trivial_interval(task, var_id))
+                }
+            }),
     );
-    for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
-        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
-        match numeric_var.get_type() {
-            NumericType::Constant => {
-                let value =
-                    float_tolerance::canonicalize(initial_numeric_values[numeric_var_id.index()]);
-                ensure!(
-                    value.is_finite() && !value.is_nan(),
-                    "constant numeric value for var {numeric_var_id} must be finite, got {value}"
-                );
-                out[numeric_var_id.index()] = Interval::singleton(value);
-            }
-            NumericType::Derived if numeric_domain_sizes[numeric_var_id.index()] == 1 => {}
-            NumericType::Derived | NumericType::Regular => {
-                let abs_var = abstraction_numeric_var(num_props, numeric_var_id);
-                ensure!(
-                    abs_var.index() < hash_multipliers.len(),
-                    "missing hash multiplier for abstract numeric var {abs_var}"
-                );
-                let mult = hash_multipliers[abs_var.index()] as i64;
-                let dom = numeric_domain_sizes[numeric_var_id.index()] as i64;
-                ensure!(
-                    dom > 0,
-                    "numeric domain size must be > 0 for var {numeric_var_id}"
-                );
-                let part = (((state_hash as i64) / mult) % dom) as usize;
-                let interval = partitions.partition_interval(numeric_var_id, part).with_context(|| {
-                    format!(
-                        "missing partition interval for numeric var {numeric_var_id} part {part}"
-                    )
-                })?;
-                out[numeric_var_id.index()] = interval;
-            }
-            NumericType::Cost => {
-                out[numeric_var_id.index()] = Interval::unbounded();
-            }
-        }
-    }
-
-    fill_derived_numeric_intervals_from_comparison_trees(comparison_trees, out);
-    for interval in out.iter_mut() {
+    fill_derived_numeric_intervals_from_comparison_trees(task.numeric_conditions().all(), out);
+    for (var_id, interval) in out.iter_mut().enumerate() {
         if interval.is_empty() {
+            assert!(
+                is_unrefined_derived(VariableIndex::from_usize(var_id)),
+                "numeric variable {var_id} has an empty interval"
+            );
             *interval = Interval::unbounded();
         }
     }
-
-    Ok(())
 }
 
-pub fn evaluate_comparison_tree_from_initial_state(
+/// Fills `out` with the interval of every numeric variable over abstract
+/// state `state`; see [`fill_condition_intervals`].
+pub(super) fn fill_state_intervals(
     task: &dyn AbstractNumericTask,
-    tree: &NumericCondition,
-) -> Result<Option<bool>> {
-    let mut numeric_intervals =
-        prepare_comparison_tree_inputs_from_initial_state(task, std::slice::from_ref(tree))?;
-    Ok(tree.evaluate_interval_and_fill(&mut numeric_intervals))
+    partitions: &NumericPartitions,
+    layout: &StateLayout,
+    state: usize,
+    out: &mut Vec<Interval>,
+) {
+    fill_condition_intervals(
+        task,
+        |var_id| {
+            (layout.numeric_domain_sizes()[var_id.index()] > 1
+                || task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular)
+                .then(|| partitions.partition_interval(var_id, layout.partition(state, var_id)))
+        },
+        out,
+    );
 }

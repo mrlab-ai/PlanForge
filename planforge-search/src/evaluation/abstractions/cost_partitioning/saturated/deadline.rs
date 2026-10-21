@@ -1,14 +1,13 @@
-use super::*;
+use std::time::{Duration, Instant};
 
-pub(super) fn optimization_deadline(max_time: f64) -> Option<Instant> {
-    (max_time.is_finite() && max_time.is_sign_positive())
-        .then(|| Instant::now() + Duration::from_secs_f64(max_time))
-}
+use crate::evaluation::evaluator::EvaluationError;
+use crate::resource_limits::Deadline;
 
-pub(super) fn earliest_deadline(left: Option<Instant>, right: Option<Instant>) -> Option<Instant> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
-        (None, None) => None,
-    }
+/// The deadline `limit` from now, for the time limit `option`.
+pub(super) fn deadline_from_now(
+    option: &str,
+    limit: Option<Duration>,
+) -> Result<Deadline, EvaluationError> {
+    Deadline::after(Instant::now(), limit)
+        .map_err(|error| EvaluationError::ComputationFailed(format!("scp: {option}: {error}")))
 }

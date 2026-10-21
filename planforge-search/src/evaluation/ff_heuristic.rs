@@ -66,8 +66,8 @@ use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_a
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue, Operator,
-    OperatorIndex, VariableIndex, ZERO_VALUE, metric_operator_cost_from_initial_values,
+    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue,
+    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 
 type FactId = usize;
@@ -549,9 +549,9 @@ fn add_task_operator(
     let parent_op_id = ops.push(RelaxedOperator {
         task_idx: Some(op_idx),
         parent: None,
-        cost: metric_operator_cost_from_initial_values(task, op)
-            .value()
-            .max(0.0),
+        cost: task
+            .abstract_operator_cost(OperatorIndex::from_usize(op_idx))
+            .value(),
         preconditions: parent_preconds.clone(),
         state_deps: parent_state_deps.clone(),
         effects: parent_effects,
@@ -845,9 +845,9 @@ fn collect_goal_facts(
     task: &dyn AbstractNumericTask,
     universe: &FactUniverse,
 ) -> Result<Vec<FactId>, String> {
-    (0..task.get_num_goals())
-        .map(|i| {
-            let goal = task.get_goal_fact(i);
+    task.goals()
+        .iter()
+        .map(|goal| {
             universe.fact_id(goal).ok_or_else(|| {
                 format!(
                     "goal fact {goal:?} maps to no FactId — variable {} value {} not \
@@ -1220,7 +1220,7 @@ impl<'task> FfHeuristic<'task> {
             &mut scratch.numeric,
         )?;
         // The initial state already evaluates derived numerics correctly,
-        // but `fill_numeric_vars` returns singleton ranges for them. Run
+        // but the decoded numeric state gives singleton ranges for them. Run
         // assignment-axiom propagation once so any wider-than-singleton
         // bounds (e.g. uninitialized derived = -∞/+∞) settle to a
         // consistent starting point. We don't care about which vars
@@ -1237,10 +1237,12 @@ impl<'task> FfHeuristic<'task> {
         scratch.dirty_vars_scratch.clear();
 
         // Layer 0 propositional facts. Batch-read the entire packed
-        // propositional state once (`fill_state`), then index directly
-        // into the resulting Vec — saves O(num_facts) bound-checked
-        // `state_packer.get` calls per evaluation.
-        live_state.fill_state(registry, &mut scratch.prop_state_values);
+        // propositional state once, then index directly into the resulting
+        // Vec — saves O(num_facts) bound-checked `state_packer.get` calls
+        // per evaluation.
+        registry
+            .view(live_state)
+            .fill_propositional(&mut scratch.prop_state_values);
         for (var, &value) in scratch.prop_state_values.iter().enumerate() {
             let Some(&offset) = self.fact_id_offsets.get(var) else {
                 break;

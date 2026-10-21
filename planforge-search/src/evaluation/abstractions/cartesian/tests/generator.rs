@@ -66,7 +66,6 @@ fn a_derived_goal_is_refused_by_name() {
             max_states: 64,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)
@@ -130,16 +129,17 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: false,
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)
     .unwrap();
-    let h = abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+    let h = abstraction.initial_h();
     assert!(h <= 2.0);
-    assert!(!abstraction.metadata.solved_by_self());
-    assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::SizeLimit);
-    assert!(abstraction.metadata.pending_flaw.is_some());
-    assert!(abstraction.abstract_source_sets.is_empty());
+    assert!(!abstraction.metadata().solved_by_self());
+    assert_eq!(
+        abstraction.metadata().stop_reason,
+        CegarStopReason::SizeLimit
+    );
+    assert!(abstraction.metadata().pending_flaw.is_some());
+    assert!(abstraction.abstract_source_sets().is_none());
 }

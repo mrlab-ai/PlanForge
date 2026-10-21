@@ -6,7 +6,6 @@
 mod config;
 mod function;
 mod heuristic;
-mod ocp;
 mod optimizer;
 mod rays;
 mod sampling;
@@ -15,7 +14,6 @@ mod task;
 pub use config::{BoundsProvider, DiverseFallback, NumericPotentialConfig, OptimizeFor};
 pub use function::NumericPotentialFunction;
 pub use heuristic::NumericPotentialHeuristic;
-pub use ocp::PotentialAbstractionOcpHeuristic;
 pub use optimizer::{NumericPotentialOptimizer, OptimizationOutcome};
 pub use task::{FeatureBounds, PotentialTask};
 

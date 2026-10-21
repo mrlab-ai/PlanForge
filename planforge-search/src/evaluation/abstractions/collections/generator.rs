@@ -8,39 +8,43 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
-use super::config::{CollectionConfig, MemberConfig, MemberSpecialization};
-use super::goal_focused::{
-    GoalFocusedBackend, GoalVariant, MemberBudget, build_goal_focused_collection,
-};
-use super::standard::{StandardBackend, StandardMember, build_standard_collection};
+use super::config::{CollectionConfig, MemberConfig};
+use super::goal_focused::{GoalFocusedBackend, build_goal_focused_collection};
+use super::member::MemberConstruction;
+use super::standard::build_standard_collection;
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
+use crate::evaluation::abstractions::component::AbstractionKind;
 
 /// A CEGAR generator of single abstractions, which collections build their
 /// members with.
 pub trait AbstractionGenerator: Sized {
-    type Config: MemberSpecialization;
+    type Config: MemberConfig;
     type Abstraction: CegarAbstraction;
     /// Equal exactly for abstractions that are the same abstraction.
     type Key: Eq + Hash;
 
-    /// The representation's name in log and error messages.
-    const NAME: &'static str;
+    /// The representation the generator builds.
+    const KIND: AbstractionKind;
 
     /// Rejects a configuration the generator cannot follow.
     fn new(config: Self::Config) -> Result<Self>;
 
     /// Builds an abstraction of `task` whose CEGAR loop searches for flaws
-    /// from `refinement_root`, or from the task's initial state when `None`.
+    /// from `refinement_root`, or from the task's initial state when `None`,
+    /// and refines within `scope`.
     fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
     ) -> Result<Self::Abstraction>;
 
-    /// Builds an abstraction of `task` refined from its initial state.
+    /// Builds an abstraction of `task` refined from its initial state, on
+    /// every variable.
     fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Self::Abstraction> {
-        self.generate_from_root(task, None)
+        self.generate_from_root(task, None, &RefinementScope::default())
     }
 
     fn key(abstraction: &Self::Abstraction) -> Self::Key;
@@ -74,9 +78,11 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     /// cost-partitioned collection heuristics.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Vec<G::Abstraction>> {
         let members = match self.config.collection_strategy {
-            CollectionStrategy::Standard => {
-                build_standard_collection(task, &self.config.standard_schedule(), self)?
-            }
+            CollectionStrategy::Standard => build_standard_collection::<G>(
+                task,
+                &self.config.standard_schedule(),
+                &self.config.member,
+            )?,
             CollectionStrategy::PerGoal | CollectionStrategy::GoalFocused => {
                 build_goal_focused_collection(task, &self.config.goal_focused_schedule(), self)?
             }
@@ -85,10 +91,9 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
             for member in &members {
                 let metadata = member.metadata();
                 info!(
-                    "{} collection member: {:?}, {:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
-                    G::NAME,
-                    metadata.collection,
-                    metadata.collection_member,
+                    "{} collection member: {:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
+                    G::KIND,
+                    metadata.abstraction_use,
                     member.num_states(),
                     member.initial_h(),
                     metadata.stop_reason,
@@ -100,41 +105,21 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     }
 }
 
-impl<G: AbstractionGenerator> StandardBackend for CollectionGenerator<G> {
-    type Member = G::Abstraction;
-    type Key = G::Key;
-
-    const NAME: &'static str = G::NAME;
-
-    fn build(
-        &self,
-        task: &dyn AbstractNumericTask,
-        member: &StandardMember,
-    ) -> Result<Self::Member> {
-        G::new(self.config.member.for_restart(member))?.generate_from_root(task, None)
-    }
-
-    fn key(&self, member: &Self::Member) -> Self::Key {
-        G::key(member)
-    }
-}
-
 impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
     type Member = G::Abstraction;
 
-    const NAME: &'static str = G::NAME;
+    const NAME: &'static str = G::KIND.name();
 
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
         root: Option<&ExplicitState>,
-        variant: &GoalVariant,
-        budget: MemberBudget,
+        construction: &MemberConstruction,
     ) -> Result<Self::Member> {
-        let config = self
-            .config
-            .member
-            .for_variant(variant, self.config.split_kind, budget);
-        G::new(config)?.generate_from_root(task, root)
+        G::new(self.config.member.for_member(construction))?.generate_from_root(
+            task,
+            root,
+            &construction.scope,
+        )
     }
 }

@@ -8,23 +8,25 @@
 
 use planforge_sas::numeric_task::VariableIndex;
 
-pub mod abstract_operators;
+mod abstract_operators;
 pub mod abstraction;
 pub mod collection;
-pub mod comparison_inputs;
+mod comparison_inputs;
 pub mod config;
-pub(crate) mod debug_dump;
-pub mod factory;
+mod debug_dump;
+pub(crate) mod function;
 pub mod generator;
-pub mod initial_splits;
-pub mod partitions;
+mod layout;
+pub(crate) mod partitions;
+#[cfg(test)]
+mod test_support;
 mod view;
 
 /// The id a domain abstraction gives numeric variable `numeric_var_id`.
 ///
 /// An abstraction addresses both kinds of variable through one dense id space:
 /// the task's `num_propositional_vars` propositional variables first, its
-/// numeric variables after them. `hash_multipliers` is indexed by that space,
+/// numeric variables after them. [`layout::StateLayout`] is indexed by that space,
 /// and facts on the upper range carry
 /// [`FactNamespace::NumericVariable`](planforge_sas::numeric_task::FactNamespace::NumericVariable)
 /// so the offset is readable off the fact instead of off the arithmetic that

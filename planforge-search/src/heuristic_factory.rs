@@ -6,6 +6,7 @@
 //! CLI help are generated from that declaration.
 
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
+use crate::evaluation::abstractions::collections::config::MemberConfig;
 use crate::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
@@ -14,14 +15,13 @@ use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::Po
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
-use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
+use crate::resource_limits::Deadline;
 use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use std::sync::OnceLock;
-use std::time::Instant;
 use tracing::info;
 
 mod abstraction_config;
@@ -300,8 +300,8 @@ pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> 
 
 use crate::evaluation::Heuristic;
 use abstraction_config::{
-    ComponentUse, build_components, component_source_help, remaining_construction_time,
-    require_only_component_sources, validate_scp_combinator_options,
+    ComponentUse, ScpSourceConfig, build_components, component_source_help,
+    remaining_construction_time, require_only_component_sources,
 };
 
 #[derive(Debug)]
@@ -364,7 +364,7 @@ fn build_max_from_sources<'task>(
     sources: &[crate::config::ConfigCall],
     name: &str,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
-    let components = build_components(task, sources, ComponentUse::Standalone, None)?;
+    let components = build_components(task, sources, ComponentUse::Standalone, Deadline::NONE)?;
     let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     Ok(Some(Box::new(heuristic)))
@@ -374,7 +374,7 @@ fn build_canonical_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[crate::config::ConfigCall],
     name: &str,
-    construction_deadline: Option<Instant>,
+    construction_deadline: Deadline,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     let components = build_components(
         task,
@@ -389,14 +389,19 @@ fn build_canonical_from_sources<'task>(
     Ok(Some(Box::new(heuristic)))
 }
 
+/// Builds `name(...)` from its sources and the configuration that
+/// [`abstraction_config::scp_sources_config_and_deadline`] parsed.
 fn build_scp_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sampling_task: TaskRef<'task>,
-    sources: &[crate::config::ConfigCall],
-    options: &[crate::config::ConfigArg],
+    source_config: ScpSourceConfig,
     name: &str,
-    construction_deadline: Option<Instant>,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
+    let ScpSourceConfig {
+        sources,
+        config,
+        construction_deadline,
+    } = source_config;
     if sources.is_empty() {
         return Err(format!(
             "`{name}` requires at least one abstraction source: {}",
@@ -404,21 +409,13 @@ fn build_scp_from_sources<'task>(
         )
         .into());
     }
-    validate_scp_combinator_options(options)?;
-    let mut config = configure(
-        name,
-        crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig::default(),
-        options,
-    )?;
     let component_use = if config.partitioning.uses_regions() {
         ComponentUse::RegionalCostPartitioning
     } else {
         ComponentUse::LabelCostPartitioning
     };
-    let components = build_components(task, sources, component_use, construction_deadline)?;
-    if let Some(remaining) = remaining_construction_time(construction_deadline)? {
-        config.cap_construction_time(remaining.as_secs_f64());
-    }
+    let components = build_components(task, &sources, component_use, construction_deadline)?;
+    remaining_construction_time(construction_deadline)?;
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         Some(name.to_string()),
         components,
@@ -426,11 +423,35 @@ fn build_scp_from_sources<'task>(
         task,
         ScpBuildOptions {
             sampling_task: Some(sampling_task),
+            construction_deadline,
         },
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     remaining_construction_time(construction_deadline)?;
     Ok(Some(Box::new(heuristic)))
+}
+
+/// The heuristic of the one abstraction `spec` configures `G` to build.
+fn standalone_abstraction_heuristic<'a, G>(
+    spec: &HeuristicSpec,
+    task: &dyn AbstractNumericTask,
+) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError>
+where
+    G: AbstractionGenerator,
+    G::Config: Default,
+    G::Abstraction: 'a,
+{
+    info!("Building {} (CEGAR)...", G::KIND);
+    let mut config = G::Config::default();
+    config.cegar_mut().keep_transitions = false;
+    let config = configure(&spec.name, config, &spec.args)?;
+    let abstraction = G::new(config)
+        .and_then(|generator| generator.generate(task))
+        .map_err(|error| format!("failed to build {}: {error:#}", G::KIND))?;
+    Ok(Some(Box::new(AbstractionHeuristic::new(
+        &spec.name,
+        abstraction,
+    ))))
 }
 
 heuristic_registry! {
@@ -509,15 +530,9 @@ heuristic_registry! {
         requirements: component_task_requirements,
         nested: no_nested_heuristics,
         build: {
-            let source_config = abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
-            build_scp_from_sources(
-                task,
-                sampling_task,
-                &source_config.sources,
-                &source_config.options,
-                spec.name.as_str(),
-                source_config.construction_deadline,
-            )
+            let source_config =
+                abstraction_config::scp_sources_config_and_deadline(&spec.name, &spec.args)?;
+            build_scp_from_sources(task, sampling_task, source_config, spec.name.as_str())
         }
     }
 
@@ -526,28 +541,7 @@ heuristic_registry! {
         backend: RequiredBackend::None,
         requirements: abstractable_task,
         nested: no_nested_heuristics,
-        build: {
-            info!("Building domain abstraction (CEGAR)...");
-            // Single DA reads only the distance table; operator regions are
-            // SCP-specific. Skip the per-concrete-op CartesianSet cost.
-            let cfg = configure(
-                &spec.name,
-                DomainAbstractionConfig {
-                    compute_source_sets: false,
-                    ..DomainAbstractionConfig::default()
-                },
-                &spec.args,
-            )?;
-            let generator = DomainAbstractionGenerator::new(cfg)
-                .map_err(|e| format!("failed to construct DomainAbstractionGenerator: {e:#}"))?;
-            let abstraction = generator
-                .generate(task)
-                .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
-            Ok(Some(
-                Box::new(AbstractionHeuristic::new(&spec.name, abstraction))
-                    as Box<dyn Heuristic + 'a>,
-            ))
-        }
+        build: { standalone_abstraction_heuristic::<DomainAbstractionGenerator>(spec, task) }
     }
 
     CartesianAbstraction {
@@ -555,23 +549,7 @@ heuristic_registry! {
         backend: RequiredBackend::None,
         requirements: abstractable_task,
         nested: no_nested_heuristics,
-        build: {
-            info!("Building Cartesian abstraction (CEGAR)...");
-            let cfg = configure(
-                &spec.name,
-                abstraction_config::cartesian_config(abstraction_config::ComponentUse::Standalone),
-                &spec.args,
-            )?;
-            let generator = CartesianAbstractionGenerator::new(cfg)
-                .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
-            let abstraction = generator
-                .generate(task)
-                .map_err(|error| format!("failed to build Cartesian abstraction: {error:#}"))?;
-            Ok(Some(
-                Box::new(AbstractionHeuristic::new(&spec.name, abstraction))
-                    as Box<dyn Heuristic + 'a>,
-            ))
-        }
+        build: { standalone_abstraction_heuristic::<CartesianAbstractionGenerator>(spec, task) }
     }
 
     PosthocOptimization {
@@ -598,116 +576,6 @@ heuristic_registry! {
             #[cfg(not(feature = "cplex"))]
             {
                 Err("posthoc_optimization requires CPLEX, which is not compiled into this build. \
-                     Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
-                     installation."
-                    .to_string()
-                    .into())
-            }
-        }
-    }
-
-    PotentialDomainAbstractionOcp {
-        names: ["pot_da_ocp"],
-        backend: RequiredBackend::Cplex,
-        requirements: abstractable_task,
-        nested: no_nested_heuristics,
-        build: {
-            #[cfg(feature = "cplex")]
-            {
-            use crate::config::{FromOptionValue, for_each_option};
-            use crate::evaluation::numeric_potentials::{
-                NumericPotentialConfig, PotentialAbstractionOcpHeuristic,
-            };
-
-            const ORDER: &[&str] = &[
-                "abstraction",
-                "nonnegative",
-                "max_potential",
-                "ignore_numeric_variables",
-                "bounds",
-                "precision",
-                "epsilon",
-                "dump_lp",
-            ];
-            let mut abstraction_call = None;
-            let mut nonnegative = false;
-            let mut potential_args = Vec::new();
-            for_each_option(&spec.args, ORDER, |key, value| {
-                match key {
-                    "abstraction" => abstraction_call = Some(value.as_call()?.clone()),
-                    "nonnegative" => nonnegative = bool::from_option_value(value)?,
-                    other => potential_args.push(ConfigArg::new(
-                        Some(other.to_string()),
-                        value.clone(),
-                    )),
-                }
-                Ok(())
-            })?;
-            let abstraction_call = abstraction_call.ok_or_else(|| {
-                "pot_da_ocp requires abstraction=domain_abstraction_cegar(...)".to_string()
-            })?;
-            if !matches!(
-                abstraction_call.name(),
-                "domain_abstraction_cegar" | "domain_abstraction"
-            ) {
-                return Err(format!(
-                    "pot_da_ocp requires a domain_abstraction_cegar generator, got `{}`",
-                    abstraction_call.name()
-                )
-                .into());
-            }
-            let mut record_transition_system = false;
-            let mut max_recorded_transitions = 100_000_usize;
-            let mut da_args = Vec::new();
-            for arg in abstraction_call.args() {
-                match arg.key() {
-                    Some("record_transition_system") => {
-                        record_transition_system =
-                            bool::from_option_value(arg.value())?;
-                    }
-                    Some("record_transition_system_max_transitions") => {
-                        max_recorded_transitions =
-                            usize::from_option_value(arg.value())?;
-                    }
-                    _ => da_args.push(arg.clone()),
-                }
-            }
-            if !record_transition_system {
-                return Err(
-                    "pot_da_ocp requires record_transition_system=true in its abstraction generator"
-                        .to_string()
-                        .into(),
-                );
-            }
-            let da_config = configure(
-                abstraction_call.name(),
-                DomainAbstractionConfig {
-                    compute_source_sets: false,
-                    ..DomainAbstractionConfig::default()
-                },
-                &da_args,
-            )?;
-            info!("Building recorded domain abstraction for pot_da_ocp...");
-            let abstraction = DomainAbstractionGenerator::new(da_config)
-                .map_err(|error| format!("failed to construct pot_da_ocp abstraction: {error:#}"))?
-                .generate(task)
-                .map_err(|error| format!("failed to build pot_da_ocp abstraction: {error:#}"))?;
-            let potential_config =
-                configure(&spec.name, NumericPotentialConfig::default(), &potential_args)?;
-            let heuristic = PotentialAbstractionOcpHeuristic::new(
-                task,
-                sampling_task,
-                abstraction,
-                potential_config,
-                nonnegative,
-                max_recorded_transitions,
-            )
-            .map_err(|error| format!("failed to construct pot_da_ocp: {error}"))?;
-            Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
-            }
-            #[cfg(not(feature = "cplex"))]
-            {
-                Err("pot_da_ocp requires unrestricted CPLEX, which is not compiled into this build. \
                      Rebuild with `--features cplex` and set CPLEX_ROOT to an unrestricted CPLEX \
                      installation."
                     .to_string()
@@ -773,7 +641,7 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             let source = crate::config::ConfigCall::new("pdb", spec.args.clone());
-            build_canonical_from_sources(task, &[source], "canonical_numeric_pdb", None)
+            build_canonical_from_sources(task, &[source], "canonical_numeric_pdb", Deadline::NONE)
         }
     }
 

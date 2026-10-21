@@ -23,6 +23,7 @@ pub(super) struct CartesianSemantics<'task> {
 
 pub(super) fn mark_fact_split_dependencies(
     task: &dyn AbstractNumericTask,
+    coordinates: &Coordinates<'_>,
     fact: &ExplicitFact,
     propositional_axioms_by_prop_var: &[Vec<usize>],
     visiting: &mut [bool],
@@ -32,7 +33,7 @@ pub(super) fn mark_fact_split_dependencies(
     let var_id = fact.var_index();
     if let Some(condition) = task.numeric_conditions().for_var(var_id) {
         let mut dimensions = condition.regular_numeric_var_dependencies().to_vec();
-        dimensions.extend(comparison_refinement_dimensions(task, condition));
+        dimensions.extend(coordinates.refinement_dimensions(condition));
         dimensions.sort_unstable();
         dimensions.dedup();
         for numeric_var_id in dimensions {
@@ -57,6 +58,7 @@ pub(super) fn mark_fact_split_dependencies(
         for condition in axiom.conditions() {
             mark_fact_split_dependencies(
                 task,
+                coordinates,
                 condition,
                 propositional_axioms_by_prop_var,
                 visiting,
@@ -152,6 +154,7 @@ impl<'task> CartesianSemantics<'task> {
             for precondition in op.preconditions() {
                 mark_fact_split_dependencies(
                     task,
+                    &coordinates,
                     precondition,
                     &propositional_axioms_by_prop_var,
                     &mut visiting,
@@ -176,7 +179,9 @@ impl<'task> CartesianSemantics<'task> {
             for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
                 if view.as_ref().is_some_and(|view| {
                     view.operator_delta(OperatorIndex::from_usize(op_id))
-                        .is_ok_and(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON)
+                        .value()
+                        .abs()
+                        > float_tolerance::SEARCH_EPSILON
                 }) {
                     numeric_dependencies[numeric_var_id] = true;
                 }
@@ -228,10 +233,8 @@ impl<'task> CartesianSemantics<'task> {
             numeric_integer_lattice[numeric_var_id] =
                 approximately_equal(initial_value.value(), initial_value.value().round())
                     && (0..operator_count).all(|op_id| {
-                        view.operator_delta(OperatorIndex::from_usize(op_id))
-                            .is_ok_and(|delta| {
-                                approximately_equal(delta.value(), delta.value().round())
-                            })
+                        let delta = view.operator_delta(OperatorIndex::from_usize(op_id));
+                        approximately_equal(delta.value(), delta.value().round())
                     });
         }
         Ok(Self {

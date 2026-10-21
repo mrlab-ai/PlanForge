@@ -1243,11 +1243,10 @@ impl Task {
 
     #[getter]
     fn goals(&self) -> Vec<(usize, usize)> {
-        (0..self.task.get_num_goals())
-            .map(|i| {
-                let f = self.task.get_goal_fact(i);
-                (f.var(), f.value())
-            })
+        self.task
+            .goals()
+            .iter()
+            .map(|f| (f.var(), f.value()))
             .collect()
     }
 
@@ -1361,15 +1360,7 @@ impl Task {
     fn is_goal(&self, state: &State) -> PyResult<bool> {
         let reg = self.registry.borrow();
         let cstate = self.lookup(state, &reg)?;
-        let mut all = true;
-        for i in 0..self.task.get_num_goals() {
-            let g = self.task.get_goal_fact(i);
-            if !g.is_held(reg.view(&cstate)) {
-                all = false;
-                break;
-            }
-        }
-        Ok(all)
+        Ok(reg.view(&cstate).holds_all(self.task.goals()))
     }
 
     /// Return every operator applicable in `state`.

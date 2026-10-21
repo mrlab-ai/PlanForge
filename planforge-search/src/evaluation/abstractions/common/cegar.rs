@@ -1,4 +1,5 @@
-pub(crate) mod fact_splits;
+pub(crate) mod flaw_splits;
+pub mod initial_splits;
 pub mod options;
 pub(crate) mod progression;
 pub(crate) mod refine;
@@ -8,38 +9,13 @@ pub(crate) mod semantics;
 pub(crate) mod split;
 pub(crate) mod view;
 
-use std::fmt;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Generates the option-value parsing and display of a CEGAR option enum
-/// from its `(variant, name)` pairs.
-macro_rules! option_enum {
-    ($option:literal, $type:ident { $($variant:ident => $name:literal),+ $(,)? }) => {
-        impl fmt::Display for $type {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(match self {
-                    $(Self::$variant => $name),+
-                })
-            }
-        }
-
-        impl crate::config::FromOptionValue for $type {
-            fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-                match crate::config::atom(value)? {
-                    $($name => Ok(Self::$variant),)+
-                    other => Err(format!(
-                        "invalid {} `{other}`; expected one of {}",
-                        $option,
-                        [$($name),+].join(", ")
-                    )),
-                }
-            }
-        }
-    };
-}
+use crate::config::option_enum;
+use crate::resource_limits::Deadline;
 
 /// How CEGAR finds the flaws of an abstract plan.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -155,18 +131,18 @@ impl CegarDriver {
     pub fn run_from(
         self,
         start: Instant,
-        run_iteration: impl FnMut(usize, Option<Instant>) -> Result<CegarIterationResult>,
+        run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
     ) -> Result<CegarRunResult> {
         self.run_from_with_poll_phase::<false>(start, run_iteration)
     }
 
-    /// Runs a backend whose pre-iteration resource poll historically used the
-    /// number of completed refinements, starting at zero.
+    /// Like [`Self::run_from`], but polls the memory limit by the number of
+    /// completed refinements, starting at zero, as the ICAPS26 loop does.
     #[inline]
     pub fn run_from_zero_based(
         self,
         start: Instant,
-        run_iteration: impl FnMut(usize, Option<Instant>) -> Result<CegarIterationResult>,
+        run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
     ) -> Result<CegarRunResult> {
         self.run_from_with_poll_phase::<true>(start, run_iteration)
     }
@@ -175,9 +151,9 @@ impl CegarDriver {
     fn run_from_with_poll_phase<const POLL_BEFORE_FIRST: bool>(
         self,
         start: Instant,
-        mut run_iteration: impl FnMut(usize, Option<Instant>) -> Result<CegarIterationResult>,
+        mut run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
     ) -> Result<CegarRunResult> {
-        let deadline = self.max_time.map(|max_time| start + max_time);
+        let deadline = Deadline::after(start, self.max_time)?;
         let mut iteration = 1usize;
 
         while iteration <= self.max_iterations {
@@ -194,7 +170,7 @@ impl CegarDriver {
                     stop_reason: CegarStopReason::MemoryLimit,
                 });
             }
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if deadline.passed() {
                 return Ok(CegarRunResult {
                     next_iteration: iteration,
                     stop_reason: CegarStopReason::TimeLimit,
@@ -228,7 +204,7 @@ mod tests {
         let mut seen = Vec::new();
         let result = CegarDriver::new(3, None)
             .run_from(Instant::now(), |iteration, deadline| {
-                assert!(deadline.is_none());
+                assert_eq!(deadline, Deadline::NONE);
                 seen.push(iteration);
                 Ok(CegarIterationResult::Continue)
             })

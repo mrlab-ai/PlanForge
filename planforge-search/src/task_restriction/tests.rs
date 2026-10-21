@@ -301,11 +301,11 @@ fn restricted_task_preserves_metric_increment_on_assignment_operator() {
         .expect("task should be restricted");
     let transformed = restricted.task();
     assert_eq!(
-        metric_operator_cost_from_initial_values(&task, &task.get_operators()[0]),
+        task.abstract_operator_cost(OperatorIndex::new(0)),
         NumericValue::new(1.0)
     );
     assert_eq!(
-        metric_operator_cost_from_initial_values(transformed, &transformed.get_operators()[0]),
+        transformed.abstract_operator_cost(OperatorIndex::new(0)),
         NumericValue::new(1.0)
     );
     let metric_var_id = transformed.metric().var_id().unwrap();
@@ -408,7 +408,7 @@ fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
         &NumericType::Cost
     );
     assert_eq!(
-        metric_operator_cost_from_initial_values(transformed, &transformed.get_operators()[0]),
+        transformed.abstract_operator_cost(OperatorIndex::new(0)),
         NumericValue::new(2.0)
     );
 }
@@ -417,7 +417,7 @@ fn assert_derived_metric_cost_preserved(transformed: &NumericRootTask) {
 fn restricted_task_preserves_derived_metric_cost() {
     let task = task_with_derived_metric();
     assert_eq!(
-        metric_operator_cost_from_initial_values(&task, &task.get_operators()[0]),
+        task.abstract_operator_cost(OperatorIndex::new(0)),
         NumericValue::new(2.0)
     );
     let restricted = build_restricted_task(&task)

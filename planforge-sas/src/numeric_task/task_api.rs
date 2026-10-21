@@ -260,71 +260,49 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
     Ok(())
 }
 
-pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
-    task: &T,
-    operator: &Operator,
-) -> NumericValue {
+/// The metric cost of every operator of `task` applied in its initial state,
+/// as search charges it there: the effects apply simultaneously, conditional
+/// ones where their conditions hold, and the successor is closed under the
+/// axioms. Without a metric, every operator's own cost.
+pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue> {
     if !task.metric().use_metric() {
-        return NumericValue::new(operator.cost().value() as f64);
+        return task
+            .get_operators()
+            .iter()
+            .map(|operator| NumericValue::new(operator.cost().value() as f64))
+            .collect();
     }
-
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_values = initial_numeric_values.to_vec();
-    let old_metric = evaluate_metric_from_values(task, &numeric_values);
-
-    // Effects of one operator apply simultaneously, so every read must see the
-    // pre-application values. Collect first, publish second; see
-    // `StateRegistry::apply_numeric_effects_inner` for the same reasoning on
-    // the search path.
-    let mut results = Vec::with_capacity(operator.assignment_effects().len());
-    for effect in operator.assignment_effects() {
-        let assignment_var_id = effect.var_id();
-        let affected_var_id = effect.affected_var_id();
-        assert!(
-            (assignment_var_id.index()) < numeric_values.len(),
-            "assignment variable {} of operator {} is out of bounds for {} numeric variables",
-            assignment_var_id.index(),
-            operator.name(),
-            numeric_values.len(),
-        );
-        assert!(
-            (affected_var_id.index()) < numeric_values.len(),
-            "affected variable {} of operator {} is out of bounds for {} numeric variables",
-            affected_var_id.index(),
-            operator.name(),
-            numeric_values.len(),
-        );
-
-        let result = AssignmentOperation::apply(
-            numeric_values[affected_var_id.index()],
-            effect.operation(),
-            numeric_values[assignment_var_id.index()],
-        );
-        results.push((affected_var_id, result));
-    }
-    for (affected_var_id, result) in results {
-        numeric_values[affected_var_id.index()] = result;
-    }
-
-    propagate_assignment_axiom_values(task, &mut numeric_values).unwrap_or_else(|error| {
-        panic!(
-            "operator {} cannot evaluate assignment axioms while computing its metric cost: \
-             {error:?}",
-            operator.name()
-        )
-    });
-    let new_metric = evaluate_metric_from_values(task, &numeric_values);
-    let delta = if task.metric().is_min() {
-        new_metric - old_metric
-    } else {
-        old_metric - new_metric
-    };
-    assert!(
-        delta >= ZERO_VALUE,
-        "operator {} has negative metric cost {delta}, which search does not support",
-        operator.name()
-    );
-    delta
+    let states = ExplicitStateSpace::new(task);
+    let initial_state = states
+        .initial_state()
+        .unwrap_or_else(|error| panic!("the initial state violates the axioms: {error}"));
+    let initial_metric = evaluate_metric_from_values(task, &initial_state.numeric);
+    let mut successor = ExplicitState::default();
+    task.get_operators()
+        .iter()
+        .map(|operator| {
+            states
+                .apply_effects_into(&initial_state, operator, &mut successor)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "operator {} leads the initial state into an axiom violation: {error}",
+                        operator.name()
+                    )
+                });
+            let metric = evaluate_metric_from_values(task, &successor.numeric);
+            let cost = if task.metric().is_min() {
+                metric - initial_metric
+            } else {
+                initial_metric - metric
+            };
+            assert!(
+                cost >= ZERO_VALUE,
+                "operator {} has negative metric cost {cost}, which search does not support",
+                operator.name()
+            );
+            cost
+        })
+        .collect()
 }
 
 fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
@@ -610,8 +588,8 @@ pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
             check(condition, &origin);
         }
     }
-    for goal_index in 0..task.get_num_goals() {
-        check(task.get_goal_fact(goal_index), &"goal");
+    for goal in task.goals() {
+        check(goal, &"goal");
     }
 }
 
@@ -719,6 +697,7 @@ impl NumericRootTask {
             global_constraint,
         };
         task.assign_fact_namespaces();
+        task.assert_invariants();
         task.close_initial_state_under_axioms();
         for group in &task.mutexes {
             for (index, &left) in group.iter().enumerate() {
@@ -732,12 +711,7 @@ impl NumericRootTask {
                 }
             }
         }
-        task.operator_costs = task
-            .operators
-            .iter()
-            .map(|operator| metric_operator_cost_from_initial_values(&task, operator))
-            .collect();
-        task.assert_invariants();
+        task.operator_costs = metric_operator_costs(&task);
         debug_assert_fact_namespaces(&task);
         task
     }
@@ -1217,10 +1191,16 @@ impl AbstractNumericTask for NumericRootTask {
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        let mut propositional = self.get_initial_propositional_state_values().to_vec();
-        let mut numeric = self.get_initial_numeric_state_values().to_vec();
-        evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
-        Ok((propositional, numeric))
+        // Closed as given: the initial values are not canonicalized, unlike
+        // `ExplicitStateSpace::initial_state`.
+        let mut state = ExplicitState {
+            propositional: self.get_initial_propositional_state_values().to_vec(),
+            numeric: self.get_initial_numeric_state_values().to_vec(),
+        };
+        ExplicitStateSpace::new(self)
+            .close_under_axioms(&mut state)
+            .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
+        Ok((state.propositional, state.numeric))
     }
 }
 
@@ -1274,44 +1254,6 @@ fn narrow_condition_variables(
             }
         }
     }
-}
-
-fn evaluate_state_with_axiom_closure(
-    task: &dyn AbstractNumericTask,
-    propositional: &mut [ExplicitValueIndex],
-    numeric: &mut [NumericValue],
-) -> Result<(), String> {
-    let packer = Arc::new(StatePacker::propositional(task));
-    let mut packed = vec![0u64; packer.num_bins()];
-    for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut packed, var_id, value.index() as u64);
-    }
-    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), packer.clone());
-    finish_axiom_closure(
-        &packer,
-        propositional,
-        numeric,
-        &mut packed,
-        &axiom_evaluator,
-    )
-}
-
-fn finish_axiom_closure(
-    packer: &StatePacker,
-    propositional: &mut [ExplicitValueIndex],
-    numeric: &mut [NumericValue],
-    packed: &mut [u64],
-    axiom_evaluator: &AxiomEvaluator<'_>,
-) -> Result<(), String> {
-    axiom_evaluator
-        .evaluate(packed, numeric)
-        .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
-
-    for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = ExplicitValueIndex::new(packer.get(packed, var_id) as u32);
-    }
-
-    Ok(())
 }
 
 /// Lives here rather than in `crate::tests` because it has to plant a
@@ -1371,6 +1313,22 @@ mod root_task_invariants {
             assignment_axioms: Vec::new(),
             global_constraint: ExplicitFact::propositional(0, 0),
         }
+    }
+
+    #[test]
+    fn closing_the_initial_state_keeps_numeric_values_as_given() {
+        let off_lattice = NumericValue::new(0.1 + 0.2);
+        assert_ne!(
+            crate::utils::float_tolerance::canonicalize(off_lattice).to_bits(),
+            off_lattice.to_bits()
+        );
+        let mut parts = valid_parts();
+        parts.numeric_state = vec![off_lattice];
+        let task = NumericRootTask::new(parts);
+        assert_eq!(
+            task.get_initial_numeric_state_values()[0].to_bits(),
+            off_lattice.to_bits()
+        );
     }
 
     #[test]

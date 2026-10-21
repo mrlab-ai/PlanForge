@@ -19,6 +19,7 @@ use planforge_sas::numeric_task::{
     ZERO_VALUE,
 };
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
+use planforge_sas::utils::float_tolerance;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -256,6 +257,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             algorithm,
             config: SearchConfig {
                 operator_costs,
+                min_action_cost: min_action_cost.value(),
                 use_metric,
                 time_limit,
                 max_memory_bytes,
@@ -396,17 +398,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
     /// Check if the given state satisfies all goal conditions.
     fn is_goal_state(&self, state: &ConcreteState) -> bool {
-        for goal_fact in self.goals {
-            if !self.state_satisfies_fact(state, goal_fact) {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Check if a state satisfies a specific fact.
-    fn state_satisfies_fact(&self, state: &ConcreteState, fact: &ExplicitFact) -> bool {
-        fact.is_held(self.state_registry.view(state))
+        self.state_registry.view(state).holds_all(self.goals)
     }
 
     /// Evaluate a state for A* without materializing named evaluator results.
@@ -429,13 +421,25 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
                     heuristic_revision: self.heuristic.revision(),
                 }
             }
-            Ok(h_value) => SearchEvaluation {
-                h_value,
-                f_value: self.algorithm.priority(g_value, h_value),
-                g_value,
-                is_dead_end: false,
-                heuristic_revision: self.heuristic.revision(),
-            },
+            Ok(h_value) => {
+                // Every plan from a non-goal state applies an action, so it
+                // costs at least the cheapest one: the maximum with the blind
+                // heuristic stays admissible and consistent, and lifts a
+                // heuristic that is 0 on a non-goal state, as an abstraction
+                // is on every state of an abstract goal state.
+                let h_value = if is_goal {
+                    h_value
+                } else {
+                    h_value.max(self.config.min_action_cost)
+                };
+                SearchEvaluation {
+                    h_value,
+                    f_value: self.algorithm.priority(g_value, h_value),
+                    g_value,
+                    is_dead_end: false,
+                    heuristic_revision: self.heuristic.revision(),
+                }
+            }
             Err(EvaluationError::DeadEnd { reliable }) => {
                 // Reliable and unreliable dead ends both prune, matching Fast
                 // Downward's `OpenList::is_dead_end`: an unreliable detection
@@ -508,7 +512,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
         let previous_h = entry.h_value.into_inner();
         assert!(
-            evaluation.h_value + 1e-9 >= previous_h,
+            evaluation.h_value + float_tolerance::SEARCH_EPSILON >= previous_h,
             "dynamic heuristic decreased for state {} at revision {}: {} -> {}",
             entry.state_id(),
             evaluation.heuristic_revision,
@@ -584,7 +588,9 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     }
 
     fn populate_applicable_operators(&mut self, state: &ConcreteState) {
-        state.fill_state(&self.state_registry, &mut self.scratch.state_values);
+        self.state_registry
+            .view(state)
+            .fill_propositional(&mut self.scratch.state_values);
         self.scratch.applicable_operators.clear();
         self.successor_generator.get_applicable_operators(
             &self.scratch.state_values,

@@ -1,5 +1,6 @@
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -16,20 +17,21 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
 use crate::evaluation::abstractions::common::abstraction::{
-    AbstractionMetadata, AbstractionUse, CollectionRecord,
+    AbstractionCore, AbstractionMetadata, AbstractionUse,
 };
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 
 #[test]
-fn interval_stolen_costs_keep_disjoint_infinite_tails() {
+fn region_stolen_costs_keep_disjoint_infinite_tails() {
     let region = |lower, upper, lower_closed, upper_closed| {
         CartesianSet::with_all_props_constrained(
             Vec::new(),
@@ -41,18 +43,18 @@ fn interval_stolen_costs_keep_disjoint_infinite_tails() {
     let overlapping_tail = region(NumericValue::new(-1.0), INF_VALUE, true, false);
 
     assert_eq!(
-        pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
+        pairwise_region_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
         0.0
     );
     assert_eq!(
-        pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
+        pairwise_region_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
         1.0
     );
 }
 
 #[test]
 #[ignore = "oracle collection report over translated sailing benchmark"]
-fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp() {
+fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
@@ -64,13 +66,10 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
                 cegar: CegarOptions {
                     max_states: 1_000,
                     max_time: Some(Duration::from_secs(5)),
-                    combine_labels: false,
                     random_seed: Some(1),
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                compute_source_sets: true,
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
@@ -79,7 +78,6 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })
@@ -100,15 +98,15 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             .iter()
             .filter(|abstraction| {
                 abstraction
-                    .metadata
-                    .collection_member
+                    .metadata()
+                    .collection_membership()
                     .map(|member| member.goal_id)
                     == Some(goal_id)
             })
             .map(|abstraction| {
                 (
-                    abstraction.metadata.split_kind,
-                    abstraction.metadata.split_selection_rank,
+                    abstraction.metadata().split_kind,
+                    abstraction.metadata().split_selection_rank,
                 )
             })
             .collect::<Vec<_>>();
@@ -134,15 +132,11 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
 
     let standalone_max = abstractions
         .iter()
-        .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
-        })
+        .map(|abstraction| abstraction.initial_h())
         .fold(0.0f64, f64::max);
     let abstraction_h = abstractions
         .iter()
-        .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
-        })
+        .map(|abstraction| abstraction.initial_h())
         .collect::<Vec<_>>();
     let components = abstractions
         .iter()
@@ -186,10 +180,9 @@ fn initial_cartesian_scp_value(
         })
         .collect::<Vec<_>>();
     let config = ScpConfig {
-        table_construction_max_time: 30.0,
-        combine_labels: false,
+        table_construction_max_time: Some(Duration::from_secs(30)),
         saturator: Saturator::All,
-        random_seed: Some(1),
+        random_seed: 1,
         partitioning: if partitioning {
             CostPartitioningMethod::Region
         } else {
@@ -199,16 +192,16 @@ fn initial_cartesian_scp_value(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(vec![], abstractions, vec![]),
+        abstractions
+            .into_iter()
+            .map(AbstractionComponent::from)
+            .collect(),
         config,
         task,
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
-    let mut state = heuristic.state.borrow_mut();
-    let mut partitions = heuristic
-        .build_cost_partitionings(task, &mut state, &abstract_state_ids)
-        .expect("oracle SCP construction failed");
+    let mut partitions = build_cost_partitionings(&heuristic, &abstract_state_ids);
     assert_eq!(partitions.len(), 1);
     partitions
         .pop()
@@ -218,7 +211,7 @@ fn initial_cartesian_scp_value(
 
 #[test]
 #[ignore = "diagnostic full-task handcrafted sailing regional SCP report"]
-fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
+fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
@@ -233,11 +226,11 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
         let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
-        abstraction.metadata.collection = Some(CollectionRecord {
+        abstraction.metadata_mut().abstraction_use = AbstractionUse::CollectionMember {
             iteration: index + 1,
-            full_task: false,
-        });
-        let states = abstraction.distance_table.distances.len();
+            membership: abstraction.metadata().collection_membership(),
+        };
+        let states = abstraction.distances().len();
         assert!(
             states <= 10_000,
             "{} has {states} states, expected at most 10000",
@@ -247,52 +240,52 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     }
 
     let config = ScpConfig {
-        max_time: 300.0,
-        table_construction_max_time: 30.0,
+        max_time: Some(Duration::from_secs(300)),
+        table_construction_max_time: Some(Duration::from_secs(30)),
         diversify: false,
         samples: 1_000,
         max_orders: usize::MAX,
-        combine_labels: false,
         order_generator: OrderGenerator::Greedy,
-        initial_order_generation_max_time: 0.0,
+        initial_order_generation_max_time: Some(Duration::ZERO),
         saturator: Saturator::All,
-        random_seed: Some(1),
+        random_seed: 1,
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
 
+    let partition_reports = specs
+        .iter()
+        .zip(&abstractions)
+        .map(|(spec, abstraction)| partition_report(transformed_task, abstraction, &spec.view_ids))
+        .collect::<Vec<_>>();
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        abstractions
+            .into_iter()
+            .map(AbstractionComponent::from)
+            .collect(),
         config,
         transformed_task,
         Default::default(),
     )
     .expect("failed to construct SCP heuristic");
     let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
-    {
-        let mut state = heuristic.state.borrow_mut();
-        let mut partitions = heuristic
-            .build_cost_partitionings(transformed_task, &mut state, &abstract_state_ids)
-            .expect("initial SCP construction failed");
-        assert_eq!(partitions.len(), 1);
-        SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partitions.pop().unwrap());
-    }
+    let cp_heuristics = build_cost_partitionings(&heuristic, &abstract_state_ids);
+    assert_eq!(cp_heuristics.len(), 1);
 
+    let initial_h = compute_max_h(&cp_heuristics, &abstract_state_ids);
     let state = heuristic.state.borrow();
-    let initial_h = SaturatedCostPartitioningHeuristic::compute_max_h(&state, &abstract_state_ids);
-    let components = heuristic.components.borrow();
+    let components = &state.components;
 
     println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
     let mut contributions = vec![0.0; specs.len()];
-    for cp in &state.cp_heuristics {
+    for cp in &cp_heuristics {
         for table in &cp.lookup_tables {
-            let contribution = abstract_state_ids
-                .get(table.abstraction_id)
-                .copied()
-                .flatten()
-                .and_then(|state_id| table.distances.get(state_id).copied())
-                .unwrap_or(table.unknown_value);
+            let contribution = current_h_for_distances(
+                table.abstraction_id,
+                &table.distances,
+                &abstract_state_ids,
+            );
             if let Some(total) = contributions.get_mut(table.abstraction_id) {
                 *total += contribution;
             }
@@ -301,20 +294,17 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
 
     for (index, (spec, component)) in specs.iter().zip(components.iter()).enumerate() {
         let abstraction = component
-            .as_domain()
+            .cegar()
             .expect("handcrafted diagnostic uses domain components");
-        let abstraction_h = current_h_for_distances(
-            index,
-            &abstraction.distance_table.distances,
-            &abstract_state_ids,
-        );
+        let abstraction_h =
+            current_h_for_distances(index, abstraction.distances(), &abstract_state_ids);
         println!(
             "HANDCRAFTED_FULL_TASK_ABS index={index} name={} abstraction_h={abstraction_h} scp_contribution={} states={} abstract_ops={} views={}",
             spec.name,
             contributions[index],
-            abstraction.distance_table.distances.len(),
-            abstraction.abstract_operators.len(),
-            partition_report(transformed_task, abstraction, &spec.view_ids),
+            abstraction.distances().len(),
+            abstraction.num_abstract_operators(),
+            partition_reports[index],
         );
     }
     println!("HANDCRAFTED_FULL_TASK_CONTRIBUTIONS {contributions:?}");
@@ -384,8 +374,10 @@ fn build_handcrafted_abstraction(
         );
     }
 
-    let goal_vars = (0..transformed_task.get_num_goals())
-        .map(|goal_id| transformed_task.get_goal_fact(goal_id).var())
+    let goal_vars = transformed_task
+        .goals()
+        .iter()
+        .map(ExplicitFact::var)
         .collect::<HashSet<_>>();
     let domain_mapping = (0..transformed_task.get_num_variables())
         .map(|var_id| {
@@ -411,48 +403,24 @@ fn build_handcrafted_abstraction(
                 .map_or(0, |value| value.index() + 1)
         })
         .collect::<Vec<_>>();
-    let numeric_domain_sizes = (0..transformed_task.numeric_variables().len())
-        .map(|numeric_var_id| {
-            partitions
-                .partitions(VariableIndex::from_usize(numeric_var_id))
-                .expect("trivial partitions contain every numeric variable")
-                .len()
-        })
-        .collect::<Vec<_>>();
-    let factory = DomainAbstractionFactory::new(
-        transformed_task,
+    let function = DomainAbstractionFunction::new(
+        &CegarSemantics::for_options(transformed_task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
         partitions,
-        numeric_domain_sizes,
     )?;
-    let mut operator_generator = factory.make_operator_generator(transformed_task, false)?;
-    let abstract_operators = operator_generator.build_abstract_operators(transformed_task)?;
-    let abstract_source_sets =
-        factory.build_abstract_source_sets(transformed_task, &abstract_operators)?;
-    let distance_table = factory.build_distance_table(
-        transformed_task,
-        &operator_generator,
-        &abstract_operators,
-        DistanceTableOptions::default(),
-    )?;
-    let relevant_operator_ids = factory.relevant_operator_ids_from_operators(
-        transformed_task,
-        false,
-        &abstract_operators,
-        DistanceTableOptions::default(),
-    )?;
-    Ok(DomainAbstraction {
-        factory,
-        distance_table,
-        combine_labels: false,
-        relevant_operator_ids,
-        abstract_operators,
-        transition_data_retained: true,
-        abstract_source_sets,
-        interval_transition_system: RefCell::new(None),
+    let transitions = function.transitions(transformed_task, false, Deadline::NONE)?;
+    let (distances, _) = transitions.goal_distances(Deadline::NONE)?;
+    let core = AbstractionCore {
+        distances,
+        initial_state: function.initial_state(transformed_task)?,
+        relevant_operator_ids: transitions.relevant_operator_ids(),
+        num_abstract_operators: transitions.operators.len(),
         metadata: AbstractionMetadata {
-            abstraction_use: AbstractionUse::CollectionMember,
+            abstraction_use: AbstractionUse::CollectionMember {
+                iteration: 1,
+                membership: None,
+            },
             ..AbstractionMetadata::standalone(
                 CegarOutcome {
                     stop_reason: CegarStopReason::SizeLimit,
@@ -464,7 +432,11 @@ fn build_handcrafted_abstraction(
                 None,
             )
         },
-    })
+    };
+    let mut abstraction = DomainAbstraction::new(function, core, Some(transitions));
+    abstraction
+        .prepare_regional_saturation(&RegionSemantics::new(transformed_task)?, Deadline::NONE)?;
+    Ok(abstraction)
 }
 
 fn initial_abstract_state_ids(
@@ -476,8 +448,9 @@ fn initial_abstract_state_ids(
         numeric: task.get_initial_numeric_state_values().to_vec(),
     };
     heuristic
-        .components
+        .state
         .borrow()
+        .components
         .iter()
         .map(|component| {
             component
@@ -619,10 +592,9 @@ fn partition_report(
         .map(|&view_id| {
             let name = task.numeric_variables()[view_id].name();
             let num_parts = abstraction
-                .factory
+                .function()
                 .partitions()
                 .partitions(VariableIndex::from_usize(view_id))
-                .expect("missing partition for handcrafted view")
                 .len();
             format!("n{view_id}:{name} parts={num_parts}")
         })

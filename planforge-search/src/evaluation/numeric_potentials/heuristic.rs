@@ -16,6 +16,7 @@ use std::time::Instant;
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
+use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
 
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
@@ -190,8 +191,11 @@ impl NumericPotentialHeuristic {
             );
         }
         if config.validate_duality && initial_was_optimal {
-            let (optimum, columns, rows) =
-                optimizer.validate_duality(registry.view(&initial_state), initial_value, 1e-6)?;
+            let (optimum, columns, rows) = optimizer.validate_duality(
+                registry.view(&initial_state),
+                initial_value,
+                float_tolerance::LP_EPSILON,
+            )?;
             info!(
                 "Numeric potential duality validation: h_pot(s_0)={initial_value}, operator-counting optimum={optimum} ({columns} columns, {rows} rows)"
             );
@@ -342,7 +346,7 @@ impl NumericPotentialHeuristic {
         }
         info!(
             "Numeric bounds statistics: provider={} finite_lower={} finite_upper={} finite_both={}",
-            config.bounds.as_str(),
+            config.bounds,
             potential_task
                 .global_feature_bounds
                 .iter()
@@ -582,7 +586,7 @@ impl NumericPotentialHeuristic {
                     )
                     .map_err(EvaluationError::ComputationFailed)?
                     .max(0.0);
-                let tolerance = 1e-6 * online_value.abs().max(1.0);
+                let tolerance = float_tolerance::LP_EPSILON * online_value.abs().max(1.0);
                 if online_value > envelope_value + tolerance {
                     envelope_value = online_value;
                     self.functions.borrow_mut().push(function);
@@ -822,7 +826,9 @@ fn build_conditioned_groups(
 ) -> Result<Vec<Vec<NumericPotentialFunction>>, String> {
     let start = Instant::now();
     let mut initial_props = Vec::new();
-    initial_state.fill_state(registry, &mut initial_props);
+    registry
+        .view(initial_state)
+        .fill_propositional(&mut initial_props);
     let mut goals: Vec<_> = optimizer
         .conditionable_goals()
         .into_iter()
@@ -1098,7 +1104,7 @@ fn remove_covered(
         let state = registry.view(&target.state);
         let optimum = function_value(&target.optimum, state, task)?.max(0.0);
         let value = function_value(function, state, task)?.max(0.0);
-        let tolerance = 1e-6 * optimum.abs().max(1.0);
+        let tolerance = float_tolerance::LP_EPSILON * optimum.abs().max(1.0);
         if value + tolerance < optimum {
             kept.push(target);
         }

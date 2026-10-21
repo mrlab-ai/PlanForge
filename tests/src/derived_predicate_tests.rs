@@ -21,6 +21,7 @@ use planforge_search::evaluation::abstractions::collections::generator::Abstract
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
@@ -242,8 +243,9 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
             .filter(|&&var| supports_itself(var, &supports))
             .count(),
         comparisons: task.comparison_axioms().len(),
-        default_value_goals: (0..task.get_num_goals())
-            .map(|goal_id| task.get_goal_fact(goal_id))
+        default_value_goals: task
+            .goals()
+            .iter()
             .filter(|goal| defaults.get(&goal.var()) == Some(&goal.value()))
             .count(),
     }
@@ -408,14 +410,13 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
 
     let collection = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 10_000,
-        stagnation_limit: 0.0,
+        stagnation_limit: Some(Duration::ZERO),
         enable_blacklist_on_stagnation: false,
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
                 max_states: 10_000,
                 ..DomainAbstractionCollectionConfig::default().member.cegar
             },
-            compute_source_sets: false,
             ..DomainAbstractionCollectionConfig::default().member
         },
         ..Default::default()
@@ -434,7 +435,6 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
             max_states: 10_000,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .expect("the Cartesian generator constructs")
     .generate(&task);
@@ -567,10 +567,7 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
 
     let proven = |state: &_| -> BTreeSet<usize> {
         let mut propositional = Vec::new();
-        let mut numeric = Vec::new();
-        registry
-            .fill_state_and_numeric_vars(state, &mut propositional, &mut numeric)
-            .expect("unpacking a state of the fixture");
+        registry.view(state).fill_propositional(&mut propositional);
         derived
             .iter()
             .copied()

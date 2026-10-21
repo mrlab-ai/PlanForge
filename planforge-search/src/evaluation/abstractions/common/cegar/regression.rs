@@ -34,6 +34,11 @@
 //! The split therefore goes to `a_i` when the image of `a_{i-1}` misses `p_i`
 //! and to `a_{i-1}` when only the precondition and `p_i` disagree there.
 
+#[cfg(test)]
+pub(crate) mod test_tasks;
+#[cfg(test)]
+mod tests;
+
 use anyhow::{Context, Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{
@@ -45,7 +50,7 @@ use planforge_sas::utils::interval::Interval;
 use std::collections::HashSet;
 
 use super::progression::{ConcretePlan, PlanCheck};
-use super::selection::{push_unique_split, select_refinement};
+use super::selection::{WHOLE_PLAN_TAG, push_unique_split, select_split};
 use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::{AbstractionView, TransitionKey};
@@ -140,8 +145,8 @@ pub(crate) fn ensure_regressable(
             check(fact, &|| format!("operator {op_id} ({})", op.name()))?;
         }
     }
-    for goal_id in 0..task.get_num_goals() {
-        check(task.get_goal_fact(goal_id), &|| "the goal".to_string())?;
+    for goal in task.goals() {
+        check(goal, &|| "the goal".to_string())?;
     }
     Ok(())
 }
@@ -161,6 +166,12 @@ impl PartialState {
             propositions: vec![None; task.get_num_variables()],
             numeric: vec![Interval::unbounded(); task.numeric_variables().len()],
         }
+    }
+
+    /// Drops every requirement.
+    fn clear(&mut self) {
+        self.propositions.fill(None);
+        self.numeric.fill(Interval::unbounded());
     }
 
     /// Adds `facts`; `None` if they contradict each other or `self`.
@@ -211,163 +222,190 @@ pub(crate) fn find_regression_flaws(
         operators.len(),
         states.len()
     );
-    let goal = (0..task.get_num_goals())
-        .map(|goal_id| *task.get_goal_fact(goal_id))
-        .collect::<Vec<_>>();
     let mut partial = PartialState::unconstrained(task);
     ensure!(
-        partial.require(coordinates, task, &goal)?.is_some(),
+        partial.require(coordinates, task, task.goals())?.is_some(),
         "the goal contradicts itself"
     );
     ensure!(
         overlaps(&partial, &states[operators.len()]),
         "the last abstract state of the trace admits no goal state"
     );
-    let mut flaws = Flaws {
-        scope,
-        found: Vec::new(),
+    let mut regression = Regression {
+        task,
+        coordinates,
+        flaws: Flaws {
+            scope,
+            found: Vec::new(),
+        },
+        preconditions: PartialState::unconstrained(task),
+        written: vec![false; task.get_num_variables()],
     };
+    let mut predecessor = PartialState::unconstrained(task);
     for step in (1..=operators.len()).rev() {
-        let op_id = operators[step - 1];
-        match regress(
-            task,
-            coordinates,
+        if !regression.regress(
             &partial,
-            op_id,
+            &mut predecessor,
+            operators[step - 1],
             &states[step - 1],
             &states[step],
             step,
-            &mut flaws,
         )? {
-            Some(predecessor) => partial = predecessor,
-            None => return Ok(flaws.found),
+            return Ok(regression.flaws.found);
         }
+        std::mem::swap(&mut partial, &mut predecessor);
     }
-    initial_flaws(&partial, &states[0], init, initial_split, &mut flaws)?;
-    Ok(flaws.found)
+    initial_flaws(
+        &partial,
+        &states[0],
+        init,
+        initial_split,
+        &mut regression.flaws,
+    )?;
+    Ok(regression.flaws.found)
 }
 
-/// Regresses `partial` (= `p_step`) through `op_id` into the source state
-/// `source` (= `a_{step-1}`), recording cases 1 and 2 in `flaws`. `target` is
-/// `a_step`; before the first flaw, `partial` overlaps it on every dimension.
-/// Returns `p_{step-1}`, or `None` once the search stops.
-#[allow(clippy::too_many_arguments)]
-fn regress(
-    task: &dyn AbstractNumericTask,
-    coordinates: &Coordinates<'_>,
-    partial: &PartialState,
-    op_id: OperatorIndex,
-    source: &CartesianSet,
-    target: &CartesianSet,
-    step: usize,
-    flaws: &mut Flaws,
-) -> Result<Option<PartialState>> {
-    let op = &task.get_operators()[op_id.index()];
-    let mut predecessor = PartialState::unconstrained(task);
+/// The regression of a trace: the flaws found so far, and the buffers every
+/// step reuses.
+struct Regression<'a> {
+    task: &'a dyn AbstractNumericTask,
+    coordinates: &'a Coordinates<'a>,
+    flaws: Flaws,
+    /// The preconditions of the operator regressed through.
+    preconditions: PartialState,
+    /// Per propositional variable, whether that operator writes it.
+    written: Vec<bool>,
+}
 
-    // Propositional effects falsify p_step (case 1) or free their variable;
-    // past the flaw, the effect is regressed anyway and frees it too.
-    let mut written = vec![false; task.get_num_variables()];
-    for effect in op.effects() {
-        let var = effect.var_id();
-        written[var.index()] = true;
-        if let Some(wanted) = partial.propositions[var.index()]
-            && wanted != effect.value()
-            && flaws.record(step, propositional_split(target, var, wanted))?
-        {
-            return Ok(None);
+impl Regression<'_> {
+    /// Regresses `partial` (= `p_step`) through `op_id` into the source
+    /// state `source` (= `a_{step-1}`), recording cases 1 and 2. `target` is
+    /// `a_step`; before the first flaw, `partial` overlaps it on every
+    /// dimension. Writes `p_{step-1}` to `predecessor` and returns whether
+    /// the search goes on.
+    fn regress(
+        &mut self,
+        partial: &PartialState,
+        predecessor: &mut PartialState,
+        op_id: OperatorIndex,
+        source: &CartesianSet,
+        target: &CartesianSet,
+        step: usize,
+    ) -> Result<bool> {
+        let Self {
+            task,
+            coordinates,
+            flaws,
+            preconditions,
+            written,
+        } = self;
+        let op = &task.get_operators()[op_id.index()];
+
+        // Propositional effects falsify p_step (case 1) or free their
+        // variable; past the flaw, the effect is regressed anyway and frees
+        // it too.
+        written.fill(false);
+        for effect in op.effects() {
+            let var = effect.var_id();
+            written[var.index()] = true;
+            if let Some(wanted) = partial.propositions[var.index()]
+                && wanted != effect.value()
+                && flaws.record(step, propositional_split(target, var, wanted))?
+            {
+                return Ok(false);
+            }
         }
-    }
-    let mut preconditions = PartialState::unconstrained(task);
-    ensure!(
-        preconditions
-            .require(coordinates, task, op.preconditions())?
-            .is_some(),
-        "operator {op_id} ({}) has contradicting preconditions",
-        op.name()
-    );
+        preconditions.clear();
+        ensure!(
+            preconditions
+                .require(coordinates, *task, op.preconditions())?
+                .is_some(),
+            "operator {op_id} ({}) has contradicting preconditions",
+            op.name()
+        );
 
-    for (index, wanted) in partial.propositions.iter().enumerate() {
-        let var = VariableIndex::from_usize(index);
-        let precondition = preconditions.propositions[index];
-        let Some(wanted) = wanted.filter(|_| !written[index]) else {
-            if let Some(required) = precondition {
-                ensure!(
-                    admits_value(source, var, required),
-                    "abstract state {} admits operator {op_id} ({}) although it excludes its precondition {var}={required}",
+        for (index, wanted) in partial.propositions.iter().enumerate() {
+            let var = VariableIndex::from_usize(index);
+            let precondition = preconditions.propositions[index];
+            let Some(wanted) = wanted.filter(|_| !written[index]) else {
+                if let Some(required) = precondition {
+                    ensure!(
+                        admits_value(source, var, required),
+                        "abstract state {} admits operator {op_id} ({}) although it excludes its precondition {var}={required}",
+                        step - 1,
+                        op.name()
+                    );
+                }
+                predecessor.propositions[index] = precondition;
+                continue;
+            };
+            // Case 2; past it, p_{step-1} keeps the value.
+            if !admits_value(source, var, wanted)
+                && flaws.record(step, propositional_split(target, var, wanted))?
+            {
+                return Ok(false);
+            }
+            // Case 1; past it, the contradicted precondition is ignored.
+            if precondition.is_some_and(|required| required != wanted)
+                && flaws.record(step - 1, propositional_split(source, var, wanted))?
+            {
+                return Ok(false);
+            }
+            predecessor.propositions[index] = Some(wanted);
+        }
+
+        for (index, &wanted) in partial.numeric.iter().enumerate() {
+            let var = VariableIndex::from_usize(index);
+            let source_interval = source.numeric[index];
+            let required = preconditions.numeric[index];
+            let Some(regressed) = coordinates.preimage(wanted, op_id, var) else {
+                // Case 1: op_id assigns var a value outside p_step, which a_step
+                // contains. Past it, the assignment is regressed anyway and
+                // leaves only the precondition on var.
+                let assigned = coordinates.image(source_interval, op_id, var);
+                if flaws.record(
+                    step,
+                    separate(var, wanted, assigned, target.numeric[index])?,
+                )? {
+                    return Ok(false);
+                }
+                predecessor.numeric[index] = required;
+                continue;
+            };
+            let reaches_source = regressed.intersects(&source_interval);
+            // Case 2; past it, p_{step-1} keeps the regressed values.
+            if !reaches_source {
+                let image = coordinates.image(source_interval, op_id, var);
+                if flaws.record(step, separate(var, wanted, image, target.numeric[index])?)? {
+                    return Ok(false);
+                }
+            }
+            let combined = regressed.intersection(&required);
+            // Case 1: the precondition contradicts the regression in a_{step-1};
+            // past it, a precondition that contradicts the regression outright is
+            // ignored.
+            if reaches_source
+                && !combined.intersects(&source_interval)
+                && flaws.record(
                     step - 1,
-                    op.name()
-                );
+                    separate(
+                        var,
+                        regressed,
+                        required.intersection(&source_interval),
+                        source_interval,
+                    )?,
+                )?
+            {
+                return Ok(false);
             }
-            predecessor.propositions[index] = precondition;
-            continue;
-        };
-        // Case 2; past it, p_{step-1} keeps the value.
-        if !admits_value(source, var, wanted)
-            && flaws.record(step, propositional_split(target, var, wanted))?
-        {
-            return Ok(None);
+            predecessor.numeric[index] = if combined.is_empty() {
+                regressed
+            } else {
+                combined
+            };
         }
-        // Case 1; past it, the contradicted precondition is ignored.
-        if precondition.is_some_and(|required| required != wanted)
-            && flaws.record(step - 1, propositional_split(source, var, wanted))?
-        {
-            return Ok(None);
-        }
-        predecessor.propositions[index] = Some(wanted);
+        Ok(true)
     }
-
-    for (index, &wanted) in partial.numeric.iter().enumerate() {
-        let var = VariableIndex::from_usize(index);
-        let source_interval = source.numeric[index];
-        let required = preconditions.numeric[index];
-        let Some(regressed) = coordinates.preimage(wanted, op_id, var)? else {
-            // Case 1: op_id assigns var a value outside p_step, which a_step
-            // contains. Past it, the assignment is regressed anyway and
-            // leaves only the precondition on var.
-            let assigned = coordinates.image(source_interval, op_id, var)?;
-            if flaws.record(
-                step,
-                separate(var, wanted, assigned, target.numeric[index])?,
-            )? {
-                return Ok(None);
-            }
-            predecessor.numeric[index] = required;
-            continue;
-        };
-        let reaches_source = regressed.intersects(&source_interval);
-        // Case 2; past it, p_{step-1} keeps the regressed values.
-        if !reaches_source {
-            let image = coordinates.image(source_interval, op_id, var)?;
-            if flaws.record(step, separate(var, wanted, image, target.numeric[index])?)? {
-                return Ok(None);
-            }
-        }
-        let combined = regressed.intersection(&required);
-        // Case 1: the precondition contradicts the regression in a_{step-1};
-        // past it, a precondition that contradicts the regression outright is
-        // ignored.
-        if reaches_source
-            && !combined.intersects(&source_interval)
-            && flaws.record(
-                step - 1,
-                separate(
-                    var,
-                    regressed,
-                    required.intersection(&source_interval),
-                    source_interval,
-                )?,
-            )?
-        {
-            return Ok(None);
-        }
-        predecessor.numeric[index] = if combined.is_empty() {
-            regressed
-        } else {
-            combined
-        };
-    }
-    Ok(Some(predecessor))
 }
 
 /// Case 3: the initial state against `p_0` in its abstract state `state`.
@@ -493,296 +531,6 @@ fn overlaps(partial: &PartialState, state: &CartesianSet) -> bool {
             .all(|(wanted, interval)| wanted.intersects(interval))
 }
 
-#[cfg(test)]
-pub(crate) mod test_tasks {
-    //! Tasks on which regression and progression flaws differ, shared by the
-    //! tests of every abstraction.
-
-    use planforge_sas::axioms::{
-        AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator,
-    };
-    use planforge_sas::numeric_conditions::ConditionValue;
-    use planforge_sas::numeric_task::{
-        AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
-        ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-        NumericVariable, ONE_VALUE, Operator, OperatorCost, VariableIndex, ZERO_VALUE,
-    };
-
-    const TRUE: usize = ConditionValue::True.as_usize();
-
-    fn comparison_variable(name: &str) -> ExplicitVariable {
-        ExplicitVariable::new(
-            ConditionValue::DOMAIN_SIZE,
-            name.into(),
-            vec!["true".into(), "false".into()],
-            Some(0),
-            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
-        )
-    }
-
-    fn flag_variable() -> ExplicitVariable {
-        ExplicitVariable::new(
-            2,
-            "flag".into(),
-            vec!["unset".into(), "set".into()],
-            None,
-            ExplicitValueIndex::new(0),
-        )
-    }
-
-    fn add(var: usize, constant: usize) -> AssignmentEffect {
-        AssignmentEffect::new(
-            VariableIndex::from_usize(var),
-            AssignmentOperation::Plus,
-            VariableIndex::from_usize(constant),
-            false,
-            vec![],
-        )
-    }
-
-    fn compare(var: usize, left: usize, right: usize, op: ComparisonOperator) -> ComparisonAxiom {
-        ComparisonAxiom::new(
-            VariableIndex::from_usize(var),
-            VariableIndex::from_usize(left),
-            VariableIndex::from_usize(right),
-            op,
-        )
-    }
-
-    /// `x` starts at 0 and the goal is `x >= 3`. `jump` (cost 1) requires
-    /// `x >= 1` and increments `x`; `inc` (cost 2) increments it
-    /// unconditionally. Numeric variables: `x`, `one`, `three`.
-    pub(crate) fn jump_task() -> NumericRootTask {
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
-            metric: Metric::new(true, None),
-            variables: vec![
-                comparison_variable("x-at-least-three"),
-                comparison_variable("x-at-least-one"),
-            ],
-            numeric_variables: vec![
-                NumericVariable::new("x".into(), NumericType::Regular, None),
-                NumericVariable::new("one".into(), NumericType::Constant, None),
-                NumericVariable::new("three".into(), NumericType::Constant, None),
-            ],
-            goals: vec![ExplicitFact::propositional(0, TRUE)],
-            mutexes: vec![],
-            state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)],
-            numeric_state: vec![ZERO_VALUE, ONE_VALUE, NumericValue::new(3.0)],
-            operators: vec![
-                Operator::new(
-                    "inc".into(),
-                    vec![],
-                    vec![],
-                    vec![add(0, 1)],
-                    OperatorCost::new(2),
-                ),
-                Operator::new(
-                    "jump".into(),
-                    vec![ExplicitFact::propositional(1, TRUE)],
-                    vec![],
-                    vec![add(0, 1)],
-                    OperatorCost::new(1),
-                ),
-            ],
-            axioms: vec![],
-            comparison_axioms: vec![
-                compare(0, 0, 2, ComparisonOperator::GreaterThanOrEqual),
-                compare(1, 0, 1, ComparisonOperator::GreaterThanOrEqual),
-            ],
-            assignment_axioms: vec![],
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-
-    /// `o` requires `x + y <= 0` and sets the flag, `inc` increments `x`, and
-    /// the goal is the flag and `x + y >= 1`, so `h* = 2`. No finite
-    /// partition of the original variables separates `x + y <= 0` from
-    /// `x + y >= 1`; the coordinate `sum = x + y` does.
-    pub(crate) fn linear_goal_task() -> NumericRootTask {
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
-            metric: Metric::new(true, None),
-            variables: vec![
-                comparison_variable("sum-at-most-zero"),
-                comparison_variable("sum-at-least-one"),
-                flag_variable(),
-            ],
-            numeric_variables: vec![
-                NumericVariable::new("x".into(), NumericType::Regular, None),
-                NumericVariable::new("y".into(), NumericType::Regular, None),
-                NumericVariable::new("sum".into(), NumericType::Derived, None),
-                NumericVariable::new("zero".into(), NumericType::Constant, None),
-                NumericVariable::new("one".into(), NumericType::Constant, None),
-            ],
-            goals: vec![
-                ExplicitFact::propositional(1, TRUE),
-                ExplicitFact::propositional(2, 1),
-            ],
-            mutexes: vec![],
-            state: vec![
-                ExplicitValueIndex::new(0),
-                ExplicitValueIndex::new(1),
-                ExplicitValueIndex::new(0),
-            ],
-            numeric_state: vec![ZERO_VALUE, ZERO_VALUE, ZERO_VALUE, ZERO_VALUE, ONE_VALUE],
-            operators: vec![
-                Operator::new(
-                    "o".into(),
-                    vec![ExplicitFact::propositional(0, TRUE)],
-                    vec![Effect::new(
-                        vec![],
-                        VariableIndex::from_usize(2),
-                        None,
-                        ExplicitValueIndex::new(1),
-                    )],
-                    vec![],
-                    OperatorCost::new(1),
-                ),
-                Operator::new(
-                    "inc".into(),
-                    vec![],
-                    vec![],
-                    vec![add(0, 4)],
-                    OperatorCost::new(1),
-                ),
-            ],
-            axioms: vec![],
-            comparison_axioms: vec![
-                compare(0, 2, 3, ComparisonOperator::LessThanOrEqual),
-                compare(1, 2, 4, ComparisonOperator::GreaterThanOrEqual),
-            ],
-            assignment_axioms: vec![AssignmentAxiom::new(
-                VariableIndex::from_usize(2),
-                CalOperator::Sum,
-                VariableIndex::from_usize(0),
-                VariableIndex::from_usize(1),
-            )],
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-
-    /// `o` requires `y >= 1` and increments `x`; the goal is `x >= 2` and
-    /// `y <= 0`, from `(0, 0)`. The goal regressed through `o` contradicts
-    /// its precondition on `y` and leaves `x >= 1`, which the initial state
-    /// violates. Numeric variables: `x`, `y`, `zero`, `one`, `two`.
-    pub(crate) fn blocked_task() -> NumericRootTask {
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
-            metric: Metric::new(true, None),
-            variables: vec![
-                comparison_variable("y-at-least-one"),
-                comparison_variable("x-at-least-two"),
-                comparison_variable("y-at-most-zero"),
-            ],
-            numeric_variables: vec![
-                NumericVariable::new("x".into(), NumericType::Regular, None),
-                NumericVariable::new("y".into(), NumericType::Regular, None),
-                NumericVariable::new("zero".into(), NumericType::Constant, None),
-                NumericVariable::new("one".into(), NumericType::Constant, None),
-                NumericVariable::new("two".into(), NumericType::Constant, None),
-            ],
-            goals: vec![
-                ExplicitFact::propositional(1, TRUE),
-                ExplicitFact::propositional(2, TRUE),
-            ],
-            mutexes: vec![],
-            state: vec![
-                ExplicitValueIndex::new(1),
-                ExplicitValueIndex::new(1),
-                ExplicitValueIndex::from_usize(TRUE),
-            ],
-            numeric_state: vec![
-                ZERO_VALUE,
-                ZERO_VALUE,
-                ZERO_VALUE,
-                ONE_VALUE,
-                NumericValue::new(2.0),
-            ],
-            operators: vec![Operator::new(
-                "o".into(),
-                vec![ExplicitFact::propositional(0, TRUE)],
-                vec![],
-                vec![add(0, 3)],
-                OperatorCost::new(1),
-            )],
-            axioms: vec![],
-            comparison_axioms: vec![
-                compare(0, 1, 3, ComparisonOperator::GreaterThanOrEqual),
-                compare(1, 0, 4, ComparisonOperator::GreaterThanOrEqual),
-                compare(2, 1, 2, ComparisonOperator::LessThanOrEqual),
-            ],
-            assignment_axioms: vec![],
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-
-    /// The corrected example for Theorem 4. `move_right` requires `x = y`
-    /// and increments `x`; `move_down` decrements `y`. From `(0, 1)` the goal
-    /// `x >= 1` takes `<move_down, move_right>`. Regression over single
-    /// variables drops `x = y` and misses the flaw of `<move_right>`; the
-    /// coordinate `d = x - y` keeps it. Numeric variables: `x`, `y`, `d`,
-    /// `zero`, `one`.
-    pub(crate) fn diagonal_task() -> NumericRootTask {
-        let subtract = |var: usize| {
-            AssignmentEffect::new(
-                VariableIndex::from_usize(var),
-                AssignmentOperation::Minus,
-                VariableIndex::from_usize(4),
-                false,
-                vec![],
-            )
-        };
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
-            metric: Metric::new(true, None),
-            variables: vec![
-                comparison_variable("x-equals-y"),
-                comparison_variable("x-at-least-one"),
-            ],
-            numeric_variables: vec![
-                NumericVariable::new("x".into(), NumericType::Regular, None),
-                NumericVariable::new("y".into(), NumericType::Regular, None),
-                NumericVariable::new("d".into(), NumericType::Derived, None),
-                NumericVariable::new("zero".into(), NumericType::Constant, None),
-                NumericVariable::new("one".into(), NumericType::Constant, None),
-            ],
-            goals: vec![ExplicitFact::propositional(1, TRUE)],
-            mutexes: vec![],
-            state: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(1)],
-            numeric_state: vec![ZERO_VALUE, ONE_VALUE, ZERO_VALUE, ZERO_VALUE, ONE_VALUE],
-            operators: vec![
-                Operator::new(
-                    "move_right".into(),
-                    vec![ExplicitFact::propositional(0, TRUE)],
-                    vec![],
-                    vec![add(0, 4)],
-                    OperatorCost::new(1),
-                ),
-                Operator::new(
-                    "move_down".into(),
-                    vec![],
-                    vec![],
-                    vec![subtract(1)],
-                    OperatorCost::new(1),
-                ),
-            ],
-            axioms: vec![],
-            comparison_axioms: vec![
-                compare(0, 2, 3, ComparisonOperator::Equal),
-                compare(1, 0, 4, ComparisonOperator::GreaterThanOrEqual),
-            ],
-            assignment_axioms: vec![AssignmentAxiom::new(
-                VariableIndex::from_usize(2),
-                CalOperator::Difference,
-                VariableIndex::from_usize(0),
-                VariableIndex::from_usize(1),
-            )],
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-}
-
 /// Regression flaw search in `scope` on the optimal abstract plan from the
 /// abstract state of `refinement_root`. Without a flaw, the plan's operators
 /// are a concrete plan; with several, the split is selected among them.
@@ -850,7 +598,12 @@ pub(crate) fn regression_plan_check(
                     flaw_split(view, semantics, &state_ids, flaw)?,
                 );
             }
-            select_refinement(view, semantics, candidates)
+            Ok(PlanCheck::Refine(select_split(
+                view,
+                semantics,
+                candidates,
+                WHOLE_PLAN_TAG,
+            )?))
         }
     }
 }
@@ -863,10 +616,6 @@ fn flaw_split(
     flaw: &RegressionFlaw,
 ) -> Result<Split> {
     let state_id = state_ids[flaw.state];
-    let description = format!(
-        "regression flaw in abstract state {} of the plan",
-        flaw.state
-    );
     Ok(match flaw.split {
         FlawSplit::Numeric {
             var,
@@ -880,7 +629,10 @@ fn flaw_split(
                 boundary,
                 lower_includes_boundary,
                 integer_lattice,
-            )?;
+            )
+            .with_context(|| {
+                format!("regression flaw boundary {boundary} does not split numeric var {var}")
+            })?;
             Split::Numeric {
                 state_id,
                 var_id: var,
@@ -888,7 +640,6 @@ fn flaw_split(
                 lower_includes_boundary,
                 witness_value: interior_value(if wanted_is_lower { upper } else { lower }),
                 integer_lattice,
-                description,
             }
         }
         FlawSplit::Propositional { var, wanted } => {
@@ -903,7 +654,6 @@ fn flaw_split(
                 var_id: var,
                 wanted: vec![wanted],
                 witness_value,
-                description,
             }
         }
     })
@@ -935,277 +685,5 @@ fn interior_value(interval: Interval) -> NumericValue {
         (true, false) => interval.lower + ONE_VALUE,
         (false, true) => interval.upper - ONE_VALUE,
         (false, false) => ZERO_VALUE,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use planforge_sas::numeric_task::{
-        ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
-    };
-    use planforge_sas::utils::interval::Interval;
-
-    use super::test_tasks::{blocked_task, diagonal_task, jump_task};
-    use super::*;
-
-    const X: VariableIndex = VariableIndex::new(0);
-
-    /// A box over the task's numeric variables in which `x` lies in `x` and
-    /// the constants keep their values; propositional variables are free.
-    fn state(task: &dyn AbstractNumericTask, numeric: Vec<Interval>) -> CartesianSet {
-        let propositions = (0..task.get_num_variables())
-            .map(|var| {
-                (0..task
-                    .get_variable_domain_size(VariableIndex::from_usize(var))
-                    .unwrap())
-                    .map(ExplicitValueIndex::from_usize)
-                    .collect()
-            })
-            .collect();
-        CartesianSet::with_all_props_constrained(propositions, numeric)
-    }
-
-    fn jump_state(task: &dyn AbstractNumericTask, x: Interval) -> CartesianSet {
-        state(
-            task,
-            vec![
-                x,
-                Interval::singleton(NumericValue::new(1.0)),
-                Interval::singleton(NumericValue::new(3.0)),
-            ],
-        )
-    }
-
-    fn at_most(value: f64) -> Interval {
-        Interval::new(
-            NumericValue::new(f64::NEG_INFINITY),
-            NumericValue::new(value),
-            false,
-            true,
-        )
-    }
-
-    fn at_least(value: f64) -> Interval {
-        Interval::new(
-            NumericValue::new(value),
-            NumericValue::new(f64::INFINITY),
-            true,
-            false,
-        )
-    }
-
-    fn search_in_scope(
-        task: &dyn AbstractNumericTask,
-        states: &[CartesianSet],
-        operators: &[OperatorIndex],
-        numeric: &[NumericValue],
-        initial_split: SplitKind,
-        scope: FlawScope,
-    ) -> Vec<RegressionFlaw> {
-        let coordinates = Coordinates::new(task);
-        ensure_regressable(task, &coordinates).unwrap();
-        let propositions = task.get_initial_propositional_state_values();
-        find_regression_flaws(
-            task,
-            &coordinates,
-            states,
-            operators,
-            InitialState {
-                propositions,
-                numeric,
-            },
-            initial_split,
-            scope,
-        )
-        .unwrap()
-    }
-
-    fn search(
-        task: &dyn AbstractNumericTask,
-        states: &[CartesianSet],
-        operators: &[OperatorIndex],
-        numeric: &[NumericValue],
-        initial_split: SplitKind,
-    ) -> Option<RegressionFlaw> {
-        let flaws = search_in_scope(
-            task,
-            states,
-            operators,
-            numeric,
-            initial_split,
-            FlawScope::First,
-        );
-        assert!(flaws.len() <= 1, "a first-flaw search reports {flaws:?}");
-        flaws.into_iter().next()
-    }
-
-    const JUMP: OperatorIndex = OperatorIndex::new(1);
-
-    #[test]
-    fn case_3_splits_the_initial_state_at_the_regressed_goal_or_next_to_its_value() {
-        let task = jump_task();
-        let trace = [
-            jump_state(&task, at_most(2.0)),
-            jump_state(&task, at_least(3.0)),
-        ];
-        let init = [0.0, 1.0, 3.0].map(NumericValue::new);
-        // x >= 3 regresses through jump to x >= 2, which x = 0 violates.
-        assert_eq!(
-            search(&task, &trace, &[JUMP], &init, SplitKind::Wanted),
-            Some(RegressionFlaw {
-                state: 0,
-                split: FlawSplit::Numeric {
-                    var: X,
-                    boundary: NumericValue::new(2.0),
-                    lower_includes_boundary: false,
-                    wanted_is_lower: false,
-                },
-            })
-        );
-        assert_eq!(
-            search(&task, &trace, &[JUMP], &init, SplitKind::Concrete),
-            Some(RegressionFlaw {
-                state: 0,
-                split: FlawSplit::Numeric {
-                    var: X,
-                    boundary: NumericValue::new(0.0),
-                    lower_includes_boundary: true,
-                    wanted_is_lower: false,
-                },
-            })
-        );
-    }
-
-    #[test]
-    fn case_2_splits_the_successor_where_the_predecessor_cannot_reach_the_goal() {
-        let task = jump_task();
-        // jump takes x <= 1 to x <= 2, which misses the goal x >= 3 in a_1.
-        let trace = [
-            jump_state(&task, at_most(1.0)),
-            jump_state(&task, at_least(1.0)),
-        ];
-        let init = [0.0, 1.0, 3.0].map(NumericValue::new);
-        assert_eq!(
-            search(&task, &trace, &[JUMP], &init, SplitKind::Wanted),
-            Some(RegressionFlaw {
-                state: 1,
-                split: FlawSplit::Numeric {
-                    var: X,
-                    boundary: NumericValue::new(3.0),
-                    lower_includes_boundary: false,
-                    wanted_is_lower: false,
-                },
-            })
-        );
-    }
-
-    #[test]
-    fn a_plan_has_no_regression_flaw() {
-        let task = jump_task();
-        let trace = [
-            jump_state(&task, Interval::singleton(NumericValue::new(2.0))),
-            jump_state(&task, at_least(3.0)),
-        ];
-        let init = [2.0, 1.0, 3.0].map(NumericValue::new);
-        assert_eq!(
-            search(&task, &trace, &[JUMP], &init, SplitKind::Wanted),
-            None
-        );
-    }
-
-    #[test]
-    fn the_coordinate_x_minus_y_keeps_the_flaw_single_variables_lose() {
-        let task = diagonal_task();
-        let unbounded = Interval::unbounded();
-        let constants = |numeric: Vec<Interval>| {
-            let mut numeric = numeric;
-            numeric.extend([0.0, 1.0].map(|value| Interval::singleton(NumericValue::new(value))));
-            numeric
-        };
-        let trace = [
-            state(&task, constants(vec![at_most(0.0), unbounded, unbounded])),
-            state(&task, constants(vec![at_least(1.0), unbounded, unbounded])),
-        ];
-        let init = [0.0, 1.0, -1.0, 0.0, 1.0].map(NumericValue::new);
-        // p_0 = {x >= 0, d = 0}; the initial state has d = -1.
-        let flaw = search(
-            &task,
-            &trace,
-            &[OperatorIndex::new(0)],
-            &init,
-            SplitKind::Wanted,
-        );
-        assert!(
-            matches!(
-                flaw,
-                Some(RegressionFlaw {
-                    state: 0,
-                    split: FlawSplit::Numeric { var, .. },
-                }) if var == VariableIndex::new(2)
-            ),
-            "got {flaw:?}"
-        );
-    }
-
-    #[test]
-    fn whole_plan_regression_ignores_a_contradicted_precondition_and_goes_on() {
-        let task = blocked_task();
-        let unbounded = Interval::unbounded();
-        let constants = [0.0, 1.0, 2.0].map(|value| Interval::singleton(NumericValue::new(value)));
-        let with_constants = |x: Interval| {
-            let mut numeric = vec![x, unbounded];
-            numeric.extend(constants);
-            numeric
-        };
-        let trace = [
-            state(&task, with_constants(unbounded)),
-            state(&task, with_constants(at_least(2.0))),
-        ];
-        let init = [0.0, 0.0, 0.0, 1.0, 2.0].map(NumericValue::new);
-        let y = VariableIndex::new(1);
-        // y <= 0 regresses through o to y <= 0, which its precondition y >= 1
-        // contradicts in a_0.
-        let precondition_flaw = RegressionFlaw {
-            state: 0,
-            split: FlawSplit::Numeric {
-                var: y,
-                boundary: ZERO_VALUE,
-                lower_includes_boundary: true,
-                wanted_is_lower: true,
-            },
-        };
-        // Ignoring it, p_0 = {x >= 1, y <= 0}, and x = 0 violates x >= 1.
-        let initial_flaw = RegressionFlaw {
-            state: 0,
-            split: FlawSplit::Numeric {
-                var: X,
-                boundary: ONE_VALUE,
-                lower_includes_boundary: false,
-                wanted_is_lower: false,
-            },
-        };
-        let o = [OperatorIndex::new(0)];
-        assert_eq!(
-            search_in_scope(
-                &task,
-                &trace,
-                &o,
-                &init,
-                SplitKind::Wanted,
-                FlawScope::First
-            ),
-            vec![precondition_flaw.clone()]
-        );
-        assert_eq!(
-            search_in_scope(
-                &task,
-                &trace,
-                &o,
-                &init,
-                SplitKind::Wanted,
-                FlawScope::WholePlan
-            ),
-            vec![precondition_flaw, initial_flaw]
-        );
     }
 }

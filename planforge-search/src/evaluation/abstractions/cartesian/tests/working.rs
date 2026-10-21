@@ -93,17 +93,23 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
-        ..CartesianAbstractionConfig::default()
     })
     .unwrap()
     .generate(&task)
     .unwrap();
 
-    assert!(abstraction.transition_system.transitions.is_empty());
-    assert!(abstraction.abstract_source_sets.is_empty());
-    assert!(abstraction.relevant_operator_ids.is_empty());
-    assert_eq!(abstraction.distance_table.distances, vec![0.0]);
+    assert!(
+        abstraction
+            .transitions
+            .as_ref()
+            .unwrap()
+            .system
+            .transitions
+            .is_empty()
+    );
+    assert!(abstraction.abstract_source_sets().is_none());
+    assert!(abstraction.relevant_operator_ids().is_empty());
+    assert_eq!(abstraction.distances(), vec![0.0]);
 }
 
 #[test]
@@ -140,15 +146,13 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let generate = |retain_transition_system| {
+    let generate = |keep_transitions| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             cegar: CegarOptions {
                 max_states: 2,
+                keep_transitions,
                 ..CartesianAbstractionConfig::default().cegar
             },
-            compute_source_sets: false,
-            retain_transition_system,
-            ..CartesianAbstractionConfig::default()
         })
         .unwrap()
         .generate(&task)
@@ -157,15 +161,25 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
 
     let full = generate(true);
     let standalone = generate(false);
+    assert_eq!(standalone.distances(), full.distances());
     assert_eq!(
-        standalone.distance_table.distances,
-        full.distance_table.distances
+        standalone.relevant_operator_ids(),
+        full.relevant_operator_ids()
     );
-    assert_eq!(standalone.relevant_operator_ids, full.relevant_operator_ids);
-    assert_eq!(standalone.transition_count, full.transition_count);
-    assert!(!full.transition_system.transitions.is_empty());
-    assert!(standalone.transition_system.transitions.is_empty());
-    assert!(standalone.transition_system.cartesian_sets.is_empty());
+    assert_eq!(
+        standalone.num_abstract_operators(),
+        full.num_abstract_operators()
+    );
+    assert!(
+        !full
+            .transitions
+            .as_ref()
+            .unwrap()
+            .system
+            .transitions
+            .is_empty()
+    );
+    assert!(standalone.transitions.is_none());
 }
 
 #[test]
@@ -199,31 +213,4 @@ fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     assert_eq!(working.outgoing[0], vec![0]);
     assert_eq!(working.incoming[1], vec![0]);
     assert!(working.transitions[0].is_some());
-}
-
-#[test]
-fn shortest_path_dependency_positions_survive_swap_removal() {
-    let first = TransitionKey {
-        source: 0,
-        concrete_op_id: OperatorIndex::new(0),
-        target: 2,
-    };
-    let second = TransitionKey {
-        source: 1,
-        concrete_op_id: OperatorIndex::new(1),
-        target: 2,
-    };
-    let mut shortest_paths = ShortestPaths::for_test(
-        vec![1.0, 1.0, 0.0],
-        vec![Some(first), Some(second), None],
-        vec![vec![], vec![], vec![0, 1]],
-        vec![Some(0), Some(1), None],
-        vec![false, false, true],
-    );
-
-    shortest_paths.remove_generating_transition(0);
-    assert_eq!(shortest_paths.dependents(2), [1]);
-    assert_eq!(shortest_paths.dependent_position(1), Some(0));
-    shortest_paths.remove_generating_transition(1);
-    assert!(shortest_paths.dependents(2).is_empty());
 }

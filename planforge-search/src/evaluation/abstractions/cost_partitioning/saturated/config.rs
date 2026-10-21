@@ -1,8 +1,9 @@
-use std::fmt;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
+use crate::config::option_enum;
+use crate::evaluation::seed::RANDOM_SPLIT_SEED;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -15,24 +16,10 @@ pub enum OrderGenerator {
     Diverse,
 }
 
-impl fmt::Display for OrderGenerator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OrderGenerator::Greedy => write!(f, "greedy_orders"),
-            OrderGenerator::Diverse => write!(f, "diverse_orders"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for OrderGenerator {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "greedy_orders" | "greedy_orders()" => Ok(Self::Greedy),
-            "diverse_orders" | "diverse_orders()" => Ok(Self::Diverse),
-            other => Err(format!("invalid OrderGenerator `{other}`")),
-        }
-    }
-}
+option_enum!("orders", OrderGenerator {
+    Greedy => "greedy_orders" | "greedy_orders()",
+    Diverse => "diverse_orders" | "diverse_orders()",
+});
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -42,36 +29,46 @@ pub enum Saturator {
     Perimstar,
 }
 
-impl fmt::Display for Saturator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Saturator::All => write!(f, "all"),
-            Saturator::Perim => write!(f, "perim"),
-            Saturator::Perimstar => write!(f, "perimstar"),
-        }
-    }
+option_enum!("saturator", Saturator {
+    All => "all",
+    Perim => "perim",
+    Perimstar => "perimstar",
+});
+
+/// One saturation pass over an abstraction.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SaturationPass {
+    /// The pass in logs.
+    pub(super) label: &'static str,
+    /// The pass saturates only within the perimeter of the evaluated state's
+    /// abstract goal distance (Seipp et al.).
+    pub(super) within_perimeter: bool,
 }
 
 impl Saturator {
-    /// The saturation passes over one abstraction, each with its log label and
-    /// whether it caps saturation at the evaluated state's abstract goal
-    /// distance (the perimeter of Seipp et al.).
-    pub(super) fn passes(self) -> &'static [(&'static str, bool)] {
+    /// The saturation passes over one abstraction, in order.
+    pub(super) fn passes(self) -> &'static [SaturationPass] {
+        const ALL: SaturationPass = SaturationPass {
+            label: "all",
+            within_perimeter: false,
+        };
+        const PERIM: SaturationPass = SaturationPass {
+            label: "perim",
+            within_perimeter: true,
+        };
         match self {
-            Self::All => &[("all", false)],
-            Self::Perim => &[("perim", true)],
-            Self::Perimstar => &[("perimstar/perim", true), ("perimstar/all", false)],
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for Saturator {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "all" => Ok(Self::All),
-            "perim" => Ok(Self::Perim),
-            "perimstar" => Ok(Self::Perimstar),
-            other => Err(format!("invalid Saturator `{other}`")),
+            Self::All => &[ALL],
+            Self::Perim => &[PERIM],
+            Self::Perimstar => &[
+                SaturationPass {
+                    label: "perimstar/perim",
+                    ..PERIM
+                },
+                SaturationPass {
+                    label: "perimstar/all",
+                    ..ALL
+                },
+            ],
         }
     }
 }
@@ -79,7 +76,12 @@ impl crate::config::FromOptionValue for Saturator {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CostPartitioningMethod {
+    /// One cost per operator.
     Label,
+    /// One cost per source set of every abstract transition, for the
+    /// abstractions CEGAR builds. A pattern database has no source sets and
+    /// takes one cost per operator of what remains, as in label cost
+    /// partitioning.
     Region,
 }
 
@@ -89,46 +91,42 @@ impl CostPartitioningMethod {
     }
 }
 
-impl fmt::Display for CostPartitioningMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Label => write!(f, "label"),
-            Self::Region => write!(f, "region"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for CostPartitioningMethod {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "label" => Ok(Self::Label),
-            "region" => Ok(Self::Region),
-            other => Err(format!("invalid cost partitioning method `{other}`")),
-        }
-    }
-}
+option_enum!("partitioning", CostPartitioningMethod {
+    Label => "label",
+    Region => "region",
+});
 
 /// Configuration of SCP over a collection of abstractions. All cost
 /// partitionings are built at the first evaluated state, before search, and
 /// construction-only abstraction data is released afterwards.
+///
+/// Building them has one budget, [`Self::table_construction_max_time`]
+/// together with the heuristic's construction deadline; the phases
+/// limited by [`Self::initial_order_generation_max_time`] and
+/// [`Self::max_time`] end at the budget's end at the latest. A cost
+/// partitioning the budget cuts short keeps the components saturated so far.
+/// Time limits are in seconds, `infinity` for none.
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
 pub struct ScpConfig {
-    /// Time for choosing diverse orders over the samples.
-    pub max_time: f64,
-    pub table_construction_max_time: f64,
+    /// Time for diversification, from its start: sampling and the orders
+    /// built for the samples (Seipp et al. 2020).
+    pub max_time: Option<Duration>,
+    /// Time for building every cost partitioning, from the first evaluated
+    /// state on.
+    pub table_construction_max_time: Option<Duration>,
     /// Choose orders over random-walk samples (Seipp et al. 2020).
     pub diversify: bool,
     /// Number of sampled states that judge whether an order adds value.
     pub samples: usize,
     /// Maximum number of diverse orders retained.
     pub max_orders: usize,
-    pub combine_labels: bool,
     #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
-    /// Time for the candidate orders built for every sample.
-    pub initial_order_generation_max_time: f64,
+    /// Time for the candidate orders of the evaluated state, from their
+    /// start.
+    pub initial_order_generation_max_time: Option<Duration>,
     /// Goal-cover orders per goal that every diversified collection keeps
     /// (AAMAS 2027), in addition to the best order.
     pub goal_cover_orders_per_goal: usize,
@@ -136,26 +134,26 @@ pub struct ScpConfig {
     /// state.
     pub random_orders: usize,
     pub saturator: Saturator,
-    pub random_seed: Option<u64>,
+    /// Seeds order selection and sampling; by default the seed CEGAR's
+    /// random split selection starts from.
+    pub random_seed: u64,
     pub partitioning: CostPartitioningMethod,
 }
 
 impl Default for ScpConfig {
     fn default() -> Self {
-        let random_seed = DomainAbstractionCollectionConfig::default().random_seed;
         Self {
-            max_time: 200.0,
-            table_construction_max_time: 30.0,
+            max_time: Some(Duration::from_secs(200)),
+            table_construction_max_time: None,
             diversify: false,
             samples: 1_000,
             max_orders: usize::MAX,
-            combine_labels: false,
             order_generator: OrderGenerator::Greedy,
-            initial_order_generation_max_time: 10.0,
+            initial_order_generation_max_time: Some(Duration::from_secs(10)),
             goal_cover_orders_per_goal: 4,
             random_orders: 3,
             saturator: Saturator::All,
-            random_seed,
+            random_seed: RANDOM_SPLIT_SEED,
             partitioning: CostPartitioningMethod::Label,
         }
     }
@@ -176,22 +174,9 @@ impl ScpConfig {
         if self.diversify && self.max_orders == 0 {
             return fail("SCP diversification requires max_orders > 0");
         }
-        if self.diversify
-            && (self.initial_order_generation_max_time.is_nan()
-                || self.initial_order_generation_max_time < 0.0)
-        {
-            return fail("SCP diversification requires initial_order_generation_max_time >= 0");
-        }
         if self.diversify && !has_sampling_task {
             return fail("SCP diversification requires an owned task reference for sampling");
         }
         Ok(())
-    }
-
-    /// Bound every phase of SCP construction by the caller's remaining time.
-    pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
-        self.table_construction_max_time = self.table_construction_max_time.min(max_seconds);
-        self.initial_order_generation_max_time =
-            self.initial_order_generation_max_time.min(max_seconds);
     }
 }

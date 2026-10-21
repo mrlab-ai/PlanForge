@@ -1,5 +1,6 @@
 use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
@@ -33,7 +34,7 @@ fn required_orders_are_retained_beyond_max_orders() {
         retained_per_goal.keys().copied().collect::<HashSet<_>>(),
         expected_goals
     );
-    assert!(heuristic.state.borrow().cp_heuristics.len() > 1);
+    assert!(retained_cost_partitionings(&heuristic).len() > 1);
 }
 
 #[test]
@@ -45,12 +46,14 @@ fn diverse_orders_support_mixed_abstraction_representations() {
             combine_labels: false,
             ..DomainAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
         ..Default::default()
     };
-    let domain = DomainAbstractionGenerator::new(domain_config)
+    let mut domain = DomainAbstractionGenerator::new(domain_config)
         .unwrap()
         .generate(&*task)
+        .unwrap();
+    domain
+        .prepare_regional_saturation(&RegionSemantics::new(&*task).unwrap(), Deadline::NONE)
         .unwrap();
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&*task, &pattern).unwrap(), 32).unwrap();
@@ -70,22 +73,20 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         &*task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
+            ..Default::default()
         },
     )
     .unwrap();
 
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
-    let state = heuristic.state.borrow();
-    assert!(state.built);
-    assert!(state.sample_abstract_state_ids.is_empty());
-    assert!(!state.cp_heuristics.is_empty());
-    assert!(state.cp_heuristics.len() <= 8);
-    drop(state);
-    assert!(heuristic.sampling_task.borrow().is_none());
-    assert!(heuristic.components.borrow().iter().all(|component| {
+    let retained = retained_cost_partitionings(&heuristic);
+    assert!(!retained.is_empty());
+    assert!(retained.len() <= 8);
+    drop(retained);
+    assert!(heuristic.state.borrow().components.iter().all(|component| {
         component
-            .as_cartesian()
-            .is_none_or(|abstraction| abstraction.transition_system.transitions.is_empty())
+            .cegar()
+            .is_none_or(|abstraction| !abstraction.retains_transitions())
     }));
 }
 
@@ -116,41 +117,11 @@ fn diverse_order_generator_requires_diversify() {
 }
 
 #[test]
-fn diverse_orders_reject_nan_initial_order_budget() {
-    let task = std::sync::Arc::new(independent_goals_task());
-    let component = AbstractionComponent::from(cartesian_abstraction(&task));
-    let mut config = scp_config(Saturator::All, true);
-    config.diversify = true;
-    config.initial_order_generation_max_time = f64::NAN;
-
-    let result = SaturatedCostPartitioningHeuristic::new(
-        None,
-        vec![component],
-        config,
-        &*task,
-        ScpBuildOptions {
-            sampling_task: Some(task.clone()),
-        },
-    );
-    let error = match result {
-        Ok(_) => panic!("NaN initial-order budget must be rejected"),
-        Err(error) => error,
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("initial_order_generation_max_time >= 0")
-    );
-}
-
-#[test]
 fn diverse_orders_keep_partitionings_that_improve_different_samples() {
     let partition = |distances| CostPartitioningHeuristic {
         lookup_tables: vec![LookupTable {
             abstraction_id: 0,
             distances,
-            unknown_value: f64::INFINITY,
         }],
         goal_cover_goal_id: None,
     };
@@ -174,6 +145,13 @@ fn diverse_orders_keep_partitionings_that_improve_different_samples() {
         &mut size_kb,
     ));
     assert!(!retain_if_improving_some_sample(
+        partition(vec![5.0, 1.0]),
+        &samples,
+        &mut best,
+        &mut selected,
+        &mut size_kb,
+    ));
+    assert!(!retain_if_improving_some_sample(
         partition(vec![5.0, 5.0]),
         &samples,
         &mut best,
@@ -186,43 +164,34 @@ fn diverse_orders_keep_partitionings_that_improve_different_samples() {
 }
 
 /// The heuristic is the maximum over the retained orders only (Seipp et al.
-/// 2020): the abstractions' own goal distances add nothing to it.
+/// 2020), which look up only the components their tables read.
 #[test]
 fn the_heuristic_is_the_maximum_over_the_retained_orders_only() {
-    let mut state = ScpState::new(Some(1));
-    state.goal_distances_by_abstraction = vec![vec![5.0, 1.0], vec![2.0, 6.0], vec![0.0, 0.0]];
     let samples = [vec![Some(0), Some(0), None], vec![Some(1), Some(1), None]];
+    assert!(samples.iter().all(|ids| compute_max_h(&[], ids) == 0.0));
+    assert_eq!(compute_lookup_mask(&[], 3), vec![false, false, false]);
 
+    let retained = [CostPartitioningHeuristic {
+        lookup_tables: vec![LookupTable {
+            abstraction_id: 1,
+            distances: vec![2.0, 6.0],
+        }],
+        goal_cover_goal_id: None,
+    }];
     assert_eq!(
         samples
             .iter()
-            .map(|ids| SaturatedCostPartitioningHeuristic::compute_max_h(&state, ids))
+            .map(|ids| compute_max_h(&retained, ids))
             .collect::<Vec<_>>(),
-        vec![0.0, 0.0]
+        vec![2.0, 6.0]
     );
-    assert_eq!(
-        SaturatedCostPartitioningHeuristic::compute_lookup_mask(&state, 3),
-        vec![false, false, false]
-    );
+    assert_eq!(compute_lookup_mask(&retained, 3), vec![false, true, false]);
 }
 
 #[test]
-fn diverse_orders_keep_tables_that_are_zero_only_at_the_initial_state() {
+fn a_table_is_zero_at_the_evaluated_state_only_where_it_estimates_nothing() {
     let distances = [0.0, 4.0];
-    let initial_state = [Some(0)];
 
-    assert!(should_skip_zero_current_table(
-        false,
-        "test",
-        0,
-        &distances,
-        &initial_state,
-    ));
-    assert!(!should_skip_zero_current_table(
-        true,
-        "test",
-        0,
-        &distances,
-        &initial_state,
-    ));
+    assert!(is_zero_at_evaluated_state(0, &distances, &[Some(0)]));
+    assert!(!is_zero_at_evaluated_state(0, &distances, &[Some(1)]));
 }

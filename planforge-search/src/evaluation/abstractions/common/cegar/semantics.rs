@@ -3,8 +3,9 @@
 //! wanted splits split at, and how splits are chosen.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitStateSpace;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, NumericTaskExt, NumericType, NumericValue,
@@ -14,16 +15,15 @@ use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use super::options::CegarOptions;
+use super::regression::ensure_regressable;
 use super::split::{Split, SplitDimension, approximately_equal};
-use super::{SplitKind, SplitSelection};
-use crate::evaluation::abstractions::collections::strategy::{mix_seed, stable_text_seed};
+use super::{FlawKind, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
+use crate::evaluation::seed::{RANDOM_SPLIT_SEED, mix_seed, stable_text_seed};
 use crate::evaluation::validate_abstractable_goal;
-
-/// The seed of random split selection when none is configured.
-const RANDOM_SPLIT_SEED: u64 = 2011;
 
 /// How CEGAR places and chooses splits.
 #[derive(Debug, Clone, Copy)]
@@ -39,14 +39,39 @@ pub(crate) struct SplitOptions {
 pub(crate) struct CegarSemantics<'task> {
     states: ExplicitStateSpace<'task>,
     regions: RegionSemantics<'task>,
-    operator_costs: Vec<NumericValue>,
+    operator_costs: Arc<[NumericValue]>,
     numeric_integer_lattice: Vec<bool>,
+    /// Per numeric variable, the seed of its name that split choice keys
+    /// mix in.
+    numeric_name_seeds: Vec<u64>,
     wanted_split_boundaries: Vec<NumericValue>,
     split_options: SplitOptions,
     random_split_rng: Option<RefCell<SmallRng>>,
 }
 
 impl<'task> CegarSemantics<'task> {
+    /// The semantics a CEGAR run with `options` refines abstractions of
+    /// `task` under. Fails if the run regresses and `task` is not
+    /// regressable.
+    pub(crate) fn for_options(
+        task: &'task dyn AbstractNumericTask,
+        options: &CegarOptions,
+    ) -> Result<Self> {
+        let semantics = Self::new(
+            task,
+            SplitOptions {
+                kind: options.split_kind,
+                selection: options.split_selection,
+                rank: options.split_selection_rank,
+                random_seed: options.random_seed,
+            },
+        )?;
+        if options.flaw_kind == FlawKind::Regression {
+            ensure_regressable(task, semantics.coordinates())?;
+        }
+        Ok(semantics)
+    }
+
     pub(crate) fn new(
         task: &'task dyn AbstractNumericTask,
         split_options: SplitOptions,
@@ -56,22 +81,24 @@ impl<'task> CegarSemantics<'task> {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
         let regions = RegionSemantics::new(task)?;
-        // Task views that move the initial state keep these costs pinned to
-        // the base task, so the goal distances stay admissible there.
+        // Costs within the search tolerance below zero are zero.
         let operator_costs = (0..task.get_operators().len())
-            .map(|op_id| task.abstract_operator_cost(OperatorIndex::from_usize(op_id)))
-            .collect();
+            .map(|op_id| {
+                let cost = task.abstract_operator_cost(OperatorIndex::from_usize(op_id));
+                ensure!(
+                    cost.value() >= -float_tolerance::SEARCH_EPSILON,
+                    "operator {op_id} has the negative cost {cost}"
+                );
+                Ok(NumericValue::new(cost.value().max(0.0)))
+            })
+            .collect::<Result<_>>()?;
         let mut wanted_split_boundaries = task
             .numeric_variables()
             .iter()
             .enumerate()
             .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
-            .filter_map(|(numeric_var_id, _)| {
-                task.get_initial_numeric_state_values()
-                    .get(numeric_var_id)
-                    .copied()
-                    .filter(|value| value.is_finite())
-            })
+            .map(|(numeric_var_id, _)| task.get_initial_numeric_state_values()[numeric_var_id])
+            .filter(|value| value.is_finite())
             .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
         wanted_split_boundaries.sort_by(NumericValue::total_cmp);
@@ -84,11 +111,17 @@ impl<'task> CegarSemantics<'task> {
             ))
         });
         let numeric_integer_lattice = numeric_integer_lattice(task, regions.coordinates());
+        let numeric_name_seeds = task
+            .numeric_variables()
+            .iter()
+            .map(|variable| stable_text_seed(variable.name()))
+            .collect();
         Ok(Self {
             states: ExplicitStateSpace::new(task),
             regions,
             operator_costs,
             numeric_integer_lattice,
+            numeric_name_seeds,
             wanted_split_boundaries,
             split_options,
             random_split_rng,
@@ -112,8 +145,14 @@ impl<'task> CegarSemantics<'task> {
         self.regions.coordinates()
     }
 
+    /// The nonnegative cost of every operator.
     pub(crate) fn operator_costs(&self) -> &[NumericValue] {
         &self.operator_costs
+    }
+
+    /// The costs, shared with an abstraction that outlives the task borrow.
+    pub(crate) fn shared_operator_costs(&self) -> Arc<[NumericValue]> {
+        Arc::clone(&self.operator_costs)
     }
 
     /// Per numeric dimension, whether every reachable value is an integer.
@@ -199,20 +238,23 @@ impl<'task> CegarSemantics<'task> {
                 boundary,
                 lower_includes_boundary,
                 ..
-            } => {
-                let variable_name = self.task().numeric_variables()[var_id.index()].name();
-                numeric_split_choice_key(variable_name, *boundary, *lower_includes_boundary)
-            }
+            } => numeric_split_choice_key(
+                self.numeric_name_seeds[var_id.index()],
+                *boundary,
+                *lower_includes_boundary,
+            ),
         }
     }
 }
 
+/// The choice key of a numeric split of the variable whose name has seed
+/// `name_seed`.
 pub(crate) fn numeric_split_choice_key(
-    variable_name: &str,
+    name_seed: u64,
     boundary: NumericValue,
     lower_closed: bool,
 ) -> u64 {
-    mix_seed(stable_text_seed(variable_name) ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
+    mix_seed(name_seed ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
 }
 
 /// Per numeric dimension, whether the initial value and every effect keep it
@@ -249,10 +291,8 @@ fn numeric_integer_lattice(
         lattice[numeric_var_id] =
             approximately_equal(initial_value.value(), initial_value.value().round())
                 && (0..task.get_operators().len()).all(|op_id| {
-                    view.operator_delta(OperatorIndex::from_usize(op_id))
-                        .is_ok_and(|delta| {
-                            approximately_equal(delta.value(), delta.value().round())
-                        })
+                    let delta = view.operator_delta(OperatorIndex::from_usize(op_id));
+                    approximately_equal(delta.value(), delta.value().round())
                 });
     }
     lattice

@@ -3,122 +3,90 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
 use std::time::Instant;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
-use rand::{SeedableRng, rngs::SmallRng};
 
 use super::config::DomainAbstractionConfig;
-use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
-use super::initial_splits::{
-    RefinementState, apply_initial_goal_splits, trivial_domain_mapping_and_sizes,
+use super::function::DomainAbstractionFunction;
+use super::view::{DomainBuild, DomainRefinement};
+use crate::evaluation::abstractions::common::abstraction::{
+    AbstractionCore, AbstractionMetadata, finish_abstraction,
 };
-use super::partitions::NumericPartitions;
-use super::view::DomainRefinement;
-use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
-use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
-use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
-use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    RefinementScope, initial_splits,
+};
+use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, refine_from_root};
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
-use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
-use crate::evaluation::abstractions::common::task::RootedTask;
+use crate::resource_limits::Deadline;
 
 use super::abstraction::DomainAbstraction;
-use super::collection::AbstractionKey;
+use super::collection::{AbstractionKey, abstraction_key};
 use super::debug_dump::log_final_abstraction;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::component::AbstractionKind;
 
-/// The domain abstraction CEGAR refined, before its distances are finalized.
+/// The domain abstraction CEGAR refined, with the transitions and goal
+/// distances of its last flaw search if no split followed it.
 #[derive(Debug)]
 pub(super) struct DomainRefinementOutcome {
-    pub(super) factory: DomainAbstractionFactory,
+    pub(super) function: DomainAbstractionFunction,
     pub(super) outcome: CegarOutcome,
+    pub(super) built: Option<DomainBuild>,
 }
 
-/// Refines a domain abstraction of `task` by CEGAR from the initial state of
-/// `task`: the trivial abstraction split on the goal variables, refined until
-/// the abstract plan is concrete or a limit is reached.
+/// Refines a domain abstraction of `task` by CEGAR from `refinement_root`,
+/// or from the initial state of `task` when `None`: the trivial abstraction
+/// with the initial splits of the configured scope, refined until the
+/// abstract plan is concrete or a limit is reached.
 pub(super) fn refine_domain_abstraction(
     config: &DomainAbstractionConfig,
     task: &dyn AbstractNumericTask,
+    refinement_root: Option<&ExplicitState>,
+    scope: &RefinementScope,
 ) -> Result<DomainRefinementOutcome> {
-    let semantics = CegarSemantics::new(
-        task,
-        SplitOptions {
-            kind: config.cegar.split_kind,
-            selection: config.cegar.split_selection,
-            rank: config.cegar.split_selection_rank,
-            random_seed: config.cegar.random_seed,
-        },
-    )?;
-    if config.cegar.flaw_kind == FlawKind::Regression {
-        ensure_regressable(task, semantics.coordinates())?;
+    let start = Instant::now();
+    let semantics = CegarSemantics::for_options(task, &config.cegar)?;
+
+    let mut function = DomainAbstractionFunction::trivial(&semantics)
+        .context("failed to construct the trivial domain abstraction")?;
+    // Every initial split divides a different variable of the trivial
+    // abstraction, so it divides every abstract state if it divides one. As
+    // for Cartesian abstractions, a split that would exceed `max_states` is
+    // left out.
+    for initial_split in initial_splits(&semantics, scope, config.cegar.random_seed) {
+        if let Some(split) = initial_split.in_state(0, &function.state_region(0))
+            && function.states_after_split(&split) <= config.cegar.max_states as u128
+        {
+            function.apply_split(task, &split)?;
+        }
     }
 
-    let start = Instant::now();
-    // The run is a function of its configuration alone: collection
-    // generators hand every member its own seed.
-    let mut rng = SmallRng::seed_from_u64(
-        config
-            .cegar
-            .random_seed
-            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
-    );
-    let (mut domain_mapping, mut domain_sizes) =
-        trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
-    let mut partitions = NumericPartitions::trivial(task);
-    let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
-    let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
-    let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
-    apply_initial_goal_splits(
+    let mut refinement = DomainRefinement::new(
         task,
+        function,
+        RefinementLimits::new(&config.cegar, scope),
         config,
-        semantics.numeric_integer_lattice(),
-        &mut rng,
-        RefinementState {
-            domain_mapping: &mut domain_mapping,
-            domain_sizes: &mut domain_sizes,
-            partitions: &mut partitions,
-            numeric_domain_sizes: &mut numeric_domain_sizes,
-            blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
-        },
-    )?;
-    let factory = DomainAbstractionFactory::new(
-        task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .context("failed to construct the initial domain abstraction")?;
-
-    let root = semantics.states().initial_state()?;
-    let limits = RefinementLimits {
-        max_states: config.cegar.max_states,
-        blacklisted_prop_var_ids: &blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids: &blacklisted_numeric_var_ids,
-    };
-    let mut refinement = DomainRefinement::new(task, factory, limits, config);
-    let outcome = refine(
+    );
+    let outcome = refine_from_root(
         &mut refinement,
-        &CegarRun {
-            semantics: &semantics,
-            flaw_kind: config.cegar.flaw_kind,
-            flaw_scope: config.cegar.flaw_scope,
-            refinement_root: &root,
-            driver: CegarDriver::new(config.cegar.max_iterations, config.cegar.max_time),
-        },
+        &semantics,
+        &config.cegar,
+        refinement_root,
         start,
     )?;
-    let factory = refinement.into_factory();
+    let (function, built) = refinement.into_parts();
     if config.cegar.debug {
-        log_final_abstraction(task, &factory);
+        log_final_abstraction(task, &function);
     }
-    Ok(DomainRefinementOutcome { factory, outcome })
+    Ok(DomainRefinementOutcome {
+        function,
+        outcome,
+        built,
+    })
 }
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
@@ -132,7 +100,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     type Abstraction = DomainAbstraction;
     type Key = AbstractionKey;
 
-    const NAME: &'static str = "domain";
+    const KIND: AbstractionKind = AbstractionKind::Domain;
 
     fn new(config: DomainAbstractionConfig) -> Result<Self> {
         config.cegar.validate()?;
@@ -140,95 +108,56 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     }
 
     fn key(abstraction: &DomainAbstraction) -> AbstractionKey {
-        AbstractionKey::from_abstraction(abstraction)
+        abstraction_key(abstraction)
     }
 
     /// The root only chooses counterexamples. The abstraction still partitions
-    /// the full state space of `task`, operator costs stay those of `task`, and
-    /// the distance table's initial state is the initial state of `task`.
+    /// the full state space of `task`, and the distance table's initial state
+    /// is the initial state of `task`.
     fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
     ) -> Result<DomainAbstraction> {
-        let DomainRefinementOutcome { factory, outcome } = match refinement_root {
-            Some(root) => {
-                let rooted_task = RootedTask::new(task, root)?;
-                refine_domain_abstraction(&self.config, &rooted_task)
-            }
-            None => refine_domain_abstraction(&self.config, task),
-        }
-        .context("CEGAR failed to build abstraction")?;
-        let stop_reason = outcome.stop_reason;
-        let mut operator_generator =
-            factory.make_operator_generator(task, self.config.cegar.combine_labels)?;
-        let abstract_operators = operator_generator
-            .build_abstract_operators_with_deadline(task, None)
-            .context("failed to build abstract operators")?;
-        let abstract_source_sets = if self.config.compute_source_sets {
-            factory
-                .build_abstract_source_sets(task, &abstract_operators)
-                .context("failed to build abstract-operator regions")?
-        } else {
-            // Heuristics that read only the distance table (canonical, max,
-            // single domain abstraction) do not consume operator regions;
-            // skipping them saves ~12 GB on minecraft-sword-advanced/prob_30x30_5.
-            // Regional SCP builds them from the finished abstraction.
-            Vec::new()
+        let start = Instant::now();
+        let DomainRefinementOutcome {
+            function,
+            outcome,
+            built,
+        } = refine_domain_abstraction(&self.config, task, refinement_root, scope)
+            .context("CEGAR failed to build abstraction")?;
+        let DomainBuild {
+            transitions,
+            distances,
+            ..
+        } = match built {
+            Some(built) => built,
+            None => DomainBuild::new(
+                function
+                    .transitions(task, self.config.cegar.combine_labels, Deadline::NONE)
+                    .context("failed to build abstract operators")?,
+                Deadline::NONE,
+            )
+            .context("failed to build the goal distances")?,
         };
-        let distance_table = factory
-            .build_distance_table(
-                task,
-                &operator_generator,
-                &abstract_operators,
-                DistanceTableOptions::default(),
-            )
-            .context("failed to build abstract distance table")?;
-        let initial_h = distance_table
-            .distances
-            .get(distance_table.initial_state_hash)
-            .copied()
-            .with_context(|| {
-                format!(
-                    "abstract initial state hash {} out of bounds for distance table of length {}",
-                    distance_table.initial_state_hash,
-                    distance_table.distances.len()
-                )
-            })?;
-        // The refinement root is reachable from the initial state, so a dead
-        // initial state means a dead root, which is where CEGAR stops.
-        ensure!(
-            initial_h.is_finite() || stop_reason == CegarStopReason::DeadEnd,
-            "domain abstraction initial state is abstract-dead, but CEGAR stopped with {stop_reason:?}; initial_hash={}, states={}, abstract_ops={}, prop_domains={:?}, numeric_domains={:?}",
-            distance_table.initial_state_hash,
-            distance_table.distances.len(),
-            abstract_operators.len(),
-            factory.domain_sizes(),
-            factory.numeric_domain_sizes()
-        );
-        let relevant_operator_ids = factory
-            .relevant_operator_ids_from_operators(
-                task,
-                self.config.cegar.combine_labels,
-                &abstract_operators,
-                DistanceTableOptions::default(),
-            )
-            .context("failed to compute relevant operator ids")?;
-
-        Ok(DomainAbstraction {
-            factory,
-            distance_table,
-            combine_labels: self.config.cegar.combine_labels,
-            relevant_operator_ids,
-            abstract_operators,
-            transition_data_retained: true,
-            abstract_source_sets,
-            interval_transition_system: RefCell::new(None),
+        let core = AbstractionCore {
+            distances,
+            initial_state: function.initial_state(task)?,
+            relevant_operator_ids: transitions.relevant_operator_ids(),
+            num_abstract_operators: transitions.operators.len(),
             metadata: AbstractionMetadata::standalone(
                 outcome,
                 self.config.cegar.split_kind,
                 self.config.cegar.split_selection_rank,
             ),
-        })
+        };
+        let abstraction = DomainAbstraction::new(
+            function,
+            core,
+            self.config.cegar.keep_transitions.then_some(transitions),
+        );
+        finish_abstraction(&abstraction, start.elapsed())?;
+        Ok(abstraction)
     }
 }

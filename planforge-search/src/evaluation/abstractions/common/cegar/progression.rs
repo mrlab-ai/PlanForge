@@ -13,8 +13,12 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::OperatorIndex;
 
 use super::FlawScope;
-use super::fact_splits::{DeviationWitness, split_deviation_candidates, split_failed_fact};
-use super::selection::{push_unique_split, select_refinement, select_refinement_split};
+use super::flaw_splits::{
+    ConcreteWitness, DeviationWitness, split_deviation_candidates, split_failed_fact,
+};
+use super::selection::{
+    DEVIATION_TAG, GOAL_TAG, PRECONDITION_TAG, WHOLE_PLAN_TAG, push_unique_split, select_split,
+};
 use super::semantics::CegarSemantics;
 use super::split::{Split, approximately_equal};
 use super::view::AbstractionView;
@@ -38,11 +42,6 @@ impl ConcretePlan {
         self.operator_ids
     }
 }
-
-/// The decisions split selection draws a seeded choice for, by flaw kind.
-const GOAL_TAG: u64 = 0x474F_414C;
-const PRECONDITION_TAG: u64 = 0x5052_4543;
-const DEVIATION_TAG: u64 = 0x4445_5649;
 
 pub(crate) enum PlanCheck {
     ConcretePlan(ConcretePlan),
@@ -81,9 +80,8 @@ pub(crate) fn replay_plan(
                     cost: concrete_cost,
                 }));
             }
-            let failed_goals = (0..semantics.task().get_num_goals())
-                .map(|goal_id| semantics.task().get_goal_fact(goal_id))
-                .filter(|goal| !state.holds(goal))
+            let failed_goals = state
+                .unsatisfied(semantics.task().goals())
                 .collect::<Vec<_>>();
             ensure!(
                 !failed_goals.is_empty(),
@@ -97,13 +95,14 @@ pub(crate) fn replay_plan(
                         semantics,
                         abstract_state,
                         goal,
-                        &state.propositional,
-                        &state.numeric,
-                        format!("goal {goal:?}"),
+                        ConcreteWitness {
+                            propositions: &state.propositional,
+                            numeric: &state.numeric,
+                        },
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
-            return Ok(PlanCheck::Refine(select_refinement_split(
+            return Ok(PlanCheck::Refine(select_split(
                 view, semantics, candidates, GOAL_TAG,
             )?));
         }
@@ -119,13 +118,9 @@ pub(crate) fn replay_plan(
         let mut precondition_splits = Vec::new();
         let mut deviation_splits = Vec::new();
         let mut executed = None;
-        for op_id in view.step_operators(transition) {
+        for &op_id in view.step_operators(&transition) {
             let op = &semantics.task().get_operators()[op_id.index()];
-            let failed_preconditions = op
-                .preconditions()
-                .iter()
-                .filter(|fact| !state.holds(fact))
-                .collect::<Vec<_>>();
+            let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if !failed_preconditions.is_empty() {
                 for failed in failed_preconditions {
                     precondition_splits.push(split_failed_fact(
@@ -133,9 +128,10 @@ pub(crate) fn replay_plan(
                         semantics,
                         abstract_state,
                         failed,
-                        &state.propositional,
-                        &state.numeric,
-                        format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+                        ConcreteWitness {
+                            propositions: &state.propositional,
+                            numeric: &state.numeric,
+                        },
                     )?);
                 }
                 continue;
@@ -149,14 +145,14 @@ pub(crate) fn replay_plan(
                 deviation_splits.extend(split_deviation_candidates(
                     view,
                     semantics,
-                    DeviationWitness::new(
-                        abstract_state,
-                        transition.target,
+                    DeviationWitness {
+                        source_state_id: abstract_state,
+                        target_state_id: transition.target,
                         op_id,
-                        &successor.propositional,
-                        &state.numeric,
-                        &successor.numeric,
-                    ),
+                        successor_prop: &successor.propositional,
+                        source_numeric: &state.numeric,
+                        successor_numeric: &successor.numeric,
+                    },
                 )?);
                 continue;
             }
@@ -170,7 +166,7 @@ pub(crate) fn replay_plan(
                 precondition_splits.extend(deviation_splits);
                 (precondition_splits, PRECONDITION_TAG)
             };
-            return Ok(PlanCheck::Refine(select_refinement_split(
+            return Ok(PlanCheck::Refine(select_split(
                 view, semantics, candidates, tag,
             )?));
         };
@@ -222,61 +218,58 @@ fn replay_whole_plan(
     let mut candidate_identities = HashSet::new();
     let mut visited_abstract_states = HashSet::new();
 
-    loop {
+    // The replay ends with the flaws it witnessed.
+    let candidates = loop {
         let abstract_state = view.abstract_state(&state.propositional, &state.numeric)?;
         if !visited_abstract_states.insert(abstract_state) {
             ensure!(
                 !candidates.is_empty(),
                 "whole-plan replay cycled without witnessing a flaw"
             );
-            return select_refinement(view, semantics, candidates);
+            break candidates;
         }
         let abstract_distance = view.goal_distance(abstract_state);
         if !abstract_distance.is_finite() {
-            return if candidates.is_empty() {
+            if candidates.is_empty() {
                 // Without a flaw the replay is still on the optimal abstract
                 // plan, whose states all reach the goal: this is the root.
                 assert!(
                     operator_ids.is_empty(),
                     "flawless whole-plan replay reached an abstract dead end"
                 );
-                Ok(PlanCheck::AbstractDeadEnd)
-            } else {
-                select_refinement(view, semantics, candidates)
-            };
+                return Ok(PlanCheck::AbstractDeadEnd);
+            }
+            break candidates;
         }
 
         if view.is_goal(abstract_state)? {
             if semantics.states().is_goal(&state) {
-                return if candidates.is_empty() {
-                    Ok(PlanCheck::ConcretePlan(ConcretePlan {
+                if candidates.is_empty() {
+                    return Ok(PlanCheck::ConcretePlan(ConcretePlan {
                         operator_ids,
                         cost: concrete_cost,
-                    }))
-                } else {
-                    select_refinement(view, semantics, candidates)
-                };
-            }
-            for goal_id in 0..semantics.task().get_num_goals() {
-                let goal = semantics.task().get_goal_fact(goal_id);
-                if !state.holds(goal) {
-                    let split = split_failed_fact(
-                        view,
-                        semantics,
-                        abstract_state,
-                        goal,
-                        &state.propositional,
-                        &state.numeric,
-                        format!("goal {goal:?}"),
-                    )?;
-                    push_unique_split(&mut candidates, &mut candidate_identities, split);
+                    }));
                 }
+                break candidates;
+            }
+            for goal in state.unsatisfied(semantics.task().goals()) {
+                let split = split_failed_fact(
+                    view,
+                    semantics,
+                    abstract_state,
+                    goal,
+                    ConcreteWitness {
+                        propositions: &state.propositional,
+                        numeric: &state.numeric,
+                    },
+                )?;
+                push_unique_split(&mut candidates, &mut candidate_identities, split);
             }
             ensure!(
                 !candidates.is_empty(),
                 "abstract goal contains a concrete non-goal without a refinable failed goal fact"
             );
-            return select_refinement(view, semantics, candidates);
+            break candidates;
         }
 
         let transition = view.optimal_transition(abstract_state)?;
@@ -293,16 +286,12 @@ fn replay_whole_plan(
         // the precondition flaws of the operators before it are not flaws of
         // the plan. If none applies, the first operator is executed anyway and
         // the step's precondition flaws are kept.
-        let step_operators = view.step_operators(transition);
+        let step_operators = view.step_operators(&transition);
         let mut step_splits = Vec::new();
         let mut applicable = None;
-        for &op_id in &step_operators {
+        for &op_id in step_operators {
             let op = &semantics.task().get_operators()[op_id.index()];
-            let failed_preconditions = op
-                .preconditions()
-                .iter()
-                .filter(|fact| !state.holds(fact))
-                .collect::<Vec<_>>();
+            let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if failed_preconditions.is_empty() {
                 applicable = Some(op_id);
                 step_splits.clear();
@@ -314,9 +303,10 @@ fn replay_whole_plan(
                     semantics,
                     abstract_state,
                     failed,
-                    &state.propositional,
-                    &state.numeric,
-                    format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
+                    ConcreteWitness {
+                        propositions: &state.propositional,
+                        numeric: &state.numeric,
+                    },
                 )?);
             }
         }
@@ -335,14 +325,14 @@ fn replay_whole_plan(
             for split in split_deviation_candidates(
                 view,
                 semantics,
-                DeviationWitness::new(
-                    abstract_state,
-                    transition.target,
+                DeviationWitness {
+                    source_state_id: abstract_state,
+                    target_state_id: transition.target,
                     op_id,
-                    &successor.propositional,
-                    &state.numeric,
-                    &successor.numeric,
-                ),
+                    successor_prop: &successor.propositional,
+                    source_numeric: &state.numeric,
+                    successor_numeric: &successor.numeric,
+                },
             )? {
                 push_unique_split(&mut candidates, &mut candidate_identities, split);
             }
@@ -351,7 +341,13 @@ fn replay_whole_plan(
 
         concrete_cost += semantics.operator_costs()[op_id.index()].value();
         operator_ids.push(op_id);
-    }
+    };
+    Ok(PlanCheck::Refine(select_split(
+        view,
+        semantics,
+        candidates,
+        WHOLE_PLAN_TAG,
+    )?))
 }
 
 /// Checks that `plan` reaches the goal from `refinement_root` at its recorded

@@ -115,29 +115,28 @@ fn reachable_partitions_overlaps_result_interval() {
     let partitions = NumericPartitions::with_partitions(parts);
 
     // From partition 0: (-inf,9) + 7 -> (-inf,16) overlaps both partitions.
-    let targets = partitions.reachable_partitions(
+    let targets = partitions.intersecting(
         VariableIndex::from_usize(0),
-        0,
-        &planforge_sas::numeric_task::AssignmentOperation::Plus,
-        Interval::singleton(NumericValue::new(7.0)),
+        (partitions.partition_interval(VariableIndex::from_usize(0), 0)
+            + Interval::singleton(NumericValue::new(7.0)))
+        .canonicalized(),
     );
-    assert_eq!(targets, vec![0, 1]);
+    assert_eq!(targets.collect::<Vec<_>>(), vec![0, 1]);
 
     // From partition 1: [9,inf) + 7 -> [16,inf) overlaps only partition 1.
-    let targets = partitions.reachable_partitions(
+    let targets = partitions.intersecting(
         VariableIndex::from_usize(0),
-        1,
-        &planforge_sas::numeric_task::AssignmentOperation::Plus,
-        Interval::singleton(NumericValue::new(7.0)),
+        (partitions.partition_interval(VariableIndex::from_usize(0), 1)
+            + Interval::singleton(NumericValue::new(7.0)))
+        .canonicalized(),
     );
-    assert_eq!(targets, vec![1]);
+    assert_eq!(targets.collect::<Vec<_>>(), vec![1]);
 
-    // Silence unused dummy_task while keeping construction pattern consistent.
     let _ = dummy_task.metric();
 }
 
 #[test]
-fn reachable_partitions_use_the_numeric_state_lattice() {
+fn partition_images_use_the_numeric_state_lattice() {
     let mut partitions = NumericPartitions::with_partitions(vec![vec![Interval::unbounded()]]);
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
@@ -159,7 +158,7 @@ fn reachable_partitions_use_the_numeric_state_lattice() {
     ));
 
     assert_eq!(
-        partitions.partitions(VariableIndex::from_usize(0)).unwrap(),
+        partitions.partitions(VariableIndex::from_usize(0)),
         &[
             Interval::new(NEG_INF_VALUE, NumericValue::new(-6.0), false, true),
             Interval::new(
@@ -181,12 +180,14 @@ fn reachable_partitions_use_the_numeric_state_lattice() {
     // Concrete execution canonicalizes (-5.8, -5.7] - 0.2 to
     // (-6.0, -5.9]. It therefore cannot enter the partition ending at -6.0.
     assert_eq!(
-        partitions.reachable_partitions(
-            VariableIndex::from_usize(0),
-            2,
-            &planforge_sas::numeric_task::AssignmentOperation::Plus,
-            Interval::singleton(NumericValue::new(-0.2)),
-        ),
+        partitions
+            .intersecting(
+                VariableIndex::from_usize(0),
+                (partitions.partition_interval(VariableIndex::from_usize(0), 2)
+                    + Interval::singleton(NumericValue::new(-0.2)))
+                .canonicalized(),
+            )
+            .collect::<Vec<_>>(),
         vec![1]
     );
 }
@@ -223,11 +224,11 @@ fn trivial_partitions_use_singletons_for_constants() {
     let partitions = NumericPartitions::trivial(&task);
 
     assert_eq!(
-        partitions.partitions(VariableIndex::from_usize(0)).unwrap(),
+        partitions.partitions(VariableIndex::from_usize(0)),
         &[Interval::unbounded()]
     );
     assert_eq!(
-        partitions.partitions(VariableIndex::from_usize(1)).unwrap(),
+        partitions.partitions(VariableIndex::from_usize(1)),
         &[Interval::singleton(NumericValue::new(7.0))]
     );
 }
@@ -265,7 +266,7 @@ fn trivial_constant_partitions_use_canonical_initial_values() {
     let partitions = NumericPartitions::trivial(&task);
 
     assert_eq!(
-        partitions.partitions(VariableIndex::from_usize(0)).unwrap(),
+        partitions.partitions(VariableIndex::from_usize(0)),
         &[Interval::singleton(NumericValue::new(9.45))]
     );
 }

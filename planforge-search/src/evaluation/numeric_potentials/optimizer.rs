@@ -31,7 +31,6 @@ pub(super) struct PotentialSystem {
     pub(super) fact_columns: Vec<Vec<usize>>,
     pub(super) constant_column: Option<usize>,
     pub(super) weight_columns: Vec<usize>,
-    pub(super) operator_rows: Vec<Option<usize>>,
     pub(super) conditioned_goal: Option<(VariableIndex, ExplicitValueIndex)>,
 }
 
@@ -70,7 +69,6 @@ impl NumericPotentialOptimizer {
                     fact_columns: Vec::new(),
                     constant_column: None,
                     weight_columns: Vec::new(),
-                    operator_rows: vec![None; task.operators.len()],
                     conditioned_goal: None,
                 },
                 model: Model::new("numeric_potential_early_dead_end")
@@ -470,14 +468,6 @@ impl NumericPotentialOptimizer {
         extract_function_for_system(&self.task, system, solution, None)
     }
 
-    pub(super) fn ordinary_system(&self) -> &PotentialSystem {
-        assert!(
-            self.system.conditioned_goal.is_none(),
-            "joint potential LP requires the ordinary potential system"
-        );
-        &self.system
-    }
-
     fn state_objective(&mut self, state: ConcreteStateView<'_>) -> Result<Vec<f64>, String> {
         let mut objective = vec![0.0; self.system.variables.len()];
         state.fill_propositional(&mut self.prop_scratch);
@@ -617,8 +607,7 @@ fn build_plain_system(
     }
 
     let mut constraints = Vec::new();
-    let mut operator_rows = vec![None; task.operators.len()];
-    for (operator_id, operator) in task.operators.iter().enumerate() {
+    for operator in &task.operators {
         if !operator.reachable {
             continue;
         }
@@ -644,7 +633,6 @@ fn build_plain_system(
         for &(feature_id, delta) in &operator.numeric_deltas {
             *coefficients.entry(weight_columns[feature_id]).or_default() -= delta;
         }
-        operator_rows[operator_id] = Some(constraints.len());
         constraints.push(Constraint::new(
             -infinity,
             if zero_costs { 0.0 } else { operator.cost },
@@ -729,7 +717,6 @@ fn build_plain_system(
         fact_columns,
         constant_column,
         weight_columns,
-        operator_rows,
         conditioned_goal: None,
     })
 }
@@ -767,7 +754,6 @@ fn build_conditioned_system(
     }
 
     let mut constraints = Vec::new();
-    let mut operator_rows = vec![None; task.operators.len()];
     for (operator_id, operator) in task.operators.iter().enumerate() {
         if operator_id == achiever_id || !operator.reachable {
             continue;
@@ -777,7 +763,6 @@ fn build_conditioned_system(
             .iter()
             .map(|&(feature_id, delta)| (weight_columns[feature_id], -delta))
             .collect();
-        operator_rows[operator_id] = Some(constraints.len());
         constraints.push(Constraint::new(-infinity, operator.cost, coefficients));
     }
 
@@ -865,7 +850,6 @@ fn build_conditioned_system(
         fact_columns: Vec::new(),
         constant_column: Some(constant_column),
         weight_columns,
-        operator_rows,
         conditioned_goal: Some((goal_var, goal_value)),
     })
 }

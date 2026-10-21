@@ -10,12 +10,12 @@ fn registry_values(
     registry: &StateRegistry<'_>,
     state: &crate::state_registry::ConcreteState,
 ) -> ExplicitState {
-    ExplicitState {
-        propositional: state.get_state(registry),
-        numeric: registry
-            .get_numeric_vars(state)
-            .expect("a registered state has numeric values"),
-    }
+    let mut values = ExplicitState::default();
+    registry
+        .view(state)
+        .fill_explicit(&mut values)
+        .expect("a registered state has numeric values");
+    values
 }
 
 #[test]
@@ -50,4 +50,24 @@ fn a_state_of_another_layout_is_rejected() {
     let mut state = space.initial_state().unwrap();
     state.propositional.pop();
     let _ = space.successor(&state, &task.get_operators()[0]);
+}
+
+#[test]
+fn unsatisfied_lists_the_failed_facts_in_order() {
+    let state = ExplicitState {
+        propositional: vec![ExplicitValueIndex::new(1), ExplicitValueIndex::new(0)],
+        numeric: Vec::new(),
+    };
+    let facts = [
+        ExplicitFact::propositional(0, 0),
+        ExplicitFact::propositional(1, 0),
+        ExplicitFact::propositional(1, 1),
+    ];
+    assert!(facts[1].holds_in(&state.propositional));
+    assert!(!state.holds_all(&facts));
+    assert!(state.holds_all(&facts[1..2]));
+    assert_eq!(
+        state.unsatisfied(&facts).collect::<Vec<_>>(),
+        [&facts[0], &facts[2]]
+    );
 }

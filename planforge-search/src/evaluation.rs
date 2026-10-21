@@ -1,16 +1,5 @@
 //! State evaluation and heuristic implementations.
 
-/// Seed used wherever a randomised evaluation component is not given an explicit
-/// `random_seed`.
-///
-/// A planner run is reproducible by default: two runs of the same configuration
-/// on the same task must produce the same plan and the same number of
-/// expansions. Seeding from the clock instead made order selection, CEGAR
-/// refinement and plan extraction vary between runs, which shows up as an
-/// expansion count that drifts for no visible reason. Randomised behaviour is
-/// available by asking for a seed, not by omitting one.
-pub const DEFAULT_RANDOM_SEED: u64 = 0;
-
 pub mod abstractions;
 pub mod check_admissible;
 pub mod evaluator;
@@ -20,6 +9,7 @@ pub(crate) mod maximal_cliques;
 pub mod numeric_landmarks;
 #[cfg(feature = "cplex")]
 pub mod numeric_potentials;
+pub mod seed;
 pub(crate) mod state_value_cache;
 pub use evaluator::{EvaluationError, EvaluationState};
 pub use heuristic::Heuristic;
@@ -51,8 +41,7 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 pub fn validate_abstractable_goal(
     task: &dyn AbstractNumericTask,
 ) -> std::result::Result<(), String> {
-    for index in 0..task.get_num_goals() {
-        let fact = task.get_goal_fact(index);
+    for fact in task.goals() {
         if fact.is_condition() {
             continue;
         }

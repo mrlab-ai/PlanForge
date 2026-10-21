@@ -45,7 +45,6 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
                 split_kind: direction,
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         })
         .unwrap()
         .generate(&task)
@@ -94,19 +93,17 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                         split_kind,
                         ..CartesianAbstractionConfig::default().cegar
                     },
-                    ..Default::default()
                 })
                 .unwrap()
                 .generate(&task)
                 .unwrap();
                 assert_eq!(
-                    abstraction.metadata.stop_reason,
+                    abstraction.metadata().stop_reason,
                     CegarStopReason::ConcretePlan,
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
-                    abstraction.distance_table.distances
-                        [abstraction.distance_table.initial_state_hash],
+                    abstraction.initial_h(),
                     optimal_cost,
                     "{name}, {flaw_scope}, {split_kind}"
                 );

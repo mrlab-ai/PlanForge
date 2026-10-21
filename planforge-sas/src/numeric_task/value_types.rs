@@ -456,6 +456,13 @@ impl ExplicitFact {
     pub const fn value_index(&self) -> ExplicitValueIndex {
         self.value_id
     }
+
+    /// Whether the fact holds in the propositional values `propositional`,
+    /// which cover every variable.
+    #[inline]
+    pub fn holds_in(&self, propositional: &[ExplicitValueIndex]) -> bool {
+        propositional[self.var()] == self.value_id
+    }
 }
 
 /// Identity, ordering and hashing are all over `(variable, value)` and ignore
@@ -760,7 +767,7 @@ impl Operator {
         let holds = |conditions: &[ExplicitFact]| {
             conditions
                 .iter()
-                .all(|condition| propositional[condition.var()] == condition.value_index())
+                .all(|condition| condition.holds_in(propositional))
         };
         successor_propositional.clear();
         successor_propositional.extend_from_slice(propositional);

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
@@ -19,10 +21,12 @@ use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTas
 use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
-use crate::evaluation::abstractions::domain::abstraction::{DomainAbstraction, hash_multipliers};
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
+use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
+use crate::resource_limits::Deadline;
 
 fn simple_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(
@@ -81,36 +85,23 @@ fn simple_task() -> NumericRootTask {
 }
 
 fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstraction {
-    let factory = DomainAbstractionFactory::new(
-        task,
+    let function = DomainAbstractionFunction::new(
+        &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         vec![
             vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
             vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
         ],
         vec![2, 2],
         NumericPartitions::with_partitions(vec![]),
-        vec![],
     )
     .unwrap();
-    let multipliers =
-        hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).unwrap();
 
-    DomainAbstraction {
-        factory,
-        distance_table: AbstractDistanceTable {
-            distances,
-            generating_op_ids: vec![None; 4],
-            initial_state_hash: 0,
-            goal_facts: vec![],
-            hash_multipliers: multipliers,
-            numeric_domain_sizes: vec![],
-        },
-        combine_labels: false,
+    let transitions = function.transitions(task, false, Deadline::NONE).unwrap();
+    let core = AbstractionCore {
+        distances,
+        initial_state: 0,
         relevant_operator_ids: Vec::new(),
-        abstract_operators: Vec::new(),
-        transition_data_retained: false,
-        abstract_source_sets: Vec::new(),
-        interval_transition_system: std::cell::RefCell::new(None),
+        num_abstract_operators: 0,
         metadata: AbstractionMetadata::standalone(
             CegarOutcome {
                 stop_reason: CegarStopReason::SizeLimit,
@@ -121,7 +112,10 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             SplitKind::Concrete,
             None,
         ),
-    }
+    };
+    let mut abstraction = DomainAbstraction::new(function, core, Some(transitions));
+    abstraction.discard_transitions();
+    abstraction
 }
 
 #[test]
@@ -135,19 +129,89 @@ fn computes_max_additive_subsets_from_relevant_operators() {
     assert_eq!(subsets, vec![vec![0, 1], vec![1, 2]]);
 }
 
+/// The canonical heuristic over the given additive subsets of `components`.
+fn with_explicit_subsets<'task>(
+    name: Option<String>,
+    task: &dyn AbstractNumericTask,
+    components: Vec<AbstractionComponent<'task>>,
+    max_additive_subsets: Vec<Vec<usize>>,
+) -> Result<CanonicalAbstractionHeuristic<'task>, String> {
+    if components.is_empty() {
+        return Err("canonical abstraction heuristic requires at least one component".to_string());
+    }
+    let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
+        .iter()
+        .map(|component| component.relevant_operator_ids(task))
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_additive_subsets(
+        components.len(),
+        &max_additive_subsets,
+        &relevant_operator_ids,
+    )?;
+    Ok(CanonicalAbstractionHeuristic::from_validated_parts(
+        name,
+        components,
+        max_additive_subsets,
+        relevant_operator_ids,
+    ))
+}
+
+fn validate_additive_subsets(
+    component_count: usize,
+    subsets: &[Vec<usize>],
+    relevant_operator_ids: &[BTreeSet<OperatorIndex>],
+) -> Result<(), String> {
+    if subsets.is_empty() {
+        return Err("canonical abstraction heuristic requires at least one subset".to_string());
+    }
+    for (subset_id, subset) in subsets.iter().enumerate() {
+        if subset.is_empty() {
+            return Err(format!("canonical subset {subset_id} is empty"));
+        }
+        let mut seen = HashSet::new();
+        for &component_id in subset {
+            if component_id >= component_count {
+                return Err(format!(
+                    "canonical subset {subset_id} references component {component_id}, but collection has {component_count} components"
+                ));
+            }
+            if !seen.insert(component_id) {
+                return Err(format!(
+                    "canonical subset {subset_id} contains duplicate component {component_id}"
+                ));
+            }
+        }
+        for left_index in 0..subset.len() {
+            for right_index in (left_index + 1)..subset.len() {
+                let left = subset[left_index];
+                let right = subset[right_index];
+                if !are_operator_sets_additive(
+                    &relevant_operator_ids[left],
+                    &relevant_operator_ids[right],
+                ) {
+                    return Err(format!(
+                        "canonical subset {subset_id} contains non-additive components {left} and {right}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn canonical_domain_abstraction_uses_explicit_subsets() {
     let task = simple_task();
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = registry.get_initial_state();
     let mut da0 = make_abstraction(&task, vec![2.0, 0.0, 0.0, 0.0]);
-    da0.relevant_operator_ids = vec![OperatorIndex::new(0)];
+    da0.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
     let mut da1 = make_abstraction(&task, vec![3.0, 0.0, 0.0, 0.0]);
-    da1.relevant_operator_ids = vec![OperatorIndex::new(1)];
+    da1.core_mut().relevant_operator_ids = vec![OperatorIndex::new(1)];
     let mut da2 = make_abstraction(&task, vec![4.0, 0.0, 0.0, 0.0]);
-    da2.relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
+    da2.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
 
-    let heuristic = CanonicalAbstractionHeuristic::with_explicit_subsets(
+    let heuristic = with_explicit_subsets(
         None,
         &task,
         vec![
@@ -167,7 +231,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
 
 fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionComponent<'task>> {
     let mut domain = make_abstraction(task, vec![2.0, 0.0, 2.0, 0.0]);
-    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
+    domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
 
     let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
@@ -178,8 +242,6 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
             debug: false,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
-        ..Default::default()
     })
     .unwrap()
     .generate(task)
@@ -210,7 +272,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
         CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task)).unwrap();
     assert!(
         canonical
-            .max_additive_subsets()
+            .max_additive_subsets
             .iter()
             .any(|subset| subset == &[0, 2])
     );
@@ -221,18 +283,18 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
 fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() {
     let task = simple_task();
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
-    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
-    domain.metadata.abstraction_use = AbstractionUse::Standalone;
+    domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
+    domain.metadata_mut().stop_reason = CegarStopReason::ConcretePlan;
+    domain.metadata_mut().abstraction_use = AbstractionUse::Standalone;
     let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
     let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
     assert!(!max.proves_initial_state_optimal());
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
-    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
-    domain.metadata.abstraction_use = AbstractionUse::Standalone;
+    domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
+    domain.metadata_mut().stop_reason = CegarStopReason::ConcretePlan;
+    domain.metadata_mut().abstraction_use = AbstractionUse::Standalone;
     let canonical =
         CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
             .unwrap();

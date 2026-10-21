@@ -1,108 +1,92 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, VariableIndex,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, VariableIndex};
 use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::cegar::split::numeric_split_intervals;
 
-use planforge_sas::numeric_conditions::ArithOp;
 use planforge_sas::utils::interval::Interval;
 
+use crate::evaluation::abstractions::common::regions::trivial_interval;
+
+/// The partitions of every numeric variable. Boundaries are canonical, so
+/// equal partitions hash alike by their canonical bits.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
     partitions_by_numeric_var: Vec<Vec<Interval>>,
 }
 
+impl Eq for NumericPartitions {}
+
+impl std::hash::Hash for NumericPartitions {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for partitions in &self.partitions_by_numeric_var {
+            partitions.len().hash(state);
+            for interval in partitions {
+                float_tolerance::canonical_bits(interval.lower).hash(state);
+                float_tolerance::canonical_bits(interval.upper).hash(state);
+                (interval.lower_closed, interval.upper_closed).hash(state);
+            }
+        }
+    }
+}
+
 impl NumericPartitions {
     pub fn trivial(task: &dyn AbstractNumericTask) -> Self {
-        let initial_numeric_values = task.get_initial_numeric_state_values();
-        let partitions_by_numeric_var: Vec<Vec<Interval>> = task
-            .numeric_variables()
-            .iter()
-            .enumerate()
-            .map(|(i, v)| match v.get_type() {
-                NumericType::Constant => {
-                    let value = float_tolerance::canonicalize(initial_numeric_values[i]);
-                    assert!(
-                        value.is_finite(),
-                        "constant numeric variable {} has the non-finite value {value}",
-                        v.name()
-                    );
-                    vec![Interval::singleton(value)]
-                }
-                _ => vec![Interval::unbounded()],
-            })
+        let partitions_by_numeric_var = (0..task.numeric_variables().len())
+            .map(|var_id| vec![trivial_interval(task, VariableIndex::from_usize(var_id))])
             .collect();
         Self {
             partitions_by_numeric_var,
         }
     }
 
+    #[cfg(test)]
     pub fn with_partitions(partitions_by_numeric_var: Vec<Vec<Interval>>) -> Self {
         Self {
             partitions_by_numeric_var,
         }
     }
 
-    pub fn partitions(&self, numeric_var_id: VariableIndex) -> Option<&[Interval]> {
+    /// The partitions of `numeric_var_id`: disjoint, ascending, and covering
+    /// every value the variable can take.
+    pub fn partitions(&self, numeric_var_id: VariableIndex) -> &[Interval] {
+        &self.partitions_by_numeric_var[numeric_var_id.index()]
+    }
+
+    /// The number of partitions of every numeric variable.
+    pub fn numeric_domain_sizes(&self) -> Vec<usize> {
         self.partitions_by_numeric_var
-            .get(numeric_var_id.index())
-            .map(|v| v.as_slice())
+            .iter()
+            .map(Vec::len)
+            .collect()
     }
 
     pub fn partition_interval(
         &self,
         numeric_var_id: VariableIndex,
         partition_id: usize,
-    ) -> Option<Interval> {
-        self.partitions_by_numeric_var
-            .get(numeric_var_id.index())
-            .and_then(|parts| parts.get(partition_id).copied())
+    ) -> Interval {
+        self.partitions(numeric_var_id)[partition_id]
     }
 
-    pub fn reachable_partitions(
+    /// The partitions of `numeric_var_id` that `interval` intersects,
+    /// ascending. Partitions are disjoint and ordered, so they are one run
+    /// found by binary search.
+    pub fn intersecting(
         &self,
         numeric_var_id: VariableIndex,
-        source_partition: usize,
-        operation: &AssignmentOperation,
-        rhs: Interval,
-    ) -> Vec<usize> {
-        let Some(source_interval) = self.partition_interval(numeric_var_id, source_partition)
-        else {
-            return vec![];
-        };
-
-        // Concrete numeric states are canonicalized after every assignment.
-        // Keep abstract transition images on the same lattice so a rounding
-        // artifact cannot manufacture overlap with an adjacent partition.
-        let result_interval = match operation {
-            AssignmentOperation::Assign => rhs,
-            AssignmentOperation::Plus => ArithOp::Add.apply_interval(source_interval, rhs),
-            AssignmentOperation::Minus => ArithOp::Sub.apply_interval(source_interval, rhs),
-            AssignmentOperation::Times => ArithOp::Mul.apply_interval(source_interval, rhs),
-            AssignmentOperation::Divide => ArithOp::Div.apply_interval(source_interval, rhs),
-        }
-        .canonicalized();
-
-        let Some(targets) = self.partitions(numeric_var_id) else {
-            return vec![];
-        };
-
-        let mut out: Vec<usize> = Vec::new();
-        for (target_id, &target_interval) in targets.iter().enumerate() {
-            if result_interval.intersects(&target_interval) {
-                out.push(target_id);
-            }
-        }
-        out
+        interval: Interval,
+    ) -> impl Iterator<Item = usize> + '_ {
+        let parts = self.partitions(numeric_var_id);
+        let first = parts.partition_point(|part| {
+            part.upper < interval.lower
+                || (part.upper == interval.lower && !(part.upper_closed && interval.lower_closed))
+        });
+        (first..parts.len()).take_while(move |&part_id| parts[part_id].intersects(&interval))
     }
 
-    /// Splits the partition that contains `value` into two partitions.
-    ///
-    /// Returns `true` if a split was applied.
     /// Split the partition of `numeric_var_id` that contains `value` at
     /// `value`, which belongs to the lower part iff `include_in_lower`. On an
     /// integer lattice the parts are closed at the neighbouring integers.
@@ -126,7 +110,7 @@ impl NumericPartitions {
         if !iv.can_split_at(value, include_in_lower) {
             return false;
         }
-        let Ok((lower, upper)) =
+        let Some((lower, upper)) =
             numeric_split_intervals(iv, value, include_in_lower, integer_lattice)
         else {
             return false;
@@ -140,7 +124,7 @@ impl NumericPartitions {
 /// The partition of `partitions` that contains `value`.
 ///
 /// This is the one value-to-partition mapping of domain abstractions: CEGAR's
-/// flaw search and splits, the initial-state hash of the distance tables, and
+/// flaw search and splits, the initial abstract state of the distance tables, and
 /// the heuristic's state lookup all go through it, so a value is assigned to
 /// the same abstract value everywhere.
 ///

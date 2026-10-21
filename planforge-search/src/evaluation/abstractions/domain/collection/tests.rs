@@ -2,11 +2,15 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::evaluation::abstractions::collections::config::MemberSpecialization;
+use crate::evaluation::abstractions::collections::config::MemberConfig;
+use crate::evaluation::abstractions::collections::config::SplitKinds;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
-use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
+use crate::evaluation::abstractions::collections::member::MemberConstruction;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionUse, CegarAbstraction};
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    InitialSplitVar, RefinementScope,
+};
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{
     CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
@@ -16,6 +20,7 @@ use crate::evaluation::abstractions::domain::config::{
 };
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
+use planforge_sas::numeric_task::VariableIndex;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
@@ -26,8 +31,6 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, RefinementNode,
 };
-use crate::evaluation::abstractions::collections::goal_focused::MemberKind;
-use crate::evaluation::abstractions::collections::standard::StandardBackend;
 use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocusedMember};
 
 #[test]
@@ -37,7 +40,7 @@ fn standard_collection_defaults() {
     assert_eq!(config.member.cegar.max_states, 1_000_000);
     assert_eq!(config.max_collection_size, 10_000_000);
     assert!(!config.member.use_wildcard_plans);
-    assert_eq!(config.random_seed, Some(2011));
+    assert_eq!(config.member.cegar.random_seed, Some(2011));
     assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(config.member.cegar.flaw_scope, FlawScope::First);
     assert_eq!(config.alternate_split_kinds, None);
@@ -96,9 +99,12 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             .unwrap();
 
         assert_eq!(abstractions.len(), 1, "{collection_strategy}");
-        assert_eq!(
-            abstractions[0].metadata.abstraction_use,
-            AbstractionUse::CollectionMember
+        assert!(
+            matches!(
+                abstractions[0].metadata().abstraction_use,
+                AbstractionUse::CollectionMember { iteration: 1, .. }
+            ),
+            "{collection_strategy}"
         );
     }
 }
@@ -110,7 +116,7 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
     let config = DomainAbstractionCollectionConfig {
         max_collection_size: 100_000,
         total_max_time: Some(Duration::from_secs(600)),
-        stagnation_limit: 600.0,
+        stagnation_limit: Some(Duration::from_secs(600)),
         member: member_config(1_000, Some(Duration::from_secs(600))),
         ..Default::default()
     };
@@ -122,7 +128,7 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 
     assert!(start.elapsed() < Duration::from_secs(60));
     assert_eq!(abstractions.len(), 1);
-    assert!(abstractions[0].metadata.solved_by_self());
+    assert!(abstractions[0].metadata().solved_by_self());
 }
 
 /// The default member with `max_states` and `max_time`, without operator
@@ -135,9 +141,16 @@ fn member_config(max_states: usize, max_time: Option<Duration>) -> DomainAbstrac
             max_time,
             ..member.cegar
         },
-        compute_source_sets: false,
         ..member
     }
+}
+
+/// [`member_config`] without a time limit and with the collection seed
+/// `seed`.
+fn seeded_member_config(max_states: usize, seed: u64) -> DomainAbstractionConfig {
+    let mut member = member_config(max_states, None);
+    member.cegar.random_seed = Some(seed);
+    member
 }
 
 /// The default collection with the member's `flaw_kind` and `flaw_scope`.
@@ -163,11 +176,12 @@ fn standard_can_alternate_split_kinds_on_the_full_task() {
         FlawKind::Progression,
         FlawScope::WholePlan,
     );
-    let schedule = config.standard_schedule();
+    let split_kinds = config.standard_schedule().split_kinds;
 
-    assert_eq!(schedule.split_kind(1), Some(SplitKind::Concrete));
-    assert_eq!(schedule.split_kind(2), Some(SplitKind::Wanted));
-    assert_eq!(schedule.split_kind(3), Some(SplitKind::Concrete));
+    assert_eq!(split_kinds, SplitKinds::Alternating);
+    assert_eq!(split_kinds.of(0), SplitKind::Concrete);
+    assert_eq!(split_kinds.of(1), SplitKind::Wanted);
+    assert_eq!(split_kinds.of(2), SplitKind::Concrete);
 }
 
 fn validation_error(config: DomainAbstractionCollectionConfig) -> String {
@@ -241,6 +255,56 @@ fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
 }
 
 #[test]
+fn goal_focused_collections_reject_the_options_of_standard_collections() {
+    for collection_strategy in [CollectionStrategy::PerGoal, CollectionStrategy::GoalFocused] {
+        let goal_focused = DomainAbstractionCollectionConfig {
+            collection_strategy,
+            ..Default::default()
+        };
+        assert!(goal_focused.validate().is_ok());
+        for config in [
+            DomainAbstractionCollectionConfig {
+                stagnation_limit: None,
+                ..goal_focused.clone()
+            },
+            DomainAbstractionCollectionConfig {
+                blacklist_trigger_percentage: 0.5,
+                ..goal_focused.clone()
+            },
+            DomainAbstractionCollectionConfig {
+                enable_blacklist_on_stagnation: false,
+                ..goal_focused.clone()
+            },
+        ] {
+            let error = validation_error(config);
+            assert!(
+                error.contains("require `collection_strategy=standard`"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_blacklist_trigger_is_a_share_of_the_time_limit() {
+    for share in [-0.1, 1.5, f64::NAN] {
+        let error = validation_error(DomainAbstractionCollectionConfig {
+            blacklist_trigger_percentage: share,
+            ..Default::default()
+        });
+        assert!(error.contains("between 0 and 1"), "{error}");
+    }
+}
+
+#[test]
+fn collections_choose_their_members_split_kinds() {
+    let mut config = DomainAbstractionCollectionConfig::default();
+    config.member.cegar.split_kind = SplitKind::Wanted;
+    let error = validation_error(config);
+    assert!(error.contains("its own `split_kind`"), "{error}");
+}
+
+#[test]
 fn standard_rejects_goal_focused_options() {
     let error = validation_error(DomainAbstractionCollectionConfig {
         variants_per_goal: 2,
@@ -256,54 +320,38 @@ fn standard_rejects_goal_focused_options() {
 }
 
 #[test]
-fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
-    let mut config = DomainAbstractionCollectionConfig {
-        collection_strategy: CollectionStrategy::GoalFocused,
-        ..Default::default()
+fn a_member_construction_sets_exactly_the_options_it_names() {
+    let mut member = member_config(50, Some(Duration::from_secs(7)));
+    member.cegar.flaw_kind = FlawKind::Progression;
+    member.cegar.split_selection = SplitSelection::MinGrowth;
+    let scope = RefinementScope {
+        initial_split_var: Some(InitialSplitVar::Numeric(VariableIndex::from_usize(1))),
+        blacklisted_prop_var_ids: [VariableIndex::from_usize(2)].into(),
+        ..RefinementScope::default()
     };
-    config.member.cegar.flaw_kind = FlawKind::Progression;
-    config.member.cegar.split_selection = SplitSelection::MinGrowth;
-    config.member.cegar.max_states = 50;
-    config.member.cegar.max_time = Some(Duration::from_secs(7));
-    let variant = |direction, tie_rank, seed| GoalVariant {
-        goal_id: Some(1),
-        full_task: false,
-        variant_id: 3,
-        kind: MemberKind::Scheduled,
-        split_kind: Some(direction),
-        tie_rank: Some(tie_rank),
-        seed,
-    };
-    let budget = MemberBudget {
-        remaining_states: 30,
-        remaining_time: Some(Duration::from_secs(5)),
-    };
+    let built = member.for_member(&MemberConstruction {
+        max_states: 30,
+        max_time: Some(Duration::from_secs(5)),
+        random_seed: Some(9),
+        split_kind: SplitKind::Wanted,
+        split_selection_rank: Some(2),
+        scope,
+    });
 
-    let member = |variant: GoalVariant| {
-        config
-            .member
-            .for_variant(&variant, config.split_kind, budget)
-    };
-    let forward = member(variant(SplitKind::Concrete, 1, None));
-    assert_eq!(forward.cegar.flaw_kind, FlawKind::Progression);
-    assert_eq!(forward.cegar.split_kind, SplitKind::Concrete);
-    assert_eq!(forward.cegar.split_selection_rank, Some(1));
-    assert_eq!(forward.cegar.random_seed, None);
-    assert_eq!(forward.cegar.max_states, 30);
-    assert_eq!(forward.cegar.max_time, Some(Duration::from_secs(5)));
-    assert_eq!(forward.init_split_var_ids, Some(HashSet::new()));
-    assert!(forward.blacklisted_prop_var_ids.is_empty());
-    assert!(forward.blacklisted_numeric_var_ids.is_empty());
-
-    let backward = member(variant(SplitKind::Wanted, 2, Some(9)));
     assert_eq!(
-        backward.cegar.flaw_kind,
-        FlawKind::Progression,
-        "regression variants keep the configured flaw kind"
+        built,
+        DomainAbstractionConfig {
+            cegar: CegarOptions {
+                max_states: 30,
+                max_time: Some(Duration::from_secs(5)),
+                random_seed: Some(9),
+                split_kind: SplitKind::Wanted,
+                split_selection_rank: Some(2),
+                ..member.cegar.clone()
+            },
+            ..member
+        }
     );
-    assert_eq!(backward.cegar.split_kind, SplitKind::Wanted);
-    assert_eq!(backward.cegar.split_selection_rank, Some(2));
-    assert_eq!(backward.cegar.random_seed, Some(9));
 }
 
 fn comparison_variable(name: &str) -> ExplicitVariable {
@@ -436,8 +484,7 @@ fn domain_goal_focused_config(
         total_max_time: None,
         variants_per_goal,
         progress_states,
-        random_seed: Some(1),
-        member: member_config(64, None),
+        member: seeded_member_config(64, 1),
         ..Default::default()
     }
 }
@@ -456,9 +503,8 @@ fn domain_members(
         .unwrap()
         .into_iter()
         .map(|abstraction| {
-            let initial_h =
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
-            let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
+            let initial_h = abstraction.initial_h();
+            let plan = abstraction.metadata().concrete_plan_operator_ids.clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
@@ -476,10 +522,9 @@ fn cartesian_members(
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
-                    random_seed: Some(1),
+                    random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal,
@@ -489,7 +534,6 @@ fn cartesian_members(
             alternate_split_kinds: Some(true),
             single_goal_tasks: true,
             split_kind: None,
-            random_seed: None,
             ..Default::default()
         },
     )
@@ -505,9 +549,8 @@ fn cartesian_members_with(
         .unwrap()
         .into_iter()
         .map(|abstraction| {
-            let initial_h =
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
-            let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
+            let initial_h = abstraction.initial_h();
+            let plan = abstraction.metadata().concrete_plan_operator_ids.clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
@@ -522,7 +565,7 @@ fn schedule_view(
         .iter()
         .map(|(member, initial_h, plan)| {
             let member = GoalFocusedMember {
-                retained_transitions: 0,
+                abstract_operators: 0,
                 ..member.expect("every member of a goal task is a collection member")
             };
             (member, *initial_h, plan.clone())
@@ -549,12 +592,12 @@ fn goal_focused_domain_collection_follows_the_cartesian_member_sequence() {
             ))
             .collect::<Vec<_>>(),
         vec![
-            (0, 0, SplitKind::Concrete, Some(0), 2.0),
-            (1, 0, SplitKind::Concrete, Some(0), 3.0),
-            (0, 1, SplitKind::Wanted, Some(0), 2.0),
-            (1, 1, SplitKind::Wanted, Some(0), 3.0),
-            (1, 2, SplitKind::Concrete, Some(1), 3.0),
-            (0, 2, SplitKind::Concrete, Some(1), 2.0),
+            (0, Some(0), SplitKind::Concrete, Some(0), 2.0),
+            (1, Some(0), SplitKind::Concrete, Some(0), 3.0),
+            (0, Some(1), SplitKind::Wanted, Some(0), 2.0),
+            (1, Some(1), SplitKind::Wanted, Some(0), 3.0),
+            (1, Some(2), SplitKind::Concrete, Some(1), 3.0),
+            (0, Some(2), SplitKind::Concrete, Some(1), 2.0),
         ]
     );
 }
@@ -614,11 +657,9 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
-                    random_seed: Some(1),
-                    split_kind: SplitKind::Wanted,
+                    random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
@@ -627,8 +668,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             progress_states: true,
             alternate_split_kinds: Some(false),
             single_goal_tasks: true,
-            split_kind: None,
-            random_seed: None,
+            split_kind: Some(SplitKind::Wanted),
             ..Default::default()
         },
     );
@@ -681,10 +721,9 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
-                    random_seed: Some(1),
+                    random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 2,
@@ -693,9 +732,8 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: false,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -706,15 +744,12 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
     assert_eq!(domain.len(), 4);
     assert_eq!(cartesian.len(), 4);
     for (index, (domain, cartesian)) in domain.iter().zip(&cartesian).enumerate() {
-        assert_eq!(
-            domain.metadata.collection.map(|record| record.full_task),
-            Some(true)
-        );
-        assert_eq!(domain.metadata.collection_member, None);
-        assert_eq!(cartesian.metadata.collection_member, None);
+        assert_eq!(domain.metadata().collection_iteration(), Some(index + 1));
+        assert_eq!(domain.metadata().collection_membership(), None);
+        assert_eq!(cartesian.metadata().collection_membership(), None);
         let expected_backward = index >= 2;
         assert_eq!(
-            domain.metadata.split_kind,
+            domain.metadata().split_kind,
             if expected_backward {
                 SplitKind::Wanted
             } else {
@@ -722,26 +757,26 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             }
         );
         assert_eq!(
-            cartesian.metadata.split_kind,
+            cartesian.metadata().split_kind,
             if expected_backward {
                 SplitKind::Wanted
             } else {
                 SplitKind::Concrete
             }
         );
-        assert_eq!(domain.metadata.split_selection_rank, Some(0));
-        assert_eq!(cartesian.metadata.split_selection_rank, Some(0));
+        assert_eq!(domain.metadata().split_selection_rank, Some(0));
+        assert_eq!(cartesian.metadata().split_selection_rank, Some(0));
         // Both abstract the full task: the plan reaches x >= 2 and y >= 3.
         for (backend, initial_h, plan) in [
             (
                 "domain",
-                domain.distance_table.distances[domain.distance_table.initial_state_hash],
-                domain.metadata.concrete_plan_operator_ids.as_ref(),
+                domain.initial_h(),
+                domain.metadata().concrete_plan_operator_ids.as_ref(),
             ),
             (
                 "Cartesian",
-                cartesian.distance_table.distances[cartesian.distance_table.initial_state_hash],
-                cartesian.metadata.concrete_plan_operator_ids.as_ref(),
+                cartesian.initial_h(),
+                cartesian.metadata().concrete_plan_operator_ids.as_ref(),
             ),
         ] {
             assert_eq!(initial_h, 5.0, "{backend} member {index}");
@@ -808,11 +843,9 @@ fn cartesian_collection(
                 random_seed: Some(1),
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         },
         collection_strategy: strategy,
         max_collection_size,
-        random_seed: Some(1),
         ..Default::default()
     }
 }
@@ -824,8 +857,7 @@ fn both_representations_build_one_per_goal_member_per_goal() {
         collection_strategy: CollectionStrategy::PerGoal,
         max_collection_size: 10_000,
         total_max_time: None,
-        random_seed: Some(1),
-        member: member_config(64, None),
+        member: seeded_member_config(64, 1),
         ..Default::default()
     })
     .unwrap()
@@ -841,11 +873,11 @@ fn both_representations_build_one_per_goal_member_per_goal() {
     .unwrap();
     let domain_goals: Vec<_> = domain
         .iter()
-        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .map(|member| member.metadata().collection_membership().unwrap().goal_id)
         .collect();
     let cartesian_goals: Vec<_> = cartesian
         .iter()
-        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .map(|member| member.metadata().collection_membership().unwrap().goal_id)
         .collect();
     assert_eq!(domain_goals, [0, 1]);
     assert_eq!(cartesian_goals, [0, 1]);
@@ -857,8 +889,7 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 100_000,
         total_max_time: None,
-        random_seed: Some(1),
-        member: member_config(1_000, None),
+        member: seeded_member_config(1_000, 1),
         ..Default::default()
     })
     .unwrap()
@@ -873,9 +904,9 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     .generate(&task)
     .unwrap();
     assert_eq!(domain.len(), 1);
-    assert!(domain[0].metadata.solved_by_self());
+    assert!(domain[0].metadata().solved_by_self());
     assert_eq!(cartesian.len(), 1);
-    assert!(cartesian[0].metadata.solved_by_self());
+    assert!(cartesian[0].metadata().solved_by_self());
 }
 
 #[test]
@@ -890,21 +921,15 @@ fn standard_cartesian_restarts_are_distinct_full_task_abstractions() {
     .generate(&task)
     .unwrap();
     assert!(members.len() > 1, "only {} restart", members.len());
-    let generator = CartesianAbstractionCollectionGenerator::new(cartesian_collection(
-        CollectionStrategy::Standard,
-        3,
-        12,
-    ))
-    .unwrap();
     let keys: HashSet<_> = members
         .iter()
-        .map(|member| StandardBackend::key(&generator, member))
+        .map(CartesianAbstractionGenerator::key)
         .collect();
     assert_eq!(keys.len(), members.len());
     assert!(
         members
             .iter()
-            .all(|member| member.metadata.collection_member.is_none())
+            .all(|member| member.metadata().collection_membership().is_none())
     );
 }
 
@@ -916,14 +941,19 @@ fn cartesian_cegar_leaves_blacklisted_variables_alone() {
             max_states: 100,
             ..CartesianAbstractionConfig::default().cegar
         },
-        blacklisted_numeric_var_ids: [0, 1].map(VariableIndex::from_usize).into(),
-        ..Default::default()
     })
     .unwrap()
-    .generate(&task)
+    .generate_from_root(
+        &task,
+        None,
+        &RefinementScope {
+            blacklisted_numeric_var_ids: [0, 1].map(VariableIndex::from_usize).into(),
+            ..RefinementScope::default()
+        },
+    )
     .unwrap();
     assert_eq!(
-        abstraction.metadata.stop_reason,
+        abstraction.metadata().stop_reason,
         CegarStopReason::NoRefinableFlaw
     );
     assert_eq!(abstraction.num_states(), 1);
@@ -937,11 +967,16 @@ fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initi
             max_states: 2,
             ..CartesianAbstractionConfig::default().cegar
         },
-        initial_split_var: Some(VariableIndex::from_usize(0)),
-        ..Default::default()
     })
     .unwrap()
-    .generate(&task)
+    .generate_from_root(
+        &task,
+        None,
+        &RefinementScope {
+            initial_split_var: Some(InitialSplitVar::Propositional(VariableIndex::from_usize(0))),
+            ..RefinementScope::default()
+        },
+    )
     .unwrap();
     assert!(
         matches!(
@@ -951,5 +986,31 @@ fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initi
         ),
         "{:?}",
         abstraction.hierarchy.nodes[0]
+    );
+}
+
+#[test]
+fn a_numeric_initial_split_candidate_starts_from_the_trivial_abstraction() {
+    let task = two_counter_task();
+    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        cegar: CegarOptions {
+            max_states: 1,
+            ..CartesianAbstractionConfig::default().cegar
+        },
+    })
+    .unwrap()
+    .generate_from_root(
+        &task,
+        None,
+        &RefinementScope {
+            initial_split_var: Some(InitialSplitVar::Numeric(VariableIndex::from_usize(0))),
+            ..RefinementScope::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(abstraction.num_states(), 1);
+    assert_eq!(
+        abstraction.metadata().stop_reason,
+        CegarStopReason::SizeLimit
     );
 }

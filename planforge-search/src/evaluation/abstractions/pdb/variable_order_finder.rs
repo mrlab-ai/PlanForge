@@ -5,11 +5,11 @@ use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 
 use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
+use crate::config::option_enum;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -21,27 +21,11 @@ pub enum GreedyVariableOrderType {
     GoalCgLevel,
 }
 
-impl fmt::Display for GreedyVariableOrderType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            Self::CgGoalLevel => "cg_goal_level",
-            Self::CgGoalRandom => "cg_goal_random",
-            Self::GoalCgLevel => "goal_cg_level",
-        };
-        write!(f, "{name}")
-    }
-}
-
-impl crate::config::FromOptionValue for GreedyVariableOrderType {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "cg_goal_level" => Ok(Self::CgGoalLevel),
-            "cg_goal_random" => Ok(Self::CgGoalRandom),
-            "goal_cg_level" => Ok(Self::GoalCgLevel),
-            other => Err(format!("invalid GreedyVariableOrderType `{other}`")),
-        }
-    }
-}
+option_enum!("variable_order_type", GreedyVariableOrderType {
+    CgGoalLevel => "cg_goal_level",
+    CgGoalRandom => "cg_goal_random",
+    GoalCgLevel => "goal_cg_level",
+});
 
 pub struct VariableOrderFinder {
     remaining_vars: Vec<(VariableIndex, bool)>,
@@ -85,7 +69,7 @@ impl VariableOrderFinder {
         }
 
         if variable_order_type == GreedyVariableOrderType::CgGoalRandom {
-            let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
+            let mut rng = SmallRng::seed_from_u64(random_seed);
             remaining_vars.shuffle(&mut rng);
         }
 

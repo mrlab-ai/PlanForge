@@ -1,5 +1,8 @@
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use crate::resource_limits::Deadline;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,19 +17,25 @@ use planforge_sas::numeric_task::{
     NumericVariable, ONE_VALUE, Operator, OperatorCost, OperatorIndex, VariableIndex,
 };
 
+use super::distances::ShortestPaths;
+use super::semantics::CartesianSemantics;
+use super::view::CartesianView;
+use super::working::{OperatorBitSet, WorkingAbstraction};
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
-    CartesianView, FlawKind, FlawScope, OperatorBitSet, RefinementLimits, RefinementNode,
-    ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, RefinementNode,
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::CegarStopReason;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::selection::{
-    push_unique_split, retain_min_growth_splits, select_refinement_split,
+    push_unique_split, retain_min_growth_splits, select_split,
 };
 use crate::evaluation::abstractions::common::cegar::semantics::numeric_split_choice_key;
+use crate::evaluation::abstractions::common::cegar::split::{Split, SplitDimension};
+use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
+use crate::evaluation::seed::stable_text_seed;
 use planforge_sas::utils::interval::Interval;
 
 mod collection;
@@ -73,46 +82,42 @@ fn numeric_goal_task(
 
 fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
     for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
-        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        let mut abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             cegar: CegarOptions {
                 max_states: 64,
                 flaw_kind: FlawKind::Progression,
                 flaw_scope,
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         })
         .unwrap()
         .generate(task)
         .unwrap();
+        abstraction
+            .prepare_regional_saturation(&RegionSemantics::new(task).unwrap(), Deadline::NONE)
+            .unwrap();
         assert_eq!(
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+            abstraction.initial_h(),
             expected_h,
             "unexpected initial h for {flaw_scope}"
         );
         assert!(
-            abstraction.metadata.solved_by_self(),
+            abstraction.metadata().solved_by_self(),
             "{flaw_scope} progression failed to produce a concrete plan"
         );
         assert_eq!(
-            abstraction.metadata.stop_reason,
+            abstraction.metadata().stop_reason,
             CegarStopReason::ConcretePlan
         );
         assert_eq!(
-            abstraction.abstract_source_sets.len(),
-            abstraction.transition_system.transitions.len()
+            abstraction.abstract_source_sets().unwrap().len(),
+            abstraction
+                .transitions
+                .as_ref()
+                .unwrap()
+                .system
+                .transitions
+                .len()
         );
     }
-}
-
-/// Shortest paths that make every state a goal: for tests that read only the
-/// regions and growth of a view.
-fn all_goal_paths(states: usize) -> ShortestPaths {
-    ShortestPaths::for_test(
-        vec![0.0; states],
-        vec![None; states],
-        vec![Vec::new(); states],
-        vec![None; states],
-        vec![true; states],
-    )
 }

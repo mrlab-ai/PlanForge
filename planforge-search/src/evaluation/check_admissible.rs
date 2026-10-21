@@ -19,14 +19,14 @@ use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
-    ExplicitValueIndex, INF_VALUE, NumericValue, Operator, OperatorIndex, TaskRef, ZERO_VALUE,
+    INF_VALUE, NumericValue, Operator, OperatorIndex, TaskRef, ZERO_VALUE,
 };
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::{BlindHeuristic, CostType, Heuristic};
 use crate::search::compute_effective_operator_costs;
-use crate::successor_generator::SuccessorTree;
+use crate::successor_generator::RegistryExpander;
 
 /// Slack allowed on `h <= h*` before an estimate counts as inadmissible.
 const ADMISSIBILITY_TOLERANCE: f64 = 1e-9;
@@ -168,7 +168,7 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
 struct GoalDistanceOracle<'task> {
     task: TaskRef<'task>,
     registry: StateRegistry<'task>,
-    successor_generator: SuccessorTree,
+    expander: RegistryExpander,
     operator_costs: Vec<NumericValue>,
     min_action_cost: NumericValue,
 }
@@ -181,11 +181,11 @@ impl<'task> GoalDistanceOracle<'task> {
         registry.get_initial_state();
         let operator_costs = compute_effective_operator_costs(&*task);
         let min_action_cost = minimum_action_cost(&operator_costs)?;
-        let successor_generator = SuccessorTree::new(&*task);
+        let expander = RegistryExpander::new(&*task);
         Ok(Self {
             task,
             registry,
-            successor_generator,
+            expander,
             operator_costs,
             min_action_cost,
         })
@@ -233,47 +233,27 @@ impl<'task> GoalDistanceOracle<'task> {
             })
     }
 
-    fn is_goal(&self, state: &ConcreteState) -> bool {
-        (0..self.task.get_num_goals()).all(|index| {
-            self.task
-                .get_goal_fact(index)
-                .is_held(self.registry.view(state))
-        })
-    }
-
-    /// Blind estimate of the remaining cost: zero in a goal, the cheapest
-    /// action otherwise.
-    fn blind_estimate(&self, state: &ConcreteState) -> f64 {
-        if self.is_goal(state) {
-            0.0
-        } else {
-            self.min_action_cost.value()
-        }
-    }
-
     /// A* with the blind estimate, i.e. Dijkstra with a goal test. Runs to
     /// completion; the caller is responsible for the overall time budget.
     fn blind_a_star(&mut self, start: ConcreteState) -> Result<f64, String> {
-        if self.is_goal(&start) {
+        let Self {
+            task,
+            registry,
+            expander,
+            operator_costs,
+            min_action_cost,
+        } = self;
+        let is_goal = |registry: &StateRegistry<'_>, state: &ConcreteState| {
+            registry.view(state).holds_all(task.goals())
+        };
+        if is_goal(registry, &start) {
             return Ok(0.0);
         }
 
-        // A borrowed handle keeps operator lookups off `self` so the registry
-        // can be mutated inside the expansion loop.
-        let task = self.task.clone();
         let mut best_g: HashMap<StateID, f64> = HashMap::new();
         let mut open: BinaryHeap<OpenEntry> = BinaryHeap::new();
         best_g.insert(start.get_id(), 0.0);
-        open.push(open_entry(
-            self.min_action_cost.value(),
-            0.0,
-            start.get_id(),
-        )?);
-
-        let mut propositional_values: Vec<ExplicitValueIndex> = Vec::new();
-        let mut applicable_operators: Vec<OperatorIndex> = Vec::new();
-        let mut successor_numeric_values: Vec<NumericValue> = Vec::new();
-        let mut successor_cost_values: Vec<NumericValue> = Vec::new();
+        open.push(open_entry(min_action_cost.value(), 0.0, start.get_id())?);
 
         while let Some((Reverse(_f_value), Reverse(g_value), state_id)) = open.pop() {
             let g_value = g_value.into_inner();
@@ -285,37 +265,30 @@ impl<'task> GoalDistanceOracle<'task> {
                 continue;
             }
 
-            let state = self.registry.lookup_state(state_id).map_err(|error| {
+            let state = registry.lookup_state(state_id).map_err(|error| {
                 format!("the admissibility oracle lost state {state_id}: {error:?}")
             })?;
-            if self.is_goal(&state) {
+            if is_goal(registry, &state) {
                 return Ok(g_value);
             }
 
-            state.fill_state(&self.registry, &mut propositional_values);
-            applicable_operators.clear();
-            self.successor_generator
-                .get_applicable_operators(&propositional_values, &mut applicable_operators);
-
-            for &applicable_id in &applicable_operators {
+            let mut expansion = expander.expand(registry, &state).map_err(|error| {
+                format!(
+                    "the admissibility oracle could not expand state {state_id}: {}",
+                    error.message
+                )
+            })?;
+            for &applicable_id in expansion.applicable_operators() {
                 let operator_id = applicable_id.index();
                 let operator = &task.get_operators()[operator_id];
-                let successor = self
-                    .registry
-                    .get_successor_state_with_buffers(
-                        &state,
-                        operator,
-                        &mut successor_numeric_values,
-                        &mut successor_cost_values,
+                let (successor, _) = expansion.successor(registry, operator).map_err(|error| {
+                    format!(
+                        "the admissibility oracle could not apply `{}`: {}",
+                        operator.name(),
+                        error.message
                     )
-                    .map_err(|error| {
-                        format!(
-                            "the admissibility oracle could not apply `{}`: {}",
-                            operator.name(),
-                            error.message
-                        )
-                    })?;
-                let successor_g = g_value + self.operator_costs[operator_id].value();
+                })?;
+                let successor_g = g_value + operator_costs[operator_id].value();
                 let successor_id = successor.get_id();
                 let successor_best = best_g.get(&successor_id).copied().unwrap_or(f64::INFINITY);
                 if successor_g + G_IMPROVEMENT_TOLERANCE >= successor_best {
@@ -323,8 +296,18 @@ impl<'task> GoalDistanceOracle<'task> {
                 }
 
                 best_g.insert(successor_id, successor_g);
-                let successor_f = successor_g + self.blind_estimate(&successor);
-                open.push(open_entry(successor_f, successor_g, successor_id)?);
+                // The blind estimate: zero in a goal, the cheapest action
+                // otherwise.
+                let estimate = if is_goal(registry, &successor) {
+                    0.0
+                } else {
+                    min_action_cost.value()
+                };
+                open.push(open_entry(
+                    successor_g + estimate,
+                    successor_g,
+                    successor_id,
+                )?);
             }
         }
 

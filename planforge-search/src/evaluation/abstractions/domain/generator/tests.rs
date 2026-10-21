@@ -1,16 +1,19 @@
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::explicit_state::ExplicitState;
-use std::collections::HashSet;
 
 use planforge_sas::numeric_conditions::ConditionValue;
 
 use planforge_sas::utils::float_tolerance;
 
 use super::*;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    InitialSplitVar, RefinementScope,
+};
 use crate::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitKind, SplitSelection,
 };
-use crate::evaluation::abstractions::domain::initial_splits::initial_split_mapping;
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
@@ -152,10 +155,10 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
             ..DomainAbstractionConfig::default().cegar
         },
         use_wildcard_plans: false,
-        ..Default::default()
     };
 
-    let outcome = refine_domain_abstraction(&config, &task).unwrap();
+    let outcome =
+        refine_domain_abstraction(&config, &task, None, &RefinementScope::default()).unwrap();
     assert!(outcome.outcome.concrete_plan.is_some());
     let plan = outcome
         .outcome
@@ -210,11 +213,13 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
             ..Default::default()
         },
         &task,
+        None,
+        &RefinementScope::default(),
     )
     .unwrap();
 
     assert_eq!(outcome.outcome.stop_reason, CegarStopReason::SizeLimit);
-    assert_eq!(outcome.factory.domain_sizes(), [1]);
+    assert_eq!(outcome.function.domain_sizes(), [1]);
 }
 #[test]
 fn blacklisted_propositional_vars_are_not_refined() {
@@ -241,17 +246,19 @@ fn blacklisted_propositional_vars_are_not_refined() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let mut config = DomainAbstractionConfig::default();
-    config
-        .blacklisted_prop_var_ids
-        .insert(VariableIndex::from_usize(0));
-    let outcome = refine_domain_abstraction(&config, &task).unwrap();
+    let scope = RefinementScope {
+        blacklisted_prop_var_ids: [VariableIndex::from_usize(0)].into(),
+        ..RefinementScope::default()
+    };
+    let outcome =
+        refine_domain_abstraction(&DomainAbstractionConfig::default(), &task, None, &scope)
+            .unwrap();
 
     assert_eq!(
         outcome.outcome.stop_reason,
         CegarStopReason::NoRefinableFlaw
     );
-    assert_eq!(outcome.factory.domain_sizes(), [1]);
+    assert_eq!(outcome.function.domain_sizes(), [1]);
 }
 
 #[test]
@@ -279,10 +286,26 @@ fn init_value_split_separates_the_initial_value() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let mapping = initial_split_mapping(&task, VariableIndex::from_usize(0)).unwrap();
+    let config = DomainAbstractionConfig {
+        cegar: CegarOptions {
+            max_states: 2,
+            ..DomainAbstractionConfig::default().cegar
+        },
+        ..Default::default()
+    };
+    let outcome = refine_domain_abstraction(
+        &config,
+        &task,
+        None,
+        &RefinementScope {
+            initial_split_var: Some(InitialSplitVar::Propositional(VariableIndex::from_usize(0))),
+            ..RefinementScope::default()
+        },
+    )
+    .unwrap();
 
     assert_eq!(
-        mapping,
+        outcome.function.domain_mapping()[0],
         vec![
             ExplicitValueIndex::new(0),
             ExplicitValueIndex::new(1),
@@ -306,14 +329,13 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
         ..Default::default()
     };
 
-    let outcome = refine_domain_abstraction(&config, &task)
+    let outcome = refine_domain_abstraction(&config, &task, None, &RefinementScope::default())
         .expect("normal one-dimensional CEGAR run should make progress");
 
     let x_partitions = outcome
-        .factory
+        .function
         .partitions()
-        .partitions(VariableIndex::from_usize(0))
-        .expect("x partitions should exist");
+        .partitions(VariableIndex::from_usize(0));
     assert!(
         x_partitions.len() > 1,
         "CEGAR should refine x on the one-dimensional task"
@@ -324,10 +346,9 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
 fn backward_splits_build_goal_side_partitions() {
     fn split_points(outcome: &DomainRefinementOutcome) -> Vec<NumericValue> {
         let mut points = outcome
-            .factory
+            .function
             .partitions()
             .partitions(VariableIndex::from_usize(0))
-            .expect("x partitions should exist")
             .iter()
             .flat_map(|interval| [interval.lower, interval.upper])
             .filter(|value| value.is_finite())
@@ -353,6 +374,8 @@ fn backward_splits_build_goal_side_partitions() {
             ..Default::default()
         },
         &task,
+        None,
+        &RefinementScope::default(),
     )
     .expect("backward-split CEGAR should build goal-side partitions");
     let progression = refine_domain_abstraction(
@@ -367,6 +390,8 @@ fn backward_splits_build_goal_side_partitions() {
             ..Default::default()
         },
         &task,
+        None,
+        &RefinementScope::default(),
     )
     .expect("progression CEGAR should build start-side partitions");
 
@@ -456,22 +481,20 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
                 flaw_kind: FlawKind::Progression,
                 ..DomainAbstractionConfig::default().cegar
             },
-            init_split_var_ids: Some(HashSet::new()),
             ..Default::default()
         })
         .unwrap()
         .generate(&task)
         .unwrap();
-        assert!(abstraction.metadata.solved_by_self(), "x0={initial}");
-        let partition_count = abstraction.factory.numeric_domain_sizes()[0];
+        assert!(abstraction.metadata().solved_by_self(), "x0={initial}");
+        let partition_count = abstraction.function().numeric_domain_sizes()[0];
         // Both sides of the old small/large lookup split are covered.
         assert_eq!(
             partition_count > 8,
             initial < 15.0,
             "x0={initial}: {partition_count} partitions"
         );
-        let stored_h =
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+        let stored_h = abstraction.initial_h();
         assert_eq!(stored_h, 20.0 - initial, "x0={initial}");
 
         let component = AbstractionComponent::from(abstraction);
@@ -529,12 +552,11 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 .generate(&task)
                 .unwrap();
                 assert!(
-                    abstraction.metadata.solved_by_self(),
+                    abstraction.metadata().solved_by_self(),
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
-                    abstraction.distance_table.distances
-                        [abstraction.distance_table.initial_state_hash],
+                    abstraction.initial_h(),
                     optimal_cost,
                     "{name}, {flaw_scope}, {split_kind}"
                 );

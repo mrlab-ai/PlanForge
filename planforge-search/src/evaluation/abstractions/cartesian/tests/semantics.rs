@@ -65,19 +65,15 @@ fn refines_through_a_comparison_goal() {
             max_states: 16,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)
     .unwrap();
 
+    assert_eq!(abstraction.initial_h(), 2.0);
+    assert!(abstraction.metadata().solved_by_self());
     assert_eq!(
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
-        2.0
-    );
-    assert!(abstraction.metadata.solved_by_self());
-    assert_eq!(
-        abstraction.metadata.stop_reason,
+        abstraction.metadata().stop_reason,
         CegarStopReason::ConcretePlan
     );
 }
@@ -328,7 +324,6 @@ fn exact_affine_preimages_preserve_open_boundaries() {
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
             )
-            .unwrap()
             .unwrap(),
         Interval::new(NumericValue::new(4.0), NumericValue::new(9.0), false, true)
     );
@@ -350,7 +345,6 @@ fn exact_affine_preimages_preserve_open_boundaries() {
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
             )
-            .unwrap()
             .unwrap(),
         Interval::new(NumericValue::new(2.0), NumericValue::new(5.0), true, false)
     );
@@ -372,7 +366,6 @@ fn exact_affine_preimages_preserve_open_boundaries() {
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
             )
-            .unwrap()
             .unwrap(),
         Interval::new(NumericValue::new(4.0), NumericValue::new(10.0), true, false)
     );
@@ -391,7 +384,6 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
             )
-            .unwrap()
             .unwrap(),
         Interval::unbounded()
     );
@@ -404,7 +396,6 @@ fn assignment_preimage_is_universal_exactly_when_target_contains_rhs() {
                 OperatorIndex::new(0),
                 VariableIndex::new(0)
             )
-            .unwrap()
             .is_none()
     );
 }

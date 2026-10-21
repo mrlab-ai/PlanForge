@@ -212,10 +212,12 @@ impl Heuristic for RevisionControlledHeuristic {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         self.calls.set(self.calls.get() + 1);
+        // Above the cheapest action cost, which search floors non-goal
+        // values at, so a new revision raises the value.
         Ok(if eval_state.is_goal() {
             0.0
         } else {
-            self.revision.get() as f64
+            1.0 + self.revision.get() as f64
         })
     }
 

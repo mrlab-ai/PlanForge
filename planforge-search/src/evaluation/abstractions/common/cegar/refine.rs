@@ -4,15 +4,18 @@
 
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::utils::float_tolerance;
 
+use super::options::CegarOptions;
 use super::progression::{ConcretePlan, PlanCheck, progression_plan_check, validate_concrete_plan};
 use super::regression::regression_plan_check;
 use super::semantics::CegarSemantics;
 use super::split::Split;
 use super::view::AbstractionView;
 use super::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, FlawScope};
+use crate::resource_limits::Deadline;
 
 /// An abstraction that CEGAR refines.
 pub(crate) trait Refinable {
@@ -23,10 +26,40 @@ pub(crate) trait Refinable {
     /// The abstraction as the flaw search sees it now. A representation that
     /// rebuilds its transitions after a split does so here and fails with a
     /// deadline error once `deadline` passes.
-    fn view(&mut self, deadline: Option<Instant>) -> Result<Self::View<'_>>;
+    fn view(&mut self, deadline: Deadline) -> Result<Self::View<'_>>;
 
     /// Refines the abstraction by `split`, which its view found refinable.
     fn apply_split(&mut self, split: Split) -> Result<()>;
+}
+
+/// Refines `abstraction` by CEGAR under `options`, searching for flaws from
+/// `refinement_root`, or from the task's initial state when `None`.
+pub(crate) fn refine_from_root<R: Refinable>(
+    abstraction: &mut R,
+    semantics: &CegarSemantics<'_>,
+    options: &CegarOptions,
+    refinement_root: Option<&ExplicitState>,
+    start: Instant,
+) -> Result<CegarOutcome> {
+    let initial_state;
+    let refinement_root = match refinement_root {
+        Some(root) => root,
+        None => {
+            initial_state = semantics.states().initial_state()?;
+            &initial_state
+        }
+    };
+    refine(
+        abstraction,
+        &CegarRun {
+            semantics,
+            flaw_kind: options.flaw_kind,
+            flaw_scope: options.flaw_scope,
+            refinement_root,
+            driver: CegarDriver::new(options.max_iterations, options.max_time),
+        },
+        start,
+    )
 }
 
 /// Where a CEGAR run searches for flaws and what it may spend.
@@ -88,6 +121,16 @@ pub(crate) fn refine<R: Refinable>(
             let split = match check_abstract_plan(&view, run)? {
                 PlanCheck::ConcretePlan(plan) => {
                     validate_concrete_plan(run.semantics, run.refinement_root, &plan)?;
+                    let root = view.abstract_state(
+                        &run.refinement_root.propositional,
+                        &run.refinement_root.numeric,
+                    )?;
+                    let root_distance = view.goal_distance(root);
+                    ensure!(
+                        (plan.cost() - root_distance).abs() <= float_tolerance::AGREEMENT_EPSILON,
+                        "the concrete plan costs {}, but the refinement root's abstract goal distance is {root_distance}",
+                        plan.cost()
+                    );
                     concrete_plan = Some(plan);
                     return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
                 }
@@ -97,7 +140,7 @@ pub(crate) fn refine<R: Refinable>(
                 PlanCheck::Refine(split) => split,
             };
             if let Some(limit) = view.refinement_limit(&split) {
-                pending_flaw = Some(split.description().to_string());
+                pending_flaw = Some(format!("{split:?}"));
                 return Ok(CegarIterationResult::Stop(limit));
             }
             tracing::debug!(

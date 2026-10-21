@@ -4,7 +4,6 @@
 // without a CPLEX installation.
 #![allow(clippy::field_reassign_with_default)]
 
-use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use std::sync::Arc;
 
 use planforge_sas::axioms::{
@@ -18,15 +17,12 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::config::{ApplyOptions, ConfigArg, ConfigValue};
-use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
-use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
-use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::{EvaluationState, Heuristic};
 
 use super::rays::RayGenerator;
 use super::{
     BoundsProvider, NumericPotentialConfig, NumericPotentialHeuristic, NumericPotentialOptimizer,
-    OptimizationOutcome, OptimizeFor, PotentialAbstractionOcpHeuristic, PotentialTask,
+    OptimizationOutcome, OptimizeFor, PotentialTask,
 };
 
 #[test]
@@ -480,99 +476,6 @@ fn classical_only_mode_ignores_numeric_action_conditions() {
         panic!("expected a bounded classical potential")
     };
     assert!((value - 1.0).abs() < 1e-7, "got {value}");
-}
-
-#[test]
-fn ocp_retains_stuttering_action_constraints() {
-    let task: TaskRef<'static> = Arc::new(NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(false, None),
-        variables: vec![ExplicitVariable::new(
-            2,
-            "x-at-least-two".into(),
-            vec!["true".into(), "false".into()],
-            Some(0),
-            ExplicitValueIndex::new(1),
-        )],
-        numeric_variables: vec![
-            NumericVariable::new("x".into(), NumericType::Regular, None),
-            NumericVariable::new("two".into(), NumericType::Constant, None),
-            NumericVariable::new("one".into(), NumericType::Constant, None),
-        ],
-        goals: vec![ExplicitFact::propositional(0, 0)],
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(1)],
-        numeric_state: vec![
-            NumericValue::new(0.0),
-            NumericValue::new(2.0),
-            NumericValue::new(1.0),
-        ],
-        operators: vec![Operator::new(
-            "increment".into(),
-            vec![],
-            vec![],
-            vec![AssignmentEffect::new(
-                VariableIndex::from_usize(0),
-                AssignmentOperation::Plus,
-                VariableIndex::from_usize(2),
-                false,
-                vec![],
-            )],
-            OperatorCost::new(1),
-        )],
-        axioms: vec![],
-        comparison_axioms: vec![ComparisonAxiom::new(
-            VariableIndex::new(0),
-            VariableIndex::new(0),
-            VariableIndex::new(1),
-            ComparisonOperator::GreaterThanOrEqual,
-        )],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    }));
-    let cegar_config = DomainAbstractionConfig {
-        cegar: CegarOptions {
-            max_states: 1,
-            max_iterations: 1,
-            ..DomainAbstractionConfig::default().cegar
-        },
-        compute_source_sets: false,
-        ..DomainAbstractionConfig::default()
-    };
-    let generator = DomainAbstractionGenerator::new(cegar_config).unwrap();
-    let abstraction = generator.generate(&*task).unwrap();
-    let heuristic = PotentialAbstractionOcpHeuristic::new(
-        &*task,
-        task.clone(),
-        abstraction,
-        NumericPotentialConfig::default(),
-        false,
-        100,
-    )
-    .unwrap();
-    let mut registry = StateRegistry::for_task(task.clone());
-    let initial = registry.get_initial_state();
-    let eval_state = EvaluationState::new(&initial, &*task, &registry);
-    let value = heuristic.compute_heuristic(&eval_state).unwrap();
-    assert!(
-        (value - 2.0).abs() < 1e-7,
-        "the abstract self-loop must enforce a nonnegative abstraction cost share; got {value}"
-    );
-
-    let capped = PotentialAbstractionOcpHeuristic::new(
-        &*task,
-        task.clone(),
-        generator.generate(&*task).unwrap(),
-        NumericPotentialConfig::default(),
-        false,
-        0,
-    )
-    .unwrap();
-    let capped_value = capped.compute_heuristic(&eval_state).unwrap();
-    assert!(
-        (capped_value - 2.0).abs() < 1e-7,
-        "a capped transition system must fall back to the independently admissible potential; got {capped_value}"
-    );
 }
 
 #[test]

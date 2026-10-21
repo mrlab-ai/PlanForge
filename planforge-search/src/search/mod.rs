@@ -27,15 +27,14 @@ pub use registry::{
 
 use anyhow::Result;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericValue, Operator, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, NumericTaskExt, NumericValue, Operator, OperatorIndex,
 };
 use planforge_sas::state_registry::StateID;
 use std::time::Duration;
 
 pub fn compute_effective_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue> {
-    task.get_operators()
-        .iter()
-        .map(|op| metric_operator_cost_from_initial_values(task, op))
+    (0..task.get_operators().len())
+        .map(|op_id| task.abstract_operator_cost(OperatorIndex::from_usize(op_id)))
         .collect()
 }
 

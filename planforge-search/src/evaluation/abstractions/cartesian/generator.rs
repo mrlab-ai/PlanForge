@@ -1,5 +1,26 @@
-use super::*;
-use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
+use std::time::Instant;
+
+use anyhow::Result;
+use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
+
+use super::abstraction::CartesianAbstraction;
+use super::config::CartesianAbstractionConfig;
+use super::distances::compute_shortest_paths;
+use super::finalize::finalize_abstraction;
+use super::hierarchy::CartesianRefinementHierarchy;
+use super::initial_splits::apply_initial_splits;
+use super::semantics::CartesianSemantics;
+use super::view::CartesianRefinement;
+use super::working::WorkingAbstraction;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::{
+    AbstractionMetadata, finish_abstraction,
+};
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
+use crate::evaluation::abstractions::common::cegar::refine::refine_from_root;
+use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
+use crate::evaluation::abstractions::component::AbstractionKind;
 
 pub struct CartesianAbstractionGenerator {
     pub(super) config: CartesianAbstractionConfig,
@@ -8,23 +29,24 @@ pub struct CartesianAbstractionGenerator {
 impl AbstractionGenerator for CartesianAbstractionGenerator {
     type Config = CartesianAbstractionConfig;
     type Abstraction = CartesianAbstraction;
-    type Key = Vec<HierarchyKey>;
+    type Key = CartesianRefinementHierarchy;
 
-    const NAME: &'static str = "Cartesian";
+    const KIND: AbstractionKind = AbstractionKind::Cartesian;
 
     fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         config.cegar.validate()?;
         Ok(Self { config })
     }
 
-    fn key(abstraction: &CartesianAbstraction) -> Vec<HierarchyKey> {
-        hierarchy_key(&abstraction.hierarchy)
+    fn key(abstraction: &CartesianAbstraction) -> CartesianRefinementHierarchy {
+        abstraction.hierarchy.clone()
     }
 
     fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
     ) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
@@ -40,40 +62,19 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                 working.add_transition(0, OperatorIndex::from_usize(op_id), 0);
             }
         }
-        let initial_state = semantics.cegar().states().initial_state()?;
-        let refinement_root = refinement_root.unwrap_or(&initial_state);
-        if let Some(var) = self.config.initial_split_var {
-            apply_initial_split(
-                &mut working,
-                &semantics,
-                &self.config,
-                &initial_state.propositional,
-                var,
-            )?;
-        }
+        apply_initial_splits(&mut working, &semantics, &self.config.cegar, scope)?;
         let shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let mut refinement = CartesianRefinement {
             working,
             shortest_paths,
             semantics: &semantics,
-            limits: RefinementLimits {
-                max_states: self.config.cegar.max_states,
-                blacklisted_prop_var_ids: &self.config.blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids: &self.config.blacklisted_numeric_var_ids,
-            },
+            limits: RefinementLimits::new(&self.config.cegar, scope),
         };
-        let outcome = refine(
+        let outcome = refine_from_root(
             &mut refinement,
-            &CegarRun {
-                semantics: semantics.cegar(),
-                flaw_kind: self.config.cegar.flaw_kind,
-                flaw_scope: self.config.cegar.flaw_scope,
-                refinement_root,
-                driver: CegarDriver::new(
-                    self.config.cegar.max_iterations,
-                    self.config.cegar.max_time,
-                ),
-            },
+            semantics.cegar(),
+            &self.config.cegar,
+            refinement_root,
             start,
         )?;
         let CartesianRefinement {
@@ -81,64 +82,23 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             shortest_paths,
             ..
         } = refinement;
-        let working_transition_count = working.active_transition_ids().count();
-        let initial_state_hash = working
+        let initial_state = semantics.cegar().states().initial_state()?;
+        let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_state.propositional, &initial_state.numeric)?;
-        let (transition_system, distance_table, relevant_operator_ids, source_sets) =
-            if self.config.retain_transition_system {
-                finalize_abstraction(
-                    &working,
-                    &semantics,
-                    initial_state_hash,
-                    self.config.cegar.combine_labels,
-                    self.config.compute_source_sets,
-                )?
-            } else {
-                finalize_standalone_abstraction(
-                    &working,
-                    &semantics,
-                    &shortest_paths,
-                    initial_state_hash,
-                )?
-            };
-        let transition_count = if self.config.retain_transition_system {
-            transition_system.transitions.len()
-        } else {
-            working_transition_count
-        };
-        if let Some(plan) = &outcome.concrete_plan {
-            let root_state_id = working
-                .hierarchy
-                .map_state(&refinement_root.propositional, &refinement_root.numeric)?;
-            let h = distance_table.distances[root_state_id];
-            ensure!(
-                (plan.cost() - h).abs() <= 1e-7,
-                "concrete Cartesian plan cost {} differs from abstract h(refinement root) {h}",
-                plan.cost()
-            );
-        }
-        info!(
-            "Cartesian abstraction: states={}, transitions={}, refinements={}, h(init)={}, stop={:?}, elapsed={:.3}s",
-            distance_table.distances.len(),
-            transition_count,
-            outcome.refinements,
-            distance_table.distances[distance_table.initial_state_hash],
-            outcome.stop_reason,
-            start.elapsed().as_secs_f64()
-        );
-        Ok(CartesianAbstraction {
-            hierarchy: working.hierarchy,
-            distance_table,
-            transition_system,
-            relevant_operator_ids,
-            abstract_source_sets: source_sets,
-            metadata: AbstractionMetadata::standalone(
+        let abstraction = finalize_abstraction(
+            working,
+            &semantics,
+            &shortest_paths,
+            initial_abstract_state,
+            &self.config.cegar,
+            AbstractionMetadata::standalone(
                 outcome,
                 self.config.cegar.split_kind,
                 self.config.cegar.split_selection_rank,
             ),
-            transition_count,
-        })
+        );
+        finish_abstraction(&abstraction, start.elapsed())?;
+        Ok(abstraction)
     }
 }

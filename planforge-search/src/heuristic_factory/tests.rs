@@ -26,6 +26,7 @@ use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
+use crate::resource_limits::Deadline;
 /// The heuristic inside an `astar(...)` spec. Written as the full search spec
 /// because that is what a user types, and `astar(` / `)` is all the engine
 /// grammar these tests need.
@@ -84,14 +85,9 @@ fn cartesian_collection_config(
     args: &[ConfigArg],
     component_use: abstraction_config::ComponentUse,
 ) -> Result<CartesianAbstractionCollectionConfig, String> {
-    configure(
-        "cartesian_collection",
-        CartesianAbstractionCollectionConfig {
-            member: abstraction_config::cartesian_config(component_use),
-            ..Default::default()
-        },
-        args,
-    )
+    let mut config = CartesianAbstractionCollectionConfig::default();
+    config.member.cegar.keep_transitions = component_use.needs_transition_system();
+    configure("cartesian_collection", config, args)
 }
 
 /// The `cartesian(...)` options `args` for a component used as
@@ -100,11 +96,9 @@ fn cartesian_source_config(
     args: &[ConfigArg],
     component_use: abstraction_config::ComponentUse,
 ) -> Result<CartesianAbstractionConfig, String> {
-    configure(
-        "cartesian",
-        abstraction_config::cartesian_config(component_use),
-        args,
-    )
+    let mut config = CartesianAbstractionConfig::default();
+    config.cegar.keep_transitions = component_use.needs_transition_system();
+    configure("cartesian", config, args)
 }
 
 #[test]
@@ -121,7 +115,7 @@ fn parses_canonical_domain_collection_with_named_options() {
     assert!(!cfg.member.use_wildcard_plans);
     assert!(cfg.member.cegar.combine_labels);
     assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Progression);
-    assert_eq!(cfg.random_seed, Some(7));
+    assert_eq!(cfg.member.cegar.random_seed, Some(7));
 }
 
 #[test]
@@ -133,31 +127,50 @@ fn parses_hierarchical_scp_options_and_sources() {
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 3);
     assert_eq!(options.len(), 7);
-    abstraction_config::validate_scp_combinator_options(&options).unwrap();
-    let mut config = ScpConfig::default();
-    ApplyOptions::apply_options(&mut config, &options).unwrap();
+    let config = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args)
+        .unwrap()
+        .config;
     assert!(config.diversify);
     assert_eq!(config.samples, 123);
     assert_eq!(config.max_orders, 17);
     assert_eq!(config.order_generator, OrderGenerator::Diverse);
-    assert_eq!(config.initial_order_generation_max_time, 9.0);
+    assert_eq!(
+        config.initial_order_generation_max_time,
+        Some(std::time::Duration::from_secs(9))
+    );
 }
 
 #[test]
 fn hierarchical_scp_rejects_legacy_pdb_switches() {
     let h = astar_heuristic("astar(scp([domain_collection()], use_numeric_pdbs=true))");
-    let error = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap_err();
-    assert!(error.contains("unknown `scp` combinator option `use_numeric_pdbs`"));
-    assert!(error.contains("pdb(...)"));
+    let error = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
+    assert_eq!(error, "scp(...): unknown option `use_numeric_pdbs`");
+}
+
+#[test]
+fn hierarchical_scp_sets_every_scp_option() {
+    let h = astar_heuristic(
+        "astar(scp([domain_collection()], goal_cover_orders_per_goal=2, random_orders=5))",
+    );
+    let config = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args)
+        .unwrap()
+        .config;
+    assert_eq!(config.goal_cover_orders_per_goal, 2);
+    assert_eq!(config.random_orders, 5);
+}
+
+#[test]
+fn hierarchical_scp_rejects_positional_options() {
+    let h = astar_heuristic("astar(scp([domain_collection()], 5))");
+    let error = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
+    assert!(error.contains("must be named"), "got `{error}`");
 }
 
 #[test]
 fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
     let h = astar_heuristic("astar(scp([domain_collection()], max_time=[5]))");
-    let source_config = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap();
-    let error =
-        ApplyOptions::apply_options(&mut ScpConfig::default(), &source_config.options).unwrap_err();
-    assert_eq!(error, "expected scalar value, got a list");
+    let error = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
+    assert_eq!(error, "scp(...): expected scalar value, got a list");
 
     let wrapper = astar_heuristic("astar(check_admissible([domain_collection()]))");
     let error =
@@ -186,7 +199,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert!(config.single_goal_tasks);
     assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(config.member.cegar.flaw_scope, FlawScope::WholePlan);
-    assert!(config.member.compute_source_sets);
+    assert!(config.member.cegar.keep_transitions);
 }
 
 #[test]
@@ -225,7 +238,7 @@ fn parses_matched_single_abstraction_icaps26_configuration() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "icaps26_cartesian");
     assert!(
-        construction_deadline.is_none(),
+        construction_deadline == Deadline::NONE,
         "the published 900-second limit bounds CEGAR, not the outer combinator"
     );
     let config = abstraction_config::apply_icaps26_cartesian_options(
@@ -246,13 +259,14 @@ fn parses_shared_construction_deadlines_for_canonical_and_scp() {
     let (sources, deadline) =
         abstraction_config::canonical_sources_and_deadline(&canonical.args).unwrap();
     assert_eq!(sources.len(), 1);
-    assert!(deadline.is_some());
+    assert_ne!(deadline, Deadline::NONE);
 
     let scp = astar_heuristic("astar(scp(cartesian(max_states=100),construction_max_time=900))");
-    let source_config = abstraction_config::scp_sources_options_and_deadline(&scp.args).unwrap();
+    let source_config =
+        abstraction_config::scp_sources_config_and_deadline(&scp.name, &scp.args).unwrap();
     assert_eq!(source_config.sources.len(), 1);
-    assert_eq!(source_config.options.len(), 0);
-    assert!(source_config.construction_deadline.is_some());
+    assert_eq!(source_config.config, ScpConfig::default());
+    assert_ne!(source_config.construction_deadline, Deadline::NONE);
 }
 
 #[test]
@@ -331,9 +345,10 @@ fn both_representations_take_the_same_cegar_options() {
     let domain = astar_heuristic(&format!("astar(domain_abstraction({options}))"));
     let domain = configure("domain", DomainAbstractionConfig::default(), &domain.args).unwrap();
     let cartesian = astar_heuristic(&format!("astar(cartesian_abstraction({options}))"));
-    let cartesian = cartesian_source_config(
+    let cartesian = configure(
+        "cartesian",
+        CartesianAbstractionConfig::default(),
         &cartesian.args,
-        abstraction_config::ComponentUse::Standalone,
     )
     .unwrap();
     assert_eq!(domain.cegar, cartesian.cegar);
@@ -530,7 +545,7 @@ fn parses_max_domain_collection_with_named_options() {
     assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(cfg.member.cegar.flaw_scope, FlawScope::WholePlan);
     assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
-    assert_eq!(cfg.random_seed, Some(7));
+    assert_eq!(cfg.member.cegar.random_seed, Some(7));
     assert!(cfg.member.cegar.debug);
 }
 
@@ -635,8 +650,7 @@ fn external_registration_rejects_duplicate_external_names() {
 #[test]
 fn rejects_unknown_options_inside_known_heuristics() {
     let h = astar_heuristic("astar(scp(domain_collection(), deviation_flaws=false))");
-    let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let err = abstraction_config::validate_scp_combinator_options(&options).unwrap_err();
+    let err = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let err = domain_collection_source_error(
@@ -668,4 +682,25 @@ fn domain_source_is_one_domain_abstraction_with_its_own_options() {
         error.contains("unknown option `max_collection_size`"),
         "{error}"
     );
+}
+
+#[test]
+fn collection_seeds_split_kinds_and_stagnation_limits_parse_once() {
+    let cfg = domain_collection_source(
+        "astar(max(domain_collection(random_seed=none, split_kind=wanted, stagnation_limit=infinity)))",
+    );
+    assert_eq!(cfg.member.cegar.random_seed, None);
+    assert_eq!(cfg.split_kind, Some(SplitKind::Wanted));
+    assert_eq!(cfg.member.cegar.split_kind, SplitKind::Concrete);
+    assert_eq!(cfg.stagnation_limit, None);
+
+    let cfg = domain_collection_source("astar(max(domain_collection(stagnation_limit=2.5)))");
+    assert_eq!(
+        cfg.stagnation_limit,
+        Some(std::time::Duration::from_millis(2500))
+    );
+
+    let error =
+        domain_collection_source_error("astar(max(domain_collection(stagnation_limit=-1)))");
+    assert!(error.contains("non-negative"), "{error}");
 }

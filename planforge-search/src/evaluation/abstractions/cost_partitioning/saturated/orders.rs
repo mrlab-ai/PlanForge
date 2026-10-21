@@ -1,4 +1,26 @@
-use super::*;
+use std::collections::HashSet;
+use std::time::Duration;
+
+use rand::SeedableRng;
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
+use tracing::info;
+
+use super::config::OrderGenerator;
+use super::deadline::deadline_from_now;
+use super::goal_cover_orders::deduplicate_goal_cover_orders;
+use super::lookup::{
+    CostPartitioningHeuristic, abstraction_heuristic_values, current_h_for_distances,
+};
+use super::partition::{Completion, PartitionedCollection};
+use super::scoring::compute_score;
+use super::{OrderSelection, SaturatedCostPartitioningHeuristic};
+use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::evaluator::EvaluationError;
+use crate::resource_limits::Deadline;
+
+/// How many components of an order an info line shows.
+const LOGGED_ORDER_PREFIX: usize = 24;
 
 pub(super) struct CandidateCostPartitions {
     pub(super) partitions: Vec<CostPartitioningHeuristic>,
@@ -7,10 +29,10 @@ pub(super) struct CandidateCostPartitions {
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// The order SCP starts from at the evaluated state: the greedy order, or
-    /// for interval SCP over a goal-focused collection, its goal-cover order.
+    /// for region SCP over a goal-focused collection, its goal-cover order.
     pub(super) fn compute_order_for_state(
         &self,
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         abstract_state_ids: &[Option<usize>],
         components: &[AbstractionComponent<'_>],
     ) -> Vec<usize> {
@@ -25,7 +47,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         {
             info!(
                 "scp: using the goal-cover order, first abstractions {:?}",
-                goal_cover_order.iter().take(24).collect::<Vec<_>>()
+                goal_cover_order
+                    .iter()
+                    .take(LOGGED_ORDER_PREFIX)
+                    .collect::<Vec<_>>()
             );
             return goal_cover_order;
         }
@@ -36,7 +61,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// also a random permutation.
     pub(super) fn diverse_orders_for_sample(
         &self,
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         abstract_state_ids: &[Option<usize>],
     ) -> Vec<Vec<usize>> {
         let greedy = Self::compute_greedy_order_for_state(state, abstract_state_ids);
@@ -49,61 +74,43 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 
     pub(super) fn compute_greedy_order_for_state(
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         abstract_state_ids: &[Option<usize>],
     ) -> Vec<usize> {
         let total = state.goal_distances_by_abstraction.len();
         let mut order: Vec<usize> = (0..total).collect();
         order.shuffle(&mut state.rng);
-        let current_h: Vec<f64> = (0..total)
-            .map(|abs_id| {
-                abstract_state_ids
-                    .get(abs_id)
-                    .copied()
-                    .flatten()
-                    .and_then(|sid| {
-                        state
-                            .goal_distances_by_abstraction
-                            .get(abs_id)
-                            .and_then(|values| values.get(sid))
-                            .copied()
-                    })
-                    .unwrap_or(0.0)
-            })
-            .collect();
-
         let scores: Vec<f64> = (0..total)
             .map(|abs_id| {
-                let h = current_h[abs_id];
-                let stolen = state
-                    .stolen_costs_by_abstraction
-                    .get(abs_id)
-                    .copied()
-                    .unwrap_or(0.0);
-                compute_score(h, stolen)
+                let h = current_h_for_distances(
+                    abs_id,
+                    &state.goal_distances_by_abstraction[abs_id],
+                    abstract_state_ids,
+                );
+                compute_score(h, state.stolen_costs_by_abstraction[abs_id])
             })
             .collect();
 
         order.sort_by(|&a, &b| {
             scores[b]
                 .partial_cmp(&scores[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .expect("order scores are not NaN")
         });
 
         order
     }
 
     /// The cost partitionings of the incumbent order and of the candidate
-    /// orders derived from it, built until `optimization_max_time` runs out,
-    /// with the incumbent replaced by the order of the best one at the
-    /// evaluated state. Interval cost partitionings remember the goal their
-    /// goal-cover order puts first.
+    /// orders derived from it, built until `optimization_max_time` or
+    /// `budget` runs out, with the incumbent replaced by the order of the
+    /// best one at the evaluated state. Regional cost partitionings remember
+    /// the goal their goal-cover order puts first.
     pub(super) fn build_best_cp_from_candidate_orders(
         &self,
         collection: PartitionedCollection<'_, '_>,
         incumbent_order: &mut Vec<usize>,
-        baseline_deadline: Option<Instant>,
-        optimization_max_time: f64,
+        budget: Deadline,
+        optimization_max_time: Option<Duration>,
     ) -> Result<CandidateCostPartitions, EvaluationError> {
         let PartitionedCollection {
             components,
@@ -111,26 +118,26 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             abstraction_h,
             ..
         } = collection;
-        let interval = self.config.partitioning.uses_regions();
+        let regional = self.config.partitioning.uses_regions();
         let goal_cover_goal = |order: &[usize]| {
-            interval
+            regional
                 .then(|| self.goal_cover_goal_of_order(order, components))
                 .flatten()
         };
         let mut best_order = incumbent_order.clone();
-        let mut baseline = self.build_cp(collection, &best_order, baseline_deadline)?;
+        let (mut baseline, _) = self.build_cp(collection, &best_order, budget)?;
         baseline.goal_cover_goal_id = goal_cover_goal(&best_order);
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
-        let candidate_deadline = earliest_deadline(
-            baseline_deadline,
-            optimization_deadline(optimization_max_time),
-        );
-        let candidates = if !optimization_max_time.is_sign_positive() {
+        let candidate_deadline = budget.earliest(deadline_from_now(
+            "initial_order_generation_max_time",
+            optimization_max_time,
+        )?);
+        let candidates = if optimization_max_time.is_some_and(|limit| limit.is_zero()) {
             Vec::new()
-        } else if interval {
-            self.candidate_interval_orders(incumbent_order, components, abstraction_h)
+        } else if regional {
+            self.candidate_region_orders(incumbent_order, components, abstraction_h)
         } else {
             self.candidate_label_orders(incumbent_order, abstraction_h)
                 .into_iter()
@@ -139,20 +146,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         };
 
         for (goal_id, candidate) in candidates {
-            if candidate_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if candidate_deadline.passed() {
                 break;
             }
             if candidate == best_order {
                 continue;
             }
-            let mut candidate_cp = match self.build_cp(collection, &candidate, candidate_deadline) {
-                Ok(cp) => cp,
-                Err(error) if Self::is_deadline_exceeded(&error) => {
-                    info!("scp: candidate order stopped while computing table (deadline)");
-                    break;
-                }
-                Err(error) => return Err(error),
-            };
+            let (mut candidate_cp, completion) =
+                self.build_cp(collection, &candidate, candidate_deadline)?;
             candidate_cp.goal_cover_goal_id = goal_id.or_else(|| goal_cover_goal(&candidate));
             let candidate_h = candidate_cp.compute_heuristic(abstract_state_ids);
             let candidate_index = partitions.len();
@@ -166,6 +167,9 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 best_order = candidate;
                 best_index = candidate_index;
             }
+            if completion == Completion::Truncated {
+                break;
+            }
         }
 
         *incumbent_order = best_order;
@@ -175,7 +179,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         })
     }
 
-    pub(super) fn candidate_interval_orders(
+    pub(super) fn candidate_region_orders(
         &self,
         base_order: &[usize],
         components: &[AbstractionComponent<'_>],
@@ -215,10 +219,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         for seed_offset in 0..self.config.random_orders as u64 {
             let mut random_order = base_order.to_vec();
             random_order.shuffle(&mut SmallRng::seed_from_u64(
-                self.config
-                    .random_seed
-                    .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED)
-                    .wrapping_add(seed_offset),
+                self.config.random_seed.wrapping_add(seed_offset),
             ));
             orders.push((None, random_order));
         }
@@ -238,14 +239,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 }
 
+/// The iteration that built component `component_id` of its collection;
+/// components outside a collection come last.
 pub(super) fn abstraction_collection_iteration(
     components: &[AbstractionComponent<'_>],
     component_id: usize,
 ) -> usize {
     components[component_id]
-        .as_domain()
-        .and_then(|abstraction| abstraction.metadata.collection)
-        .map_or(usize::MAX, |record| record.iteration)
+        .cegar()
+        .and_then(|abstraction| abstraction.metadata().collection_iteration())
+        .unwrap_or(usize::MAX)
 }
 
 pub(super) fn max_heuristic_greedy_order(

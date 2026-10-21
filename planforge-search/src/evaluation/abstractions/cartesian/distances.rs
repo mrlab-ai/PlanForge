@@ -1,4 +1,19 @@
-use super::*;
+#[cfg(test)]
+mod tests;
+
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
+use anyhow::{Result, ensure};
+use ordered_float::NotNan;
+use planforge_sas::utils::float_tolerance;
+
+use super::semantics::CartesianSemantics;
+use super::working::WorkingAbstraction;
+use crate::evaluation::abstractions::common::cegar::view::TransitionKey;
+use crate::evaluation::abstractions::common::transition_system::{
+    BackwardGraph, backward_goal_distances,
+};
 
 #[derive(Debug)]
 pub(super) struct ShortestPaths {
@@ -11,35 +26,6 @@ pub(super) struct ShortestPaths {
 }
 
 impl ShortestPaths {
-    #[cfg(test)]
-    pub(super) fn for_test(
-        distances: Vec<f64>,
-        generating_transition: Vec<Option<TransitionKey>>,
-        dependents: Vec<Vec<usize>>,
-        dependent_positions: Vec<Option<usize>>,
-        is_goal: Vec<bool>,
-    ) -> Self {
-        let invalid = vec![false; distances.len()];
-        Self {
-            distances,
-            generating_transition,
-            dependents,
-            dependent_positions,
-            is_goal,
-            invalid,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn dependents(&self, state_id: usize) -> &[usize] {
-        &self.dependents[state_id]
-    }
-
-    #[cfg(test)]
-    pub(super) fn dependent_position(&self, state_id: usize) -> Option<usize> {
-        self.dependent_positions[state_id]
-    }
-
     pub(super) fn distances(&self) -> &[f64] {
         &self.distances
     }
@@ -50,6 +36,13 @@ impl ShortestPaths {
 
     pub(super) fn is_goal(&self, state_id: usize) -> bool {
         self.is_goal[state_id]
+    }
+
+    /// The goal states, ascending.
+    pub(super) fn goal_states(&self) -> Vec<usize> {
+        (0..self.is_goal.len())
+            .filter(|&state_id| self.is_goal[state_id])
+            .collect()
     }
 
     pub(super) fn generating_transition(&self, state_id: usize) -> Option<TransitionKey> {
@@ -176,11 +169,7 @@ impl BackwardGraph for WorkingGraph<'_> {
             }
             incoming.push((
                 transition.source,
-                TransitionKey {
-                    source: transition.source,
-                    concrete_op_id: transition.concrete_op_id,
-                    target,
-                },
+                *transition,
                 operator_costs[transition.concrete_op_id.index()].value(),
             ));
         }
@@ -276,19 +265,10 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let candidate = target_distance
-                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()]
-                    .value()
-                    .max(0.0);
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
-                shortest_paths.set_generating_transition(
-                    source,
-                    TransitionKey {
-                        source,
-                        concrete_op_id: transition.concrete_op_id,
-                        target: transition.target,
-                    },
-                );
+                shortest_paths.set_generating_transition(source, *transition);
                 heap.push((Reverse(NotNan::new(candidate).unwrap()), source));
             }
         }
@@ -305,21 +285,12 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let alternative = distance
-                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()]
-                    .value()
-                    .max(0.0);
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
             if alternative + float_tolerance::SEARCH_EPSILON
                 < shortest_paths.distances[transition.source]
             {
                 shortest_paths.distances[transition.source] = alternative;
-                shortest_paths.set_generating_transition(
-                    transition.source,
-                    TransitionKey {
-                        source: transition.source,
-                        concrete_op_id: transition.concrete_op_id,
-                        target,
-                    },
-                );
+                shortest_paths.set_generating_transition(transition.source, *transition);
                 heap.push((
                     Reverse(NotNan::new(alternative).unwrap()),
                     transition.source,
@@ -335,7 +306,8 @@ pub(super) fn update_shortest_paths_after_split(
             let actual = shortest_paths.distances[state_id];
             let expected = reference.distances[state_id];
             assert!(
-                (actual == expected) || (actual - expected).abs() <= 1e-7,
+                (actual == expected)
+                    || (actual - expected).abs() <= float_tolerance::AGREEMENT_EPSILON,
                 "incremental Cartesian distance mismatch at state {state_id}: {actual} vs {expected}"
             );
         }

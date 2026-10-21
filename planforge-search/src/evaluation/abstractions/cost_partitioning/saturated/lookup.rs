@@ -1,10 +1,13 @@
-use super::*;
+use planforge_sas::utils::float_tolerance;
+
+use super::{OrderSelection, SaturatedCostPartitioningHeuristic};
+use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct LookupTable {
     pub(super) abstraction_id: usize,
     pub(super) distances: Vec<f64>,
-    pub(super) unknown_value: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -19,14 +22,13 @@ impl CostPartitioningHeuristic {
     }
 
     pub(super) fn add_h_values(&mut self, abstraction_id: usize, distances: Vec<f64>) {
-        if distances.iter().any(|value| *value > 0.0) {
+        if distances
+            .iter()
+            .any(|value| *value > float_tolerance::SEARCH_EPSILON)
+        {
             self.lookup_tables.push(LookupTable {
                 abstraction_id,
                 distances,
-                // As in max_abstraction_heuristic: an entry this table does not
-                // have is an unknown lower bound, which is zero, not a proof
-                // that the state is a dead end.
-                unknown_value: 0.0,
             });
         }
     }
@@ -34,19 +36,9 @@ impl CostPartitioningHeuristic {
     pub(super) fn compute_heuristic(&self, abstract_state_ids: &[Option<usize>]) -> f64 {
         let mut sum = 0.0;
         for table in &self.lookup_tables {
-            let Some(state_id) = abstract_state_ids
-                .get(table.abstraction_id)
-                .copied()
-                .flatten()
-            else {
-                sum += table.unknown_value;
-                continue;
-            };
-            let Some(&value) = table.distances.get(state_id) else {
-                sum += table.unknown_value;
-                continue;
-            };
-            if value.is_infinite() && value.is_sign_positive() {
+            let value =
+                current_h_for_distances(table.abstraction_id, &table.distances, abstract_state_ids);
+            if value == f64::INFINITY {
                 return f64::INFINITY;
             }
             sum += value;
@@ -60,18 +52,20 @@ impl CostPartitioningHeuristic {
             .iter()
             .map(|table| table.distances.len())
             .sum::<usize>();
-        values.saturating_mul(std::mem::size_of::<f64>()) / 1024
+        values * std::mem::size_of::<f64>() / 1024
     }
 }
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    /// The abstract state of `eval_state` in every component, or in those
+    /// `lookup_mask` selects.
     pub(super) fn compute_abstract_state_ids_into(
         &self,
+        components: &[AbstractionComponent<'_>],
         eval_state: &EvaluationState<'_, '_>,
         lookup_mask: Option<&[bool]>,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let components = self.components.borrow();
         if let Some(mask) = lookup_mask {
             assert_eq!(
                 mask.len(),
@@ -92,52 +86,35 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
 
         Ok(())
     }
-
-    /// The heuristic: the maximum over the retained cost partitionings
-    /// (Seipp et al. 2020).
-    pub(super) fn compute_max_h(state: &ScpState, ids: &[Option<usize>]) -> f64 {
-        state
-            .cp_heuristics
-            .iter()
-            .map(|cp| cp.compute_heuristic(ids))
-            .fold(0.0, f64::max)
-    }
-
-    pub(super) fn compute_lookup_mask(state: &ScpState, component_count: usize) -> Vec<bool> {
-        let mut ids: Vec<usize> = state
-            .cp_heuristics
-            .iter()
-            .flat_map(|cp| cp.lookup_tables.iter().map(|table| table.abstraction_id))
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        let mut mask = vec![false; component_count];
-        for id in ids {
-            *mask
-                .get_mut(id)
-                .expect("retained lookup table must reference an existing component") = true;
-        }
-        mask
-    }
 }
 
-pub(super) fn lookup_distance(
-    abstraction_id: usize,
-    distances: &[f64],
-    unknown_value: f64,
-    abstract_state_ids: &[Option<usize>],
+/// The heuristic: the maximum over the retained cost partitionings (Seipp et
+/// al. 2020).
+pub(super) fn compute_max_h(
+    cp_heuristics: &[CostPartitioningHeuristic],
+    ids: &[Option<usize>],
 ) -> f64 {
-    abstract_state_ids
-        .get(abstraction_id)
-        .copied()
-        .flatten()
-        .and_then(|state_id| distances.get(state_id))
-        .copied()
-        .unwrap_or(unknown_value)
+    cp_heuristics
+        .iter()
+        .map(|cp| cp.compute_heuristic(ids))
+        .fold(0.0, f64::max)
+}
+
+/// Which of the `component_count` components a lookup table of
+/// `cp_heuristics` reads.
+pub(super) fn compute_lookup_mask(
+    cp_heuristics: &[CostPartitioningHeuristic],
+    component_count: usize,
+) -> Vec<bool> {
+    let mut mask = vec![false; component_count];
+    for table in cp_heuristics.iter().flat_map(|cp| &cp.lookup_tables) {
+        mask[table.abstraction_id] = true;
+    }
+    mask
 }
 
 pub(super) fn max_abstraction_heuristic(
-    state: &ScpState,
+    state: &OrderSelection<'_>,
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
     state
@@ -145,21 +122,7 @@ pub(super) fn max_abstraction_heuristic(
         .iter()
         .enumerate()
         .map(|(abstraction_id, distances)| {
-            // A miss contributes nothing, for every kind of abstraction.
-            //
-            // This used to be infinity for a prefix of component kinds, on the
-            // reading that a domain abstraction covers every concrete state, so
-            // a state it has no entry for cannot reach the goal. That reading is
-            // wrong here: when the online path is not rebuilding a partitioning,
-            // it computes abstract state ids only for abstractions selected by
-            // `lookup_mask`, so every other one is legitimately absent.
-            // Absent then meant infinite, the maximum swallowed every finite
-            // estimate, and the search recorded a solvable state as a dead end.
-            //
-            // A distance that is present and infinite still means unreachable,
-            // and still propagates, because that one was computed rather than
-            // assumed.
-            lookup_distance(abstraction_id, distances, 0.0, abstract_state_ids)
+            current_h_for_distances(abstraction_id, distances, abstract_state_ids)
         })
         .fold(0.0, f64::max)
 }
@@ -167,30 +130,22 @@ pub(super) fn max_abstraction_heuristic(
 /// What a lookup table contributes for a component without an abstract state
 /// for the evaluated state: a pattern database state outside the database's
 /// enumerated states, or a component this evaluation did not look up. Such a
-/// component claims nothing, which is how cost-partitioning tables read it
-/// (`unknown_value`), and order selection scores it the same way.
+/// component claims nothing, in cost partitionings and in order selection.
 pub(super) const UNKNOWN_STATE_H: f64 = 0.0;
 
-/// The goal distance of the evaluated state in one component's table;
-/// infinite for an abstract dead end.
+/// The goal distance of the evaluated state in component `abstraction_id`'s
+/// table `distances`: infinite for an abstract dead end, and
+/// [`UNKNOWN_STATE_H`] without an abstract state.
 pub(super) fn current_h_for_distances(
     abstraction_id: usize,
     distances: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
-    let Some(state_id) = abstract_state_ids[abstraction_id] else {
-        return UNKNOWN_STATE_H;
-    };
-    *distances.get(state_id).unwrap_or_else(|| {
-        panic!(
-            "component {abstraction_id} state id {state_id} is outside its {} distances",
-            distances.len()
-        )
-    })
+    abstract_state_ids[abstraction_id].map_or(UNKNOWN_STATE_H, |state_id| distances[state_id])
 }
 
 pub(super) fn abstraction_heuristic_values(
-    state: &ScpState,
+    state: &OrderSelection<'_>,
     abstract_state_ids: &[Option<usize>],
 ) -> Vec<f64> {
     state

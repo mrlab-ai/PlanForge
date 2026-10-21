@@ -1,13 +1,14 @@
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, NumericRootTask, NumericRootTaskParts, NumericTaskExt,
-    metric_operator_cost_from_initial_values,
+    AssignmentEffect, AssignmentOperation, NumericRootTask, NumericRootTaskParts,
 };
 
 use super::*;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
@@ -87,60 +88,6 @@ fn root_after(task: &NumericRootTask, increments: usize) -> ExplicitState {
         .unwrap()
 }
 
-#[test]
-fn rooted_task_moves_only_the_initial_state() {
-    let task = doubling_cost_task(4.0, false);
-    let root = root_after(&task, 2);
-    let rooted = RootedTask::new(&task, &root).unwrap();
-
-    assert_eq!(
-        rooted.get_initial_numeric_state_values(),
-        &[2.0, 1.0, 2.0, 4.0, 4.0].map(NumericValue::new)
-    );
-    assert_eq!(
-        rooted.get_initial_propositional_state_values(),
-        &[ExplicitValueIndex::from_usize(
-            ConditionValue::False.as_usize()
-        )]
-    );
-    assert_eq!(
-        rooted.evaluate_initial_state_values().unwrap(),
-        (
-            rooted.get_initial_propositional_state_values().to_vec(),
-            rooted.get_initial_numeric_state_values().to_vec()
-        )
-    );
-    assert_eq!(rooted.goals(), task.goals());
-    assert_eq!(rooted.get_operators().len(), task.get_operators().len());
-    // Evaluated at the root, the metric would price the increment at 4; the
-    // abstraction cost hook keeps the base task's price.
-    assert_eq!(
-        metric_operator_cost_from_initial_values(&rooted, &task.get_operators()[0]),
-        NumericValue::new(4.0)
-    );
-    assert_eq!(
-        rooted.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
-    );
-    assert_eq!(
-        task.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
-    );
-}
-
-#[test]
-fn rooted_task_rejects_a_root_that_changes_a_constant() {
-    let task = doubling_cost_task(4.0, false);
-    let mut root = root_after(&task, 1);
-    root.numeric[BOUND.index()] = NumericValue::new(5.0);
-    let error = RootedTask::new(&task, &root).err().unwrap();
-
-    assert!(
-        error.to_string().contains("constant numeric variable 3"),
-        "{error:#}"
-    );
-}
-
 fn cegar_config() -> DomainAbstractionConfig {
     DomainAbstractionConfig {
         cegar: CegarOptions {
@@ -148,7 +95,6 @@ fn cegar_config() -> DomainAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             ..DomainAbstractionConfig::default().cegar
         },
-        init_split_var_ids: Some(Default::default()),
         ..Default::default()
     }
 }
@@ -159,19 +105,18 @@ fn a_rooted_domain_abstraction_plans_from_the_root_and_reports_the_initial_state
     let root = root_after(&task, 2);
     let abstraction = DomainAbstractionGenerator::new(cegar_config())
         .unwrap()
-        .generate_from_root(&task, Some(&root))
+        .generate_from_root(&task, Some(&root), &RefinementScope::default())
         .unwrap();
 
-    assert!(abstraction.metadata.solved_by_self());
+    assert!(abstraction.metadata().solved_by_self());
     assert_eq!(
-        abstraction.metadata.concrete_plan_operator_ids,
+        abstraction.metadata().concrete_plan_operator_ids,
         Some(vec![OperatorIndex::new(0); 2]),
         "the executed plan starts at the root x=2"
     );
     // h(s0) uses the base task's initial state and its pinned unit costs: the
     // abstraction never overestimates the four increments from x=0.
-    let initial_h =
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+    let initial_h = abstraction.initial_h();
     assert!(initial_h <= 4.0, "h(s0)={initial_h} overestimates h*=4");
     assert!(initial_h.is_finite());
 }
@@ -182,9 +127,9 @@ fn a_dead_root_stops_refinement_as_a_dead_end() {
     let root = root_after(&task, 1);
     let abstraction = DomainAbstractionGenerator::new(cegar_config())
         .unwrap()
-        .generate_from_root(&task, Some(&root))
+        .generate_from_root(&task, Some(&root), &RefinementScope::default())
         .unwrap();
 
-    assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::DeadEnd);
-    assert!(!abstraction.metadata.solved_by_self());
+    assert_eq!(abstraction.metadata().stop_reason, CegarStopReason::DeadEnd);
+    assert!(!abstraction.metadata().solved_by_self());
 }

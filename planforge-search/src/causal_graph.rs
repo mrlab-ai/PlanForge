@@ -216,8 +216,7 @@ impl CausalGraph {
 
     fn compute_goal_distances(&mut self, task: &dyn AbstractNumericTask) {
         let mut queue = VecDeque::new();
-        for goal_index in 0..task.get_num_goals() {
-            let goal = task.get_goal_fact(goal_index);
+        for goal in task.goals() {
             let goal_var = task
                 .numeric_conditions()
                 .id_for_var(goal.var_index())

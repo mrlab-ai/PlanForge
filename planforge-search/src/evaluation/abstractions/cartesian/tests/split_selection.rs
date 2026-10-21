@@ -32,18 +32,18 @@ fn operator_bitsets_preserve_exact_membership_and_intersections() {
 
 #[test]
 fn numeric_split_keys_include_semantic_identity_and_boundary() {
-    let key = numeric_split_choice_key("x(b0)", NumericValue::new(1.0), true);
+    let key = numeric_split_choice_key(stable_text_seed("x(b0)"), NumericValue::new(1.0), true);
     assert_ne!(
         key,
-        numeric_split_choice_key("x(b1)", NumericValue::new(1.0), true)
+        numeric_split_choice_key(stable_text_seed("x(b1)"), NumericValue::new(1.0), true)
     );
     assert_ne!(
         key,
-        numeric_split_choice_key("x(b0)", NumericValue::new(2.0), true)
+        numeric_split_choice_key(stable_text_seed("x(b0)"), NumericValue::new(2.0), true)
     );
     assert_ne!(
         key,
-        numeric_split_choice_key("x(b0)", NumericValue::new(1.0), false)
+        numeric_split_choice_key(stable_text_seed("x(b0)"), NumericValue::new(1.0), false)
     );
 }
 
@@ -56,17 +56,11 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
         lower_includes_boundary: true,
         witness_value: NumericValue::new(1.0),
         integer_lattice: false,
-        description: "first witness".into(),
     };
     let mut candidates = Vec::new();
     let mut identities = HashSet::new();
     push_unique_split(&mut candidates, &mut identities, split.clone());
-    let mut duplicate = split;
-    let Split::Numeric { description, .. } = &mut duplicate else {
-        unreachable!()
-    };
-    *description = "same refinement seen later".into();
-    push_unique_split(&mut candidates, &mut identities, duplicate);
+    push_unique_split(&mut candidates, &mut identities, split);
 
     assert_eq!(candidates.len(), 1);
 }
@@ -134,11 +128,10 @@ fn min_growth_uses_projected_transition_count() {
         lower_includes_boundary: true,
         witness_value: NumericValue::new(0.0),
         integer_lattice: false,
-        description: String::new(),
     };
 
     let mut candidates = vec![split(VariableIndex::new(0)), split(VariableIndex::new(1))];
-    let paths = all_goal_paths(working.states().len());
+    let paths = ShortestPaths::all_goals(working.states().len());
     let view = CartesianView {
         working: &working,
         semantics: &semantics,
@@ -190,7 +183,6 @@ fn native_random_selector_is_seeded() {
         var_id,
         wanted: vec![ExplicitValueIndex::new(1)],
         witness_value: ExplicitValueIndex::new(0),
-        description: String::new(),
     };
     let candidates = vec![
         split(VariableIndex::from_usize(0)),
@@ -203,7 +195,6 @@ fn native_random_selector_is_seeded() {
             random_seed: Some(7),
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..CartesianAbstractionConfig::default()
     };
     let random_a = CartesianSemantics::new(&task, &random_config).unwrap();
     let random_b = CartesianSemantics::new(&task, &random_config).unwrap();
@@ -217,7 +208,7 @@ fn native_random_selector_is_seeded() {
         ),
         0,
     );
-    let paths = all_goal_paths(working.states().len());
+    let paths = ShortestPaths::all_goals(working.states().len());
     let draw = |semantics: &CartesianSemantics<'_>| {
         let view = CartesianView {
             working: &working,
@@ -227,7 +218,7 @@ fn native_random_selector_is_seeded() {
         };
         (0..32)
             .map(|_| {
-                select_refinement_split(&view, semantics.cegar(), candidates.clone(), 0)
+                select_split(&view, semantics.cegar(), candidates.clone(), 0)
                     .unwrap()
                     .dimension()
             })

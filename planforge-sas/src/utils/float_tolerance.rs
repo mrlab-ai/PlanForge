@@ -4,6 +4,11 @@ pub const ABS_EPSILON: f64 = 1e-12;
 pub const REL_EPSILON: f64 = 1e-12;
 pub const DIJKSTRA_EPSILON: f64 = 1e-12;
 pub const SEARCH_EPSILON: f64 = 1e-9;
+/// How closely two computations of the same cost or value agree, as in a
+/// concrete plan's cost and the abstract goal distance it realises.
+pub const AGREEMENT_EPSILON: f64 = 1e-7;
+/// How closely a value matches an LP optimum it should dominate or reach.
+pub const LP_EPSILON: f64 = 1e-6;
 
 const _: () = assert!(ABS_EPSILON > f64::EPSILON);
 const _: () = assert!(REL_EPSILON > f64::EPSILON);
@@ -15,6 +20,13 @@ pub fn tolerance(lhs: NumericValue, rhs: NumericValue) -> NumericValue {
     NumericValue::new(ABS_EPSILON.max(REL_EPSILON * lhs.abs().max(rhs.abs()).value()))
 }
 
+/// TODO(canonical values): multiplying by the inexact `ABS_EPSILON` moves
+/// some integers by one ulp from about 1e7 on (636192524 becomes
+/// 636192523.9999999), and from |v| >= 2^53 * 1e-12 (about 9007) the grid is
+/// finer than f64 resolution, so no noise is removed there. Keeping integers
+/// fixed (identity above that bound, `(v * 1e12).round() / 1e12` below) would
+/// let comparisons of canonical values be exact; it changes search state
+/// hashing, so it needs its own gated change.
 #[inline]
 pub fn canonicalize(value: NumericValue) -> NumericValue {
     if value.is_nan() || value.is_infinite() {

@@ -12,12 +12,13 @@ use ordered_float::NotNan;
 use planforge_sas::numeric_task::{
     ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef, ZERO_VALUE,
 };
-use planforge_sas::state_registry::{ExpansionContext, StateRegistry};
+use planforge_sas::state_registry::StateRegistry;
 
 use crate::evaluation::abstractions::common::transition_system::{
     BackwardGraph, backward_goal_distances,
 };
-use crate::successor_generator::SuccessorTree;
+use crate::resource_limits::Deadline;
+use crate::successor_generator::RegistryExpander;
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumerationLimits {
@@ -211,21 +212,13 @@ impl BackwardGraph for ConcreteBackwardGraph<'_> {
     }
 }
 
-fn limit_deadline(start: Instant, limit: Duration) -> Result<Instant, StateSpaceEnumerationError> {
-    start.checked_add(limit).ok_or_else(|| {
-        StateSpaceEnumerationError::InvalidLimit(
-            "max_time is too large for the platform clock".to_string(),
-        )
-    })
-}
-
 fn check_time_limit(
-    deadline: Instant,
+    deadline: Deadline,
     limit: Duration,
     states: usize,
     transitions: usize,
 ) -> Result<(), StateSpaceEnumerationError> {
-    if Instant::now() >= deadline {
+    if deadline.passed() {
         return Err(StateSpaceEnumerationError::TimeLimit {
             limit,
             states,
@@ -240,11 +233,11 @@ pub fn enumerate_state_space(
     limits: EnumerationLimits,
 ) -> Result<OwnedStateSpace, StateSpaceEnumerationError> {
     let limits = limits.validate()?;
-    let start = Instant::now();
-    let deadline = limit_deadline(start, limits.max_time)?;
+    let deadline = Deadline::after(Instant::now(), Some(limits.max_time))
+        .map_err(|error| StateSpaceEnumerationError::InvalidLimit(format!("max_time: {error}")))?;
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
-    let successor_generator = SuccessorTree::new(&*task);
+    let mut expander = RegistryExpander::new(&*task);
     let operators = task.get_operators();
     let num_propositional_variables = task.variables().len();
     let num_numeric_variables = task.numeric_variables().len();
@@ -268,12 +261,6 @@ pub fn enumerate_state_space(
     let mut goal_states = Vec::new();
     let mut goal_state_ids = Vec::new();
 
-    let mut propositional_scratch = Vec::with_capacity(num_propositional_variables);
-    let mut numeric_scratch = Vec::with_capacity(num_numeric_variables);
-    let mut applicable = Vec::new();
-    let mut expansion_context = ExpansionContext::default();
-    let mut successor_numeric = Vec::with_capacity(num_numeric_variables);
-    let mut successor_cost = Vec::new();
     let mut state_id = 0usize;
 
     while state_id < registry.num_registered_states() {
@@ -288,35 +275,21 @@ pub fn enumerate_state_space(
                 "registered state {state_id} disappeared: {error:?}"
             ))
         })?;
-        registry
-            .fill_state_and_numeric_vars(&state, &mut propositional_scratch, &mut numeric_scratch)
-            .map_err(|error| {
-                StateSpaceEnumerationError::Enumeration(format!(
-                    "could not decode state {state_id}: {error:?}"
-                ))
-            })?;
-        for &value in &propositional_scratch {
-            propositional_values.push(value);
-        }
-        numeric_values.extend_from_slice(&numeric_scratch);
+        let mut expansion = expander.expand(&registry, &state).map_err(|error| {
+            StateSpaceEnumerationError::Enumeration(format!(
+                "could not expand state {state_id}: {error:?}"
+            ))
+        })?;
+        propositional_values.extend_from_slice(expansion.propositional());
+        numeric_values.extend_from_slice(expansion.numeric());
 
-        let is_goal = (0..task.get_num_goals())
-            .all(|goal_id| task.get_goal_fact(goal_id).is_held(registry.view(&state)));
+        let is_goal = registry.view(&state).holds_all(task.goals());
         goal_states.push(is_goal);
         if is_goal {
             goal_state_ids.push(state_id);
         }
 
-        applicable.clear();
-        successor_generator.get_applicable_operators(&propositional_scratch, &mut applicable);
-        registry
-            .build_expansion_context(&state, &mut expansion_context)
-            .map_err(|error| {
-                StateSpaceEnumerationError::Enumeration(format!(
-                    "could not prepare expansion of state {state_id}: {error:?}"
-                ))
-            })?;
-        for &operator_id in &applicable {
+        for &operator_id in expansion.applicable_operators() {
             if transition_costs.len() == limits.max_transitions {
                 return Err(StateSpaceEnumerationError::TransitionLimit {
                     limit: limits.max_transitions,
@@ -335,20 +308,15 @@ pub fn enumerate_state_space(
             let operator = operators.get(operator_id.index()).unwrap_or_else(|| {
                 panic!("successor generator returned invalid operator id {operator_id}")
             });
-            let (successor, cost) = registry
-                .apply_operator_in_context(
-                    &state,
-                    operator,
-                    &expansion_context,
-                    &mut successor_numeric,
-                    &mut successor_cost,
-                )
-                .map_err(|error| {
-                    StateSpaceEnumerationError::Enumeration(format!(
-                        "operator {operator_id} ({}) failed in state {state_id}: {error:?}",
-                        operator.name()
-                    ))
-                })?;
+            let (successor, cost) =
+                expansion
+                    .successor(&mut registry, operator)
+                    .map_err(|error| {
+                        StateSpaceEnumerationError::Enumeration(format!(
+                            "operator {operator_id} ({}) failed in state {state_id}: {error:?}",
+                            operator.name()
+                        ))
+                    })?;
             if !cost.is_finite() || cost < ZERO_VALUE {
                 return Err(StateSpaceEnumerationError::Enumeration(format!(
                     "transition from state {state_id} via operator {operator_id} has invalid cost {cost}"
@@ -447,7 +415,7 @@ pub fn enumerate_state_space(
         &mut backward_graph,
         &goal_state_ids,
         || -> AnyResult<()> {
-            if Instant::now() >= deadline {
+            if deadline.passed() {
                 timed_out.set(true);
                 bail!("state-space enumeration time limit reached");
             }

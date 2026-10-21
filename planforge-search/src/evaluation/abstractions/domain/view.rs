@@ -2,36 +2,35 @@
 //! it.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
+use rustc_hash::FxHashMap;
 
-use std::time::Instant;
-
-use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator};
 use super::config::DomainAbstractionConfig;
-use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
+use super::function::{DomainAbstractionFunction, DomainTransitions};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::refine::Refinable;
 use crate::evaluation::abstractions::common::cegar::split::Split;
 use crate::evaluation::abstractions::common::cegar::view::{
     AbstractionView, RefinementLimits, TransitionKey,
 };
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::resource_limits::Deadline;
 
 pub(super) struct DomainView<'a> {
-    pub(super) task: &'a dyn AbstractNumericTask,
-    pub(super) factory: &'a DomainAbstractionFactory,
-    pub(super) numeric_domain_sizes: &'a [usize],
-    pub(super) hash_multipliers: &'a [usize],
-    pub(super) operators: &'a [AbstractOperator],
-    pub(super) table: &'a AbstractDistanceTable,
-    pub(super) limits: RefinementLimits<'a>,
+    function: &'a DomainAbstractionFunction,
+    built: &'a DomainBuild,
+    limits: RefinementLimits<'a>,
     /// Plan steps execute any label of their abstract operator, not just
     /// the first.
-    pub(super) wildcard_plans: bool,
+    wildcard_plans: bool,
+    /// The regions of the states the flaw search asked for. The abstraction
+    /// does not change while the view lives, and a cached region is lent
+    /// out by cloning its shared parts.
+    regions: RefCell<FxHashMap<usize, CartesianSet>>,
 }
 
 impl AbstractionView for DomainView<'_> {
@@ -39,7 +38,7 @@ impl AbstractionView for DomainView<'_> {
     type Growth = u128;
 
     fn num_states(&self) -> usize {
-        self.table.distances.len()
+        self.built.distances.len()
     }
 
     fn abstract_state(
@@ -47,55 +46,44 @@ impl AbstractionView for DomainView<'_> {
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Result<usize> {
-        self.factory.abstract_state_hash(
-            propositions,
-            numeric,
-            self.numeric_domain_sizes,
-            self.hash_multipliers,
-        )
+        self.function.abstract_state(propositions, numeric)
     }
 
     fn region(&self, state: usize) -> Cow<'_, CartesianSet> {
         Cow::Owned(
-            self.factory
-                .cartesian_set_from_hash(state, self.numeric_domain_sizes, self.hash_multipliers)
-                .expect("every abstract state hash decodes to a region"),
+            self.regions
+                .borrow_mut()
+                .entry(state)
+                .or_insert_with(|| self.function.state_region(state))
+                .clone(),
         )
     }
 
     fn goal_distance(&self, state: usize) -> f64 {
-        self.table.distances[state]
+        self.built.distances[state]
     }
 
-    /// Evaluated on demand: the flaw search only asks about the states along
-    /// the abstract plan.
     fn is_goal(&self, state: usize) -> Result<bool> {
-        self.factory.is_goal_state(
-            self.task,
-            state,
-            &self.table.goal_facts,
-            self.numeric_domain_sizes,
-            self.hash_multipliers,
-        )
+        Ok(self.built.transitions.is_goal(state))
     }
 
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey> {
-        let op_id = self.table.generating_op_ids[state].with_context(|| {
+        let op_id = self.built.generating_op_ids[state].with_context(|| {
             format!(
                 "non-goal abstract state {state} with finite distance has no generating operator"
             )
         })?;
-        let op = &self.operators[op_id];
-        let target = (state as i64 - op.hash_effect as i64) as usize;
-        ensure!(
-            target < self.table.distances.len(),
-            "abstract operator {op_id} leads from state {state} out of the abstraction"
-        );
+        let op = &self.built.transitions.operators[op_id];
+        let target = state
+            .checked_add_signed(-op.regression_offset)
+            .filter(|&target| target < self.built.distances.len())
+            .with_context(|| {
+                format!("abstract operator {op_id} leads from state {state} out of the abstraction")
+            })?;
         let concrete_op_id = *op
             .concrete_op_ids
-            .iter()
-            .min()
-            .with_context(|| format!("abstract operator {op_id} has no concrete operator"))?;
+            .first()
+            .expect("every abstract operator has a label");
         Ok(TransitionKey {
             source: state,
             concrete_op_id,
@@ -114,23 +102,18 @@ impl AbstractionView for DomainView<'_> {
     /// Splitting a dimension of `values` values multiplies the abstract state
     /// count by `(values + 1) / values`.
     fn states_after(&self, split: &Split) -> u128 {
-        let values = match split {
-            Split::Propositional { var_id, .. } => self.factory.domain_sizes()[var_id.index()],
-            Split::Numeric { var_id, .. } => self.numeric_domain_sizes[var_id.index()],
-        } as u128;
-        self.table.distances.len() as u128 / values * (values + 1)
+        self.function.states_after_split(split)
     }
 
-    fn step_operators(&self, transition: TransitionKey) -> Vec<OperatorIndex> {
+    /// With wildcard plans, every label of the transition's abstract
+    /// operator, ascending.
+    fn step_operators<'a>(&'a self, transition: &'a TransitionKey) -> &'a [OperatorIndex] {
         if !self.wildcard_plans {
-            return vec![transition.concrete_op_id];
+            return std::slice::from_ref(&transition.concrete_op_id);
         }
-        let op_id = self.table.generating_op_ids[transition.source]
+        let op_id = self.built.generating_op_ids[transition.source]
             .expect("an optimal transition leaves through its generating operator");
-        let mut labels = self.operators[op_id].concrete_op_ids.clone();
-        labels.sort_unstable();
-        labels.dedup();
-        labels
+        &self.built.transitions.operators[op_id].concrete_op_ids
     }
 }
 
@@ -139,40 +122,57 @@ impl AbstractionView for DomainView<'_> {
 /// goal distances.
 pub(super) struct DomainRefinement<'a> {
     pub(super) task: &'a dyn AbstractNumericTask,
-    pub(super) factory: DomainAbstractionFactory,
+    pub(super) function: DomainAbstractionFunction,
     pub(super) limits: RefinementLimits<'a>,
     pub(super) combine_labels: bool,
     pub(super) wildcard_plans: bool,
-    pub(super) debug: bool,
-    /// The operators and goal distances of the current abstraction, built by
-    /// [`Refinable::view`].
-    built: Option<(
-        AbstractOperatorGenerator,
-        Vec<AbstractOperator>,
-        AbstractDistanceTable,
-    )>,
+    /// The transitions and goal distances of the current abstraction, built
+    /// by [`Refinable::view`].
+    built: Option<DomainBuild>,
+}
+
+/// The transitions of a domain abstraction and the goal distances under
+/// them, with the abstract operator each state's cheapest goal path starts
+/// with.
+#[derive(Debug)]
+pub(super) struct DomainBuild {
+    pub(super) transitions: DomainTransitions,
+    pub(super) distances: Vec<f64>,
+    pub(super) generating_op_ids: Vec<Option<usize>>,
+}
+
+impl DomainBuild {
+    pub(super) fn new(transitions: DomainTransitions, deadline: Deadline) -> Result<Self> {
+        let (distances, generating_op_ids) = transitions.goal_distances(deadline)?;
+        Ok(Self {
+            transitions,
+            distances,
+            generating_op_ids,
+        })
+    }
 }
 
 impl<'a> DomainRefinement<'a> {
     pub(super) fn new(
         task: &'a dyn AbstractNumericTask,
-        factory: DomainAbstractionFactory,
+        function: DomainAbstractionFunction,
         limits: RefinementLimits<'a>,
         config: &DomainAbstractionConfig,
     ) -> Self {
         Self {
             task,
-            factory,
+            function,
             limits,
             combine_labels: config.cegar.combine_labels,
             wildcard_plans: config.use_wildcard_plans,
-            debug: config.cegar.debug,
             built: None,
         }
     }
 
-    pub(super) fn into_factory(self) -> DomainAbstractionFactory {
-        self.factory
+    /// The abstraction, with the transitions and goal distances its last
+    /// view built if no split followed.
+    pub(super) fn into_parts(self) -> (DomainAbstractionFunction, Option<DomainBuild>) {
+        (self.function, self.built)
     }
 }
 
@@ -182,34 +182,22 @@ impl Refinable for DomainRefinement<'_> {
     where
         Self: 'b;
 
-    fn view(&mut self, deadline: Option<Instant>) -> Result<DomainView<'_>> {
-        let mut generator = self
-            .factory
-            .make_operator_generator(self.task, self.combine_labels)?;
-        let operators = generator.build_abstract_operators_with_deadline(self.task, deadline)?;
-        let table = self.factory.build_distance_table(
-            self.task,
-            &generator,
-            &operators,
-            DistanceTableOptions::default()
-                .with_dump_distances(self.debug)
-                .with_deadline(deadline),
-        )?;
-        let (generator, operators, table) = self.built.insert((generator, operators, table));
+    fn view(&mut self, deadline: Deadline) -> Result<DomainView<'_>> {
+        let transitions = self
+            .function
+            .transitions(self.task, self.combine_labels, deadline)?;
+        let built = self.built.insert(DomainBuild::new(transitions, deadline)?);
         Ok(DomainView {
-            task: self.task,
-            factory: &self.factory,
-            numeric_domain_sizes: generator.numeric_domain_sizes(),
-            hash_multipliers: generator.hash_multipliers(),
-            operators,
-            table,
+            function: &self.function,
+            built,
             limits: self.limits,
             wildcard_plans: self.wildcard_plans,
+            regions: RefCell::default(),
         })
     }
 
     fn apply_split(&mut self, split: Split) -> Result<()> {
         self.built = None;
-        self.factory.apply_split(self.task, &split)
+        self.function.apply_split(self.task, &split)
     }
 }

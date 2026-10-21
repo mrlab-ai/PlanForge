@@ -14,7 +14,8 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericType, OperatorIndex,
     VariableIndex,
@@ -22,14 +23,44 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
 
-use super::cartesian_set::{CartesianSet, sorted_value_sets_overlap};
+use super::cartesian_set::{CartesianSet, cartesian_set_is_nonempty, sorted_value_sets_overlap};
 use super::coordinates::Coordinates;
+use super::transition_system::{AbstractOperatorSourceSets, LabelSourceSet};
 
-pub(crate) struct RegionSemantics<'task> {
+/// The interval of numeric variable `var_id` of `task` in the trivial
+/// abstraction: a constant at its value, every other variable unbounded.
+pub(crate) fn trivial_interval(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> Interval {
+    let variable = &task.numeric_variables()[var_id.index()];
+    if variable.get_type() != &NumericType::Constant {
+        return Interval::unbounded();
+    }
+    let value =
+        float_tolerance::canonicalize(task.get_initial_numeric_state_values()[var_id.index()]);
+    assert!(
+        value.is_finite(),
+        "constant numeric variable {} has the non-finite value {value}",
+        variable.name()
+    );
+    Interval::singleton(value)
+}
+
+/// The deadline operation of building source sets.
+pub(crate) const SOURCE_SETS: &str = "abstract source sets";
+
+/// What regions of the concrete state space admit, guarantee, and let an
+/// operator lead into.
+pub struct RegionSemantics<'task> {
     task: &'task dyn AbstractNumericTask,
     coordinates: Coordinates<'task>,
     /// The propositional axioms writing each propositional variable.
     axioms_by_var: Vec<Vec<usize>>,
+    /// Per propositional variable with axioms, the value it has where none
+    /// of them fires.
+    axiom_defaults: Vec<Option<ExplicitValueIndex>>,
+    /// Per operator, the value its successors have on each operator
+    /// variable it writes or requires, sorted by variable: the effect's
+    /// value, else the prevail condition's.
+    successor_values: Vec<Box<[(VariableIndex, ExplicitValueIndex)]>>,
 }
 
 impl<'task> RegionSemantics<'task> {
@@ -43,10 +74,61 @@ impl<'task> RegionSemantics<'task> {
             );
             axioms_by_var[var_id.index()].push(axiom_id);
         }
+        let axiom_defaults = axioms_by_var
+            .iter()
+            .enumerate()
+            .map(|(var_id, axiom_ids)| {
+                let Some((&first_axiom_id, remaining)) = axiom_ids.split_first() else {
+                    return Ok(None);
+                };
+                let default_value = task.axioms()[first_axiom_id].precondition_value();
+                ensure!(
+                    remaining
+                        .iter()
+                        .all(|&axiom_id| task.axioms()[axiom_id].precondition_value()
+                            == default_value),
+                    "propositional axioms for variable {var_id} disagree on default value"
+                );
+                Ok(Some(default_value))
+            })
+            .collect::<Result<_>>()?;
+        let is_operator_variable = |var_id: VariableIndex| {
+            !task.numeric_conditions().is_condition_var(var_id)
+                && axioms_by_var[var_id.index()].is_empty()
+        };
+        let successor_values = task
+            .get_operators()
+            .iter()
+            .enumerate()
+            .map(|(op_id, op)| {
+                // Effects before prevail conditions, each in order: the first
+                // entry of a variable is the one that determines its value.
+                let mut values =
+                    op.effects()
+                        .iter()
+                        .map(|effect| {
+                            debug_assert!(
+                                effect.conditions().is_empty(),
+                                "validated operator {op_id} has a conditional effect"
+                            );
+                            (effect.var_id(), effect.value() as ExplicitValueIndex)
+                        })
+                        .chain(op.preconditions().iter().map(|precondition| {
+                            (precondition.var_index(), precondition.value_index())
+                        }))
+                        .filter(|&(var_id, _)| is_operator_variable(var_id))
+                        .collect::<Vec<_>>();
+                values.sort_by_key(|&(var_id, _)| var_id);
+                values.dedup_by_key(|&mut (var_id, _)| var_id);
+                values.into_boxed_slice()
+            })
+            .collect();
         Ok(Self {
             task,
             coordinates: Coordinates::new(task),
             axioms_by_var,
+            axiom_defaults,
+            successor_values,
         })
     }
 
@@ -76,10 +158,7 @@ impl<'task> RegionSemantics<'task> {
     pub(crate) fn trivial_region(&self) -> Result<CartesianSet> {
         let propositions = (0..self.task.get_num_variables())
             .map(|var_id| {
-                let size = self
-                    .task
-                    .get_variable_domain_size(VariableIndex::from_usize(var_id))
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let size = self.task.variables()[var_id].domain_size();
                 ensure!(size > 0, "propositional var {var_id} has an empty domain");
                 ensure!(
                     u32::try_from(size).is_ok(),
@@ -88,19 +167,8 @@ impl<'task> RegionSemantics<'task> {
                 Ok((0..size as u32).map(ExplicitValueIndex::new).collect())
             })
             .collect::<Result<Vec<_>>>()?;
-        let initial_numeric = self.task.get_initial_numeric_state_values();
-        let numeric: Vec<_> = self
-            .task
-            .numeric_variables()
-            .iter()
-            .enumerate()
-            .map(|(var_id, var)| {
-                if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
-                } else {
-                    Interval::unbounded()
-                }
-            })
+        let numeric: Vec<_> = (0..self.task.numeric_variables().len())
+            .map(|var_id| trivial_interval(self.task, VariableIndex::from_usize(var_id)))
             .collect();
         // Every dimension carries its whole domain, so nothing is constrained
         // yet; refinement adds constraints one dimension at a time.
@@ -113,23 +181,23 @@ impl<'task> RegionSemantics<'task> {
 
     /// Whether some state of `region` satisfies `fact`.
     pub(crate) fn admits(&self, region: &CartesianSet, fact: &ExplicitFact) -> Result<bool> {
-        self.admits_with(region, fact, &mut self.unvisited())
+        self.admits_with(region, fact, &mut Vec::new())
     }
 
     /// Whether every state of `region` satisfies `fact`.
     pub(crate) fn guarantees(&self, region: &CartesianSet, fact: &ExplicitFact) -> Result<bool> {
-        self.guarantees_with(region, fact, &mut self.unvisited())
+        self.guarantees_with(region, fact, &mut Vec::new())
     }
 
     /// Whether `region` admits each of `facts` (not necessarily in one state).
     pub(crate) fn admits_all(&self, region: &CartesianSet, facts: &[ExplicitFact]) -> Result<bool> {
-        self.admits_all_with(region, facts, &mut self.unvisited())
+        self.admits_all_with(region, facts, &mut Vec::new())
     }
 
     /// Whether `region` admits every goal fact.
     pub(crate) fn is_goal(&self, region: &CartesianSet) -> Result<bool> {
-        for goal_id in 0..self.task.get_num_goals() {
-            if !self.admits(region, self.task.get_goal_fact(goal_id))? {
+        for goal in self.task.goals() {
+            if !self.admits(region, goal)? {
                 return Ok(false);
             }
         }
@@ -138,19 +206,9 @@ impl<'task> RegionSemantics<'task> {
 
     /// The value a propositional axiom variable has where none of its axioms
     /// fires.
-    pub(crate) fn axiom_default(&self, var_id: VariableIndex) -> Result<ExplicitValueIndex> {
-        let (&first_axiom_id, remaining) = self
-            .axioms_for(var_id)
-            .split_first()
-            .with_context(|| format!("variable {var_id} has no propositional axiom"))?;
-        let default_value = self.task.axioms()[first_axiom_id].precondition_value();
-        for &axiom_id in remaining {
-            ensure!(
-                self.task.axioms()[axiom_id].precondition_value() == default_value,
-                "propositional axioms for variable {var_id} disagree on default value"
-            );
-        }
-        Ok(default_value)
+    pub(crate) fn axiom_default(&self, var_id: VariableIndex) -> ExplicitValueIndex {
+        self.axiom_defaults[var_id.index()]
+            .unwrap_or_else(|| panic!("variable {var_id} has no propositional axiom"))
     }
 
     /// Whether comparison `tree_id` may be true and may be false in `region`.
@@ -203,29 +261,16 @@ impl<'task> RegionSemantics<'task> {
             self.is_operator_variable(var_id),
             "derived proposition {var_id} has no explicit transition relation"
         );
-        let op = &self.task.get_operators()[op_id.index()];
-        if let Some(effect) = op.effects().iter().find(|effect| effect.var_id() == var_id) {
-            debug_assert!(
-                effect.conditions().is_empty(),
-                "validated operator {op_id} has a conditional effect"
-            );
-            return target.propositions()[var_id.index()]
-                .binary_search(&(effect.value() as ExplicitValueIndex))
-                .is_ok();
+        let successor_values = &self.successor_values[op_id.index()];
+        let target_values = &target.propositions()[var_id.index()];
+        match successor_values.binary_search_by_key(&var_id, |&(var_id, _)| var_id) {
+            Ok(index) => target_values
+                .binary_search(&successor_values[index].1)
+                .is_ok(),
+            Err(_) => {
+                sorted_value_sets_overlap(&source.propositions()[var_id.index()], target_values)
+            }
         }
-        if let Some(prevail) = op
-            .preconditions()
-            .iter()
-            .find(|precondition| precondition.var_index() == var_id)
-        {
-            return target.propositions()[var_id.index()]
-                .binary_search(&prevail.value_index())
-                .is_ok();
-        }
-        sorted_value_sets_overlap(
-            &source.propositions()[var_id.index()],
-            &target.propositions()[var_id.index()],
-        )
     }
 
     /// Whether applying `op_id` with numeric coordinate `var_id` in `source`
@@ -237,7 +282,7 @@ impl<'task> RegionSemantics<'task> {
         target: Interval,
         var_id: VariableIndex,
     ) -> Result<bool> {
-        let Some(preimage) = self.coordinates.preimage(target, op_id, var_id)? else {
+        let Some(preimage) = self.coordinates.preimage(target, op_id, var_id) else {
             return Ok(false);
         };
         Ok(!source.is_empty() && preimage.intersects(&source))
@@ -245,17 +290,26 @@ impl<'task> RegionSemantics<'task> {
 
     /// Whether `op_id` may induce an abstract transition from `source` to
     /// `target`: it may apply in `source`, and on every operator variable and
-    /// numeric coordinate some applicable state may reach `target`.
+    /// numeric coordinate some applicable state may reach `target`. A
+    /// variable `target` does not constrain admits every successor value.
     pub(crate) fn may_transition(
         &self,
         source: &CartesianSet,
         op_id: OperatorIndex,
         target: &CartesianSet,
     ) -> Result<bool> {
+        debug_assert!(
+            cartesian_set_is_nonempty(source),
+            "transition source region is empty"
+        );
         if !self.operator_may_apply(source, op_id)? {
             return Ok(false);
         }
-        for var_id in (0..self.task.get_num_variables()).map(VariableIndex::from_usize) {
+        for var_id in target
+            .constrained_props()
+            .iter()
+            .map(|&var_id| VariableIndex::new(var_id))
+        {
             if self.is_operator_variable(var_id)
                 && !self.propositional_may_transition(source, op_id, target, var_id)
             {
@@ -317,7 +371,7 @@ impl<'task> RegionSemantics<'task> {
                 NumericType::Regular => {
                     let Some(preimage) =
                         self.coordinates
-                            .preimage(target.numeric[numeric_var_id], op_id, var_id)?
+                            .preimage(target.numeric[numeric_var_id], op_id, var_id)
                     else {
                         return Ok(None);
                     };
@@ -325,7 +379,7 @@ impl<'task> RegionSemantics<'task> {
                 }
                 NumericType::Derived if self.coordinates.views()[numeric_var_id].is_some() => self
                     .coordinates
-                    .preimage(target.numeric[numeric_var_id], op_id, var_id)?
+                    .preimage(target.numeric[numeric_var_id], op_id, var_id)
                     .expect("additive-view preimage is always defined"),
                 NumericType::Derived | NumericType::Cost => continue,
             };
@@ -340,29 +394,55 @@ impl<'task> RegionSemantics<'task> {
         Ok(Some(source_set))
     }
 
-    fn unvisited(&self) -> Vec<bool> {
-        vec![false; self.task.get_num_variables()]
+    /// The source sets of an abstract operator from `source` to `target`
+    /// with `labels`: for each label, the states of `source` from which it
+    /// may lead into `target`. A label that may leave from all of `source`
+    /// shares it.
+    pub(crate) fn abstract_operator_source_sets(
+        &self,
+        source: &Arc<CartesianSet>,
+        labels: &[OperatorIndex],
+        target: &CartesianSet,
+    ) -> Result<AbstractOperatorSourceSets> {
+        let labels = labels
+            .iter()
+            .map(|&concrete_op_id| {
+                let source_set = self
+                    .transition_source_set(source, concrete_op_id, target)?
+                    .with_context(|| {
+                        format!("operator {concrete_op_id} has an empty source set")
+                    })?;
+                let source = if source_set == **source {
+                    Arc::clone(source)
+                } else {
+                    Arc::new(source_set)
+                };
+                Ok(LabelSourceSet {
+                    concrete_op_id,
+                    source,
+                })
+            })
+            .collect::<Result<_>>()?;
+        Ok(AbstractOperatorSourceSets { labels })
     }
 
     fn admits_with(
         &self,
         region: &CartesianSet,
         fact: &ExplicitFact,
-        visiting: &mut [bool],
+        visiting: &mut Vec<VariableIndex>,
     ) -> Result<bool> {
         let var_id = fact.var_index();
         if let Some(tree_id) = self.task.numeric_conditions().id_for_var(var_id) {
             let (may_true, may_false) = self.comparison_truths(region, tree_id)?;
-            return Ok(match fact.value() {
-                0 => may_true,
-                1 => may_false,
-                2 => may_true || may_false,
-                value => bail!("invalid comparison proposition value {value} for var {var_id}"),
+            return Ok(match comparison_value(fact)? {
+                ConditionValue::True => may_true,
+                ConditionValue::False => may_false,
             });
         }
         if !self.axioms_for(var_id).is_empty() {
             return self.with_visiting(var_id, visiting, |visiting| {
-                let default_value = self.axiom_default(var_id)?;
+                let default_value = self.axiom_default(var_id);
                 if fact.value_index() == default_value {
                     for &axiom_id in self.axioms_for(var_id) {
                         let conditions = self.task.axioms()[axiom_id].conditions();
@@ -392,21 +472,19 @@ impl<'task> RegionSemantics<'task> {
         &self,
         region: &CartesianSet,
         fact: &ExplicitFact,
-        visiting: &mut [bool],
+        visiting: &mut Vec<VariableIndex>,
     ) -> Result<bool> {
         let var_id = fact.var_index();
         if let Some(tree_id) = self.task.numeric_conditions().id_for_var(var_id) {
             let (may_true, may_false) = self.comparison_truths(region, tree_id)?;
-            return Ok(match fact.value() {
-                0 => may_true && !may_false,
-                1 => may_false && !may_true,
-                2 => false,
-                value => bail!("invalid comparison proposition value {value} for var {var_id}"),
+            return Ok(match comparison_value(fact)? {
+                ConditionValue::True => may_true && !may_false,
+                ConditionValue::False => may_false && !may_true,
             });
         }
         if !self.axioms_for(var_id).is_empty() {
             return self.with_visiting(var_id, visiting, |visiting| {
-                let default_value = self.axiom_default(var_id)?;
+                let default_value = self.axiom_default(var_id);
                 if fact.value_index() == default_value {
                     for &axiom_id in self.axioms_for(var_id) {
                         let conditions = self.task.axioms()[axiom_id].conditions();
@@ -435,7 +513,7 @@ impl<'task> RegionSemantics<'task> {
         &self,
         region: &CartesianSet,
         facts: &[ExplicitFact],
-        visiting: &mut [bool],
+        visiting: &mut Vec<VariableIndex>,
     ) -> Result<bool> {
         for fact in facts {
             if !self.admits_with(region, fact, visiting)? {
@@ -449,7 +527,7 @@ impl<'task> RegionSemantics<'task> {
         &self,
         region: &CartesianSet,
         facts: &[ExplicitFact],
-        visiting: &mut [bool],
+        visiting: &mut Vec<VariableIndex>,
     ) -> Result<bool> {
         for fact in facts {
             if !self.guarantees_with(region, fact, visiting)? {
@@ -459,21 +537,32 @@ impl<'task> RegionSemantics<'task> {
         Ok(true)
     }
 
-    /// Evaluate `evaluate` with `var_id` marked as visited, rejecting cyclic
-    /// axiom support.
+    /// Evaluate `evaluate` with `var_id` on the stack of the derived
+    /// variables being evaluated, `visiting`, rejecting cyclic axiom support.
     fn with_visiting(
         &self,
         var_id: VariableIndex,
-        visiting: &mut [bool],
-        evaluate: impl FnOnce(&mut [bool]) -> Result<bool>,
+        visiting: &mut Vec<VariableIndex>,
+        evaluate: impl FnOnce(&mut Vec<VariableIndex>) -> Result<bool>,
     ) -> Result<bool> {
         ensure!(
-            !visiting[var_id.index()],
+            !visiting.contains(&var_id),
             "cyclic propositional axiom support for variable {var_id}"
         );
-        visiting[var_id.index()] = true;
+        visiting.push(var_id);
         let result = evaluate(visiting);
-        visiting[var_id.index()] = false;
+        visiting.pop();
         result
     }
+}
+
+/// The truth value the comparison fact `fact` asks for.
+fn comparison_value(fact: &ExplicitFact) -> Result<ConditionValue> {
+    ConditionValue::from_usize(fact.value()).with_context(|| {
+        format!(
+            "invalid comparison proposition value {} for var {}",
+            fact.value(),
+            fact.var()
+        )
+    })
 }

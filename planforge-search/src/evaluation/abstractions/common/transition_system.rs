@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{ExplicitFact, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
 
 use super::cartesian_set::CartesianSet;
@@ -16,8 +16,8 @@ pub struct AbstractTransition {
     pub transition_id: usize,
     pub abstract_op_id: usize,
     pub concrete_op_ids: Vec<OperatorIndex>,
-    pub source_hash: usize,
-    pub target_hash: usize,
+    pub source_state: usize,
+    pub target_state: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,28 +31,14 @@ pub struct LabelSourceSet {
     pub source: Arc<CartesianSet>,
 }
 
+/// An explicit abstract transition system.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransitionSystem {
     pub transitions: Vec<AbstractTransition>,
+    /// The transitions into each state.
     pub backward: Vec<Vec<usize>>,
-    pub forward: Vec<Vec<usize>>,
-    pub goal_facts: Vec<ExplicitFact>,
-    pub goal_state_hashes: Vec<usize>,
-    pub initial_state_hash: usize,
-    pub hash_multipliers: Vec<usize>,
-    pub numeric_domain_sizes: Vec<usize>,
-    pub cartesian_sets: Vec<Arc<CartesianSet>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AbstractDistanceTable {
-    pub distances: Vec<f64>,
-    // Per-state operator leading to a goal along a shortest path.
-    pub generating_op_ids: Vec<Option<usize>>,
-    pub initial_state_hash: usize,
-    pub goal_facts: Vec<ExplicitFact>,
-    pub hash_multipliers: Vec<usize>,
-    pub numeric_domain_sizes: Vec<usize>,
+    /// The abstract goal states, ascending.
+    pub goal_states: Vec<usize>,
 }
 
 /// A graph whose goal distances [`backward_goal_distances`] computes.
@@ -91,9 +77,9 @@ impl BackwardGraph for CostedTransitionSystem<'_> {
         incoming.clear();
         for &transition_id in &self.system.backward[target] {
             let transition = &self.system.transitions[transition_id];
-            debug_assert_eq!(transition.target_hash, target);
+            debug_assert_eq!(transition.target_state, target);
             incoming.push((
-                transition.source_hash,
+                transition.source_state,
                 transition.abstract_op_id,
                 self.transition_costs[transition_id],
             ));
