@@ -218,7 +218,7 @@ fn native_random_selector_is_seeded() {
         };
         (0..32)
             .map(|_| {
-                select_refinement_split(&view, semantics.cegar(), candidates.clone(), 0)
+                select_split(&view, semantics.cegar(), candidates.clone(), 0)
                     .unwrap()
                     .dimension()
             })

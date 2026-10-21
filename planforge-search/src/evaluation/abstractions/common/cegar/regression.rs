@@ -50,7 +50,7 @@ use planforge_sas::utils::interval::Interval;
 use std::collections::HashSet;
 
 use super::progression::{ConcretePlan, PlanCheck};
-use super::selection::{push_unique_split, select_refinement};
+use super::selection::{WHOLE_PLAN_TAG, push_unique_split, select_split};
 use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::{AbstractionView, TransitionKey};
@@ -562,7 +562,12 @@ pub(crate) fn regression_plan_check(
                     flaw_split(view, semantics, &state_ids, flaw)?,
                 );
             }
-            select_refinement(view, semantics, candidates)
+            Ok(PlanCheck::Refine(select_split(
+                view,
+                semantics,
+                candidates,
+                WHOLE_PLAN_TAG,
+            )?))
         }
     }
 }

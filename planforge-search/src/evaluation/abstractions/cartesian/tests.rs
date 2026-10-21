@@ -25,7 +25,7 @@ use super::{
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::selection::{
-    push_unique_split, retain_min_growth_splits, select_refinement_split,
+    push_unique_split, retain_min_growth_splits, select_split,
 };
 use crate::evaluation::abstractions::common::cegar::semantics::numeric_split_choice_key;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind, FlawScope};

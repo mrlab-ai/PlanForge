@@ -1,4 +1,4 @@
-pub(crate) mod fact_splits;
+pub(crate) mod flaw_splits;
 pub mod initial_splits;
 pub mod options;
 pub(crate) mod progression;
