@@ -73,6 +73,7 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         &*task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -115,35 +116,6 @@ fn diverse_order_generator_requires_diversify() {
         error
             .to_string()
             .contains("diverse SCP orders require diversify=true")
-    );
-}
-
-#[test]
-fn diverse_orders_reject_nan_initial_order_budget() {
-    let task = std::sync::Arc::new(independent_goals_task());
-    let component = AbstractionComponent::from(cartesian_abstraction(&task));
-    let mut config = scp_config(Saturator::All, true);
-    config.diversify = true;
-    config.initial_order_generation_max_time = f64::NAN;
-
-    let result = SaturatedCostPartitioningHeuristic::new(
-        None,
-        vec![component],
-        config,
-        &*task,
-        ScpBuildOptions {
-            sampling_task: Some(task.clone()),
-        },
-    );
-    let error = match result {
-        Ok(_) => panic!("NaN initial-order budget must be rejected"),
-        Err(error) => error,
-    };
-
-    assert!(
-        error
-            .to_string()
-            .contains("initial_order_generation_max_time")
     );
 }
 

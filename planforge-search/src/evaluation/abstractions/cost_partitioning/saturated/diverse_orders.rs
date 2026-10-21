@@ -6,15 +6,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         collection: PartitionedCollection<'_, '_>,
         state: &mut ScpState,
         initial_candidates: Vec<CostPartitioningHeuristic>,
-        table_deadline: Deadline,
+        budget: Deadline,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let initial_abstract_state_ids = collection.abstract_state_ids;
         assert!(self.config.diversify);
         assert!(!initial_candidates.is_empty());
         assert!(!initial_candidates[0].is_empty());
 
-        let deadline =
-            table_deadline.earliest(deadline_from_now("max_time", self.config.max_time)?);
+        let deadline = budget.earliest(deadline_from_now("max_time", self.config.max_time)?);
         let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
         self.sample_states(state, initial_h, deadline)?;
         assert!(
@@ -104,12 +103,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 if selected.len() >= self.config.max_orders || deadline.passed() {
                     break;
                 }
-                let candidate = self.build_cp(sample_collection, &order, deadline);
-                let candidate = match candidate {
-                    Ok(candidate) => candidate,
-                    Err(error) if Self::is_deadline_exceeded(&error) => break,
-                    Err(error) => return Err(error),
-                };
+                let (candidate, completion) = self.build_cp(sample_collection, &order, deadline)?;
                 evaluated_orders += 1;
 
                 retain_if_improving_some_sample(
@@ -119,6 +113,9 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                     &mut selected,
                     &mut selected_size_kb,
                 );
+                if completion == Completion::Truncated {
+                    break;
+                }
             }
         }
 

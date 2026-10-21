@@ -8,6 +8,7 @@ use super::sampling::*;
 
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use std::time::Duration;
 
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 
@@ -110,8 +111,8 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
 
 pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpConfig {
     ScpConfig {
-        max_time: 10.0,
-        table_construction_max_time: 10.0,
+        max_time: Some(Duration::from_secs(10)),
+        table_construction_max_time: Some(Duration::from_secs(10)),
         saturator,
         random_seed: Some(1),
         partitioning: if abstract_operator {
@@ -121,45 +122,6 @@ pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpCo
         },
         ..ScpConfig::default()
     }
-}
-
-#[test]
-fn scp_rejects_negative_and_nan_time_limits() {
-    let valid = scp_config(Saturator::All, false);
-    valid.validate(true).unwrap();
-    for seconds in [-1.0, f64::NAN, f64::NEG_INFINITY] {
-        let configs = [
-            ScpConfig {
-                max_time: seconds,
-                ..valid.clone()
-            },
-            ScpConfig {
-                table_construction_max_time: seconds,
-                ..valid.clone()
-            },
-            ScpConfig {
-                initial_order_generation_max_time: seconds,
-                ..valid.clone()
-            },
-        ];
-        for config in configs {
-            let error = config.validate(true).unwrap_err();
-            assert!(error.contains("non-negative number of seconds"), "{error}");
-        }
-    }
-}
-
-#[test]
-fn capping_scp_construction_time_keeps_invalid_limits() {
-    let mut config = ScpConfig {
-        table_construction_max_time: f64::NAN,
-        initial_order_generation_max_time: f64::INFINITY,
-        ..scp_config(Saturator::All, false)
-    };
-    config.cap_construction_time(5.0);
-    assert!(config.table_construction_max_time.is_nan());
-    assert_eq!(config.initial_order_generation_max_time, 5.0);
-    assert!(config.validate(true).is_err());
 }
 
 pub(super) fn evaluate_initial(
@@ -225,7 +187,7 @@ pub(super) fn goal_cover_scp<'task>(
     config.diversify = true;
     config.samples = 16;
     config.max_orders = max_orders(expected_goals.len());
-    config.initial_order_generation_max_time = 10.0;
+    config.initial_order_generation_max_time = Some(Duration::from_secs(10));
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
@@ -233,6 +195,7 @@ pub(super) fn goal_cover_scp<'task>(
         &**task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
+            ..Default::default()
         },
     )
     .unwrap();

@@ -90,6 +90,7 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     state_values: RefCell<ExplicitState>,
     component_ids_scratch: RefCell<Vec<Option<usize>>>,
     sampling_task: RefCell<Option<TaskRef<'task>>>,
+    construction_deadline: Deadline,
 }
 
 /// What a [`SaturatedCostPartitioningHeuristic`] needs besides its abstractions
@@ -99,6 +100,9 @@ pub struct ScpBuildOptions<'task> {
     /// An owned task to sample states from by random walks; required for
     /// diverse orders.
     pub sampling_task: Option<TaskRef<'task>>,
+    /// When the heuristic's construction must end, which bounds building the
+    /// cost partitionings at the first evaluated state too.
+    pub construction_deadline: Deadline,
 }
 
 /// The components of a collection of domain abstractions, Cartesian
@@ -128,7 +132,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         task: &'task dyn AbstractNumericTask,
         options: ScpBuildOptions<'task>,
     ) -> Result<Self, EvaluationError> {
-        let ScpBuildOptions { sampling_task } = options;
+        let ScpBuildOptions {
+            sampling_task,
+            construction_deadline,
+        } = options;
         if components.is_empty() {
             return Err(EvaluationError::ComputationFailed(
                 "SCP requires at least one abstraction component".to_string(),
@@ -212,6 +219,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             state_values: RefCell::default(),
             component_ids_scratch: RefCell::new(Vec::new()),
             sampling_task: RefCell::new(sampling_task),
+            construction_deadline,
         })
     }
 
@@ -224,10 +232,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let components = self.components.borrow();
-        let deadline = deadline_from_now(
+        let budget = self.construction_deadline.earliest(deadline_from_now(
             "table_construction_max_time",
             self.config.table_construction_max_time,
-        )?;
+        )?);
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
             components: &components,
@@ -249,7 +257,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         );
 
         if !self.config.diversify {
-            let cp = self.build_cp(collection, &order, deadline)?;
+            let (cp, _) = self.build_cp(collection, &order, budget)?;
             if cp.is_empty() {
                 info!("scp: the greedy order's {mode} cost partitioning has no lookup tables");
                 return Ok(Vec::new());
@@ -259,7 +267,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut candidates = self.build_best_cp_from_candidate_orders(
             collection,
             &mut order,
-            deadline,
+            budget,
             self.config.initial_order_generation_max_time,
         )?;
         let best = candidates.partitions.swap_remove(candidates.best_index);
@@ -273,7 +281,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             initial_candidates.push(best);
         }
         initial_candidates.extend(candidates.partitions);
-        self.select_diverse_orders(collection, state, initial_candidates, deadline)
+        self.select_diverse_orders(collection, state, initial_candidates, budget)
     }
 
     /// Stores `cp` unless an identical cost partitioning is stored already.

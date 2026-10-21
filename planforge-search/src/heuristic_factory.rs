@@ -399,7 +399,7 @@ fn build_scp_from_sources<'task>(
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     let ScpSourceConfig {
         sources,
-        mut config,
+        config,
         construction_deadline,
     } = source_config;
     if sources.is_empty() {
@@ -415,9 +415,7 @@ fn build_scp_from_sources<'task>(
         ComponentUse::LabelCostPartitioning
     };
     let components = build_components(task, &sources, component_use, construction_deadline)?;
-    if let Some(remaining) = remaining_construction_time(construction_deadline)? {
-        config.cap_construction_time(remaining.as_secs_f64());
-    }
+    remaining_construction_time(construction_deadline)?;
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         Some(name.to_string()),
         components,
@@ -425,6 +423,7 @@ fn build_scp_from_sources<'task>(
         task,
         ScpBuildOptions {
             sampling_task: Some(sampling_task),
+            construction_deadline,
         },
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;

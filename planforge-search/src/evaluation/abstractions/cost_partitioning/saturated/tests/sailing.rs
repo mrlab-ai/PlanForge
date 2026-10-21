@@ -180,7 +180,7 @@ fn initial_cartesian_scp_value(
         })
         .collect::<Vec<_>>();
     let config = ScpConfig {
-        table_construction_max_time: 30.0,
+        table_construction_max_time: Some(Duration::from_secs(30)),
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: if partitioning {
@@ -240,13 +240,13 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     }
 
     let config = ScpConfig {
-        max_time: 300.0,
-        table_construction_max_time: 30.0,
+        max_time: Some(Duration::from_secs(300)),
+        table_construction_max_time: Some(Duration::from_secs(30)),
         diversify: false,
         samples: 1_000,
         max_orders: usize::MAX,
         order_generator: OrderGenerator::Greedy,
-        initial_order_generation_max_time: 0.0,
+        initial_order_generation_max_time: Some(Duration::ZERO),
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: CostPartitioningMethod::Region,

@@ -134,7 +134,10 @@ fn parses_hierarchical_scp_options_and_sources() {
     assert_eq!(config.samples, 123);
     assert_eq!(config.max_orders, 17);
     assert_eq!(config.order_generator, OrderGenerator::Diverse);
-    assert_eq!(config.initial_order_generation_max_time, 9.0);
+    assert_eq!(
+        config.initial_order_generation_max_time,
+        Some(std::time::Duration::from_secs(9))
+    );
 }
 
 #[test]

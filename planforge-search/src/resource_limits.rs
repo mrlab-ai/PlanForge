@@ -75,7 +75,7 @@ pub fn min_time_limit(left: Option<Duration>, right: Option<Duration>) -> Option
 }
 
 /// The instant a bounded operation must stop at, or none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Deadline(Option<Instant>);
 
 impl Deadline {
