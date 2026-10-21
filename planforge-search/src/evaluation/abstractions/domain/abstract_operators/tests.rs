@@ -10,8 +10,8 @@ use planforge_sas::numeric_task::{
     OperatorCost, VariableIndex,
 };
 
-use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
+use crate::evaluation::abstractions::domain::test_support::identity_domain_mapping_and_sizes;
 use planforge_sas::utils::interval::Interval;
 
 /// The abstraction of `task` that keeps every propositional value apart and
@@ -20,7 +20,7 @@ fn identity_factory(
     task: &NumericRootTask,
     partitions: NumericPartitions,
 ) -> DomainAbstractionFactory {
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task);
     DomainAbstractionFactory::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         domain_mapping,

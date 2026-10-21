@@ -1,13 +1,13 @@
 //! The intervals numeric conditions are evaluated over in an abstract state.
 
-use anyhow::{Result, ensure};
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex, ZERO_VALUE};
-use planforge_sas::utils::float_tolerance;
 
 use super::layout::StateLayout;
 use super::partitions::NumericPartitions;
 use planforge_sas::numeric_conditions::NumericCondition;
 use planforge_sas::utils::interval::Interval;
+
+use crate::evaluation::abstractions::common::regions::trivial_interval;
 
 /// Propagate every comparison tree's arithmetic nodes into the intervals of the
 /// derived numeric variables they define.
@@ -25,48 +25,62 @@ pub fn fill_derived_numeric_intervals_from_comparison_trees(
     }
 }
 
+/// Fills `out` with the interval of every numeric variable that numeric
+/// conditions are evaluated over: a refined coordinate at the interval
+/// `refined` gives it, an unrefined derived variable through the comparison
+/// trees defining it, and every other variable at its trivial interval. A
+/// derived variable no tree defines, or one its operands leave undefined, is
+/// unbounded.
+pub(super) fn fill_condition_intervals(
+    task: &dyn AbstractNumericTask,
+    refined: impl Fn(VariableIndex) -> Option<Interval>,
+    out: &mut Vec<Interval>,
+) {
+    let is_unrefined_derived = |var_id: VariableIndex| {
+        task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
+            && refined(var_id).is_none()
+    };
+    out.clear();
+    out.extend(
+        (0..task.numeric_variables().len())
+            .map(VariableIndex::from_usize)
+            .map(|var_id| {
+                if is_unrefined_derived(var_id) {
+                    // Empty until the comparison trees fill it in.
+                    Interval::new(ZERO_VALUE, ZERO_VALUE, false, false)
+                } else {
+                    refined(var_id).unwrap_or_else(|| trivial_interval(task, var_id))
+                }
+            }),
+    );
+    fill_derived_numeric_intervals_from_comparison_trees(task.numeric_conditions().all(), out);
+    for (var_id, interval) in out.iter_mut().enumerate() {
+        if interval.is_empty() {
+            assert!(
+                is_unrefined_derived(VariableIndex::from_usize(var_id)),
+                "numeric variable {var_id} has an empty interval"
+            );
+            *interval = Interval::unbounded();
+        }
+    }
+}
+
 /// Fills `out` with the interval of every numeric variable over abstract
-/// state `state`: a constant at its value, a regular or refined derived
-/// variable at its partition, the cost unbounded, and an unrefined derived
-/// variable through the comparison trees defining it. A derived variable no
-/// tree defines, or one its operands leave undefined, is unbounded.
+/// state `state`; see [`fill_condition_intervals`].
 pub(super) fn fill_state_intervals(
     task: &dyn AbstractNumericTask,
-    comparison_trees: &[NumericCondition],
     partitions: &NumericPartitions,
     layout: &StateLayout,
     state: usize,
     out: &mut Vec<Interval>,
-) -> Result<()> {
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    out.clear();
-    for (numeric_var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
-        let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
-        out.push(match numeric_var.get_type() {
-            NumericType::Constant => {
-                let value =
-                    float_tolerance::canonicalize(initial_numeric_values[numeric_var_id.index()]);
-                ensure!(
-                    value.is_finite(),
-                    "constant numeric value for var {numeric_var_id} must be finite, got {value}"
-                );
-                Interval::singleton(value)
-            }
-            NumericType::Derived if layout.numeric_domain_sizes()[numeric_var_id.index()] == 1 => {
-                // Empty until the comparison trees fill it in.
-                Interval::new(ZERO_VALUE, ZERO_VALUE, false, false)
-            }
-            NumericType::Derived | NumericType::Regular => partitions
-                .partition_interval(numeric_var_id, layout.partition(state, numeric_var_id)),
-            NumericType::Cost => Interval::unbounded(),
-        });
-    }
-
-    fill_derived_numeric_intervals_from_comparison_trees(comparison_trees, out);
-    for interval in out.iter_mut() {
-        if interval.is_empty() {
-            *interval = Interval::unbounded();
-        }
-    }
-    Ok(())
+) {
+    fill_condition_intervals(
+        task,
+        |var_id| {
+            (layout.numeric_domain_sizes()[var_id.index()] > 1
+                || task.numeric_variables()[var_id.index()].get_type() == &NumericType::Regular)
+                .then(|| partitions.partition_interval(var_id, layout.partition(state, var_id)))
+        },
+        out,
+    );
 }

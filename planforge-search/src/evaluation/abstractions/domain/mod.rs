@@ -16,9 +16,10 @@ pub mod config;
 pub(crate) mod debug_dump;
 pub mod factory;
 pub mod generator;
-pub mod initial_splits;
 pub mod layout;
 pub mod partitions;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod view;
 
 /// The id a domain abstraction gives numeric variable `numeric_var_id`.

@@ -949,9 +949,7 @@ mod tests {
     fn state(task: &dyn AbstractNumericTask, numeric: Vec<Interval>) -> CartesianSet {
         let propositions = (0..task.get_num_variables())
             .map(|var| {
-                (0..task
-                    .get_variable_domain_size(VariableIndex::from_usize(var))
-                    .unwrap())
+                (0..task.variables()[var].domain_size())
                     .map(ExplicitValueIndex::from_usize)
                     .collect()
             })

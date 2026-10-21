@@ -8,12 +8,12 @@ use anyhow::{Context, Result};
 
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex, NumericType,
-    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    NumericValue, Operator, OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
 
 use super::abstraction_numeric_var;
-use super::comparison_inputs::fill_derived_numeric_intervals_from_comparison_trees;
+use super::comparison_inputs::fill_condition_intervals;
 use super::factory::DomainAbstractionFactory;
 use super::layout::StateLayout;
 use crate::evaluation::abstractions::common::coordinates::active_comparison_dimensions;
@@ -1099,10 +1099,9 @@ impl PartitionComboScratch {
 }
 
 /// Fills `out` with the interval of every numeric variable over the source
-/// partitions of `combo`: constants at their values, the
-/// variables of `combo` at their partitions, derived variables through the
-/// comparison trees, the rest unbounded. `out` is reused across combos, which
-/// keeps the cross product in `compute_hash_effects_with_preconditions` from
+/// partitions of `combo`, which are its refined coordinates; see
+/// [`fill_condition_intervals`]. `out` is reused across combos, which keeps
+/// the cross product in `compute_hash_effects_with_preconditions` from
 /// allocating.
 fn prepare_comparison_tree_inputs_for_combo_into(
     task: &dyn AbstractNumericTask,
@@ -1110,38 +1109,19 @@ fn prepare_comparison_tree_inputs_for_combo_into(
     combo: &[(VariableIndex, usize, usize)],
     out: &mut Vec<Interval>,
 ) {
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let num_numeric = task.numeric_variables().len();
-    out.clear();
-    out.resize(
-        num_numeric,
-        Interval::new(ZERO_VALUE, ZERO_VALUE, false, false),
+    let partitions = generator.factory.partitions();
+    fill_condition_intervals(
+        task,
+        |var_id| {
+            combo
+                .iter()
+                .find(|&&(combo_var, _, _)| combo_var == var_id)
+                .map(|&(_, source_partition, _)| {
+                    partitions.partition_interval(var_id, source_partition)
+                })
+        },
+        out,
     );
-
-    for (var_id, numeric_var) in task.numeric_variables().iter().enumerate() {
-        if numeric_var.get_type() == &NumericType::Constant {
-            out[var_id] = Interval::singleton(float_tolerance::canonicalize(
-                initial_numeric_values[var_id],
-            ));
-        } else if numeric_var.get_type() != &NumericType::Derived {
-            out[var_id] = Interval::unbounded();
-        }
-    }
-
-    for &(var_id, source_partition, _) in combo {
-        out[var_id.index()] = generator
-            .factory
-            .partitions()
-            .partition_interval(var_id, source_partition);
-    }
-
-    fill_derived_numeric_intervals_from_comparison_trees(task.numeric_conditions().all(), out);
-
-    for interval in out.iter_mut() {
-        if interval.is_empty() {
-            *interval = Interval::unbounded();
-        }
-    }
 }
 
 /// Whether a partition combo survives this operator's comparison-axiom

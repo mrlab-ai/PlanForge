@@ -26,6 +26,23 @@ use super::cartesian_set::{CartesianSet, sorted_value_sets_overlap};
 use super::coordinates::Coordinates;
 use super::transition_system::{AbstractOperatorSourceSets, LabelSourceSet};
 
+/// The interval of numeric variable `var_id` of `task` in the trivial
+/// abstraction: a constant at its value, every other variable unbounded.
+pub(crate) fn trivial_interval(task: &dyn AbstractNumericTask, var_id: VariableIndex) -> Interval {
+    let variable = &task.numeric_variables()[var_id.index()];
+    if variable.get_type() != &NumericType::Constant {
+        return Interval::unbounded();
+    }
+    let value =
+        float_tolerance::canonicalize(task.get_initial_numeric_state_values()[var_id.index()]);
+    assert!(
+        value.is_finite(),
+        "constant numeric variable {} has the non-finite value {value}",
+        variable.name()
+    );
+    Interval::singleton(value)
+}
+
 /// The deadline operation of building source sets.
 pub(crate) const SOURCE_SETS: &str = "abstract source sets";
 
@@ -82,10 +99,7 @@ impl<'task> RegionSemantics<'task> {
     pub(crate) fn trivial_region(&self) -> Result<CartesianSet> {
         let propositions = (0..self.task.get_num_variables())
             .map(|var_id| {
-                let size = self
-                    .task
-                    .get_variable_domain_size(VariableIndex::from_usize(var_id))
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let size = self.task.variables()[var_id].domain_size();
                 ensure!(size > 0, "propositional var {var_id} has an empty domain");
                 ensure!(
                     u32::try_from(size).is_ok(),
@@ -94,19 +108,8 @@ impl<'task> RegionSemantics<'task> {
                 Ok((0..size as u32).map(ExplicitValueIndex::new).collect())
             })
             .collect::<Result<Vec<_>>>()?;
-        let initial_numeric = self.task.get_initial_numeric_state_values();
-        let numeric: Vec<_> = self
-            .task
-            .numeric_variables()
-            .iter()
-            .enumerate()
-            .map(|(var_id, var)| {
-                if matches!(var.get_type(), NumericType::Constant) {
-                    Interval::singleton(float_tolerance::canonicalize(initial_numeric[var_id]))
-                } else {
-                    Interval::unbounded()
-                }
-            })
+        let numeric: Vec<_> = (0..self.task.numeric_variables().len())
+            .map(|var_id| trivial_interval(self.task, VariableIndex::from_usize(var_id)))
             .collect();
         // Every dimension carries its whole domain, so nothing is constrained
         // yet; refinement adds constraints one dimension at a time.

@@ -13,7 +13,7 @@ use crate::evaluation::abstractions::common::transition_system::{
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     ExplicitSaturationGraph, RemainingCosts, saturate_labels, saturate_regions,
 };
-use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
+use crate::evaluation::abstractions::domain::test_support::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
@@ -98,7 +98,8 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
                 cutpoints_by_var.len()
             );
             for &value in &constant_values {
-                let value = NotNan::new(value).map_err(|_| anyhow!("NaN cutpoint encountered"))?;
+                let value =
+                    NotNan::new(value).map_err(|_| anyhow::anyhow!("NaN cutpoint encountered"))?;
                 if value.is_finite() {
                     cutpoints_by_var[dep.index()].insert(value);
                 }
@@ -132,7 +133,7 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
 }
 
 fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFactory> {
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task)?;
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task);
     let partitions = cutpoint_partitions_for_task(task)?;
     DomainAbstractionFactory::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
@@ -774,7 +775,7 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
             Interval::singleton(NumericValue::new(100.0)),
         ],
     ]);
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
@@ -794,13 +795,11 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
     let mut numeric_intervals = Vec::new();
     fill_state_intervals(
         &task,
-        factory.numeric_conditions().all(),
         factory.partitions(),
         factory.layout(),
         state_hash,
         &mut numeric_intervals,
-    )
-    .unwrap();
+    );
 
     assert_eq!(
         numeric_intervals[0],
@@ -863,7 +862,7 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFact
         ],
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
@@ -921,7 +920,7 @@ fn additive_numeric_source_set_task_with_partitions(
         x_partitions,
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
@@ -1100,7 +1099,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
@@ -1194,7 +1193,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         ],
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
@@ -1320,7 +1319,7 @@ fn source_set_one_finite_dim_suffices() {
         vec![Interval::singleton(NumericValue::new(0.5))],
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
@@ -1428,7 +1427,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         vec![Interval::singleton(NumericValue::new(1.0))],
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
-    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
+    let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let factory = DomainAbstractionFactory::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,

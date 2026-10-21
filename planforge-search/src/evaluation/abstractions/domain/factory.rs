@@ -3,7 +3,7 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Context, Result, ensure};
 
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
@@ -74,6 +74,23 @@ pub struct DomainAbstractionFactory {
 }
 
 impl DomainAbstractionFactory {
+    /// The trivial domain abstraction of the task of `semantics`: one
+    /// abstract state, with every constant at its value.
+    pub(crate) fn trivial(semantics: &CegarSemantics<'_>) -> Result<Self> {
+        let task = semantics.task();
+        let domain_mapping = task
+            .variables()
+            .iter()
+            .map(|variable| vec![ExplicitValueIndex::new(0); variable.domain_size()])
+            .collect();
+        Self::new(
+            semantics,
+            domain_mapping,
+            vec![1; task.get_num_variables()],
+            NumericPartitions::trivial(task),
+        )
+    }
+
     /// The domain abstraction of the task of `semantics` that maps
     /// propositional values by `domain_mapping` into `domain_sizes` abstract
     /// values per variable, and numeric values by `partitions`. Operator
@@ -102,10 +119,7 @@ impl DomainAbstractionFactory {
                         .is_condition_var(VariableIndex::from_usize(var)),
                 "condition variable {var} has {abs_size} abstract values; conditions are derived from the numeric partitions"
             );
-            let concrete_size = task
-                .get_variable_domain_size(VariableIndex::from_usize(var))
-                .map_err(|e| anyhow!(e.to_string()))
-                .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
+            let concrete_size = task.variables()[var].domain_size();
             ensure!(
                 abs_size <= concrete_size,
                 "abstract domain size for var {var} exceeds concrete size ({abs_size} > {concrete_size})"

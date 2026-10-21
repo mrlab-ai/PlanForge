@@ -11,8 +11,6 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::config::DomainAbstractionConfig;
 use super::factory::DomainAbstractionFactory;
-use super::initial_splits::trivial_domain_mapping_and_sizes;
-use super::partitions::NumericPartitions;
 use super::view::{DomainBuild, DomainRefinement};
 use crate::evaluation::abstractions::common::abstraction::{
     AbstractionCore, AbstractionMetadata, finish_abstraction,
@@ -53,15 +51,8 @@ pub(super) fn refine_domain_abstraction(
     let start = Instant::now();
     let semantics = CegarSemantics::for_options(task, &config.cegar)?;
 
-    let (domain_mapping, domain_sizes) =
-        trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
-    let mut factory = DomainAbstractionFactory::new(
-        &semantics,
-        domain_mapping,
-        domain_sizes,
-        NumericPartitions::trivial(task),
-    )
-    .context("failed to construct the trivial domain abstraction")?;
+    let mut factory = DomainAbstractionFactory::trivial(&semantics)
+        .context("failed to construct the trivial domain abstraction")?;
     // Every initial split divides a different variable of the trivial
     // abstraction, so it divides every abstract state if it divides one. As
     // for Cartesian abstractions, a split that would exceed `max_states` is

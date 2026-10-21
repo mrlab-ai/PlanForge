@@ -279,14 +279,7 @@ impl DomainAbstractionFactory {
         for goal in goals {
             if let Some(condition) = self.numeric_conditions.for_var(goal.var_index()) {
                 if !intervals_filled {
-                    fill_state_intervals(
-                        task,
-                        self.numeric_conditions.all(),
-                        &self.partitions,
-                        &self.layout,
-                        state,
-                        intervals,
-                    )?;
+                    fill_state_intervals(task, &self.partitions, &self.layout, state, intervals);
                     intervals_filled = true;
                 }
                 let contradicting = Some(goal.value() != ConditionValue::True.as_usize());

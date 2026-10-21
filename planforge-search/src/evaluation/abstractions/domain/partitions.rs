@@ -2,7 +2,7 @@
 mod tests;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, VariableIndex,
+    AbstractNumericTask, AssignmentOperation, NumericValue, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
 
@@ -11,6 +11,8 @@ use crate::evaluation::abstractions::common::cegar::split::numeric_split_interva
 use planforge_sas::numeric_conditions::ArithOp;
 use planforge_sas::utils::interval::Interval;
 
+use crate::evaluation::abstractions::common::regions::trivial_interval;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
     partitions_by_numeric_var: Vec<Vec<Interval>>,
@@ -18,23 +20,8 @@ pub struct NumericPartitions {
 
 impl NumericPartitions {
     pub fn trivial(task: &dyn AbstractNumericTask) -> Self {
-        let initial_numeric_values = task.get_initial_numeric_state_values();
-        let partitions_by_numeric_var: Vec<Vec<Interval>> = task
-            .numeric_variables()
-            .iter()
-            .enumerate()
-            .map(|(i, v)| match v.get_type() {
-                NumericType::Constant => {
-                    let value = float_tolerance::canonicalize(initial_numeric_values[i]);
-                    assert!(
-                        value.is_finite(),
-                        "constant numeric variable {} has the non-finite value {value}",
-                        v.name()
-                    );
-                    vec![Interval::singleton(value)]
-                }
-                _ => vec![Interval::unbounded()],
-            })
+        let partitions_by_numeric_var = (0..task.numeric_variables().len())
+            .map(|var_id| vec![trivial_interval(task, VariableIndex::from_usize(var_id))])
             .collect();
         Self {
             partitions_by_numeric_var,
