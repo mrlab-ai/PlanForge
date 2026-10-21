@@ -507,6 +507,51 @@ fn a_dead_progress_state_is_rebuilt_from_the_initial_state_and_completes_its_var
 }
 
 #[test]
+fn a_rebuild_after_a_dead_progress_state_gets_the_time_left() {
+    /// Records the time limit of every build, and takes 20 ms for each.
+    struct Slow(ScriptedBackend, RefCell<Vec<Option<Duration>>>);
+    impl GoalFocusedBackend for Slow {
+        type Member = Member;
+        const NAME: &'static str = "slow";
+        fn build(
+            &self,
+            task: &dyn AbstractNumericTask,
+            root: Option<&ExplicitState>,
+            construction: &MemberConstruction,
+        ) -> Result<Member> {
+            self.1.borrow_mut().push(construction.max_time);
+            std::thread::sleep(Duration::from_millis(20));
+            self.0.build(task, root, construction)
+        }
+    }
+
+    let bounds = [Bound::AtLeast(1.0), Bound::AtMost(0.0)];
+    let task = counter_task(&bounds);
+    let backend = Slow(ScriptedBackend::new(&bounds), RefCell::new(Vec::new()));
+    let base = schedule(CollectionStrategy::PerGoal, 1, true);
+    build_goal_focused_collection(
+        &task,
+        &GoalFocusedSchedule {
+            limits: CollectionLimits {
+                total_max_time: Some(Duration::from_secs(1_000)),
+                ..base.limits
+            },
+            ..base
+        },
+        &backend,
+    )
+    .unwrap();
+
+    // Goal 0 from x=0, goal 1 from the dead x=1, and its rebuild.
+    let max_times = backend.1.into_inner();
+    assert_eq!(max_times.len(), 3);
+    assert!(
+        max_times[2].unwrap() + Duration::from_millis(20) <= max_times[1].unwrap(),
+        "{max_times:?}"
+    );
+}
+
+#[test]
 fn a_member_whose_initial_state_is_dead_is_kept() {
     // `x <= -1` is unreachable from x=0 by increments: the member proves the
     // task unsolvable, so the collection keeps it instead of rebuilding.

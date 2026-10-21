@@ -126,18 +126,17 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             break;
         }
 
-        let construction = schedule.construction(&member, &budget);
         let BuiltMember {
             member: built,
             root,
         } = build_member(
             task,
             backend,
+            schedule,
+            &budget,
             &state,
             &member,
-            &construction,
             members.len() + 1,
-            !schedule.single_goal_tasks,
         )?;
         let report = built.report();
         budget.charge(report.num_states);
@@ -209,18 +208,21 @@ struct BuiltMember<M> {
     root: MemberRoot,
 }
 
-/// Restrict the task to the member's goal unless members abstract the
-/// `full_task`, refine from its variant's progress state, and tag the result
-/// as build `iteration` so collection heuristics can tell members apart.
+/// Restrict the task to the member's goal unless members abstract the full
+/// task, refine from its variant's progress state within what is left of
+/// `budget`, and tag the result as build `iteration` so collection
+/// heuristics can tell members apart.
 fn build_member<B: GoalFocusedBackend>(
     task: &dyn AbstractNumericTask,
     backend: &B,
+    schedule: &GoalFocusedSchedule,
+    budget: &CollectionBudget,
     state: &CollectionState<'_>,
     member: &ScheduledMember,
-    construction: &MemberConstruction,
     iteration: usize,
-    full_task: bool,
 ) -> Result<BuiltMember<B::Member>> {
+    let full_task = !schedule.single_goal_tasks;
+    let construction = schedule.construction(member, budget);
     let goal_task =
         (!full_task).then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
     let member_task = goal_task
@@ -242,7 +244,7 @@ fn build_member<B: GoalFocusedBackend>(
     let progress = state.progress(member).filter(|progress| !progress.complete);
     let refinement_root = progress.map(|progress| &progress.state);
     let built = backend
-        .build(member_task, refinement_root, construction)
+        .build(member_task, refinement_root, &construction)
         .with_context(|| {
             format!(
                 "failed to build {} collection abstraction {iteration}",
@@ -258,8 +260,9 @@ fn build_member<B: GoalFocusedBackend>(
             member.goal_id,
             member.kind
         );
+        // The first build took time the rebuild no longer has.
         let rebuilt = backend
-            .build(member_task, None, construction)
+            .build(member_task, None, &schedule.construction(member, budget))
             .with_context(|| {
                 format!(
                     "failed to rebuild {} collection abstraction {iteration} from the task initial state",
