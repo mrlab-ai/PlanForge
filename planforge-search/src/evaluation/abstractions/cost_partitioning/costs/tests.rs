@@ -6,10 +6,19 @@ use std::sync::Arc;
 
 use planforge_sas::utils::interval::Interval;
 
+use std::cell::RefCell;
+
+use anyhow::Result;
+use planforge_sas::numeric_task::OperatorIndex;
+
+use super::usage::{SourceSetUsage, UsageCell, UsageIndex, cells_are_disjoint};
 use super::*;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::transition_system::LabelSourceSet;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem,
 };
+use crate::resource_limits::Deadline;
 
 impl SourceSetUsage {
     fn add(&mut self, region: &CartesianSet, amount: f64) {
@@ -32,16 +41,16 @@ fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
     );
     let mut usage = SourceSetUsage {
         cells: vec![
-            SourceSetUsageCell {
+            UsageCell {
                 region: first.clone(),
                 amount: 1.0,
             },
-            SourceSetUsageCell {
+            UsageCell {
                 region: second.clone(),
                 amount: 2.0,
             },
         ],
-        index: RefCell::new(CellIndex::Stale),
+        index: RefCell::new(UsageIndex::Stale),
     };
 
     usage.add(
@@ -61,7 +70,7 @@ fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
         )),
         3.0
     );
-    assert!(source_set_usage_cells_are_disjoint(&usage.cells));
+    assert!(cells_are_disjoint(&usage.cells));
 }
 
 #[test]
@@ -84,8 +93,8 @@ fn full_cost_source_sets_use_overlap_cover_without_geometric_overlay() {
     reduce_by_operator_source_sets(&mut residuals, &source_sets, &[1.0, 1.0]).unwrap();
 
     let residual = &residuals.operator_residuals[0];
-    assert_eq!(residual.full_source_set_usage.cells.len(), 2);
-    assert!(residual.source_set_usage.cells.is_empty());
+    assert_eq!(residual.full_usage.cells.len(), 2);
+    assert!(residual.fractional_usage.cells.is_empty());
     let overlapping = LabelSourceSet {
         concrete_op_id: OperatorIndex::new(0),
         source: Arc::new(region(NumericValue::new(1.5), NumericValue::new(1.5))),
