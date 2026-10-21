@@ -168,6 +168,12 @@ impl PartialState {
         }
     }
 
+    /// Drops every requirement.
+    fn clear(&mut self) {
+        self.propositions.fill(None);
+        self.numeric.fill(Interval::unbounded());
+    }
+
     /// Adds `facts`; `None` if they contradict each other or `self`.
     fn require(
         &mut self,
@@ -225,151 +231,181 @@ pub(crate) fn find_regression_flaws(
         overlaps(&partial, &states[operators.len()]),
         "the last abstract state of the trace admits no goal state"
     );
-    let mut flaws = Flaws {
-        scope,
-        found: Vec::new(),
+    let mut regression = Regression {
+        task,
+        coordinates,
+        flaws: Flaws {
+            scope,
+            found: Vec::new(),
+        },
+        preconditions: PartialState::unconstrained(task),
+        written: vec![false; task.get_num_variables()],
     };
+    let mut predecessor = PartialState::unconstrained(task);
     for step in (1..=operators.len()).rev() {
-        let op_id = operators[step - 1];
-        match regress(
-            task,
-            coordinates,
+        if !regression.regress(
             &partial,
-            op_id,
+            &mut predecessor,
+            operators[step - 1],
             &states[step - 1],
             &states[step],
             step,
-            &mut flaws,
         )? {
-            Some(predecessor) => partial = predecessor,
-            None => return Ok(flaws.found),
+            return Ok(regression.flaws.found);
         }
+        std::mem::swap(&mut partial, &mut predecessor);
     }
-    initial_flaws(&partial, &states[0], init, initial_split, &mut flaws)?;
-    Ok(flaws.found)
+    initial_flaws(
+        &partial,
+        &states[0],
+        init,
+        initial_split,
+        &mut regression.flaws,
+    )?;
+    Ok(regression.flaws.found)
 }
 
-/// Regresses `partial` (= `p_step`) through `op_id` into the source state
-/// `source` (= `a_{step-1}`), recording cases 1 and 2 in `flaws`. `target` is
-/// `a_step`; before the first flaw, `partial` overlaps it on every dimension.
-/// Returns `p_{step-1}`, or `None` once the search stops.
-#[allow(clippy::too_many_arguments)]
-fn regress(
-    task: &dyn AbstractNumericTask,
-    coordinates: &Coordinates<'_>,
-    partial: &PartialState,
-    op_id: OperatorIndex,
-    source: &CartesianSet,
-    target: &CartesianSet,
-    step: usize,
-    flaws: &mut Flaws,
-) -> Result<Option<PartialState>> {
-    let op = &task.get_operators()[op_id.index()];
-    let mut predecessor = PartialState::unconstrained(task);
+/// The regression of a trace: the flaws found so far, and the buffers every
+/// step reuses.
+struct Regression<'a> {
+    task: &'a dyn AbstractNumericTask,
+    coordinates: &'a Coordinates<'a>,
+    flaws: Flaws,
+    /// The preconditions of the operator regressed through.
+    preconditions: PartialState,
+    /// Per propositional variable, whether that operator writes it.
+    written: Vec<bool>,
+}
 
-    // Propositional effects falsify p_step (case 1) or free their variable;
-    // past the flaw, the effect is regressed anyway and frees it too.
-    let mut written = vec![false; task.get_num_variables()];
-    for effect in op.effects() {
-        let var = effect.var_id();
-        written[var.index()] = true;
-        if let Some(wanted) = partial.propositions[var.index()]
-            && wanted != effect.value()
-            && flaws.record(step, propositional_split(target, var, wanted))?
-        {
-            return Ok(None);
+impl Regression<'_> {
+    /// Regresses `partial` (= `p_step`) through `op_id` into the source
+    /// state `source` (= `a_{step-1}`), recording cases 1 and 2. `target` is
+    /// `a_step`; before the first flaw, `partial` overlaps it on every
+    /// dimension. Writes `p_{step-1}` to `predecessor` and returns whether
+    /// the search goes on.
+    fn regress(
+        &mut self,
+        partial: &PartialState,
+        predecessor: &mut PartialState,
+        op_id: OperatorIndex,
+        source: &CartesianSet,
+        target: &CartesianSet,
+        step: usize,
+    ) -> Result<bool> {
+        let Self {
+            task,
+            coordinates,
+            flaws,
+            preconditions,
+            written,
+        } = self;
+        let op = &task.get_operators()[op_id.index()];
+
+        // Propositional effects falsify p_step (case 1) or free their
+        // variable; past the flaw, the effect is regressed anyway and frees
+        // it too.
+        written.fill(false);
+        for effect in op.effects() {
+            let var = effect.var_id();
+            written[var.index()] = true;
+            if let Some(wanted) = partial.propositions[var.index()]
+                && wanted != effect.value()
+                && flaws.record(step, propositional_split(target, var, wanted))?
+            {
+                return Ok(false);
+            }
         }
-    }
-    let mut preconditions = PartialState::unconstrained(task);
-    ensure!(
-        preconditions
-            .require(coordinates, task, op.preconditions())?
-            .is_some(),
-        "operator {op_id} ({}) has contradicting preconditions",
-        op.name()
-    );
+        preconditions.clear();
+        ensure!(
+            preconditions
+                .require(coordinates, *task, op.preconditions())?
+                .is_some(),
+            "operator {op_id} ({}) has contradicting preconditions",
+            op.name()
+        );
 
-    for (index, wanted) in partial.propositions.iter().enumerate() {
-        let var = VariableIndex::from_usize(index);
-        let precondition = preconditions.propositions[index];
-        let Some(wanted) = wanted.filter(|_| !written[index]) else {
-            if let Some(required) = precondition {
-                ensure!(
-                    admits_value(source, var, required),
-                    "abstract state {} admits operator {op_id} ({}) although it excludes its precondition {var}={required}",
+        for (index, wanted) in partial.propositions.iter().enumerate() {
+            let var = VariableIndex::from_usize(index);
+            let precondition = preconditions.propositions[index];
+            let Some(wanted) = wanted.filter(|_| !written[index]) else {
+                if let Some(required) = precondition {
+                    ensure!(
+                        admits_value(source, var, required),
+                        "abstract state {} admits operator {op_id} ({}) although it excludes its precondition {var}={required}",
+                        step - 1,
+                        op.name()
+                    );
+                }
+                predecessor.propositions[index] = precondition;
+                continue;
+            };
+            // Case 2; past it, p_{step-1} keeps the value.
+            if !admits_value(source, var, wanted)
+                && flaws.record(step, propositional_split(target, var, wanted))?
+            {
+                return Ok(false);
+            }
+            // Case 1; past it, the contradicted precondition is ignored.
+            if precondition.is_some_and(|required| required != wanted)
+                && flaws.record(step - 1, propositional_split(source, var, wanted))?
+            {
+                return Ok(false);
+            }
+            predecessor.propositions[index] = Some(wanted);
+        }
+
+        for (index, &wanted) in partial.numeric.iter().enumerate() {
+            let var = VariableIndex::from_usize(index);
+            let source_interval = source.numeric[index];
+            let required = preconditions.numeric[index];
+            let Some(regressed) = coordinates.preimage(wanted, op_id, var) else {
+                // Case 1: op_id assigns var a value outside p_step, which a_step
+                // contains. Past it, the assignment is regressed anyway and
+                // leaves only the precondition on var.
+                let assigned = coordinates.image(source_interval, op_id, var);
+                if flaws.record(
+                    step,
+                    separate(var, wanted, assigned, target.numeric[index])?,
+                )? {
+                    return Ok(false);
+                }
+                predecessor.numeric[index] = required;
+                continue;
+            };
+            let reaches_source = regressed.intersects(&source_interval);
+            // Case 2; past it, p_{step-1} keeps the regressed values.
+            if !reaches_source {
+                let image = coordinates.image(source_interval, op_id, var);
+                if flaws.record(step, separate(var, wanted, image, target.numeric[index])?)? {
+                    return Ok(false);
+                }
+            }
+            let combined = regressed.intersection(&required);
+            // Case 1: the precondition contradicts the regression in a_{step-1};
+            // past it, a precondition that contradicts the regression outright is
+            // ignored.
+            if reaches_source
+                && !combined.intersects(&source_interval)
+                && flaws.record(
                     step - 1,
-                    op.name()
-                );
+                    separate(
+                        var,
+                        regressed,
+                        required.intersection(&source_interval),
+                        source_interval,
+                    )?,
+                )?
+            {
+                return Ok(false);
             }
-            predecessor.propositions[index] = precondition;
-            continue;
-        };
-        // Case 2; past it, p_{step-1} keeps the value.
-        if !admits_value(source, var, wanted)
-            && flaws.record(step, propositional_split(target, var, wanted))?
-        {
-            return Ok(None);
+            predecessor.numeric[index] = if combined.is_empty() {
+                regressed
+            } else {
+                combined
+            };
         }
-        // Case 1; past it, the contradicted precondition is ignored.
-        if precondition.is_some_and(|required| required != wanted)
-            && flaws.record(step - 1, propositional_split(source, var, wanted))?
-        {
-            return Ok(None);
-        }
-        predecessor.propositions[index] = Some(wanted);
+        Ok(true)
     }
-
-    for (index, &wanted) in partial.numeric.iter().enumerate() {
-        let var = VariableIndex::from_usize(index);
-        let source_interval = source.numeric[index];
-        let required = preconditions.numeric[index];
-        let Some(regressed) = coordinates.preimage(wanted, op_id, var) else {
-            // Case 1: op_id assigns var a value outside p_step, which a_step
-            // contains. Past it, the assignment is regressed anyway and
-            // leaves only the precondition on var.
-            let assigned = coordinates.image(source_interval, op_id, var);
-            if flaws.record(
-                step,
-                separate(var, wanted, assigned, target.numeric[index])?,
-            )? {
-                return Ok(None);
-            }
-            predecessor.numeric[index] = required;
-            continue;
-        };
-        let reaches_source = regressed.intersects(&source_interval);
-        // Case 2; past it, p_{step-1} keeps the regressed values.
-        if !reaches_source {
-            let image = coordinates.image(source_interval, op_id, var);
-            if flaws.record(step, separate(var, wanted, image, target.numeric[index])?)? {
-                return Ok(None);
-            }
-        }
-        let combined = regressed.intersection(&required);
-        // Case 1: the precondition contradicts the regression in a_{step-1};
-        // past it, a precondition that contradicts the regression outright is
-        // ignored.
-        if reaches_source
-            && !combined.intersects(&source_interval)
-            && flaws.record(
-                step - 1,
-                separate(
-                    var,
-                    regressed,
-                    required.intersection(&source_interval),
-                    source_interval,
-                )?,
-            )?
-        {
-            return Ok(None);
-        }
-        predecessor.numeric[index] = if combined.is_empty() {
-            regressed
-        } else {
-            combined
-        };
-    }
-    Ok(Some(predecessor))
 }
 
 /// Case 3: the initial state against `p_0` in its abstract state `state`.
