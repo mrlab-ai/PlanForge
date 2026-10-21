@@ -6,6 +6,8 @@ use std::time::Duration;
 
 pub(crate) struct SearchConfig {
     pub(crate) operator_costs: Vec<NumericValue>,
+    /// The cheapest operator cost, every non-goal state's lower bound.
+    pub(crate) min_action_cost: f64,
     pub(crate) use_metric: bool,
     pub(crate) time_limit: Option<Duration>,
     pub(crate) max_memory_bytes: Option<u64>,

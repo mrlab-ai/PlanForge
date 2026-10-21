@@ -257,6 +257,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             algorithm,
             config: SearchConfig {
                 operator_costs,
+                min_action_cost: min_action_cost.value(),
                 use_metric,
                 time_limit,
                 max_memory_bytes,
@@ -420,13 +421,25 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
                     heuristic_revision: self.heuristic.revision(),
                 }
             }
-            Ok(h_value) => SearchEvaluation {
-                h_value,
-                f_value: self.algorithm.priority(g_value, h_value),
-                g_value,
-                is_dead_end: false,
-                heuristic_revision: self.heuristic.revision(),
-            },
+            Ok(h_value) => {
+                // Every plan from a non-goal state applies an action, so it
+                // costs at least the cheapest one: the maximum with the blind
+                // heuristic stays admissible and consistent, and lifts a
+                // heuristic that is 0 on a non-goal state, as an abstraction
+                // is on every state of an abstract goal state.
+                let h_value = if is_goal {
+                    h_value
+                } else {
+                    h_value.max(self.config.min_action_cost)
+                };
+                SearchEvaluation {
+                    h_value,
+                    f_value: self.algorithm.priority(g_value, h_value),
+                    g_value,
+                    is_dead_end: false,
+                    heuristic_revision: self.heuristic.revision(),
+                }
+            }
             Err(EvaluationError::DeadEnd { reliable }) => {
                 // Reliable and unreliable dead ends both prune, matching Fast
                 // Downward's `OpenList::is_dead_end`: an unreliable detection
