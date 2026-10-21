@@ -342,7 +342,7 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
-        None,
+        Deadline::NONE,
     )
     .unwrap();
 
@@ -449,7 +449,7 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
-        None,
+        Deadline::NONE,
     )
     .unwrap();
 
@@ -780,7 +780,7 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
-        None,
+        Deadline::NONE,
     )
     .unwrap();
 
@@ -887,7 +887,7 @@ fn additive_view_filters_false_equality_precondition() {
         OperatorIndex::new(0),
         &[ExplicitFact::propositional(0, 0)],
         &[],
-        None,
+        Deadline::NONE,
     )
     .unwrap();
     let derived_abs_var = task.variables().len() + 2;

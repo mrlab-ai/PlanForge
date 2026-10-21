@@ -25,6 +25,7 @@ use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, 
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
 use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::common::task::RootedTask;
+use crate::resource_limits::Deadline;
 
 use super::abstraction::DomainAbstraction;
 use super::collection::AbstractionKey;
@@ -163,7 +164,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         let mut operator_generator =
             factory.make_operator_generator(task, self.config.cegar.combine_labels)?;
         let abstract_operators = operator_generator
-            .build_abstract_operators_with_deadline(task, None)
+            .build_abstract_operators_with_deadline(task, Deadline::NONE)
             .context("failed to build abstract operators")?;
         let abstract_source_sets = if self.config.compute_source_sets {
             factory

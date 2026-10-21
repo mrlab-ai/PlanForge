@@ -8,8 +8,6 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
 
-use std::time::Instant;
-
 use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator};
 use super::config::DomainAbstractionConfig;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
@@ -20,6 +18,7 @@ use crate::evaluation::abstractions::common::cegar::view::{
     AbstractionView, RefinementLimits, TransitionKey,
 };
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::resource_limits::Deadline;
 
 pub(super) struct DomainView<'a> {
     pub(super) task: &'a dyn AbstractNumericTask,
@@ -182,7 +181,7 @@ impl Refinable for DomainRefinement<'_> {
     where
         Self: 'b;
 
-    fn view(&mut self, deadline: Option<Instant>) -> Result<DomainView<'_>> {
+    fn view(&mut self, deadline: Deadline) -> Result<DomainView<'_>> {
         let mut generator = self
             .factory
             .make_operator_generator(self.task, self.combine_labels)?;

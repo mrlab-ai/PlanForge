@@ -14,6 +14,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
+use crate::resource_limits::Deadline;
 
 /// How CEGAR finds the flaws of an abstract plan.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -129,7 +130,7 @@ impl CegarDriver {
     pub fn run_from(
         self,
         start: Instant,
-        run_iteration: impl FnMut(usize, Option<Instant>) -> Result<CegarIterationResult>,
+        run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
     ) -> Result<CegarRunResult> {
         self.run_from_with_poll_phase::<false>(start, run_iteration)
     }
@@ -140,7 +141,7 @@ impl CegarDriver {
     pub fn run_from_zero_based(
         self,
         start: Instant,
-        run_iteration: impl FnMut(usize, Option<Instant>) -> Result<CegarIterationResult>,
+        run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
     ) -> Result<CegarRunResult> {
         self.run_from_with_poll_phase::<true>(start, run_iteration)
     }
@@ -149,9 +150,9 @@ impl CegarDriver {
     fn run_from_with_poll_phase<const POLL_BEFORE_FIRST: bool>(
         self,
         start: Instant,
-        mut run_iteration: impl FnMut(usize, Option<Instant>) -> Result<CegarIterationResult>,
+        mut run_iteration: impl FnMut(usize, Deadline) -> Result<CegarIterationResult>,
     ) -> Result<CegarRunResult> {
-        let deadline = self.max_time.map(|max_time| start + max_time);
+        let deadline = Deadline::after(start, self.max_time)?;
         let mut iteration = 1usize;
 
         while iteration <= self.max_iterations {
@@ -168,7 +169,7 @@ impl CegarDriver {
                     stop_reason: CegarStopReason::MemoryLimit,
                 });
             }
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if deadline.passed() {
                 return Ok(CegarRunResult {
                     next_iteration: iteration,
                     stop_reason: CegarStopReason::TimeLimit,
@@ -202,7 +203,7 @@ mod tests {
         let mut seen = Vec::new();
         let result = CegarDriver::new(3, None)
             .run_from(Instant::now(), |iteration, deadline| {
-                assert!(deadline.is_none());
+                assert_eq!(deadline, Deadline::NONE);
                 seen.push(iteration);
                 Ok(CegarIterationResult::Continue)
             })

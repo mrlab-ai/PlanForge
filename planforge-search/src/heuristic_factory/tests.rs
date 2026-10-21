@@ -26,6 +26,7 @@ use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
+use crate::resource_limits::Deadline;
 /// The heuristic inside an `astar(...)` spec. Written as the full search spec
 /// because that is what a user types, and `astar(` / `)` is all the engine
 /// grammar these tests need.
@@ -225,7 +226,7 @@ fn parses_matched_single_abstraction_icaps26_configuration() {
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0].name(), "icaps26_cartesian");
     assert!(
-        construction_deadline.is_none(),
+        construction_deadline == Deadline::NONE,
         "the published 900-second limit bounds CEGAR, not the outer combinator"
     );
     let config = abstraction_config::apply_icaps26_cartesian_options(
@@ -246,13 +247,13 @@ fn parses_shared_construction_deadlines_for_canonical_and_scp() {
     let (sources, deadline) =
         abstraction_config::canonical_sources_and_deadline(&canonical.args).unwrap();
     assert_eq!(sources.len(), 1);
-    assert!(deadline.is_some());
+    assert_ne!(deadline, Deadline::NONE);
 
     let scp = astar_heuristic("astar(scp(cartesian(max_states=100),construction_max_time=900))");
     let source_config = abstraction_config::scp_sources_options_and_deadline(&scp.args).unwrap();
     assert_eq!(source_config.sources.len(), 1);
     assert_eq!(source_config.options.len(), 0);
-    assert!(source_config.construction_deadline.is_some());
+    assert_ne!(source_config.construction_deadline, Deadline::NONE);
 }
 
 #[test]

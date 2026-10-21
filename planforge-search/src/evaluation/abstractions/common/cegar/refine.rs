@@ -13,6 +13,7 @@ use super::semantics::CegarSemantics;
 use super::split::Split;
 use super::view::AbstractionView;
 use super::{CegarDriver, CegarIterationResult, CegarStopReason, FlawKind, FlawScope};
+use crate::resource_limits::Deadline;
 
 /// An abstraction that CEGAR refines.
 pub(crate) trait Refinable {
@@ -23,7 +24,7 @@ pub(crate) trait Refinable {
     /// The abstraction as the flaw search sees it now. A representation that
     /// rebuilds its transitions after a split does so here and fails with a
     /// deadline error once `deadline` passes.
-    fn view(&mut self, deadline: Option<Instant>) -> Result<Self::View<'_>>;
+    fn view(&mut self, deadline: Deadline) -> Result<Self::View<'_>>;
 
     /// Refines the abstraction by `split`, which its view found refinable.
     fn apply_split(&mut self, split: Split) -> Result<()>;

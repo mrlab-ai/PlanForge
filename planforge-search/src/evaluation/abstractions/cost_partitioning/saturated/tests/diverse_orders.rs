@@ -140,7 +140,7 @@ fn diverse_orders_reject_nan_initial_order_budget() {
     assert!(
         error
             .to_string()
-            .contains("initial_order_generation_max_time >= 0")
+            .contains("initial_order_generation_max_time")
     );
 }
 

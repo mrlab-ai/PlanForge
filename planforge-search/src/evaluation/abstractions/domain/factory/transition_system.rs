@@ -116,14 +116,14 @@ impl DomainAbstractionFactory {
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
         contents: TransitionSystemContents,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<OcpTransitionSystemBuild> {
         let TransitionSystemContents {
             materialize_cartesian_sets,
             include_self_loops,
             max_concrete_label_transitions,
         } = contents;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let hash_multipliers = generator.hash_multipliers();
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let goal_facts = self.compute_abstract_goals(task);
@@ -164,7 +164,7 @@ impl DomainAbstractionFactory {
         let mut incoming = Vec::new();
         for (target_hash, target_backward) in backward.iter_mut().enumerate() {
             if target_hash % 64 == 0 {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             graph.incoming(target_hash, &mut incoming)?;
             for &(source_hash, abstract_op_id, _) in &incoming {
@@ -275,9 +275,9 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<Vec<OperatorIndex>> {
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let numeric_domain_sizes = generator.numeric_domain_sizes();
         let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
         let match_tree = MatchTree::new(generator, operators);
@@ -287,7 +287,7 @@ impl DomainAbstractionFactory {
 
         for target_hash in 0..num_states {
             if target_hash % 64 == 0 {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             if num_seen == seen_operator_ids.len() {
                 break;

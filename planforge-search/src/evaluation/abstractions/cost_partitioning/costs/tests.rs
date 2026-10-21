@@ -8,13 +8,6 @@ use crate::evaluation::abstractions::common::transition_system::{
 };
 
 #[test]
-fn expired_scp_table_deadline_uses_shared_typed_error() {
-    let error = ensure_scp_table_deadline(Some(Instant::now())).unwrap_err();
-
-    assert!(crate::resource_limits::is_deadline_exceeded(&error));
-}
-
-#[test]
 fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
     let region =
         |x: Interval, y: Interval| CartesianSet::with_all_props_constrained(Vec::new(), vec![x, y]);
@@ -120,7 +113,8 @@ fn two_state_transition_system() -> AbstractTransitionSystem {
 fn explicit_label_cost_partitioning_saturates_transition_graph() {
     let system = two_state_transition_system();
     let (distances, saturated) =
-        build_explicit_label_cost_partitioning_table(&system, &[5.0], None, None).unwrap();
+        build_explicit_label_cost_partitioning_table(&system, &[5.0], None, Deadline::NONE)
+            .unwrap();
 
     assert_eq!(distances, vec![5.0, 0.0]);
     assert_eq!(saturated, vec![5.0]);
@@ -142,7 +136,7 @@ fn explicit_regional_cost_partitioning_uses_source_sets() {
         &residual,
         0,
         None,
-        None,
+        Deadline::NONE,
     )
     .unwrap();
 

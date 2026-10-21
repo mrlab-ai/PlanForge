@@ -439,13 +439,8 @@ impl FromOptionValue for Option<usize> {
 /// A time limit in seconds; `infinity` is none.
 impl FromOptionValue for Option<Duration> {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        let seconds = f64::from_option_value(value)?;
-        if seconds == f64::INFINITY {
-            return Ok(None);
-        }
-        Duration::try_from_secs_f64(seconds)
-            .map(Some)
-            .map_err(|error| format!("invalid time limit of {seconds} seconds: {error}"))
+        crate::resource_limits::time_limit_from_secs(f64::from_option_value(value)?)
+            .map_err(|error| error.to_string())
     }
 }
 

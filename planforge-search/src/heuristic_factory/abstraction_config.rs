@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use crate::resource_limits::{Deadline, min_time_limit, time_limit_from_secs};
+
 use crate::config::{ConfigArg, ConfigCall, ConfigValue, FromOptionValue, configure};
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
@@ -279,7 +281,7 @@ pub(crate) fn split_component_sources(
 
 fn take_construction_deadline(
     options: Vec<ConfigArg>,
-) -> Result<(Vec<ConfigArg>, Option<Instant>), String> {
+) -> Result<(Vec<ConfigArg>, Deadline), String> {
     let mut remaining_options = Vec::with_capacity(options.len());
     let mut max_time = None;
     for option in options {
@@ -296,23 +298,20 @@ fn take_construction_deadline(
                 "construction_max_time must be finite and > 0, got {seconds}"
             ));
         }
-        let duration = Duration::try_from_secs_f64(seconds)
-            .map_err(|error| format!("invalid construction_max_time {seconds}: {error}"))?;
-        max_time = Some(duration);
+        max_time = Some(
+            time_limit_from_secs(seconds)
+                .map_err(|error| format!("invalid construction_max_time: {error}"))?
+                .expect("a finite time limit is bounded"),
+        );
     }
-    let deadline = max_time
-        .map(|duration| {
-            Instant::now()
-                .checked_add(duration)
-                .ok_or_else(|| "construction_max_time is too large".to_string())
-        })
-        .transpose()?;
+    let deadline = Deadline::after(Instant::now(), max_time)
+        .map_err(|error| format!("invalid construction_max_time: {error}"))?;
     Ok((remaining_options, deadline))
 }
 
 pub(crate) fn canonical_sources_and_deadline(
     args: &[ConfigArg],
-) -> Result<(Vec<ConfigCall>, Option<Instant>), String> {
+) -> Result<(Vec<ConfigCall>, Deadline), String> {
     let (sources, options) = split_component_sources("canonical", args)?;
     let (options, deadline) = take_construction_deadline(options)?;
     if let Some(option) = options.first() {
@@ -329,7 +328,7 @@ pub(crate) fn canonical_sources_and_deadline(
 pub(crate) struct ScpSourceConfig {
     pub sources: Vec<ConfigCall>,
     pub options: Vec<ConfigArg>,
-    pub construction_deadline: Option<Instant>,
+    pub construction_deadline: Deadline,
 }
 
 pub(crate) fn scp_sources_options_and_deadline(
@@ -393,7 +392,7 @@ pub(crate) fn build_components<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[ConfigCall],
     component_use: ComponentUse,
-    construction_deadline: Option<Instant>,
+    construction_deadline: Deadline,
 ) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
     if sources.is_empty() {
         return Err("an abstraction collection requires at least one source"
@@ -416,7 +415,7 @@ pub(crate) fn build_components<'task>(
                     },
                     source.args(),
                 )?;
-                cap_duration(&mut config.cegar.max_time, remaining);
+                config.cegar.max_time = min_time_limit(config.cegar.max_time, remaining);
                 info!("Building domain abstraction source {source_index}...");
                 let abstraction = DomainAbstractionGenerator::new(config)
                     .and_then(|generator| generator.generate(task))
@@ -465,7 +464,7 @@ pub(crate) fn build_components<'task>(
             "cartesian" => {
                 let mut config =
                     configure("cartesian", cartesian_config(component_use), source.args())?;
-                cap_duration(&mut config.cegar.max_time, remaining);
+                config.cegar.max_time = min_time_limit(config.cegar.max_time, remaining);
                 info!("Building Cartesian abstraction source {source_index}...");
                 let abstraction = CartesianAbstractionGenerator::new(config)
                     .map_err(|error| {
@@ -511,7 +510,7 @@ pub(crate) fn build_components<'task>(
             "icaps26_cartesian" => {
                 validate_restricted_task(task)?;
                 let mut config = apply_icaps26_cartesian_options(source.args(), component_use)?;
-                cap_duration(&mut config.max_time, remaining);
+                config.max_time = min_time_limit(config.max_time, remaining);
                 info!("Building ICAPS 2026 Cartesian abstraction source {source_index}...");
                 let abstraction = Icaps26CartesianGenerator::new(config)
                     .map_err(|error| {
@@ -601,22 +600,14 @@ pub(crate) fn build_components<'task>(
     Ok(components)
 }
 
+/// The construction time left before `deadline`, `None` without one; a
+/// [`HeuristicBuildError::ConstructionTimeout`] once it passed.
 pub(crate) fn remaining_construction_time(
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<Option<Duration>, HeuristicBuildError> {
-    let Some(deadline) = deadline else {
-        return Ok(None);
-    };
-    deadline
-        .checked_duration_since(Instant::now())
-        .filter(|remaining| !remaining.is_zero())
-        .map(Some)
-        .ok_or(HeuristicBuildError::ConstructionTimeout)
-}
-
-fn cap_duration(limit: &mut Option<Duration>, remaining: Option<Duration>) {
-    if let Some(remaining) = remaining {
-        *limit = Some(limit.map_or(remaining, |current| current.min(remaining)));
+    match deadline.remaining() {
+        Some(remaining) if remaining.is_zero() => Err(HeuristicBuildError::ConstructionTimeout),
+        remaining => Ok(remaining),
     }
 }
 
@@ -670,6 +661,8 @@ fn format_config_value(value: &ConfigValue) -> String {
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
+
+    use crate::resource_limits::Deadline;
 
     use crate::config::{ConfigArg, ConfigCall, ConfigValue};
 
@@ -815,7 +808,7 @@ mod tests {
 
     #[test]
     fn expired_shared_deadline_is_a_typed_timeout() {
-        let error = remaining_construction_time(Some(Instant::now())).unwrap_err();
+        let error = remaining_construction_time(Deadline::at(Instant::now())).unwrap_err();
         assert!(matches!(error, HeuristicBuildError::ConstructionTimeout));
         assert_eq!(error.into_io_error().kind(), std::io::ErrorKind::TimedOut);
     }

@@ -6,6 +6,7 @@ use std::time::Duration;
 use super::{FlawKind, FlawScope, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
 use crate::evaluation::abstractions::collections::standard::StandardMember;
+use crate::resource_limits::{min_time_limit, time_limit_from_secs};
 
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct CegarOptions {
@@ -45,10 +46,8 @@ impl CegarOptions {
     pub(crate) fn for_restart(&self, member: &StandardMember) -> Self {
         Self {
             max_states: member.max_states,
-            max_time: member
-                .max_time
-                .is_finite()
-                .then(|| Duration::from_secs_f64(member.max_time.max(0.0))),
+            max_time: time_limit_from_secs(member.max_time)
+                .expect("a restart's time limit is a non-negative number of seconds"),
             random_seed: Some(member.seed),
             split_kind: member.split_kind.unwrap_or(self.split_kind),
             ..self.clone()
@@ -67,7 +66,7 @@ impl CegarOptions {
         Self {
             max_states: self.max_states.min(budget.remaining_states),
             // Whichever of the two budgets exist bind; the tighter one wins.
-            max_time: self.max_time.into_iter().chain(budget.remaining_time).min(),
+            max_time: min_time_limit(self.max_time, budget.remaining_time),
             random_seed: variant.seed,
             split_kind: variant
                 .split_kind

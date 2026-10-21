@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use planforge_sas::numeric_task::{
     AbstractNumericTask, NumericValue, TaskRef, metric_operator_cost_from_initial_values,
@@ -14,6 +14,7 @@ use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::resource_limits::Deadline;
 use crate::successor_generator::SuccessorTree;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
@@ -218,13 +219,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let components = self.components.borrow();
-        let deadline = self
-            .config
-            .table_construction_max_time
-            .is_finite()
-            .then(|| {
-                Instant::now() + Duration::from_secs_f64(self.config.table_construction_max_time)
-            });
+        let deadline = deadline_from_now(
+            "table_construction_max_time",
+            self.config.table_construction_max_time,
+        )?;
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
             task,

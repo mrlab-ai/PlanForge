@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
+use crate::resource_limits::time_limit_from_secs;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -132,11 +133,18 @@ impl ScpConfig {
         if self.diversify && self.max_orders == 0 {
             return fail("SCP diversification requires max_orders > 0");
         }
-        if self.diversify
-            && (self.initial_order_generation_max_time.is_nan()
-                || self.initial_order_generation_max_time < 0.0)
-        {
-            return fail("SCP diversification requires initial_order_generation_max_time >= 0");
+        for (option, seconds) in [
+            ("max_time", self.max_time),
+            (
+                "table_construction_max_time",
+                self.table_construction_max_time,
+            ),
+            (
+                "initial_order_generation_max_time",
+                self.initial_order_generation_max_time,
+            ),
+        ] {
+            time_limit_from_secs(seconds).map_err(|error| format!("SCP {option}: {error}"))?;
         }
         if self.diversify && !has_sampling_task {
             return fail("SCP diversification requires an owned task reference for sampling");
@@ -145,9 +153,15 @@ impl ScpConfig {
     }
 
     /// Bound every phase of SCP construction by the caller's remaining time.
+    /// An invalid limit stays as it is, for [`Self::validate`] to reject.
     pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
-        self.table_construction_max_time = self.table_construction_max_time.min(max_seconds);
-        self.initial_order_generation_max_time =
-            self.initial_order_generation_max_time.min(max_seconds);
+        for limit in [
+            &mut self.table_construction_max_time,
+            &mut self.initial_order_generation_max_time,
+        ] {
+            if *limit > max_seconds {
+                *limit = max_seconds;
+            }
+        }
     }
 }

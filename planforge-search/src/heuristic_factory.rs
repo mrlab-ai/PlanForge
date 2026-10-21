@@ -19,9 +19,9 @@ use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerat
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
+use crate::resource_limits::Deadline;
 use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use std::sync::OnceLock;
-use std::time::Instant;
 use tracing::info;
 
 mod abstraction_config;
@@ -364,7 +364,7 @@ fn build_max_from_sources<'task>(
     sources: &[crate::config::ConfigCall],
     name: &str,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
-    let components = build_components(task, sources, ComponentUse::Standalone, None)?;
+    let components = build_components(task, sources, ComponentUse::Standalone, Deadline::NONE)?;
     let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     Ok(Some(Box::new(heuristic)))
@@ -374,7 +374,7 @@ fn build_canonical_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[crate::config::ConfigCall],
     name: &str,
-    construction_deadline: Option<Instant>,
+    construction_deadline: Deadline,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     let components = build_components(
         task,
@@ -395,7 +395,7 @@ fn build_scp_from_sources<'task>(
     sources: &[crate::config::ConfigCall],
     options: &[crate::config::ConfigArg],
     name: &str,
-    construction_deadline: Option<Instant>,
+    construction_deadline: Deadline,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     if sources.is_empty() {
         return Err(format!(
@@ -773,7 +773,7 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             let source = crate::config::ConfigCall::new("pdb", spec.args.clone());
-            build_canonical_from_sources(task, &[source], "canonical_numeric_pdb", None)
+            build_canonical_from_sources(task, &[source], "canonical_numeric_pdb", Deadline::NONE)
         }
     }
 

@@ -6,19 +6,15 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         collection: PartitionedCollection<'_, '_>,
         state: &mut ScpState,
         initial_candidates: Vec<CostPartitioningHeuristic>,
-        table_deadline: Option<Instant>,
+        table_deadline: Deadline,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let initial_abstract_state_ids = collection.abstract_state_ids;
         assert!(self.config.diversify);
         assert!(!initial_candidates.is_empty());
         assert!(!initial_candidates[0].is_empty());
 
-        let diversification_deadline = self
-            .config
-            .max_time
-            .is_finite()
-            .then(|| Instant::now() + Duration::from_secs_f64(self.config.max_time.max(0.0)));
-        let deadline = earliest_deadline(table_deadline, diversification_deadline);
+        let deadline =
+            table_deadline.earliest(deadline_from_now("max_time", self.config.max_time)?);
         let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
         self.sample_states(state, initial_h, deadline)?;
         assert!(
@@ -78,9 +74,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         );
 
         for candidate in initial_candidates.into_iter().flatten() {
-            if selected.len() >= self.config.max_orders
-                || deadline.is_some_and(|end| Instant::now() >= end)
-            {
+            if selected.len() >= self.config.max_orders || deadline.passed() {
                 break;
             }
             retain_if_improving_some_sample(
@@ -94,9 +88,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         assert!(!selected.is_empty(), "the global best SCP must be retained");
 
         for sample_index in 1..state.sample_abstract_state_ids.len() {
-            if selected.len() >= self.config.max_orders
-                || deadline.is_some_and(|end| Instant::now() >= end)
-            {
+            if selected.len() >= self.config.max_orders || deadline.passed() {
                 break;
             }
             let sample_ids = state.sample_abstract_state_ids[sample_index].clone();
@@ -109,9 +101,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 ..collection
             };
             for order in self.diverse_orders_for_sample(state, &sample_ids) {
-                if selected.len() >= self.config.max_orders
-                    || deadline.is_some_and(|end| Instant::now() >= end)
-                {
+                if selected.len() >= self.config.max_orders || deadline.passed() {
                     break;
                 }
                 let candidate = self.build_cp(sample_collection, &order, deadline);

@@ -31,7 +31,7 @@ pub struct DistanceTableOptions<'a> {
     /// Override the task goals for this distance-table build.
     pub goal_facts: Option<&'a [ExplicitFact]>,
     /// Give up once the online-SCP budget is spent.
-    pub deadline: Option<Instant>,
+    pub deadline: Deadline,
     /// State whose distance bounds perimeter saturation.
     pub cap_state_id: Option<usize>,
     /// Materialize concrete regions for abstract states.
@@ -47,7 +47,7 @@ impl Default for DistanceTableOptions<'_> {
         Self {
             dump_distances: false,
             goal_facts: None,
-            deadline: None,
+            deadline: Deadline::NONE,
             cap_state_id: None,
             materialize_cartesian_sets: true,
             include_self_loops: false,
@@ -57,7 +57,7 @@ impl Default for DistanceTableOptions<'_> {
 }
 
 impl<'a> DistanceTableOptions<'a> {
-    pub fn with_deadline(mut self, deadline: Option<Instant>) -> Self {
+    pub fn with_deadline(mut self, deadline: Deadline) -> Self {
         self.deadline = deadline;
         self
     }
@@ -151,7 +151,7 @@ impl DomainAbstractionFactory {
         options: DistanceTableOptions<'_>,
     ) -> Result<AbstractDistanceTable> {
         let deadline = options.deadline;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let computed_goal_facts;
         let goal_facts = match options.goal_facts {
             Some(goal_facts) => goal_facts,
@@ -253,7 +253,7 @@ impl DomainAbstractionFactory {
         &self,
         space: AbstractGoalDistanceSpace<'_>,
         generating_op_ids: Option<&mut [Option<usize>]>,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<Vec<f64>> {
         let AbstractGoalDistanceSpace {
             task,
@@ -270,7 +270,7 @@ impl DomainAbstractionFactory {
         let mut goal_states = Vec::new();
         for state_hash in 0..num_states {
             if state_hash % 1024 == 0 {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             if self.is_goal_state(
                 task,
@@ -290,7 +290,7 @@ impl DomainAbstractionFactory {
                 applicable: Vec::new(),
             },
             &goal_states,
-            || ensure_online_scp_deadline(deadline),
+            || deadline.ensure(ONLINE_SCP),
             generating_op_ids,
         )
     }

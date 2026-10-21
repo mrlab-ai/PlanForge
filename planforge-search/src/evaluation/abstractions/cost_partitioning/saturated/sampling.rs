@@ -5,7 +5,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         &self,
         state: &mut ScpState,
         initial_h: f64,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<(), EvaluationError> {
         if !state.sample_abstract_state_ids.is_empty() {
             return Ok(());
@@ -35,7 +35,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         state.sample_abstract_state_ids.push(ids.clone());
 
         while state.sample_abstract_state_ids.len() < self.config.samples {
-            if deadline.is_some_and(|end| Instant::now() >= end) {
+            if deadline.passed() {
                 info!(
                     "scp: offline sampling deadline reached after {} samples",
                     state.sample_abstract_state_ids.len()
@@ -45,7 +45,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             let walk_length = random_walk_length(initial_h, average_cost, &mut state.rng)?;
             let mut current = initial_state.clone();
             for _ in 0..walk_length {
-                if deadline.is_some_and(|end| Instant::now() >= end) {
+                if deadline.passed() {
                     break;
                 }
                 current.fill_state(&registry, &mut propositional);
