@@ -3,7 +3,6 @@ pub mod max_additive_subsets;
 pub mod numeric_size_estimator;
 pub use crate::task_restriction::validate_restricted_task;
 pub mod pattern_collection;
-pub mod pattern_collection_information;
 pub mod pattern_database;
 pub mod pattern_generator_greedy;
 pub mod pattern_generator_systematic;

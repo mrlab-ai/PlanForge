@@ -678,7 +678,7 @@ fn truncated_pdb_propagates_frontier_seed_costs() {
     let pdb = PatternDatabase::new(projected_task, 2).unwrap();
 
     assert!(pdb.truncated);
-    assert_eq!(pdb.reached_goal_states, 0);
+    assert!(pdb.goal_state_ids.is_empty());
     assert_eq!(pdb.frontier_states, vec![2]);
     assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(1)], &[]), Some(5.0));
     assert_eq!(pdb.lookup(&[ExplicitValueIndex::new(0)], &[]), Some(10.0));

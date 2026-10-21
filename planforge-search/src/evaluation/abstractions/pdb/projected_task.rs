@@ -9,17 +9,14 @@ use planforge_sas::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, Pr
 use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, OperatorIndex, TaskRef, VariableIndex,
-    metric_operator_cost_from_initial_values,
+    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
+    OperatorIndex, TaskRef, VariableIndex, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 
 use crate::evaluation::validate_abstractable_goal;
 use crate::task_restriction::validate_restricted_task;
-
-pub type EvaluatedState = (Vec<ExplicitValueIndex>, Vec<NumericValue>, Vec<u64>);
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pattern {
@@ -179,7 +176,6 @@ pub struct ProjectedTask<'task> {
     operator_costs: Vec<NumericValue>,
     base_operator_ids: Vec<OperatorIndex>,
     propositional_packer: Arc<StatePacker>,
-    initial_packed_propositional: Vec<u64>,
     operator_effect_facts: Vec<Vec<ExplicitFact>>,
     goals: Vec<ExplicitFact>,
     axiom_effect_facts: Vec<ExplicitFact>,
@@ -235,9 +231,11 @@ impl PatternLookupProjection {
         propositional_values: &[ExplicitValueIndex],
         multipliers: &[usize],
     ) -> Result<usize, String> {
-        if self.pattern_regular_original_ids.len() != multipliers.len() {
-            return Err("pattern regular ids and multipliers length mismatch".to_string());
-        }
+        assert_eq!(
+            self.pattern_regular_original_ids.len(),
+            multipliers.len(),
+            "one hash multiplier per pattern variable"
+        );
         if propositional_values.len() < self.base_propositional_len {
             return Err(format!(
                 "propositional state too short: {} < {}",
@@ -734,14 +732,6 @@ impl<'task> ProjectedTask<'task> {
 
         let propositional_packer =
             Arc::new(projected_propositional_packer_from_variables(&variables));
-        let mut initial_packed_propositional = vec![0u64; propositional_packer.num_bins()];
-        for (var_id, value) in projected_prop_values.iter().enumerate() {
-            propositional_packer.set(
-                &mut initial_packed_propositional,
-                var_id,
-                value.index() as u64,
-            );
-        }
         Ok(Self {
             base,
             variables,
@@ -755,7 +745,6 @@ impl<'task> ProjectedTask<'task> {
             operator_costs,
             base_operator_ids,
             propositional_packer,
-            initial_packed_propositional,
             operator_effect_facts,
             goals,
             axiom_effect_facts,
@@ -770,24 +759,6 @@ impl<'task> ProjectedTask<'task> {
         })
     }
 
-    pub fn to_numeric_root_task(&self) -> NumericRootTask {
-        NumericRootTask::new(NumericRootTaskParts {
-            version: 1,
-            metric: self.metric.clone(),
-            variables: self.variables.clone(),
-            numeric_variables: self.numeric_variables.clone(),
-            goals: self.goals.clone(),
-            mutexes: vec![],
-            state: self.state.clone(),
-            numeric_state: self.numeric_state.clone(),
-            operators: self.operators.clone(),
-            axioms: self.axioms.clone(),
-            comparison_axioms: self.comparison_axioms.clone(),
-            assignment_axioms: self.assignment_axioms.clone(),
-            global_constraint: ExplicitFact::propositional(0, 0),
-        })
-    }
-
     pub fn project_state_values(
         &self,
         propositional_values: &[ExplicitValueIndex],
@@ -796,7 +767,7 @@ impl<'task> ProjectedTask<'task> {
         let mut projected_prop_values = Vec::with_capacity(self.projected_var_to_original.len());
         let mut projected_numeric_values =
             Vec::with_capacity(self.projected_num_var_to_original.len());
-        self.project_state_values_into(
+        self.project_state_values_from_source_numeric_into(
             propositional_values,
             numeric_values,
             &mut projected_prop_values,
@@ -843,272 +814,34 @@ impl<'task> ProjectedTask<'task> {
         Ok(())
     }
 
-    pub fn project_pattern_state_values_from_source_numeric_into(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        source_numeric_values: &[NumericValue],
-        pattern_prop_values: &mut Vec<ExplicitValueIndex>,
-        pattern_numeric_values: &mut Vec<NumericValue>,
-    ) -> Result<(), String> {
-        if propositional_values.len() < self.base.variables().len() {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base.variables().len()
-            ));
-        }
-        if source_numeric_values.len() < self.base.numeric_variables().len() {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.base.numeric_variables().len()
-            ));
-        }
-
-        pattern_prop_values.clear();
-        pattern_prop_values.reserve(self.pattern_regular_projected_ids.len());
-        for &projected_var_id in &self.pattern_regular_projected_ids {
-            let original_var_id = self.projected_var_to_original[projected_var_id];
-            pattern_prop_values.push(propositional_values[original_var_id.index()]);
-        }
-
-        pattern_numeric_values.clear();
-        pattern_numeric_values.reserve(self.pattern_numeric_projected_ids.len());
-        for &projected_numeric_id in &self.pattern_numeric_projected_ids {
-            pattern_numeric_values.push(self.projected_numeric_value_from_source_numeric(
-                projected_numeric_id,
-                source_numeric_values,
-            )?);
-        }
-
-        Ok(())
-    }
-
-    pub fn pack_pattern_state_values_from_source_numeric_into(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        source_numeric_values: &[NumericValue],
-        packer: &StatePacker,
-        packed_values: &mut Vec<u64>,
-    ) -> Result<(), String> {
-        if propositional_values.len() < self.base.variables().len() {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base.variables().len()
-            ));
-        }
-        if source_numeric_values.len() < self.base.numeric_variables().len() {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.base.numeric_variables().len()
-            ));
-        }
-
-        packed_values.clear();
-        packed_values.resize(packer.num_bins(), 0);
-
-        for (compact_index, &projected_var_id) in
-            self.pattern_regular_projected_ids.iter().enumerate()
-        {
-            let original_var_id = self.projected_var_to_original[projected_var_id];
-            packer.set(
-                packed_values,
-                compact_index,
-                propositional_values[original_var_id.index()].index() as u64,
-            );
-        }
-
-        let prop_len = self.pattern_regular_projected_ids.len();
-        for (numeric_index, &projected_numeric_id) in
-            self.pattern_numeric_projected_ids.iter().enumerate()
-        {
-            packer.set(
-                packed_values,
-                prop_len + numeric_index,
-                packer.pack_double(self.projected_numeric_value_from_source_numeric(
-                    projected_numeric_id,
-                    source_numeric_values,
-                )?),
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn pack_pattern_numeric_state_values_from_source_numeric_into(
-        &self,
-        source_numeric_values: &[NumericValue],
-        packer: &StatePacker,
-        packed_values: &mut Vec<u64>,
-    ) -> Result<(), String> {
-        if source_numeric_values.len() < self.base.numeric_variables().len() {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.base.numeric_variables().len()
-            ));
-        }
-
-        packed_values.clear();
-        packed_values.resize(packer.num_bins(), 0);
-
-        for (numeric_index, &projected_numeric_id) in
-            self.pattern_numeric_projected_ids.iter().enumerate()
-        {
-            packer.set(
-                packed_values,
-                numeric_index + 1,
-                packer.pack_double(self.projected_numeric_value_from_source_numeric(
-                    projected_numeric_id,
-                    source_numeric_values,
-                )?),
-            );
-        }
-
-        Ok(())
-    }
-
-    pub fn fill_pattern_numeric_bins_from_source_numeric_into(
-        &self,
-        source_numeric_values: &[NumericValue],
-        bins: &mut Vec<u64>,
-    ) -> Result<(), String> {
-        if source_numeric_values.len() < self.base.numeric_variables().len() {
-            return Err(format!(
-                "source numeric state too short: {} < {}",
-                source_numeric_values.len(),
-                self.base.numeric_variables().len()
-            ));
-        }
-
-        bins.clear();
-        bins.resize(1 + self.pattern_numeric_projected_ids.len(), 0);
-        for (numeric_index, &projected_numeric_id) in
-            self.pattern_numeric_projected_ids.iter().enumerate()
-        {
-            bins[numeric_index + 1] =
-                float_tolerance::canonical_bits(self.projected_numeric_value_from_source_numeric(
-                    projected_numeric_id,
-                    source_numeric_values,
-                )?);
-        }
-
-        Ok(())
-    }
-
-    pub fn compact_pattern_prop_hash_from_state_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        multipliers: &[usize],
-    ) -> Result<usize, String> {
-        if self.pattern_regular_projected_ids.len() != multipliers.len() {
-            return Err("pattern regular ids and multipliers length mismatch".to_string());
-        }
-        if propositional_values.len() < self.base.variables().len() {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base.variables().len()
-            ));
-        }
-
-        let mut hash = 0usize;
-        for (&projected_var_id, &multiplier) in self
-            .pattern_regular_projected_ids
-            .iter()
-            .zip(multipliers.iter())
-        {
-            let original_var_id = self.projected_var_to_original[projected_var_id];
-            let value = propositional_values[original_var_id.index()];
-            debug_assert!(
-                value
-                    .index()
-                    .checked_mul(multiplier)
-                    .and_then(|contribution| hash.checked_add(contribution))
-                    .is_some(),
-                "PDB propositional hash must fit in usize"
-            );
-            hash += value.index() * multiplier;
-        }
-        Ok(hash)
-    }
-
-    pub fn project_state_values_into(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-        numeric_values: &[NumericValue],
-        projected_prop_values: &mut Vec<ExplicitValueIndex>,
-        projected_numeric_values: &mut Vec<NumericValue>,
-    ) -> Result<(), String> {
-        if propositional_values.len() < self.base.variables().len() {
-            return Err(format!(
-                "propositional state too short: {} < {}",
-                propositional_values.len(),
-                self.base.variables().len()
-            ));
-        }
-        if numeric_values.len() < self.base.numeric_variables().len() {
-            return Err(format!(
-                "numeric state too short: {} < {}",
-                numeric_values.len(),
-                self.base.numeric_variables().len()
-            ));
-        }
-
-        self.project_state_values_from_source_numeric_into(
-            propositional_values,
-            numeric_values,
-            projected_prop_values,
-            projected_numeric_values,
-        )
-    }
-
     pub fn evaluated_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), ProjectedTaskBuildError> {
-        let mut propositional = self.state.clone();
-        let mut numeric = self.numeric_state.clone();
-        self.evaluate_axiom_closure(&mut propositional, &mut numeric)?;
-        Ok((propositional, numeric))
-    }
-
-    pub fn pack_propositional_values(
-        &self,
-        propositional_values: &[ExplicitValueIndex],
-    ) -> Result<Vec<u64>, String> {
-        if propositional_values.len() != self.variables.len() {
-            return Err(format!(
-                "expected {} propositional values, got {}",
-                self.variables.len(),
-                propositional_values.len()
-            ));
-        }
-        let mut packed = vec![0u64; self.propositional_packer.num_bins()];
-        for (var_id, value) in propositional_values.iter().enumerate() {
+        let mut buffer = vec![0u64; self.propositional_packer.num_bins()];
+        for (var_id, value) in self.state.iter().enumerate() {
             self.propositional_packer
-                .set(&mut packed, var_id, value.index() as u64);
+                .set(&mut buffer, var_id, value.index() as u64);
         }
-        Ok(packed)
-    }
-
-    pub fn propositional_packer(&self) -> &StatePacker {
-        &self.propositional_packer
-    }
-
-    pub fn evaluated_initial_state(&self) -> Result<EvaluatedState, ProjectedTaskBuildError> {
-        let mut propositional = self.state.clone();
         let mut numeric = self.numeric_state.clone();
-        let mut packed = self.initial_packed_propositional.clone();
-        self.evaluate_axiom_closure_with_buffer(&mut propositional, &mut numeric, &mut packed)?;
-        Ok((propositional, numeric, packed))
-    }
-
-    pub fn is_goal_state_values(&self, propositional_values: &[usize]) -> bool {
-        self.goals
-            .iter()
-            .all(|goal| propositional_values.get(goal.var()).copied() == Some(goal.value()))
+        // Only the initial state is closed, once per projected task, so compiling
+        // the evaluator here costs nothing worth caching in the task.
+        let task: TaskRef<'_> = Arc::new(self);
+        let axiom_evaluator = AxiomEvaluator::new(task, Arc::clone(&self.propositional_packer));
+        axiom_evaluator
+            .evaluate(&mut buffer, &mut numeric)
+            .map_err(
+                |err| ProjectedTaskBuildError::InitialStateEvaluationFailed {
+                    reason: format!("propositional axioms: {err:?}"),
+                },
+            )?;
+        let propositional = (0..self.state.len())
+            .map(|var_id| {
+                ExplicitValueIndex::from_usize(
+                    self.propositional_packer.get(&buffer, var_id) as usize
+                )
+            })
+            .collect();
+        Ok((propositional, numeric))
     }
 
     pub fn min_operator_cost(&self) -> f64 {
@@ -1124,10 +857,8 @@ impl<'task> ProjectedTask<'task> {
         }
     }
 
-    pub fn base_operator_id(&self, projected_operator_id: OperatorIndex) -> Option<OperatorIndex> {
-        self.base_operator_ids
-            .get(projected_operator_id.index())
-            .copied()
+    pub fn base_operator_id(&self, projected_operator_id: OperatorIndex) -> OperatorIndex {
+        self.base_operator_ids[projected_operator_id.index()]
     }
 
     pub fn base_operator_ids(&self) -> &[OperatorIndex] {
@@ -1140,80 +871,6 @@ impl<'task> ProjectedTask<'task> {
 
     pub fn pattern_regular_projected_ids(&self) -> &[usize] {
         &self.pattern_regular_projected_ids
-    }
-
-    pub fn state_dependent_numeric_projected_ids(&self) -> Vec<usize> {
-        (0..self.projected_num_var_to_original.len())
-            .filter(|&projected_index| {
-                self.base
-                    .numeric_variables()
-                    .get(self.projected_num_var_to_original[projected_index].index())
-                    .is_some_and(|numeric_var| numeric_var.get_type() != &NumericType::Constant)
-            })
-            .collect()
-    }
-
-    fn projected_numeric_value_from_source_numeric(
-        &self,
-        projected_index: usize,
-        source_numeric_values: &[NumericValue],
-    ) -> Result<NumericValue, String> {
-        let original_numeric_var = self
-            .projected_num_var_to_original
-            .get(projected_index)
-            .copied()
-            .ok_or_else(|| {
-                format!("projected numeric variable index out of bounds: {projected_index}")
-            })?;
-        source_numeric_values
-            .get(original_numeric_var.index())
-            .copied()
-            .ok_or_else(|| {
-                format!(
-                    "source numeric state too short for numeric variable {original_numeric_var}"
-                )
-            })
-    }
-
-    fn evaluate_axiom_closure(
-        &self,
-        propositional: &mut [ExplicitValueIndex],
-        numeric: &mut [NumericValue],
-    ) -> Result<(), ProjectedTaskBuildError> {
-        let mut buffer = self.initial_packed_propositional.clone();
-
-        for (var_id, value) in propositional.iter().enumerate() {
-            self.propositional_packer
-                .set(&mut buffer, var_id, value.index() as u64);
-        }
-
-        self.evaluate_axiom_closure_with_buffer(propositional, numeric, &mut buffer)
-    }
-
-    fn evaluate_axiom_closure_with_buffer(
-        &self,
-        propositional: &mut [ExplicitValueIndex],
-        numeric: &mut [NumericValue],
-        buffer: &mut [u64],
-    ) -> Result<(), ProjectedTaskBuildError> {
-        // Only the initial state is closed, once per projected task, so compiling
-        // the evaluator here costs nothing worth caching in the task.
-        let task: TaskRef<'_> = Arc::new(self);
-        let axiom_evaluator = AxiomEvaluator::new(task, Arc::clone(&self.propositional_packer));
-
-        axiom_evaluator.evaluate(buffer, numeric).map_err(|err| {
-            ProjectedTaskBuildError::InitialStateEvaluationFailed {
-                reason: format!("propositional axioms: {err:?}"),
-            }
-        })?;
-
-        for (var_id, slot) in propositional.iter_mut().enumerate() {
-            *slot = ExplicitValueIndex::from_usize(
-                self.propositional_packer.get(buffer, var_id) as usize
-            );
-        }
-
-        Ok(())
     }
 }
 

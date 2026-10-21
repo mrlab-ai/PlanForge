@@ -179,18 +179,7 @@ impl ComponentSaturation<'_, '_> {
                 // saturation deliberately degrades to label granularity.
                 let operator_costs = residual.operator_costs_for_label_cp();
                 let (distances, saturated) = if let Some(state_id) = cap_state_id {
-                    let cap_distances = pdb.build_goal_distances(&operator_costs).map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to compute PDB PERIM cap table {component_id}: {error}"
-                        ))
-                    })?;
-                    let h_cap = cap_distances.get(state_id).copied().ok_or_else(|| {
-                        EvaluationError::InvalidState(format!(
-                            "PDB component {component_id} state id {state_id} out of bounds for {} states",
-                            cap_distances.len()
-                        ))
-                    })?;
-                    pdb.build_cost_partitioned_distance_table_capped(&operator_costs, h_cap)
+                    pdb.build_cost_partitioned_distance_table_capped(&operator_costs, state_id)
                 } else {
                     pdb.build_cost_partitioned_distance_table(&operator_costs)
                 }
