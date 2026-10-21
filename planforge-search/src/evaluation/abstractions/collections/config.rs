@@ -40,7 +40,10 @@ pub trait MemberConfig: ApplyOptions + Clone {
 }
 
 /// A collection of abstractions configured by `M`. The member options bound
-/// every member: `max_states` and `max_time` are per member.
+/// every member: `max_states` and `max_time` are per member. The members'
+/// `random_seed` is the seed of the collection, which its members derive
+/// theirs from; a [`MemberConstruction`] sets it, and the other options it
+/// names, for every member.
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct CollectionConfig<M: ApplyOptions> {
     pub collection_strategy: CollectionStrategy,
@@ -65,9 +68,7 @@ pub struct CollectionConfig<M: ApplyOptions> {
     pub single_goal_tasks: bool,
     /// The split kind of every member when the members do not alternate;
     /// concrete when unset. The collection chooses its members' split kinds,
-    /// so the members' own `split_kind` keeps its default. The members'
-    /// `random_seed` is the seed of the collection, which the members derive
-    /// theirs from.
+    /// so the members' own `split_kind` keeps its default.
     pub split_kind: Option<SplitKind>,
     /// Standard collections: how long without a new member the collection
     /// stagnates after; never when `None`.
