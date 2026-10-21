@@ -41,14 +41,6 @@ use lookup::*;
 use partition::*;
 use scoring::*;
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Main heuristic
-// ---------------------------------------------------------------------------
-
 /// The abstraction components and the phase of the heuristic, which builds
 /// its cost partitionings at the first evaluated state.
 struct ScpState<'task> {
