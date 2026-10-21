@@ -65,7 +65,7 @@ pub(super) fn refine_domain_abstraction(
         config
             .cegar
             .random_seed
-            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+            .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
     );
     let (mut domain_mapping, mut domain_sizes) =
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;

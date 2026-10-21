@@ -69,7 +69,7 @@ impl VariableOrderFinder {
         }
 
         if variable_order_type == GreedyVariableOrderType::CgGoalRandom {
-            let mut rng = SmallRng::seed_from_u64(random_seed as i64 as u64);
+            let mut rng = SmallRng::seed_from_u64(random_seed);
             remaining_vars.shuffle(&mut rng);
         }
 

@@ -71,7 +71,7 @@ struct ScpState {
 
 impl ScpState {
     fn new(seed: Option<u64>) -> Self {
-        let seed = seed.unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED);
+        let seed = seed.unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED);
         Self {
             built: false,
             cp_heuristics: Vec::new(),

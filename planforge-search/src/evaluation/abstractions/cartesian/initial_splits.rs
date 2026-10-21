@@ -31,7 +31,7 @@ pub(super) fn apply_initial_split(
             config
                 .cegar
                 .random_seed
-                .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+                .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
         );
         let initial_numeric = initial_numeric_values_with_additive_views(task);
         for goal_id in 0..task.get_num_goals() {

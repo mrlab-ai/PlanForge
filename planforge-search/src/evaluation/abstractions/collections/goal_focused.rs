@@ -34,10 +34,11 @@ use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
 use super::member::{BuiltReport, CollectionMember};
-use super::strategy::{CollectionStrategy, derive_variant_seed};
+use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
+use crate::evaluation::seed::{DEFAULT_RANDOM_SEED, derive_variant_seed};
 
 /// Why the collection is building a member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +161,7 @@ impl GoalFocusedSchedule {
             MemberKind::InitialRootSpecialist => 0,
             MemberKind::Scheduled | MemberKind::Continuation => member.variant_id,
         };
-        let base_seed = self.random_seed.unwrap_or(0);
+        let base_seed = self.random_seed.unwrap_or(DEFAULT_RANDOM_SEED);
         let derived_seed =
             || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
         assert!(
