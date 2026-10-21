@@ -149,7 +149,7 @@ impl std::hash::Hash for Split {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SplitDimension {
     Propositional(VariableIndex),
     Numeric(VariableIndex),
