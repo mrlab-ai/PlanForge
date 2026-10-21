@@ -25,7 +25,6 @@ use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutL
 use crate::successor_generator::GroundedSuccessorGenerator;
 
 use super::projected_task::{PatternLookupProjection, ProjectedTask};
-//use super::utils;
 
 #[inline]
 fn hash_bytes(mut hash: u64, bytes: &[u8]) -> u64 {
@@ -528,8 +527,6 @@ impl<'task> PatternDatabase<'task> {
         pdb.state_dependent_numeric_projected_ids =
             pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
-        // NOTE: Uncomment to print summary of the built PDB.
-        // utils::dump_distance_table(&pdb);
         Ok(pdb)
     }
 
@@ -1068,15 +1065,6 @@ impl<'task> PatternDatabase<'task> {
         self.states.len()
     }
 
-    pub fn distance_for_state_id(&self, state_id: usize) -> Result<f64, String> {
-        self.distances.get(state_id).copied().ok_or_else(|| {
-            format!(
-                "PDB abstract state id {state_id} out of bounds for {} states",
-                self.distances.len()
-            )
-        })
-    }
-
     pub fn relevant_operator_ids(&self) -> Vec<OperatorIndex> {
         let mut relevant = if self.exhausted_abstract_state_space {
             self.transition_predecessors
@@ -1238,31 +1226,6 @@ impl<'task> PatternDatabase<'task> {
         }
 
         Ok(saturated_costs)
-    }
-
-    pub fn abstract_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        self.task.project_state_values(propositional, numeric)
-    }
-
-    pub fn lookup_projected_or_fallback_from_state_values(
-        &self,
-        propositional: &[ExplicitValueIndex],
-        numeric: &[NumericValue],
-    ) -> Result<f64, String> {
-        let mut projected_prop = self.projection_prop_scratch.borrow_mut();
-        let mut projected_num = self.projection_numeric_scratch.borrow_mut();
-        self.task.project_state_values_into(
-            propositional,
-            numeric,
-            &mut projected_prop,
-            &mut projected_num,
-        )?;
-
-        Ok(self.lookup_pattern_or_fallback_in_projected_values(&projected_prop, &projected_num))
     }
 
     pub fn lookup_projected_or_fallback_from_source_state_values(

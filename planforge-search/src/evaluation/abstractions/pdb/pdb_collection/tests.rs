@@ -5,6 +5,7 @@ use planforge_sas::numeric_task::{
 };
 
 use super::*;
+use crate::evaluation::abstractions::pdb::projected_task::Pattern;
 
 fn simple_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(
@@ -60,11 +61,8 @@ fn pdb_collection_builds_all_patterns() {
         ),
     ]);
 
-    let collection = PdbCollection::new(&task, patterns, 32).unwrap();
+    let collection = PdbCollection::new(&task, patterns.clone(), 32).unwrap();
 
     assert_eq!(collection.len(), 2);
-    assert_eq!(
-        collection.singleton_additive_subsets(),
-        vec![vec![0], vec![1]]
-    );
+    assert_eq!(collection.patterns().as_slice(), patterns.as_slice());
 }
