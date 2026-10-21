@@ -48,9 +48,11 @@
 use planforge_search::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::evaluation::abstractions::cartesian::CartesianAbstraction;
 use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
@@ -62,8 +64,9 @@ use planforge_search::evaluation::abstractions::common::cegar::options::CegarOpt
 use planforge_search::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitSelection,
 };
+use planforge_search::evaluation::abstractions::component::AbstractionComponent;
 use planforge_search::evaluation::abstractions::cost_partitioning::saturated::{
-    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig, collection_components,
+    CostPartitioningMethod, SaturatedCostPartitioningHeuristic, ScpConfig,
 };
 use planforge_search::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_search::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
@@ -345,14 +348,14 @@ fn scp_initial_h_for_collection(
     abstractions: Vec<DomainAbstraction>,
 ) -> f64 {
     let config = ScpConfig {
-        max_time: 100.0,
-        table_construction_max_time: 100.0,
+        max_time: Some(Duration::from_secs(100)),
+        table_construction_max_time: Some(Duration::from_secs(100)),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        components(abstractions, Vec::new()),
         config,
         task,
         Default::default(),
@@ -388,14 +391,14 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         .generate(&task)
         .expect("scp domain abstractions should build");
     let config = ScpConfig {
-        max_time: 100.0,
-        table_construction_max_time: 100.0,
+        max_time: Some(Duration::from_secs(100)),
+        table_construction_max_time: Some(Duration::from_secs(100)),
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        components(abstractions, Vec::new()),
         config,
         &task,
         Default::default(),
@@ -574,4 +577,17 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
             .all(|abstraction| abstraction.metadata().collection_membership().is_some()),
         "multi-goal goal-focused collection must not generate full-goal abstractions"
     );
+}
+
+/// The collection heuristics' components: the domain abstractions, then the
+/// Cartesian ones.
+fn components<'task>(
+    domain: Vec<DomainAbstraction>,
+    cartesian: Vec<CartesianAbstraction>,
+) -> Vec<AbstractionComponent<'task>> {
+    domain
+        .into_iter()
+        .map(AbstractionComponent::from)
+        .chain(cartesian.into_iter().map(AbstractionComponent::from))
+        .collect()
 }

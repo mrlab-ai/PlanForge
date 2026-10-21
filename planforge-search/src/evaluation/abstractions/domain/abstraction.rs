@@ -151,8 +151,8 @@ impl CegarAbstraction for DomainAbstraction {
             .as_ref()
             .and_then(|data| data.regional.as_ref())
             .context("regional saturation of a domain abstraction needs its source sets")?;
-        // Several transitions leave the same state, and both passes of the
-        // saturation ask for its region, so each is materialized once.
+        // Several transitions leave the same state, so each state's region is
+        // materialized once.
         let mut regions: Vec<Option<CartesianSet>> = vec![None; system.backward.len()];
         saturate_regions(
             system,
