@@ -1,8 +1,8 @@
 use super::*;
 
 use planforge_sas::numeric_task::{
-    Effect, ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
-    OperatorCost, VariableIndex,
+    Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts, OperatorCost, VariableIndex,
 };
 use std::sync::Arc;
 

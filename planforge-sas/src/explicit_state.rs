@@ -34,12 +34,25 @@ impl ExplicitState {
     /// Whether the propositional `fact` holds.
     #[inline]
     pub fn holds(&self, fact: &ExplicitFact) -> bool {
-        self.propositional[fact.var()] == fact.value_index()
+        fact.holds_in(&self.propositional)
+    }
+
+    /// Whether every one of `facts` holds.
+    pub fn holds_all(&self, facts: &[ExplicitFact]) -> bool {
+        facts.iter().all(|fact| self.holds(fact))
+    }
+
+    /// The `facts` that do not hold, in order.
+    pub fn unsatisfied<'f>(
+        &self,
+        facts: &'f [ExplicitFact],
+    ) -> impl Iterator<Item = &'f ExplicitFact> + use<'_, 'f> {
+        facts.iter().filter(|fact| !self.holds(fact))
     }
 
     /// Whether every precondition of `operator` holds.
     pub fn is_applicable(&self, operator: &Operator) -> bool {
-        operator.preconditions().iter().all(|fact| self.holds(fact))
+        self.holds_all(operator.preconditions())
     }
 }
 
@@ -158,18 +171,21 @@ impl<'task> ExplicitStateSpace<'task> {
 
     /// How many goals hold in `state`.
     pub fn satisfied_goal_count(&self, state: &ExplicitState) -> usize {
-        (0..self.task.get_num_goals())
-            .filter(|&goal_id| self.satisfies_goal(state, goal_id))
+        self.task
+            .goals()
+            .iter()
+            .filter(|goal| state.holds(goal))
             .count()
     }
 
     /// Whether every goal holds in `state`.
     pub fn is_goal(&self, state: &ExplicitState) -> bool {
-        (0..self.task.get_num_goals()).all(|goal_id| self.satisfies_goal(state, goal_id))
+        state.holds_all(self.task.goals())
     }
 
-    /// Re-derives the axiom variables of `state` from its other values.
-    fn close_under_axioms(&self, state: &mut ExplicitState) -> Result<(), AxiomEvalError> {
+    /// Re-derives the axiom variables of `state` from its other values. The
+    /// other values are taken as they are, without canonicalization.
+    pub fn close_under_axioms(&self, state: &mut ExplicitState) -> Result<(), AxiomEvalError> {
         self.assert_layout(state);
         let mut packed = vec![0u64; self.state_packer.num_bins()];
         for (var_id, value) in state.propositional.iter().enumerate() {

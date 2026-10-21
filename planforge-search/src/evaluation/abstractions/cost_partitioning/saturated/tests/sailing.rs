@@ -379,8 +379,10 @@ fn build_handcrafted_abstraction(
         );
     }
 
-    let goal_vars = (0..transformed_task.get_num_goals())
-        .map(|goal_id| transformed_task.get_goal_fact(goal_id).var())
+    let goal_vars = transformed_task
+        .goals()
+        .iter()
+        .map(ExplicitFact::var)
         .collect::<HashSet<_>>();
     let domain_mapping = (0..transformed_task.get_num_variables())
         .map(|var_id| {

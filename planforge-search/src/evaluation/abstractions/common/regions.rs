@@ -128,8 +128,8 @@ impl<'task> RegionSemantics<'task> {
 
     /// Whether `region` admits every goal fact.
     pub(crate) fn is_goal(&self, region: &CartesianSet) -> Result<bool> {
-        for goal_id in 0..self.task.get_num_goals() {
-            if !self.admits(region, self.task.get_goal_fact(goal_id))? {
+        for goal in self.task.goals() {
+            if !self.admits(region, goal)? {
                 return Ok(false);
             }
         }

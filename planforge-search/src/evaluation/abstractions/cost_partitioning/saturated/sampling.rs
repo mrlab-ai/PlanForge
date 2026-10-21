@@ -16,7 +16,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .take()
             .expect("offline diversification was validated to have an owned sampling task");
         let mut registry = StateRegistry::for_task(sampling_task.clone());
-        let successor_generator = SuccessorTree::new(&*sampling_task);
+        let mut expander = RegistryExpander::new(&*sampling_task);
         let initial_state = registry.get_initial_state();
         let average_cost = if self.original_operator_costs.is_empty() {
             0.0
@@ -24,11 +24,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             self.original_operator_costs.iter().sum::<f64>()
                 / self.original_operator_costs.len() as f64
         };
-        let mut applicable = Vec::new();
-        let mut propositional = Vec::new();
-        let mut successor_numeric = Vec::new();
-        let mut successor_cost = Vec::new();
-        let mut expansion_context = ExpansionContext::default();
         let mut ids = Vec::new();
 
         self.abstract_state_ids_of_sample(&initial_state, &registry, self.task, &mut ids)?;
@@ -48,37 +43,28 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 if deadline.passed() {
                     break;
                 }
-                current.fill_state(&registry, &mut propositional);
-                applicable.clear();
-                successor_generator.get_applicable_operators(&propositional, &mut applicable);
-                let Some(&operator_id) = applicable.choose(&mut state.rng) else {
+                let mut expansion = expander.expand(&registry, &current).map_err(|error| {
+                    EvaluationError::ComputationFailed(format!(
+                        "failed to expand a random-walk state: {error:?}"
+                    ))
+                })?;
+                let Some(&operator_id) = expansion.applicable_operators().choose(&mut state.rng)
+                else {
                     break;
                 };
-                registry
-                    .build_expansion_context(&current, &mut expansion_context)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to build random-walk expansion context: {error:?}"
-                        ))
-                    })?;
                 let operator = sampling_task
                     .get_operators()
                     .get(operator_id.index())
                     .expect("successor generator returned an invalid operator id");
-                let (successor, _) = registry
-                    .apply_operator_in_context(
-                        &current,
-                        operator,
-                        &expansion_context,
-                        &mut successor_numeric,
-                        &mut successor_cost,
-                    )
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to apply random-walk operator {}: {error:?}",
-                            operator.name()
-                        ))
-                    })?;
+                let (successor, _) =
+                    expansion
+                        .successor(&mut registry, operator)
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to apply random-walk operator {}: {error:?}",
+                                operator.name()
+                            ))
+                        })?;
                 current = successor;
             }
             self.abstract_state_ids_of_sample(&current, &registry, self.task, &mut ids)?;

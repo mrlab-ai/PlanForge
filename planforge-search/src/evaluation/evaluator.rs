@@ -79,13 +79,14 @@ impl<'state, 'task> EvaluationState<'state, 'task> {
     /// Writes the evaluated state's values, derived numeric values included,
     /// into `values`.
     pub fn fill_values(&self, values: &mut ExplicitState) -> Result<(), EvaluationError> {
-        let view = self.state_registry.view(self.backing_state);
-        view.fill_propositional(&mut values.propositional);
-        view.fill_numeric(&mut values.numeric).map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to evaluate the state's derived numeric values: {error:?}"
-            ))
-        })
+        self.state_registry
+            .view(self.backing_state)
+            .fill_explicit(values)
+            .map_err(|error| {
+                EvaluationError::ComputationFailed(format!(
+                    "failed to evaluate the state's derived numeric values: {error:?}"
+                ))
+            })
     }
 
     /// Mark whether this state is a goal.

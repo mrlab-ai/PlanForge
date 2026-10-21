@@ -123,14 +123,7 @@ fn tagged_facts(task: &NumericRootTask) -> Vec<TaggedSection> {
             .collect()
     };
 
-    let mut sections = vec![(
-        "goals".to_owned(),
-        tagged(
-            &(0..task.get_num_goals())
-                .map(|index| *task.get_goal_fact(index))
-                .collect::<Vec<_>>(),
-        ),
-    )];
+    let mut sections = vec![("goals".to_owned(), tagged(task.goals()))];
     sections.push((
         "global constraint".to_owned(),
         tagged(&[*task.global_constraint()]),

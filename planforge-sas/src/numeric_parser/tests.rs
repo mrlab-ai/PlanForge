@@ -269,9 +269,7 @@ fn parsing_a_sas_task_keeps_the_file_s_variable_order() {
     );
 
     // Goals, mutex groups and the global constraint.
-    let goals: Vec<ExplicitFact> = (0..task.get_num_goals())
-        .map(|goal_id| *task.get_goal_fact(goal_id))
-        .collect();
+    let goals = task.goals().to_vec();
     assert_eq!(
         goals,
         [

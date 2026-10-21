@@ -4,7 +4,8 @@ mod tests;
 use std::cell::RefCell;
 use std::fmt;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue};
+use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -84,8 +85,7 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     task: &'task dyn AbstractNumericTask,
     config: LmCutNumericConfig,
     landmark_generator: RefCell<LandmarkCutLandmarks<'task>>,
-    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
-    numeric_scratch: RefCell<Vec<NumericValue>>,
+    state_scratch: RefCell<ExplicitState>,
     state_value_cache: RefCell<StateValueCache>,
 }
 
@@ -108,16 +108,8 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
             task,
             config,
             landmark_generator: RefCell::new(LandmarkCutLandmarks::new(task, config)),
-            prop_scratch: RefCell::new(Vec::new()),
-            numeric_scratch: RefCell::new(Vec::new()),
+            state_scratch: RefCell::new(ExplicitState::default()),
             state_value_cache: RefCell::new(StateValueCache::default()),
-        })
-    }
-
-    fn is_goal_state(&self, propositional_values: &[ExplicitValueIndex]) -> bool {
-        (0..self.task.get_num_goals()).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index);
-            propositional_values.get(goal.var()).copied() == Some(goal.value_index())
         })
     }
 
@@ -138,20 +130,10 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
 
         let registry = eval_state.state_registry();
         let state_buffer_len = eval_state.state().buffer(registry).len();
-        let mut numeric_values = self.numeric_scratch.borrow_mut();
-        registry
-            .fill_numeric_vars(eval_state.state(), &mut numeric_values)
-            .map_err(|err| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to prepare LM-cut numeric values: {err:?}"
-                ))
-            })?;
-        let mut propositional_values = self.prop_scratch.borrow_mut();
-        eval_state
-            .state()
-            .fill_state(registry, &mut propositional_values);
+        let mut state = self.state_scratch.borrow_mut();
+        eval_state.fill_values(&mut state)?;
 
-        if self.is_goal_state(&propositional_values) {
+        if state.holds_all(self.task.goals()) {
             self.state_value_cache.borrow_mut().insert(state_id, 0.0);
             return Ok(0.0);
         }
@@ -159,7 +141,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
         let (dead_end, total_cost) = self
             .landmark_generator
             .borrow_mut()
-            .compute_landmark_cost(&propositional_values, state_buffer_len, &numeric_values)
+            .compute_landmark_cost(&state.propositional, state_buffer_len, &state.numeric)
             .map_err(EvaluationError::ComputationFailed)?;
 
         if dead_end {

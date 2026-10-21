@@ -140,8 +140,8 @@ pub(crate) fn ensure_regressable(
             check(fact, &|| format!("operator {op_id} ({})", op.name()))?;
         }
     }
-    for goal_id in 0..task.get_num_goals() {
-        check(task.get_goal_fact(goal_id), &|| "the goal".to_string())?;
+    for goal in task.goals() {
+        check(goal, &|| "the goal".to_string())?;
     }
     Ok(())
 }
@@ -211,12 +211,9 @@ pub(crate) fn find_regression_flaws(
         operators.len(),
         states.len()
     );
-    let goal = (0..task.get_num_goals())
-        .map(|goal_id| *task.get_goal_fact(goal_id))
-        .collect::<Vec<_>>();
     let mut partial = PartialState::unconstrained(task);
     ensure!(
-        partial.require(coordinates, task, &goal)?.is_some(),
+        partial.require(coordinates, task, task.goals())?.is_some(),
         "the goal contradicts itself"
     );
     ensure!(

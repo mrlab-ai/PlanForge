@@ -134,8 +134,7 @@ impl PotentialTask {
         // implied by it, to keep the LP bound admissible.
         let mut propositional_goals = Vec::new();
         let mut numeric_conditions = Vec::new();
-        for goal_id in 0..task.get_num_goals() {
-            let goal = *task.get_goal_fact(goal_id);
+        for &goal in task.goals() {
             let materialized = helper
                 .comparison_fact_materialized_conditions(goal.var_index(), goal.value_index());
             if materialized.is_empty() {
@@ -571,8 +570,7 @@ fn build_cpp_numeric_features(
     }
     // The optimizer also materializes comparison facts implied by a
     // propositional-goal mutex.
-    for goal_id in 0..task.get_num_goals() {
-        let goal = task.get_goal_fact(goal_id);
+    for goal in task.goals() {
         for comparison in task.comparison_axioms() {
             let false_fact =
                 ExplicitFact::propositional(comparison.get_affected_var_id().index(), 1);

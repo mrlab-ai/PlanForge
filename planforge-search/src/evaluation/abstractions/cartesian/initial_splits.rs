@@ -32,8 +32,8 @@ pub(super) fn apply_initial_split(
         );
         let coordinates = semantics.cegar().coordinates();
         let initial_numeric = coordinates.initial_values();
-        for goal_id in 0..task.get_num_goals() {
-            if task.get_goal_fact(goal_id).var_index() != var {
+        for goal in task.goals() {
+            if goal.var_index() != var {
                 continue;
             }
             let condition = task

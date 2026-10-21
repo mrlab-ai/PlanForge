@@ -93,11 +93,7 @@ fn unsatisfied_goals<T: AbstractNumericTask + ?Sized>(
     task: &T,
     state: crate::state_registry::ConcreteStateView<'_>,
 ) -> Vec<ExplicitFact> {
-    (0..task.get_num_goals())
-        .map(|i| task.get_goal_fact(i))
-        .filter(|fact| !fact.is_held(state))
-        .copied()
-        .collect()
+    state.unsatisfied(task.goals()).copied().collect()
 }
 
 /// Replay `operators` from the task's initial state under exact semantics.
@@ -134,7 +130,7 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
             });
         }
 
-        if unsatisfied_goals(task, registry.view(current)).is_empty() {
+        if registry.view(current).holds_all(task.goals()) {
             return Ok(Replay {
                 outcome: ReplayOutcome::Solved(VerifiedPlan {
                     prefix_len: step,
@@ -150,16 +146,17 @@ pub fn replay_plan<T: AbstractNumericTask + ?Sized>(
             break;
         };
 
-        if let Some(fact) = operator
-            .preconditions()
-            .iter()
-            .find(|fact| !fact.is_held(registry.view(current)))
-        {
+        let failed_precondition = registry
+            .view(current)
+            .unsatisfied(operator.preconditions())
+            .next()
+            .copied();
+        if let Some(fact) = failed_precondition {
             return Ok(Replay {
                 outcome: ReplayOutcome::Rejected(PlanRejection::InapplicableOperator {
                     step,
                     operator: operator.name().to_string(),
-                    fact: *fact,
+                    fact,
                 }),
                 applied: states.len() - 1,
                 states,

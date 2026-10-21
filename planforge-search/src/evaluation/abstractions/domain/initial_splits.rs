@@ -24,9 +24,7 @@ use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 /// order below a function of the task rather than of the order the goals were
 /// written in.
 pub(super) fn sorted_goal_facts(task: &dyn AbstractNumericTask) -> Vec<ExplicitFact> {
-    let mut goals: Vec<ExplicitFact> = (0..task.get_num_goals())
-        .map(|goal_id| *task.get_goal_fact(goal_id))
-        .collect();
+    let mut goals = task.goals().to_vec();
     goals.sort_unstable();
     goals.dedup();
     goals

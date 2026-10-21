@@ -826,7 +826,9 @@ fn build_conditioned_groups(
 ) -> Result<Vec<Vec<NumericPotentialFunction>>, String> {
     let start = Instant::now();
     let mut initial_props = Vec::new();
-    initial_state.fill_state(registry, &mut initial_props);
+    registry
+        .view(initial_state)
+        .fill_propositional(&mut initial_props);
     let mut goals: Vec<_> = optimizer
         .conditionable_goals()
         .into_iter()
