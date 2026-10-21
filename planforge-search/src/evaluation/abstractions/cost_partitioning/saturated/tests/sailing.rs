@@ -31,7 +31,7 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 
 #[test]
-fn interval_stolen_costs_keep_disjoint_infinite_tails() {
+fn region_stolen_costs_keep_disjoint_infinite_tails() {
     let region = |lower, upper, lower_closed, upper_closed| {
         CartesianSet::with_all_props_constrained(
             Vec::new(),
@@ -43,18 +43,18 @@ fn interval_stolen_costs_keep_disjoint_infinite_tails() {
     let overlapping_tail = region(NumericValue::new(-1.0), INF_VALUE, true, false);
 
     assert_eq!(
-        pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
+        pairwise_region_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
         0.0
     );
     assert_eq!(
-        pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
+        pairwise_region_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
         1.0
     );
 }
 
 #[test]
 #[ignore = "oracle collection report over translated sailing benchmark"]
-fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp() {
+fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
@@ -211,7 +211,7 @@ fn initial_cartesian_scp_value(
 
 #[test]
 #[ignore = "diagnostic full-task handcrafted sailing regional SCP report"]
-fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
+fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")

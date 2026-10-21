@@ -192,7 +192,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .map(|saturated| compute_costs_stolen_by_heuristic(saturated, &surplus_costs))
             .collect();
         if config.partitioning.uses_regions() {
-            let regional_scores = interval_stolen_costs(
+            let regional_scores = region_stolen_costs(
                 &components,
                 &saturated_costs_by_abstraction,
                 &original_costs,
@@ -245,7 +245,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         };
         let mut order = self.compute_order_for_state(state, abstract_state_ids, &components);
         let mode = if self.config.partitioning.uses_regions() {
-            "interval"
+            "region"
         } else {
             "label"
         };

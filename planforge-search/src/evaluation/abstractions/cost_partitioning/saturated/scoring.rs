@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::*;
 
 /// The greedy-order score of an abstraction (Seipp 2017): its heuristic
@@ -45,15 +47,25 @@ pub(super) fn compute_costs_stolen_by_heuristic(saturated: &[f64], surplus: &[f6
         .sum()
 }
 
-pub(super) fn interval_stolen_costs(
+/// The source sets of one component's labels, grouped by concrete operator
+/// in increasing operator order.
+type SourcesByOperator<'a> = Vec<(usize, Vec<&'a CartesianSet>)>;
+
+/// The regional greedy-order score of every component with source sets (the
+/// stolen costs of [`compute_score`]); `None` for a pattern database. Two
+/// components compete for an operator when together they saturate more of
+/// it than it costs and their source sets for it overlap; each is charged
+/// the excess. The sum runs over component pairs and then operators in
+/// increasing order, so it is the same in every run.
+pub(super) fn region_stolen_costs(
     components: &[AbstractionComponent<'_>],
     saturated_by_component: &[Vec<f64>],
     operator_costs: &[f64],
 ) -> Result<Vec<Option<f64>>, EvaluationError> {
-    let mut regions_by_component = Vec::with_capacity(components.len());
+    let mut sources_by_component = Vec::with_capacity(components.len());
     for (component_id, component) in components.iter().enumerate() {
         let Some(abstraction) = component.cegar() else {
-            regions_by_component.push(None);
+            sources_by_component.push(None);
             continue;
         };
         let source_sets = abstraction.abstract_source_sets().ok_or_else(|| {
@@ -68,77 +80,107 @@ pub(super) fn interval_stolen_costs(
                 source_sets.len()
             )));
         }
-        let mut by_operator = HashMap::<usize, Vec<&CartesianSet>>::new();
-        for source_set in source_sets {
-            for label in &source_set.labels {
-                if label.concrete_op_id.index() >= operator_costs.len() {
-                    return Err(EvaluationError::ComputationFailed(format!(
-                        "region SCP component {component_id} operator region references missing operator {}",
-                        label.concrete_op_id
-                    )));
-                }
-                by_operator
-                    .entry(label.concrete_op_id.index())
-                    .or_default()
-                    .push(&label.source);
+        let mut by_operator = BTreeMap::<usize, Vec<&CartesianSet>>::new();
+        for label in source_sets.iter().flat_map(|source_set| &source_set.labels) {
+            if label.concrete_op_id.index() >= operator_costs.len() {
+                return Err(EvaluationError::ComputationFailed(format!(
+                    "region SCP component {component_id} operator region references missing operator {}",
+                    label.concrete_op_id
+                )));
             }
+            by_operator
+                .entry(label.concrete_op_id.index())
+                .or_default()
+                .push(&label.source);
         }
-        regions_by_component.push(Some(by_operator));
+        sources_by_component.push(Some(by_operator.into_iter().collect::<SourcesByOperator>()));
     }
 
-    let mut scores = regions_by_component
+    let mut scores = sources_by_component
         .iter()
-        .map(|regions| regions.as_ref().map(|_| 0.0))
+        .map(|sources| sources.as_ref().map(|_| 0.0))
         .collect::<Vec<_>>();
     for left in 0..components.len() {
-        let Some(left_by_operator) = &regions_by_component[left] else {
+        let Some(left_by_operator) = &sources_by_component[left] else {
             continue;
         };
         for right in left + 1..components.len() {
-            let Some(right_by_operator) = &regions_by_component[right] else {
+            let Some(right_by_operator) = &sources_by_component[right] else {
                 continue;
             };
-            let left_saturated = &saturated_by_component[left];
-            let right_saturated = &saturated_by_component[right];
-            for (&operator_id, left_regions) in left_by_operator {
-                let Some(right_regions) = right_by_operator.get(&operator_id) else {
-                    continue;
-                };
-                let left_amount = left_saturated[operator_id];
-                let right_amount = right_saturated[operator_id];
-                let base_cost = operator_costs[operator_id];
-                if !left_amount.is_finite() || !right_amount.is_finite() || !base_cost.is_finite() {
-                    continue;
-                }
-                let conflict = pairwise_interval_stolen_cost(
-                    left_regions,
-                    left_amount,
-                    right_regions,
-                    right_amount,
-                    base_cost,
-                );
-                if conflict > float_tolerance::SEARCH_EPSILON {
-                    *scores[left]
-                        .as_mut()
-                        .expect("regional component must have a conflict score") += conflict;
-                    *scores[right]
-                        .as_mut()
-                        .expect("regional component must have a conflict score") += conflict;
-                }
-            }
+            let conflict = pairwise_component_stolen_cost(
+                left_by_operator,
+                &saturated_by_component[left],
+                right_by_operator,
+                &saturated_by_component[right],
+                operator_costs,
+            );
+            *scores[left]
+                .as_mut()
+                .expect("a component with source sets has a score") += conflict;
+            *scores[right]
+                .as_mut()
+                .expect("a component with source sets has a score") += conflict;
         }
     }
     Ok(scores)
 }
 
-pub(super) fn pairwise_interval_stolen_cost(
+/// What two components steal from each other over the operators both have
+/// source sets for, merged in increasing operator order.
+fn pairwise_component_stolen_cost(
+    left_by_operator: &SourcesByOperator<'_>,
+    left_saturated: &[f64],
+    right_by_operator: &SourcesByOperator<'_>,
+    right_saturated: &[f64],
+    operator_costs: &[f64],
+) -> f64 {
+    let mut conflict = 0.0;
+    let mut right_iter = right_by_operator.iter().peekable();
+    for (operator_id, left_sources) in left_by_operator {
+        while right_iter
+            .next_if(|(right_id, _)| right_id < operator_id)
+            .is_some()
+        {}
+        let Some((_, right_sources)) = right_iter.next_if(|(right_id, _)| right_id == operator_id)
+        else {
+            continue;
+        };
+        let operator_id = *operator_id;
+        let (left_amount, right_amount, base_cost) = (
+            left_saturated[operator_id],
+            right_saturated[operator_id],
+            operator_costs[operator_id],
+        );
+        assert!(
+            left_amount.is_finite() && right_amount.is_finite() && base_cost.is_finite(),
+            "label saturation of an operator with source sets is finite, got {left_amount} and {right_amount} of the cost {base_cost} of operator {operator_id}"
+        );
+        let stolen = pairwise_region_stolen_cost(
+            left_sources,
+            left_amount,
+            right_sources,
+            right_amount,
+            base_cost,
+        );
+        if stolen > float_tolerance::SEARCH_EPSILON {
+            conflict += stolen;
+        }
+    }
+    conflict
+}
+
+/// What two components saturating `left_amount` and `right_amount` of an
+/// operator costing `base_cost` steal from each other: the excess over its
+/// cost if their source sets for it overlap, and nothing otherwise.
+pub(super) fn pairwise_region_stolen_cost(
     left_regions: &[&CartesianSet],
     left_amount: f64,
     right_regions: &[&CartesianSet],
     right_amount: f64,
     base_cost: f64,
 ) -> f64 {
-    let excess = (left_amount + right_amount - base_cost).max(0.0);
+    let excess = left_amount + right_amount - base_cost;
     if excess <= float_tolerance::SEARCH_EPSILON {
         return 0.0;
     }

@@ -9,7 +9,7 @@ pub(super) struct CandidateCostPartitions {
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// The order SCP starts from at the evaluated state: the greedy order, or
-    /// for interval SCP over a goal-focused collection, its goal-cover order.
+    /// for region SCP over a goal-focused collection, its goal-cover order.
     pub(super) fn compute_order_for_state(
         &self,
         state: &mut ScpState,
@@ -80,7 +80,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// The cost partitionings of the incumbent order and of the candidate
     /// orders derived from it, built until `optimization_max_time` or
     /// `budget` runs out, with the incumbent replaced by the order of the
-    /// best one at the evaluated state. Interval cost partitionings remember
+    /// best one at the evaluated state. Regional cost partitionings remember
     /// the goal their goal-cover order puts first.
     pub(super) fn build_best_cp_from_candidate_orders(
         &self,
@@ -95,9 +95,9 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             abstraction_h,
             ..
         } = collection;
-        let interval = self.config.partitioning.uses_regions();
+        let regional = self.config.partitioning.uses_regions();
         let goal_cover_goal = |order: &[usize]| {
-            interval
+            regional
                 .then(|| self.goal_cover_goal_of_order(order, components))
                 .flatten()
         };
@@ -113,8 +113,8 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         )?);
         let candidates = if optimization_max_time.is_some_and(|limit| limit.is_zero()) {
             Vec::new()
-        } else if interval {
-            self.candidate_interval_orders(incumbent_order, components, abstraction_h)
+        } else if regional {
+            self.candidate_region_orders(incumbent_order, components, abstraction_h)
         } else {
             self.candidate_label_orders(incumbent_order, abstraction_h)
                 .into_iter()
@@ -156,7 +156,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         })
     }
 
-    pub(super) fn candidate_interval_orders(
+    pub(super) fn candidate_region_orders(
         &self,
         base_order: &[usize],
         components: &[AbstractionComponent<'_>],
