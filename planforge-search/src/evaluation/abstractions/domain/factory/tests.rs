@@ -217,10 +217,11 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         .abstract_operators(&task, false, Deadline::NONE)
         .unwrap();
     let transition_system = factory
-        .build_abstract_transition_system_from_operators(
+        .build_transition_system(
             &task,
             &abstract_operators,
-            DistanceTableOptions::default().without_cartesian_sets(),
+            StateRegions::Omit,
+            Deadline::NONE,
         )
         .unwrap();
     let (explicit, _) = saturate_labels(
@@ -277,10 +278,11 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         .unwrap();
     assert_eq!(abstract_operators.len(), 1);
     let transition_system = factory
-        .build_abstract_transition_system_from_operators(
+        .build_transition_system(
             &task,
             &abstract_operators,
-            DistanceTableOptions::default().without_cartesian_sets(),
+            StateRegions::Omit,
+            Deadline::NONE,
         )
         .unwrap();
     let source_sets = vec![AbstractOperatorSourceSets {
@@ -400,7 +402,7 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
     ) -> Result<AbstractDistanceTable> {
         let operators = self.abstract_operators(task, combine_labels, Deadline::NONE)?;
-        self.build_distance_table(task, &operators, DistanceTableOptions::default())
+        self.build_distance_table(task, &operators, Deadline::NONE)
     }
 }
 

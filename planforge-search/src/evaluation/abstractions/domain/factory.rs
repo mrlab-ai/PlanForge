@@ -36,15 +36,16 @@ use crate::evaluation::abstractions::common::transition_system::{
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{SaturationGraph, cheapest_label};
 use crate::resource_limits::Deadline;
-pub use distances::*;
+pub(crate) use distances::MatchTreeGraph;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 pub(crate) use source_sets::source_set_within;
 pub(crate) use state_encoding::MatchTree;
 pub use transition_system::*;
 
-/// The operation an expired online SCP deadline names.
-const ONLINE_SCP: &str = "online SCP";
+/// The operations expired deadlines name.
+const DISTANCE_TABLE: &str = "abstract distance table";
+const TRANSITION_SYSTEM: &str = "abstract transition system";
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {

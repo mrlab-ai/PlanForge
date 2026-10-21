@@ -7,15 +7,11 @@ pub enum OcpTransitionSystemBuild {
     ConcreteLabelCapExceeded { required_at_least: usize },
 }
 
-impl OcpTransitionSystemBuild {
-    fn into_complete(self) -> Result<AbstractTransitionSystem> {
-        match self {
-            Self::Complete(system) => Ok(system),
-            Self::ConcreteLabelCapExceeded { .. } => {
-                Err(anyhow!("transition cap triggered without a configured cap"))
-            }
-        }
-    }
+/// Whether a transition system keeps the region of every abstract state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateRegions {
+    Materialize,
+    Omit,
 }
 
 /// What a transition-system build keeps beyond the transitions themselves: the
@@ -24,60 +20,57 @@ impl OcpTransitionSystemBuild {
 /// transitions it will record before reporting the cap exceeded.
 #[derive(Clone, Copy)]
 pub(super) struct TransitionSystemContents {
-    materialize_cartesian_sets: bool,
+    state_regions: StateRegions,
     include_self_loops: bool,
     max_concrete_label_transitions: Option<usize>,
 }
 
 impl DomainAbstractionFactory {
-    pub fn build_abstract_transition_system(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        options: DistanceTableOptions<'_>,
-    ) -> Result<AbstractTransitionSystem> {
-        let operators = self.abstract_operators(task, combine_labels, options.deadline)?;
-        self.build_abstract_transition_system_from_operators(task, &operators, options)
-    }
-
-    pub fn build_abstract_transition_system_from_operators(
+    /// The explicit transition system of `operators`, without self-loops.
+    pub fn build_transition_system(
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
-        options: DistanceTableOptions<'_>,
+        state_regions: StateRegions,
+        deadline: Deadline,
     ) -> Result<AbstractTransitionSystem> {
-        self.build_transition_system_with_operators(
+        match self.build_transition_system_with_operators(
             task,
             operators,
             TransitionSystemContents {
-                materialize_cartesian_sets: options.materialize_cartesian_sets,
-                include_self_loops: options.include_self_loops,
-                max_concrete_label_transitions: options.max_concrete_label_transitions,
+                state_regions,
+                include_self_loops: false,
+                max_concrete_label_transitions: None,
             },
-            options.deadline,
-        )?
-        .into_complete()
+            deadline,
+        )? {
+            OcpTransitionSystemBuild::Complete(system) => Ok(system),
+            OcpTransitionSystemBuild::ConcreteLabelCapExceeded { .. } => {
+                unreachable!("an uncapped transition system build exceeds no cap")
+            }
+        }
     }
 
     /// Build the transition relation required by potential/abstraction OCP.
     /// Unlike shortest-path transition systems, this retains abstract
     /// self-loops: `d(s)-d(s) <= c(a)` is the necessary `c(a) >= 0`
     /// constraint for every concrete label that can stutter abstractly.
-    pub fn build_ocp_transition_system_from_operators(
+    pub fn build_ocp_transition_system(
         &self,
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
-        options: DistanceTableOptions<'_>,
+        max_concrete_label_transitions: usize,
+        deadline: Deadline,
     ) -> Result<OcpTransitionSystemBuild> {
         self.build_transition_system_with_operators(
             task,
             operators,
             TransitionSystemContents {
-                materialize_cartesian_sets: false,
+                state_regions: StateRegions::Omit,
                 include_self_loops: true,
-                max_concrete_label_transitions: options.max_concrete_label_transitions,
+                max_concrete_label_transitions: Some(max_concrete_label_transitions),
             },
-            options.deadline,
+            deadline,
         )
     }
 
@@ -89,11 +82,12 @@ impl DomainAbstractionFactory {
         deadline: Deadline,
     ) -> Result<OcpTransitionSystemBuild> {
         let TransitionSystemContents {
-            materialize_cartesian_sets,
+            state_regions,
             include_self_loops,
             max_concrete_label_transitions,
         } = contents;
-        deadline.ensure(ONLINE_SCP)?;
+        let materialize_cartesian_sets = state_regions == StateRegions::Materialize;
+        deadline.ensure(TRANSITION_SYSTEM)?;
         let goal_facts = self.compute_abstract_goals(task);
         let num_states = self.layout.num_states();
         let match_tree = MatchTree::new(&self.layout, operators);
@@ -117,7 +111,7 @@ impl DomainAbstractionFactory {
         let mut incoming = Vec::new();
         for (target_hash, target_backward) in backward.iter_mut().enumerate() {
             if target_hash % 64 == 0 {
-                deadline.ensure(ONLINE_SCP)?;
+                deadline.ensure(TRANSITION_SYSTEM)?;
             }
             graph.incoming(target_hash, &mut incoming)?;
             for &(source_hash, abstract_op_id, _) in &incoming {

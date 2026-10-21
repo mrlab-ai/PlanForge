@@ -22,9 +22,7 @@ use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::factory::{
-    DistanceTableOptions, DomainAbstractionFactory,
-};
+use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
 use planforge_sas::explicit_state::ExplicitState;
@@ -414,11 +412,8 @@ fn build_handcrafted_abstraction(
     let abstract_operators = factory.abstract_operators(transformed_task, false, Deadline::NONE)?;
     let abstract_source_sets =
         factory.build_abstract_source_sets(transformed_task, &abstract_operators)?;
-    let distance_table = factory.build_distance_table(
-        transformed_task,
-        &abstract_operators,
-        DistanceTableOptions::default(),
-    )?;
+    let distance_table =
+        factory.build_distance_table(transformed_task, &abstract_operators, Deadline::NONE)?;
     let relevant_operator_ids =
         factory.relevant_operator_ids(transformed_task, &abstract_operators);
     Ok(DomainAbstraction {

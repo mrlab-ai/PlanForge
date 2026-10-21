@@ -310,7 +310,7 @@ impl DomainAbstractionFactory {
         let mut goal_states = Vec::new();
         for state in 0..self.layout.num_states() {
             if state.is_multiple_of(1024) {
-                deadline.ensure(ONLINE_SCP)?;
+                deadline.ensure(DISTANCE_TABLE)?;
             }
             if self.is_goal_state(task, state, goals, &mut intervals)? {
                 goal_states.push(state);

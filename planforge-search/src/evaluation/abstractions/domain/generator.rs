@@ -12,7 +12,7 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use rand::{SeedableRng, rngs::SmallRng};
 
 use super::config::DomainAbstractionConfig;
-use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
+use super::factory::DomainAbstractionFactory;
 use super::initial_splits::{apply_initial_goal_splits, trivial_domain_mapping_and_sizes};
 use super::partitions::NumericPartitions;
 use super::view::DomainRefinement;
@@ -154,7 +154,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
                     .abstract_operators(task, combine_labels, Deadline::NONE)
                     .context("failed to build abstract operators")?;
                 let table = factory
-                    .build_distance_table(task, &operators, DistanceTableOptions::default())
+                    .build_distance_table(task, &operators, Deadline::NONE)
                     .context("failed to build abstract distance table")?;
                 (operators, table)
             }

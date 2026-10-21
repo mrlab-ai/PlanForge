@@ -11,7 +11,7 @@ use planforge_sas::numeric_task::{
 use super::abstract_operators::AbstractOperator;
 use super::abstraction_numeric_var;
 use super::config::DomainAbstractionConfig;
-use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
+use super::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::refine::Refinable;
 use crate::evaluation::abstractions::common::cegar::split::Split;
@@ -174,11 +174,9 @@ impl Refinable for DomainRefinement<'_> {
         let operators =
             self.factory
                 .abstract_operators(self.task, self.combine_labels, deadline)?;
-        let table = self.factory.build_distance_table(
-            self.task,
-            &operators,
-            DistanceTableOptions::default().with_deadline(deadline),
-        )?;
+        let table = self
+            .factory
+            .build_distance_table(self.task, &operators, deadline)?;
         let (operators, table) = self.built.insert((operators, table));
         Ok(DomainView {
             task: self.task,

@@ -9,10 +9,9 @@ use tracing::{info, warn};
 
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use crate::evaluation::abstractions::domain::factory::{
-    DistanceTableOptions, OcpTransitionSystemBuild,
-};
+use crate::evaluation::abstractions::domain::factory::OcpTransitionSystemBuild;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
+use crate::resource_limits::Deadline;
 
 use super::{
     NumericPotentialConfig, NumericPotentialFunction, NumericPotentialOptimizer,
@@ -44,10 +43,11 @@ impl PotentialAbstractionOcpHeuristic {
     ) -> Result<Self, String> {
         let transition_build = abstraction
             .factory
-            .build_ocp_transition_system_from_operators(
+            .build_ocp_transition_system(
                 task,
                 &abstraction.abstract_operators,
-                DistanceTableOptions::default().with_concrete_label_cap(max_recorded_transitions),
+                max_recorded_transitions,
+                Deadline::NONE,
             )
             .map_err(|error| format!("pot_da_ocp could not record transitions: {error:#}"))?;
         let (transition_system, recorded_transition_count) = match transition_build {

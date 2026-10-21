@@ -12,7 +12,7 @@ use planforge_sas::numeric_task::{
 
 use super::abstract_operators::AbstractOperator;
 use super::factory::{
-    DistanceTableOptions, DomainAbstractionFactory, MatchTree, MatchTreeGraph, source_set_within,
+    DomainAbstractionFactory, MatchTree, MatchTreeGraph, StateRegions, source_set_within,
 };
 use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
@@ -105,15 +105,12 @@ impl DomainAbstraction {
         deadline: Deadline,
     ) -> Result<Ref<'a, AbstractTransitionSystem>> {
         if self.interval_transition_system.borrow().is_none() {
-            let transition_system = self
-                .factory
-                .build_abstract_transition_system_from_operators(
-                    task,
-                    &self.abstract_operators,
-                    DistanceTableOptions::default()
-                        .without_cartesian_sets()
-                        .with_deadline(deadline),
-                )?;
+            let transition_system = self.factory.build_transition_system(
+                task,
+                &self.abstract_operators,
+                StateRegions::Omit,
+                deadline,
+            )?;
             *self.interval_transition_system.borrow_mut() = Some(transition_system);
         }
         Ok(Ref::map(
