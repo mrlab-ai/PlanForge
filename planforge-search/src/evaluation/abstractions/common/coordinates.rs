@@ -35,6 +35,20 @@ impl AdditiveNumericView {
     }
 }
 
+/// The value of coordinate `var_id` in a state with `numeric` values: its
+/// additive view's for a derived coordinate, else its own, canonicalized as
+/// split boundaries are.
+pub(crate) fn coordinate_value(
+    views: &[Option<AdditiveNumericView>],
+    numeric: &[NumericValue],
+    var_id: VariableIndex,
+) -> NumericValue {
+    float_tolerance::canonicalize(match &views[var_id.index()] {
+        Some(view) => view.evaluate(numeric),
+        None => numeric[var_id.index()],
+    })
+}
+
 pub(crate) fn analyze_additive_numeric_view(
     task: &dyn AbstractNumericTask,
     numeric_var_id: VariableIndex,

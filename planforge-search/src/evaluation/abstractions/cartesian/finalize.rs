@@ -9,6 +9,7 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 /// `options.keep_transition_system`.
 pub(super) fn finalize_abstraction(
     working: WorkingAbstraction,
+    semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
     initial_state: usize,
     options: &CegarOptions,
@@ -96,5 +97,10 @@ pub(super) fn finalize_abstraction(
             source_sets: None,
         }
     });
-    CartesianAbstraction::new(working.hierarchy, core, transitions)
+    CartesianAbstraction::new(
+        working.hierarchy,
+        semantics.cegar().coordinates().shared_views(),
+        core,
+        transitions,
+    )
 }

@@ -70,6 +70,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             .map_state(&initial_state.propositional, &initial_state.numeric)?;
         let abstraction = finalize_abstraction(
             working,
+            &semantics,
             &shortest_paths,
             initial_abstract_state,
             &self.config.cegar,

@@ -1,6 +1,7 @@
 use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
 
 use super::*;
+use crate::evaluation::abstractions::common::coordinates::coordinate_value;
 
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
@@ -369,11 +370,7 @@ impl DomainAbstractionFactory {
                 continue;
             }
             let abs_var = abstraction_numeric_var(domain_sizes.len(), num_var_id);
-            let concrete_value = match &self.additive_numeric_views[num_var_id.index()] {
-                Some(view) => view.evaluate(numeric),
-                None => numeric[num_var_id.index()],
-            };
-            let val = float_tolerance::canonicalize(concrete_value);
+            let val = coordinate_value(&self.additive_numeric_views, numeric, num_var_id);
             ensure!(
                 val.is_finite(),
                 "numeric value for var {num_var_id} must be finite, got {val}"

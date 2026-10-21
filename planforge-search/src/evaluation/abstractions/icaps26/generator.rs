@@ -202,8 +202,11 @@ impl Icaps26CartesianGenerator {
             distance_table.distances[distance_table.initial_state],
             start.elapsed().as_secs_f64()
         );
+        // ICAPS26 abstractions read derived coordinates without additive views.
+        let raw_values = vec![None; semantics.task().numeric_variables().len()].into();
         Ok(CartesianAbstraction::new(
             working.hierarchy,
+            raw_values,
             AbstractionCore {
                 distances: distance_table.distances,
                 initial_state: distance_table.initial_state,

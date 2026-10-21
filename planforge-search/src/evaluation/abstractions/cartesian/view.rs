@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use super::refinement::{SplitStates, replacement_transitions};
 use super::*;
+use crate::evaluation::abstractions::common::coordinates::coordinate_value;
 use crate::resource_limits::Deadline;
 
 pub(super) struct CartesianView<'a> {
@@ -63,7 +64,12 @@ impl AbstractionView for CartesianView<'_> {
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Result<usize> {
-        self.working.hierarchy().map_state(propositions, numeric)
+        let views = self.semantics.cegar().coordinates().views();
+        self.working
+            .hierarchy()
+            .map_state_with(propositions, |var_id| {
+                coordinate_value(views, numeric, var_id)
+            })
     }
 
     fn region(&self, state: usize) -> Cow<'_, CartesianSet> {

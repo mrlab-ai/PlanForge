@@ -16,6 +16,7 @@ use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::AbstractionView;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::coordinates::coordinate_value;
 
 pub(crate) fn split_failed_fact(
     view: &impl AbstractionView,
@@ -285,12 +286,7 @@ fn comparison_refinement(
     // is over no coordinate.
     for var_id in semantics.coordinates().refinement_dimensions(tree) {
         let witness_value =
-            float_tolerance::canonicalize(match &semantics.coordinates().views()[var_id.index()] {
-                Some(view) => view.evaluate(numeric_values),
-                None => *numeric_values
-                    .get(var_id.index())
-                    .with_context(|| format!("missing concrete numeric var {var_id}"))?,
-            });
+            coordinate_value(semantics.coordinates().views(), numeric_values, var_id);
         ensure!(
             witness_value.is_finite(),
             "comparison split witness for numeric var {var_id} is non-finite: {witness_value}"

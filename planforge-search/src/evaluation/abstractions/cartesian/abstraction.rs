@@ -1,5 +1,6 @@
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
+use crate::evaluation::abstractions::common::coordinates::{AdditiveNumericView, coordinate_value};
 use crate::evaluation::abstractions::common::regions::SOURCE_SETS;
 use crate::evaluation::abstractions::component::AbstractionKind;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
@@ -13,6 +14,9 @@ use crate::resource_limits::Deadline;
 #[derive(Debug, Clone)]
 pub struct CartesianAbstraction {
     pub(crate) hierarchy: CartesianRefinementHierarchy,
+    /// The additive view of every derived coordinate, which states are
+    /// mapped through.
+    views: Arc<[Option<AdditiveNumericView>]>,
     core: AbstractionCore,
     pub(super) transitions: Option<CartesianTransitions>,
 }
@@ -30,11 +34,13 @@ pub(crate) struct CartesianTransitions {
 impl CartesianAbstraction {
     pub(crate) fn new(
         hierarchy: CartesianRefinementHierarchy,
+        views: Arc<[Option<AdditiveNumericView>]>,
         core: AbstractionCore,
         transitions: Option<CartesianTransitions>,
     ) -> Self {
         Self {
             hierarchy,
+            views,
             core,
             transitions,
         }
@@ -65,7 +71,9 @@ impl CegarAbstraction for CartesianAbstraction {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Result<usize> {
-        self.hierarchy.map_state(propositional, numeric)
+        self.hierarchy.map_state_with(propositional, |var_id| {
+            coordinate_value(&self.views, numeric, var_id)
+        })
     }
 
     fn discard_transition_data(&mut self) {

@@ -32,10 +32,22 @@ impl CartesianRefinementHierarchy {
         }
     }
 
+    /// The abstract state of the concrete state with these values, reading
+    /// numeric variables raw. The ICAPS26 abstraction maps states this way.
     pub fn map_state(
         &self,
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
+    ) -> Result<usize> {
+        self.map_state_with(propositional, |var_id| numeric[var_id.index()])
+    }
+
+    /// The abstract state of the concrete state with propositional values
+    /// `propositional` whose numeric coordinates have `coordinate_value`.
+    pub(crate) fn map_state_with(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        coordinate_value: impl Fn(VariableIndex) -> NumericValue,
     ) -> Result<usize> {
         let mut node_id = 0;
         loop {
@@ -67,9 +79,7 @@ impl CartesianRefinementHierarchy {
                     lower_child,
                     upper_child,
                 } => {
-                    let value = *numeric
-                        .get(var_id.index())
-                        .with_context(|| format!("numeric state has no value for var {var_id}"))?;
+                    let value = coordinate_value(*var_id);
                     ensure!(
                         value.is_finite(),
                         "numeric state var {var_id} is not finite: {value}"

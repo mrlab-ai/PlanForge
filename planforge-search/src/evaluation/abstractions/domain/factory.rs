@@ -9,7 +9,6 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
     VariableIndex,
 };
-use planforge_sas::utils::float_tolerance;
 
 use super::abstract_operators::{AbstractOperator, DomainMapping, build_abstract_operators};
 use super::abstraction_numeric_var;
