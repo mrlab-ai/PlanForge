@@ -231,9 +231,11 @@ impl PatternLookupProjection {
         propositional_values: &[ExplicitValueIndex],
         multipliers: &[usize],
     ) -> Result<usize, String> {
-        if self.pattern_regular_original_ids.len() != multipliers.len() {
-            return Err("pattern regular ids and multipliers length mismatch".to_string());
-        }
+        assert_eq!(
+            self.pattern_regular_original_ids.len(),
+            multipliers.len(),
+            "one hash multiplier per pattern variable"
+        );
         if propositional_values.len() < self.base_propositional_len {
             return Err(format!(
                 "propositional state too short: {} < {}",
@@ -855,10 +857,8 @@ impl<'task> ProjectedTask<'task> {
         }
     }
 
-    pub fn base_operator_id(&self, projected_operator_id: OperatorIndex) -> Option<OperatorIndex> {
-        self.base_operator_ids
-            .get(projected_operator_id.index())
-            .copied()
+    pub fn base_operator_id(&self, projected_operator_id: OperatorIndex) -> OperatorIndex {
+        self.base_operator_ids[projected_operator_id.index()]
     }
 
     pub fn base_operator_ids(&self) -> &[OperatorIndex] {
