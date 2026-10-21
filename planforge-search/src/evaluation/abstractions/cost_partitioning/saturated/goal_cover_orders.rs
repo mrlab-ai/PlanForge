@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::component::GoalFocusedMember;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct GoalCoverOrderVariant {
@@ -164,6 +165,18 @@ pub(super) fn compact_goal_cover_variants(
         .collect()
 }
 
+/// A goal-cover order of `base_order` (AAMAS 2027): the anchors of one goal
+/// first, then one representative of every other goal, so that the order
+/// covers every goal early, and then, unless `variant` is compact, every
+/// other component.
+///
+/// The goals are ranked by the largest estimate of their abstractions at the
+/// evaluated state, `abstraction_h`, and `variant` picks the anchor goal, its
+/// first and second anchor and the representatives by offsets into those
+/// rankings. Without progress states, only goals with at least two
+/// abstractions take part. `None` when no goal does, or when a compact
+/// variant or `require_pure_goal_focused_collection` meets components outside
+/// a goal-focused collection.
 pub(super) fn goal_cover_order(
     base_order: &[usize],
     components: &[AbstractionComponent<'_>],
@@ -171,160 +184,71 @@ pub(super) fn goal_cover_order(
     require_pure_goal_focused_collection: bool,
     variant: GoalCoverOrderVariant,
 ) -> Option<Vec<usize>> {
-    let goal_member = |component_id: usize| components[component_id].goal_focused_member();
-    let is_goal_member = |component_id: usize| goal_member(component_id).is_some();
-    let pure_goal_focused_collection = base_order.iter().copied().all(is_goal_member);
+    let ranking = GoalCoverRanking {
+        components,
+        abstraction_h,
+    };
+    let pure_goal_focused_collection = base_order.iter().all(|&id| ranking.is_goal_member(id));
     if (require_pure_goal_focused_collection || variant.compact) && !pure_goal_focused_collection {
         return None;
     }
 
     let mut by_goal: HashMap<usize, Vec<usize>> = HashMap::new();
     for &component_id in base_order {
-        let Some(member) = goal_member(component_id) else {
-            continue;
-        };
-        by_goal
-            .entry(member.membership.goal_id)
-            .or_default()
-            .push(component_id);
+        if let Some(member) = components[component_id].goal_focused_member() {
+            by_goal
+                .entry(member.membership.goal_id)
+                .or_default()
+                .push(component_id);
+        }
     }
     let progress_states = components
         .iter()
         .filter_map(AbstractionComponent::goal_focused_member)
         .any(|member| member.membership.from_progress_state);
-    if by_goal.is_empty()
-        || (!progress_states && by_goal.values().all(|components| components.len() < 2))
-    {
+    let anchor_goals = ranking.goals_by_max_h(&by_goal, |components| {
+        progress_states || components.len() >= 2
+    });
+    if anchor_goals.is_empty() {
         return None;
     }
-
-    let current_h = |component_id: usize| abstraction_h[component_id];
-    let member = |component_id: usize| {
-        goal_member(component_id)
-            .expect("goal-cover order component must reference a goal-focused collection member")
-    };
-    let goal_max_h = |components: &[usize]| {
-        components
-            .iter()
-            .copied()
-            .map(current_h)
-            .fold(0.0, f64::max)
-    };
-    let mut sorted_goals = by_goal
-        .iter()
-        .filter(|(_, components)| progress_states || components.len() >= 2)
-        .collect::<Vec<_>>();
-    sorted_goals.sort_by(|(left_goal, left), (right_goal, right)| {
-        goal_max_h(right)
-            .total_cmp(&goal_max_h(left))
-            .then_with(|| left_goal.cmp(right_goal))
-    });
-    let (&anchor_goal, anchor_components) =
-        sorted_goals[variant.anchor_goal_offset % sorted_goals.len()];
-
-    let compare_anchor = |&left: &usize, &right: &usize| {
-        let left_member = member(left);
-        let right_member = member(right);
-        current_h(right)
-            .total_cmp(&current_h(left))
-            .then_with(|| right_member.tie_rank.cmp(&left_member.tie_rank))
-            .then_with(|| {
-                (right_member.split_kind == SplitKind::Wanted)
-                    .cmp(&(left_member.split_kind == SplitKind::Wanted))
-            })
-            .then_with(|| left.cmp(&right))
-    };
-    let mut sorted_anchor_components = anchor_components.clone();
-    sorted_anchor_components.sort_by(compare_anchor);
-    let first_anchor =
-        sorted_anchor_components[variant.anchor_offset % sorted_anchor_components.len()];
-    let first_member = member(first_anchor);
-    let mut second_anchors = anchor_components
-        .iter()
-        .copied()
-        .filter(|&component_id| component_id != first_anchor)
-        .collect::<Vec<_>>();
-    second_anchors.sort_by(|&left, &right| {
-        let opposite_split_score = |component_id: usize| {
-            let candidate = member(component_id);
-            (
-                candidate.split_kind != first_member.split_kind,
-                candidate.tie_rank == first_member.tie_rank,
-            )
-        };
-        opposite_split_score(right)
-            .cmp(&opposite_split_score(left))
-            .then_with(|| current_h(right).total_cmp(&current_h(left)))
-            .then_with(|| {
-                member(left)
-                    .abstract_operators
-                    .cmp(&member(right).abstract_operators)
-            })
-            .then_with(|| left.cmp(&right))
-    });
-    let second_anchor = (!second_anchors.is_empty())
-        .then(|| second_anchors[variant.second_anchor_round % second_anchors.len()]);
+    let (anchor_goal, anchor_components) =
+        anchor_goals[variant.anchor_goal_offset % anchor_goals.len()];
+    let anchors = ranking.anchors(anchor_components, variant);
 
     let mut order = Vec::with_capacity(base_order.len());
     let mut selected = HashSet::with_capacity(base_order.len());
+    let mut select = |component_id: usize, order: &mut Vec<usize>| {
+        if selected.insert(component_id) {
+            order.push(component_id);
+        }
+    };
     if variant.non_goal_prefix {
         for &component_id in base_order {
-            if !is_goal_member(component_id) {
-                order.push(component_id);
-                selected.insert(component_id);
+            if !ranking.is_goal_member(component_id) {
+                select(component_id, &mut order);
             }
         }
     }
-    order.push(first_anchor);
-    selected.insert(first_anchor);
-    if let Some(component_id) = second_anchor {
-        order.push(component_id);
-        selected.insert(component_id);
+    select(anchors.first, &mut order);
+    if let Some(second) = anchors.second {
+        select(second, &mut order);
     }
     if progress_states {
-        for component_id in sorted_anchor_components {
-            if selected.insert(component_id) {
-                order.push(component_id);
-            }
+        for &component_id in &anchors.ranked {
+            select(component_id, &mut order);
         }
     }
-
-    let mut other_goals = by_goal
-        .iter()
-        .filter(|(goal_id, _)| **goal_id != anchor_goal)
-        .collect::<Vec<_>>();
-    other_goals.sort_by(|(left_goal, left), (right_goal, right)| {
-        goal_max_h(right)
-            .total_cmp(&goal_max_h(left))
-            .then_with(|| left_goal.cmp(right_goal))
-    });
-    for (representative_index, (_, components)) in other_goals.into_iter().enumerate() {
-        let mut representatives = components.clone();
-        representatives.sort_by(|&left, &right| {
-            let variant_score = |component_id: usize| {
-                let candidate = member(component_id);
-                (
-                    candidate.split_kind == first_member.split_kind,
-                    candidate.tie_rank == first_member.tie_rank,
-                )
-            };
-            variant_score(right)
-                .cmp(&variant_score(left))
-                .then_with(|| {
-                    member(left)
-                        .abstract_operators
-                        .cmp(&member(right).abstract_operators)
-                })
-                .then_with(|| current_h(right).total_cmp(&current_h(left)))
-                .then_with(|| left.cmp(&right))
-        });
-        let representative_offset = variant
-            .representative_round
-            .wrapping_add(representative_index.wrapping_mul(variant.anchor_offset + 1))
-            % representatives.len();
-        let representative = representatives[representative_offset];
-        order.push(representative);
-        selected.insert(representative);
+    let first_member = ranking.member(anchors.first);
+    let other_goals = ranking.goals_by_max_h(&by_goal, |_| true);
+    for (representative_index, (_, components)) in other_goals
+        .into_iter()
+        .filter(|&(goal_id, _)| goal_id != anchor_goal)
+        .enumerate()
+    {
+        let representative =
+            ranking.representative(components, first_member, representative_index, variant);
+        select(representative, &mut order);
     }
 
     if variant.compact {
@@ -339,33 +263,175 @@ pub(super) fn goal_cover_order(
         return Some(order);
     }
 
+    // The rest: goal-focused members by size, then the other components in
+    // the base order (the sort is stable).
     let mut remaining = base_order
         .iter()
         .copied()
         .filter(|component_id| !selected.contains(component_id))
         .collect::<Vec<_>>();
-    remaining.sort_by(
-        |&left, &right| match (is_goal_member(left), is_goal_member(right)) {
-            (true, true) => member(left)
+    remaining.sort_by(|&left, &right| {
+        match (ranking.is_goal_member(left), ranking.is_goal_member(right)) {
+            (true, true) => ranking
+                .member(left)
                 .abstract_operators
-                .cmp(&member(right).abstract_operators)
-                .then_with(|| current_h(right).total_cmp(&current_h(left)))
+                .cmp(&ranking.member(right).abstract_operators)
+                .then_with(|| ranking.h(right).total_cmp(&ranking.h(left)))
                 .then_with(|| left.cmp(&right)),
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
-            (false, false) => base_order
-                .iter()
-                .position(|&id| id == left)
-                .cmp(&base_order.iter().position(|&id| id == right)),
-        },
-    );
+            (false, false) => std::cmp::Ordering::Equal,
+        }
+    });
     order.extend(remaining);
     debug_assert_eq!(order.len(), base_order.len());
-    debug_assert_eq!(
-        order.iter().copied().collect::<HashSet<_>>().len(),
-        base_order.len()
-    );
     Some(order)
+}
+
+/// The two anchors of the anchor goal and all its components ranked.
+struct Anchors {
+    first: usize,
+    second: Option<usize>,
+    ranked: Vec<usize>,
+}
+
+/// What goal-cover orders rank components by: their estimates at the
+/// evaluated state and their goal-focused membership.
+struct GoalCoverRanking<'a, 'task> {
+    components: &'a [AbstractionComponent<'task>],
+    abstraction_h: &'a [f64],
+}
+
+impl GoalCoverRanking<'_, '_> {
+    fn h(&self, component_id: usize) -> f64 {
+        self.abstraction_h[component_id]
+    }
+
+    fn is_goal_member(&self, component_id: usize) -> bool {
+        self.components[component_id]
+            .goal_focused_member()
+            .is_some()
+    }
+
+    fn member(&self, component_id: usize) -> GoalFocusedMember {
+        self.components[component_id]
+            .goal_focused_member()
+            .expect("goal-cover order component must reference a goal-focused collection member")
+    }
+
+    /// The goals of `by_goal` that `admit` their components, by the largest
+    /// estimate among their components, descending, then by goal id.
+    fn goals_by_max_h<'g>(
+        &self,
+        by_goal: &'g HashMap<usize, Vec<usize>>,
+        admit: impl Fn(&[usize]) -> bool,
+    ) -> Vec<(usize, &'g [usize])> {
+        let goal_max_h = |components: &[usize]| {
+            components
+                .iter()
+                .map(|&component_id| self.h(component_id))
+                .fold(0.0, f64::max)
+        };
+        let mut goals = by_goal
+            .iter()
+            .filter(|(_, components)| admit(components))
+            .map(|(&goal_id, components)| (goal_id, components.as_slice()))
+            .collect::<Vec<_>>();
+        goals.sort_by(|(left_goal, left), (right_goal, right)| {
+            goal_max_h(right)
+                .total_cmp(&goal_max_h(left))
+                .then_with(|| left_goal.cmp(right_goal))
+        });
+        goals
+    }
+
+    /// The anchors of the anchor goal: `variant`'s pick among its components
+    /// by estimate, preferring later tie ranks and wanted splits, and a second
+    /// one that differs from the first in split kind and tie rank, preferring
+    /// high estimates and few abstract operators.
+    fn anchors(&self, anchor_components: &[usize], variant: GoalCoverOrderVariant) -> Anchors {
+        let mut ranked = anchor_components.to_vec();
+        ranked.sort_by(|&left, &right| {
+            let (left_member, right_member) = (self.member(left), self.member(right));
+            self.h(right)
+                .total_cmp(&self.h(left))
+                .then_with(|| right_member.tie_rank.cmp(&left_member.tie_rank))
+                .then_with(|| {
+                    (right_member.split_kind == SplitKind::Wanted)
+                        .cmp(&(left_member.split_kind == SplitKind::Wanted))
+                })
+                .then_with(|| left.cmp(&right))
+        });
+        let first = ranked[variant.anchor_offset % ranked.len()];
+        let first_member = self.member(first);
+        let opposite_split_score = |component_id: usize| {
+            let candidate = self.member(component_id);
+            (
+                candidate.split_kind != first_member.split_kind,
+                candidate.tie_rank == first_member.tie_rank,
+            )
+        };
+        let mut seconds = anchor_components
+            .iter()
+            .copied()
+            .filter(|&component_id| component_id != first)
+            .collect::<Vec<_>>();
+        seconds.sort_by(|&left, &right| {
+            opposite_split_score(right)
+                .cmp(&opposite_split_score(left))
+                .then_with(|| self.h(right).total_cmp(&self.h(left)))
+                .then_with(|| {
+                    self.member(left)
+                        .abstract_operators
+                        .cmp(&self.member(right).abstract_operators)
+                })
+                .then_with(|| left.cmp(&right))
+        });
+        let second =
+            (!seconds.is_empty()).then(|| seconds[variant.second_anchor_round % seconds.len()]);
+        Anchors {
+            first,
+            second,
+            ranked,
+        }
+    }
+
+    /// The representative of the goal with `components`, the
+    /// `representative_index`-th goal after the anchor goal: `variant`'s pick
+    /// among them, preferring the first anchor's split kind and tie rank, few
+    /// abstract operators and high estimates.
+    fn representative(
+        &self,
+        components: &[usize],
+        first_member: GoalFocusedMember,
+        representative_index: usize,
+        variant: GoalCoverOrderVariant,
+    ) -> usize {
+        let variant_score = |component_id: usize| {
+            let candidate = self.member(component_id);
+            (
+                candidate.split_kind == first_member.split_kind,
+                candidate.tie_rank == first_member.tie_rank,
+            )
+        };
+        let mut representatives = components.to_vec();
+        representatives.sort_by(|&left, &right| {
+            variant_score(right)
+                .cmp(&variant_score(left))
+                .then_with(|| {
+                    self.member(left)
+                        .abstract_operators
+                        .cmp(&self.member(right).abstract_operators)
+                })
+                .then_with(|| self.h(right).total_cmp(&self.h(left)))
+                .then_with(|| left.cmp(&right))
+        });
+        let offset = variant
+            .representative_round
+            .wrapping_add(representative_index.wrapping_mul(variant.anchor_offset + 1))
+            % representatives.len();
+        representatives[offset]
+    }
 }
 
 pub(super) fn deduplicate_goal_cover_orders(
