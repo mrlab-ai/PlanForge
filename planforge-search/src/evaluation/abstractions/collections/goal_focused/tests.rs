@@ -409,7 +409,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
 }
 
 #[test]
-fn progress_states_advance_through_concrete_plans_and_add_initial_root_specialists() {
+fn progress_states_advance_through_concrete_plans_and_add_initial_state_specialists() {
     let bounds = [Bound::AtLeast(2.0), Bound::AtLeast(4.0)];
     let task = counter_task(&bounds);
     let backend = ScriptedBackend::new(&bounds);
@@ -425,7 +425,7 @@ fn progress_states_advance_through_concrete_plans_and_add_initial_root_specialis
         vec![
             (0, 0, MemberKind::Scheduled, Some(0.0), false),
             (1, 0, MemberKind::Scheduled, Some(2.0), true),
-            (1, 1, MemberKind::InitialRootSpecialist, None, false),
+            (1, 1, MemberKind::InitialStateSpecialist, None, false),
         ]
     );
 }

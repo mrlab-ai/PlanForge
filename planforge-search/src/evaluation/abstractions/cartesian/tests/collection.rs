@@ -400,10 +400,10 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             .metadata
             .concrete_plan_operator_ids
             .as_ref()
-            .expect("initial-root specialist must find the concrete goal")
+            .expect("initial-state specialist must find the concrete goal")
             .len(),
         4,
-        "a goal first refined from a checkpoint also needs an initial-root specialist"
+        "a goal first refined from a checkpoint also needs an initial-state specialist"
     );
     for x in 0..=4 {
         let propositions = vec![
@@ -419,7 +419,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
         let true_distance = (4 - x) as f64;
         for (kind, abstraction) in [
             ("checkpoint-rooted", &abstractions[1]),
-            ("initial-root specialist", &abstractions[2]),
+            ("initial-state specialist", &abstractions[2]),
         ] {
             let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
             let h = abstraction.distance_table.distances[state_id];
