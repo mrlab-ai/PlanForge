@@ -9,10 +9,9 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
 use super::config::{CollectionConfig, MemberConfig};
-use super::goal_focused::{
-    GoalFocusedBackend, GoalVariant, MemberBudget, build_goal_focused_collection,
-};
-use super::standard::{StandardBackend, StandardMember, build_standard_collection};
+use super::goal_focused::{GoalFocusedBackend, build_goal_focused_collection};
+use super::member::MemberConstruction;
+use super::standard::build_standard_collection;
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 
@@ -74,9 +73,11 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     /// cost-partitioned collection heuristics.
     pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Vec<G::Abstraction>> {
         let members = match self.config.collection_strategy {
-            CollectionStrategy::Standard => {
-                build_standard_collection(task, &self.config.standard_schedule(), self)?
-            }
+            CollectionStrategy::Standard => build_standard_collection::<G>(
+                task,
+                &self.config.standard_schedule(),
+                &self.config.member,
+            )?,
             CollectionStrategy::PerGoal | CollectionStrategy::GoalFocused => {
                 build_goal_focused_collection(task, &self.config.goal_focused_schedule(), self)?
             }
@@ -99,25 +100,6 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
     }
 }
 
-impl<G: AbstractionGenerator> StandardBackend for CollectionGenerator<G> {
-    type Member = G::Abstraction;
-    type Key = G::Key;
-
-    const NAME: &'static str = G::NAME;
-
-    fn build(
-        &self,
-        task: &dyn AbstractNumericTask,
-        member: &StandardMember,
-    ) -> Result<Self::Member> {
-        G::new(self.config.member.for_restart(member))?.generate_from_root(task, None)
-    }
-
-    fn key(&self, member: &Self::Member) -> Self::Key {
-        G::key(member)
-    }
-}
-
 impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
     type Member = G::Abstraction;
 
@@ -127,10 +109,8 @@ impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
         &self,
         task: &dyn AbstractNumericTask,
         root: Option<&ExplicitState>,
-        variant: &GoalVariant,
-        budget: MemberBudget,
+        construction: &MemberConstruction,
     ) -> Result<Self::Member> {
-        let config = self.config.member.for_variant(variant, budget);
-        G::new(config)?.generate_from_root(task, root)
+        G::new(self.config.member.for_member(construction))?.generate_from_root(task, root)
     }
 }

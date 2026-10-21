@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 
 use super::*;
 use crate::evaluation::abstractions::collections::config::MemberConfig;
+use crate::evaluation::abstractions::collections::config::SplitKinds;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
-use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
+use crate::evaluation::abstractions::collections::member::MemberConstruction;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionUse, CegarAbstraction};
 use crate::evaluation::abstractions::common::cegar::initial_splits::{
@@ -29,8 +30,6 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, RefinementNode,
 };
-use crate::evaluation::abstractions::collections::goal_focused::MemberKind;
-use crate::evaluation::abstractions::collections::standard::StandardBackend;
 use crate::evaluation::abstractions::component::{AbstractionComponent, GoalFocusedMember};
 
 #[test]
@@ -176,11 +175,12 @@ fn standard_can_alternate_split_kinds_on_the_full_task() {
         FlawKind::Progression,
         FlawScope::WholePlan,
     );
-    let schedule = config.standard_schedule();
+    let split_kinds = config.standard_schedule().split_kinds;
 
-    assert_eq!(schedule.split_kind(1), SplitKind::Concrete);
-    assert_eq!(schedule.split_kind(2), SplitKind::Wanted);
-    assert_eq!(schedule.split_kind(3), SplitKind::Concrete);
+    assert_eq!(split_kinds, SplitKinds::Alternating);
+    assert_eq!(split_kinds.of(0), SplitKind::Concrete);
+    assert_eq!(split_kinds.of(1), SplitKind::Wanted);
+    assert_eq!(split_kinds.of(2), SplitKind::Concrete);
 }
 
 fn validation_error(config: DomainAbstractionCollectionConfig) -> String {
@@ -319,48 +319,39 @@ fn standard_rejects_goal_focused_options() {
 }
 
 #[test]
-fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
-    let mut config = DomainAbstractionCollectionConfig {
-        collection_strategy: CollectionStrategy::GoalFocused,
-        ..Default::default()
+fn a_member_construction_sets_exactly_the_options_it_names() {
+    let mut member = member_config(50, Some(Duration::from_secs(7)));
+    member.cegar.flaw_kind = FlawKind::Progression;
+    member.cegar.split_selection = SplitSelection::MinGrowth;
+    let scope = RefinementScope {
+        initial_split_var: Some(InitialSplitVar::Numeric(VariableIndex::from_usize(1))),
+        blacklisted_prop_var_ids: [VariableIndex::from_usize(2)].into(),
+        ..RefinementScope::default()
     };
-    config.member.cegar.flaw_kind = FlawKind::Progression;
-    config.member.cegar.split_selection = SplitSelection::MinGrowth;
-    config.member.cegar.max_states = 50;
-    config.member.cegar.max_time = Some(Duration::from_secs(7));
-    let variant = |direction, tie_rank, seed| GoalVariant {
-        goal_id: Some(1),
-        full_task: false,
-        variant_id: 3,
-        kind: MemberKind::Scheduled,
-        split_kind: direction,
-        tie_rank: Some(tie_rank),
-        seed,
-    };
-    let budget = MemberBudget {
-        remaining_states: 30,
-        remaining_time: Some(Duration::from_secs(5)),
-    };
+    let built = member.for_member(&MemberConstruction {
+        max_states: 30,
+        max_time: Some(Duration::from_secs(5)),
+        random_seed: Some(9),
+        split_kind: SplitKind::Wanted,
+        split_selection_rank: Some(2),
+        scope: scope.clone(),
+    });
 
-    let member = |variant: GoalVariant| config.member.for_variant(&variant, budget);
-    let forward = member(variant(SplitKind::Concrete, 1, None));
-    assert_eq!(forward.cegar.flaw_kind, FlawKind::Progression);
-    assert_eq!(forward.cegar.split_kind, SplitKind::Concrete);
-    assert_eq!(forward.cegar.split_selection_rank, Some(1));
-    assert_eq!(forward.cegar.random_seed, None);
-    assert_eq!(forward.cegar.max_states, 30);
-    assert_eq!(forward.cegar.max_time, Some(Duration::from_secs(5)));
-    assert_eq!(forward.scope, RefinementScope::default());
-
-    let backward = member(variant(SplitKind::Wanted, 2, Some(9)));
     assert_eq!(
-        backward.cegar.flaw_kind,
-        FlawKind::Progression,
-        "regression variants keep the configured flaw kind"
+        built,
+        DomainAbstractionConfig {
+            cegar: CegarOptions {
+                max_states: 30,
+                max_time: Some(Duration::from_secs(5)),
+                random_seed: Some(9),
+                split_kind: SplitKind::Wanted,
+                split_selection_rank: Some(2),
+                ..member.cegar.clone()
+            },
+            scope,
+            ..member
+        }
     );
-    assert_eq!(backward.cegar.split_kind, SplitKind::Wanted);
-    assert_eq!(backward.cegar.split_selection_rank, Some(2));
-    assert_eq!(backward.cegar.random_seed, Some(9));
 }
 
 fn comparison_variable(name: &str) -> ExplicitVariable {
@@ -936,15 +927,9 @@ fn standard_cartesian_restarts_are_distinct_full_task_abstractions() {
     .generate(&task)
     .unwrap();
     assert!(members.len() > 1, "only {} restart", members.len());
-    let generator = CartesianAbstractionCollectionGenerator::new(cartesian_collection(
-        CollectionStrategy::Standard,
-        3,
-        12,
-    ))
-    .unwrap();
     let keys: HashSet<_> = members
         .iter()
-        .map(|member| StandardBackend::key(&generator, member))
+        .map(CartesianAbstractionGenerator::key)
         .collect();
     assert_eq!(keys.len(), members.len());
     assert!(

@@ -5,8 +5,10 @@ use std::time::Duration;
 
 use anyhow::{Result, ensure};
 
-use super::goal_focused::{GoalFocusedSchedule, GoalVariant, MemberBudget};
-use super::standard::{StandardMember, StandardSchedule};
+use super::budget::CollectionLimits;
+use super::goal_focused::GoalFocusedSchedule;
+use super::member::MemberConstruction;
+use super::standard::StandardSchedule;
 use super::strategy::CollectionStrategy;
 use crate::config::ApplyOptions;
 use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
@@ -23,26 +25,16 @@ pub trait MemberConfig: ApplyOptions + Clone {
 
     fn scope_mut(&mut self) -> &mut RefinementScope;
 
-    /// This configuration for restart `member` of a standard collection,
-    /// which splits the restart's initial variable and keeps away from its
-    /// blacklisted variables.
-    fn for_restart(&self, member: &StandardMember) -> Self {
+    /// This configuration for the member `construction` describes.
+    fn for_member(&self, construction: &MemberConstruction) -> Self {
         let mut config = self.clone();
-        *config.cegar_mut() = self.cegar().for_restart(member);
-        *config.scope_mut() = RefinementScope {
-            initial_split_var: member.initial_split_var,
-            blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
-            blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
-        };
-        config
-    }
-
-    /// This configuration for a goal-focused variant, which starts from the
-    /// trivial abstraction; see [`CegarOptions::for_variant`].
-    fn for_variant(&self, variant: &GoalVariant, budget: MemberBudget) -> Self {
-        let mut config = self.clone();
-        *config.cegar_mut() = self.cegar().for_variant(variant, budget);
-        *config.scope_mut() = RefinementScope::default();
+        let cegar = config.cegar_mut();
+        cegar.max_states = construction.max_states;
+        cegar.max_time = construction.max_time;
+        cegar.random_seed = construction.random_seed;
+        cegar.split_kind = construction.split_kind;
+        cegar.split_selection_rank = construction.split_selection_rank;
+        *config.scope_mut() = construction.scope.clone();
         config
     }
 }
@@ -230,19 +222,28 @@ impl<M: MemberConfig> CollectionConfig<M> {
         cegar.max_time = min_time_limit(cegar.max_time, Some(limit));
     }
 
-    pub(crate) fn standard_schedule(&self) -> StandardSchedule {
-        let seconds = |limit: Option<Duration>| limit.map_or(f64::INFINITY, |d| d.as_secs_f64());
+    fn limits(&self) -> CollectionLimits {
         let cegar = self.member.cegar();
+        CollectionLimits {
+            max_collection_states: self.max_collection_size,
+            total_max_time: self.total_max_time,
+            member_max_states: cegar.max_states,
+            member_max_time: cegar.max_time,
+        }
+    }
+
+    pub(crate) fn standard_schedule(&self) -> StandardSchedule {
         StandardSchedule {
-            max_states: cegar.max_states,
-            max_collection_size: self.max_collection_size,
-            max_time: seconds(cegar.max_time),
-            total_max_time: seconds(self.total_max_time),
-            stagnation_limit: seconds(self.stagnation_limit),
-            blacklist_trigger_percentage: self.blacklist_trigger_percentage,
+            limits: self.limits(),
+            stagnation_limit: self.stagnation_limit,
+            // Blacklisting by time needs a time limit to take the share of.
+            blacklist_start: self
+                .total_max_time
+                .map(|total| total.mul_f64(self.blacklist_trigger_percentage)),
             enable_blacklist_on_stagnation: self.enable_blacklist_on_stagnation,
             random_seed: self.random_seed().unwrap_or(DEFAULT_RANDOM_SEED),
             split_kinds: self.split_kinds(),
+            split_selection_rank: self.member.cegar().split_selection_rank,
         }
     }
 
@@ -251,10 +252,10 @@ impl<M: MemberConfig> CollectionConfig<M> {
             strategy: self.collection_strategy,
             variants_per_goal: self.variants_per_goal,
             random_seed: self.random_seed(),
-            max_collection_states: self.max_collection_size,
-            total_max_time: self.total_max_time,
+            limits: self.limits(),
             progress_states: self.progress_states,
             split_kinds: self.split_kinds(),
+            split_selection_rank: self.member.cegar().split_selection_rank,
             single_goal_tasks: self.single_goal_tasks,
         }
     }

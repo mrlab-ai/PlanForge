@@ -9,7 +9,8 @@
 //!
 //! Scheduling: goals are visited round-robin until every goal has `min(V, 2)`
 //! variants; further variants go to the goal whose best member has the largest
-//! `h(s0)`, ties to the smaller goal id.
+//! `h(s0)`, ties to the smaller goal id. A goal-free task gets exactly one
+//! abstraction of the full task.
 //!
 //! Progress states: every variant owns a concrete *progress state*, which its
 //! members refine from. It starts as the task initial state and walks forward
@@ -26,58 +27,55 @@
 //! all members remain admissible components for collection heuristics.
 
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::explicit_state::{ExplicitState, ExplicitStateSpace};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
+use super::budget::{CollectionBudget, CollectionLimits, CollectionStopReason};
 use super::config::SplitKinds;
-use super::member::{BuiltReport, CollectionMember};
+use super::member::{CollectionMember, MemberConstruction};
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CollectionMembership;
-use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::seed::{DEFAULT_RANDOM_SEED, derive_variant_seed};
-use crate::resource_limits::Deadline;
+
+/// A goal-focused collection stops once fewer states than this are left: a
+/// member with fewer is the trivial abstraction, which tells search nothing.
+/// A standard collection stops only once no state is left.
+const MIN_MEMBER_STATES: usize = 2;
+
+/// The variants every goal gets before further variants go to the goals
+/// whose best members are strongest: one of each split kind when the
+/// variants alternate.
+const ROUND_ROBIN_VARIANTS: usize = 2;
 
 /// Why the collection is building a member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MemberKind {
-    /// One of the `G * V` members the configuration asks for.
-    Scheduled,
-    /// A goal that no member built from the task initial state covers yet.
+    /// Variant `variant_id` of its goal: one of the `G * V` members the
+    /// configuration asks for.
+    Scheduled { variant_id: usize },
+    /// A goal that no member built from the task initial state covers yet:
+    /// built like variant 0, from the task initial state.
     InitialStateSpecialist,
-    /// A goal some variant already attempted, retried from that variant's
-    /// advanced progress state.
-    Continuation,
+    /// A goal variant `variant_id` already attempted, retried from the
+    /// variant's advanced progress state.
+    Continuation { variant_id: usize },
 }
 
-/// How the collection wants one member constructed.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GoalVariant {
-    /// The goal the member is scheduled under; `None` for a goal-free task.
-    pub(crate) goal_id: Option<usize>,
-    /// The member abstracts the full task: a goal-free task, or a collection
-    /// with `single_goal_tasks` off, where `goal_id` is only a schedule label.
-    pub(crate) full_task: bool,
-    pub(crate) variant_id: usize,
-    pub(crate) kind: MemberKind,
-    pub(crate) split_kind: SplitKind,
-    /// Which of the tied best refinement candidates to take; `None` keeps the
-    /// backend's configured choice.
-    pub(crate) tie_rank: Option<usize>,
-    /// The member's random seed, replacing the configured one.
-    pub(crate) seed: Option<u64>,
-}
-
-/// What is left of the collection's state and time budget when one member is
-/// about to be built.
-#[derive(Debug, Clone, Copy)]
-pub struct MemberBudget {
-    pub(crate) remaining_states: usize,
-    pub(crate) remaining_time: Option<Duration>,
+impl MemberKind {
+    /// The variant whose progress state the member refines from; none for an
+    /// initial-state specialist.
+    pub(crate) fn variant_id(self) -> Option<usize> {
+        match self {
+            Self::Scheduled { variant_id } | Self::Continuation { variant_id } => Some(variant_id),
+            Self::InitialStateSpecialist => None,
+        }
+    }
 }
 
 /// One abstraction backend of a goal-focused collection.
@@ -87,16 +85,16 @@ pub(crate) trait GoalFocusedBackend {
     /// Backend name used in log and error messages.
     const NAME: &'static str;
 
-    /// Build one member for `task` (the member's single-goal view, or the full
-    /// task when it has no goal), refining from `root`, or from the task
-    /// initial state when `root` is `None`. A root that is an abstract dead end
-    /// stops refinement and is reported in [`BuiltReport::root_is_dead_end`].
+    /// Build the member `construction` describes for `task` (the member's
+    /// single-goal view, or the full task), refining from `root`, or from the
+    /// task initial state when `root` is `None`. A root that is an abstract
+    /// dead end stops refinement and is reported in
+    /// [`BuiltReport::root_is_dead_end`](super::member::BuiltReport::root_is_dead_end).
     fn build(
         &self,
         task: &dyn AbstractNumericTask,
         root: Option<&ExplicitState>,
-        variant: &GoalVariant,
-        budget: MemberBudget,
+        construction: &MemberConstruction,
     ) -> Result<Self::Member>;
 }
 
@@ -111,12 +109,13 @@ pub(crate) struct GoalFocusedSchedule {
     pub(crate) variants_per_goal: usize,
     /// The configured random seed, which variants derive their own from.
     pub(crate) random_seed: Option<u64>,
-    pub(crate) max_collection_states: usize,
-    pub(crate) total_max_time: Option<Duration>,
+    pub(crate) limits: CollectionLimits,
     pub(crate) progress_states: bool,
     /// Goal-focused collections may alternate split kinds by variant; ranks
     /// and seeds do not depend on it.
     pub(crate) split_kinds: SplitKinds,
+    /// The members' configured rank among tied best splits.
+    pub(crate) split_selection_rank: Option<usize>,
     /// Goal-focused collections: build every member on its goal's
     /// single-goal task. When false, every member is built on the full task;
     /// goals are then only labels that schedule the `G * V` members
@@ -128,7 +127,7 @@ pub(crate) struct GoalFocusedSchedule {
 }
 
 impl GoalFocusedSchedule {
-    /// How member `member` of a task with `goal_count` goals is constructed.
+    /// How `member` is constructed within `budget`.
     ///
     /// The variant's position in the split kind alternation, if any, is its
     /// id. A goal-focused collection ranks ties by `variant / 2` and derives
@@ -136,48 +135,51 @@ impl GoalFocusedSchedule {
     /// collection keeps the configured rank and derives a seed for every
     /// variant but the first, which keeps the configured seed. An
     /// initial-state specialist reuses variant 0's construction.
-    fn goal_variant(&self, member: &ScheduledMember, goal_count: usize) -> GoalVariant {
-        if goal_count == 0 {
-            return GoalVariant {
-                goal_id: None,
-                full_task: true,
-                variant_id: member.variant_id,
-                kind: member.kind,
-                split_kind: self.split_kinds.of(0),
-                tie_rank: None,
-                seed: self.random_seed,
-            };
-        }
-        let construction_variant = match member.kind {
-            MemberKind::InitialStateSpecialist => 0,
-            MemberKind::Scheduled | MemberKind::Continuation => member.variant_id,
-        };
-        let base_seed = self.random_seed.unwrap_or(DEFAULT_RANDOM_SEED);
-        let derived_seed =
-            || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
+    fn construction(
+        &self,
+        member: &ScheduledMember,
+        budget: &CollectionBudget,
+    ) -> MemberConstruction {
         assert!(
             self.split_kinds != SplitKinds::Alternating || self.strategy.is_goal_focused(),
             "only goal-focused collections choose split kinds per variant"
         );
-        let split_kind = self.split_kinds.of(construction_variant);
-        let (tie_rank, seed) = if self.strategy.is_goal_focused() {
-            (
-                Some(construction_variant / 2),
-                (construction_variant > 0).then(derived_seed),
+        let variant = member.kind.variant_id().unwrap_or(0);
+        let derived_seed = || {
+            derive_variant_seed(
+                self.random_seed.unwrap_or(DEFAULT_RANDOM_SEED),
+                member.goal_id,
+                variant - 1,
             )
-        } else if construction_variant > 0 {
-            (None, Some(derived_seed()))
-        } else {
-            (None, self.random_seed)
         };
-        GoalVariant {
-            goal_id: Some(member.goal_id),
-            full_task: !self.single_goal_tasks,
-            variant_id: member.variant_id,
-            kind: member.kind,
-            split_kind,
-            tie_rank,
-            seed,
+        let (split_selection_rank, random_seed) = if self.strategy.is_goal_focused() {
+            (Some(variant / 2), (variant > 0).then(derived_seed))
+        } else if variant > 0 {
+            (self.split_selection_rank, Some(derived_seed()))
+        } else {
+            (self.split_selection_rank, self.random_seed)
+        };
+        MemberConstruction {
+            max_states: budget.member_max_states(),
+            max_time: budget.member_max_time(),
+            random_seed,
+            split_kind: self.split_kinds.of(variant),
+            split_selection_rank,
+            scope: RefinementScope::default(),
+        }
+    }
+
+    /// How the one member of a goal-free task is constructed within
+    /// `budget`: like a first variant that keeps the configured seed and
+    /// rank.
+    fn goal_free_construction(&self, budget: &CollectionBudget) -> MemberConstruction {
+        MemberConstruction {
+            max_states: budget.member_max_states(),
+            max_time: budget.member_max_time(),
+            random_seed: self.random_seed,
+            split_kind: self.split_kinds.of(0),
+            split_selection_rank: self.split_selection_rank,
+            scope: RefinementScope::default(),
         }
     }
 }
@@ -188,10 +190,6 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     schedule: &GoalFocusedSchedule,
     backend: &B,
 ) -> Result<Vec<B::Member>> {
-    assert!(
-        schedule.max_collection_states > 0,
-        "goal-focused collections need a positive state budget"
-    );
     assert!(
         schedule.variants_per_goal > 0,
         "goal-focused collections need at least one variant per goal"
@@ -205,37 +203,21 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
             || (schedule.strategy.is_goal_focused() && !schedule.progress_states),
         "full-task members require a goal-focused collection without progress states"
     );
-    let goal_count = task.get_num_goals();
-    let variants_per_goal = if goal_count == 0 {
-        1
-    } else {
-        schedule.variants_per_goal
-    };
-    let abstraction_count = goal_count
-        .max(1)
-        .checked_mul(variants_per_goal)
-        .with_context(|| format!("{} collection abstraction count overflow", B::NAME))?;
-    let progress_states = schedule.progress_states;
-
     let start = Instant::now();
-    let deadline = Deadline::after(start, schedule.total_max_time)?;
-    let mut remaining_states = schedule.max_collection_states;
-    let mut members = Vec::with_capacity(abstraction_count);
-    let mut state = CollectionState::new(task, goal_count, variants_per_goal, progress_states)?;
+    let mut budget = CollectionBudget::new(schedule.limits, start)?;
+    if task.get_num_goals() == 0 {
+        return build_goal_free_member(task, schedule, backend, budget, start);
+    }
 
-    let mut stop_reason = "requested abstraction count reached";
-    while state.has_work_left(abstraction_count, progress_states) {
-        if remaining_states < 2 && !members.is_empty() {
-            stop_reason = "collection size limit";
+    let mut state = CollectionState::new(task, schedule)?;
+    let mut members = Vec::with_capacity(state.abstraction_count);
+    let mut stop_reason = CollectionStopReason::RequestedMembersBuilt;
+    while state.has_work_left() {
+        if budget.remaining_states() < MIN_MEMBER_STATES && !members.is_empty() {
+            stop_reason = CollectionStopReason::SizeLimit;
             break;
         }
-        let member = match state.select_next_member(
-            goal_count,
-            abstraction_count,
-            variants_per_goal,
-            progress_states,
-            schedule.single_goal_tasks,
-        )? {
+        let member = match state.select_next_member() {
             NextMember::Build(member) => member,
             NextMember::Stop(reason) => {
                 stop_reason = reason;
@@ -244,183 +226,188 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
         };
         // An empty collection is useless, so the first member is built even
         // with no time left -- with a zero budget, which stops it immediately.
-        let remaining_time = deadline.remaining();
-        if remaining_time.is_some_and(|remaining| remaining.is_zero()) && !members.is_empty() {
-            stop_reason = "collection time limit";
+        if budget
+            .remaining_time()
+            .is_some_and(|remaining| remaining.is_zero())
+            && !members.is_empty()
+        {
+            stop_reason = CollectionStopReason::TimeLimit;
             break;
         }
 
-        let variant = schedule.goal_variant(&member, goal_count);
-        let built = build_member(
+        let construction = schedule.construction(&member, &budget);
+        let BuiltMember {
+            member: built,
+            root,
+        } = build_member(
             task,
             backend,
             &state,
             &member,
-            &variant,
-            members.len(),
-            MemberBudget {
-                remaining_states,
-                remaining_time,
-            },
+            &construction,
+            members.len() + 1,
+            !schedule.single_goal_tasks,
         )?;
+        let report = built.report();
+        budget.charge(report.num_states);
+        state.record_built_member(&member, root, report.initial_h);
+        state.advance_progress_state::<B>(&member, root, built.concrete_plan())?;
 
-        let state_count = built.report.num_states;
-        ensure!(
-            state_count <= remaining_states,
-            "{} goal abstraction used {state_count} states with only {remaining_states} remaining",
-            B::NAME
-        );
-        remaining_states -= state_count;
-
-        state.record_built_member(
-            &member,
-            goal_count,
-            built.built_from_initial_state,
-            built.reset_progress_state,
-            built.report.initial_h,
-        );
-        state.advance_progress_state::<B>(
-            goal_count,
-            &member,
-            built.report.concrete_plan.as_deref(),
-            built.reset_progress_state,
-        )?;
-
-        members.push(built.member);
+        members.push(built);
         if !crate::resource_limits::poll_and_release_if_exceeded() {
-            stop_reason = "memory limit";
+            stop_reason = CollectionStopReason::MemoryLimit;
             break;
         }
     }
 
-    if stop_reason == "requested abstraction count reached"
-        && progress_states
+    if stop_reason == CollectionStopReason::RequestedMembersBuilt
+        && schedule.progress_states
         && state
             .goal_covered_from_initial_state
             .iter()
             .all(|covered| *covered)
     {
-        stop_reason = "requested abstractions and initial-state goal coverage reached";
+        stop_reason = CollectionStopReason::RequestedMembersAndInitialStateCoverage;
     }
     state.log_summary::<B>(
         members.len(),
-        goal_count,
-        schedule.max_collection_states - remaining_states,
+        budget.used_states(),
         start.elapsed().as_secs_f64(),
         stop_reason,
     );
     Ok(members)
 }
 
-/// One finished member, with the facts the collection bookkeeping needs about
-/// how it was built.
-struct BuiltMember<M> {
-    member: M,
-    report: BuiltReport,
-    /// The member refined from the task initial state, so it covers its goal
-    /// for every state.
-    built_from_initial_state: bool,
-    /// The variant's progress state was an abstract dead end and the member had
-    /// to be rebuilt from the task initial state.
-    reset_progress_state: bool,
+/// The one member of a goal-free task: an abstraction of the full task from
+/// its initial state.
+fn build_goal_free_member<B: GoalFocusedBackend>(
+    task: &dyn AbstractNumericTask,
+    schedule: &GoalFocusedSchedule,
+    backend: &B,
+    mut budget: CollectionBudget,
+    start: Instant,
+) -> Result<Vec<B::Member>> {
+    let mut member = backend
+        .build(task, None, &schedule.goal_free_construction(&budget))
+        .with_context(|| format!("failed to build the {} collection abstraction", B::NAME))?;
+    budget.charge(member.report().num_states);
+    member.record(1, None);
+    info!(
+        "{} collection: abstractions=1, states={}, elapsed={:.3}s, stop_reason={}",
+        B::NAME,
+        budget.used_states(),
+        start.elapsed().as_secs_f64(),
+        CollectionStopReason::RequestedMembersBuilt
+    );
+    Ok(vec![member])
 }
 
-/// Restrict the task to the member's goal, refine from its variant's progress
-/// state, and tag
-/// the result so collection heuristics can tell members apart.
+/// Where a member's refinement started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemberRoot {
+    /// The task initial state, as for an initial-state specialist, without
+    /// progress states, or as a progress state that has not advanced or is
+    /// complete. The member covers its goal for every state.
+    Initial,
+    /// The variant's advanced progress state.
+    AdvancedProgress,
+    /// The variant's progress state, which was an abstract dead end, so the
+    /// member was rebuilt from the task initial state.
+    DeadProgress,
+}
+
+/// One finished member, and where its refinement started.
+struct BuiltMember<M> {
+    member: M,
+    root: MemberRoot,
+}
+
+/// Restrict the task to the member's goal unless members abstract the
+/// `full_task`, refine from its variant's progress state, and tag the result
+/// as build `iteration` so collection heuristics can tell members apart.
 fn build_member<B: GoalFocusedBackend>(
     task: &dyn AbstractNumericTask,
     backend: &B,
     state: &CollectionState<'_>,
     member: &ScheduledMember,
-    variant: &GoalVariant,
-    abstraction_id: usize,
-    budget: MemberBudget,
+    construction: &MemberConstruction,
+    iteration: usize,
+    full_task: bool,
 ) -> Result<BuiltMember<B::Member>> {
-    let goal_task = (!variant.full_task)
-        .then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
+    let goal_task =
+        (!full_task).then(|| SingleGoalTask::new(task, *task.get_goal_fact(member.goal_id)));
     let member_task = goal_task
         .as_ref()
         .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
     debug!(
-        "{} collection: building abstraction {}, goal={}, variant={}, kind={:?}, split_kind={}, tie_rank={:?}, remaining_states={}, seed={:?}",
+        "{} collection: building abstraction {iteration}, goal={}, kind={:?}, split_kind={}, tie_rank={:?}, max_states={}, seed={:?}",
         B::NAME,
-        abstraction_id + 1,
         member.goal_id,
-        member.variant_id,
         member.kind,
-        variant.split_kind,
-        variant.tie_rank,
-        budget.remaining_states,
-        variant.seed
+        construction.split_kind,
+        construction.split_selection_rank,
+        construction.max_states,
+        construction.random_seed
     );
 
     // A specialist and a variant whose progress is complete both refine from
     // the task initial state, which the backend takes as `None`.
     let progress = state.progress(member).filter(|progress| !progress.complete);
     let refinement_root = progress.map(|progress| &progress.state);
-    let from_progress_state = progress.is_some_and(|progress| progress.advanced);
-
     let built = backend
-        .build(member_task, refinement_root, variant, budget)
+        .build(member_task, refinement_root, construction)
         .with_context(|| {
             format!(
-                "failed to build {} collection abstraction {abstraction_id}",
+                "failed to build {} collection abstraction {iteration}",
                 B::NAME
             )
         })?;
     // A dead progress state says nothing about the initial state, so the
     // member is rebuilt from there; a dead initial state is a result.
-    let reset_progress_state = refinement_root.is_some() && built.report().root_is_dead_end;
-    let mut built = if reset_progress_state {
+    let (mut built, root) = if refinement_root.is_some() && built.report().root_is_dead_end {
         info!(
-            "{} collection: progress state is an abstract dead end for goal {}, variant {}; rebuilding this member from the task initial state",
+            "{} collection: progress state is an abstract dead end for goal {}, kind {:?}; rebuilding this member from the task initial state",
             B::NAME,
             member.goal_id,
-            member.variant_id
+            member.kind
         );
-        backend
-            .build(member_task, None, variant, budget)
+        let rebuilt = backend
+            .build(member_task, None, construction)
             .with_context(|| {
                 format!(
-                    "failed to rebuild {} collection abstraction {abstraction_id} from the task initial state",
+                    "failed to rebuild {} collection abstraction {iteration} from the task initial state",
                     B::NAME
                 )
-            })?
+            })?;
+        (rebuilt, MemberRoot::DeadProgress)
+    } else if progress.is_some_and(|progress| progress.advanced) {
+        (built, MemberRoot::AdvancedProgress)
     } else {
-        built
+        (built, MemberRoot::Initial)
     };
 
-    let membership = (!variant.full_task).then_some(CollectionMembership {
+    let membership = (!full_task).then_some(CollectionMembership {
         goal_id: member.goal_id,
-        variant_id: (member.kind != MemberKind::InitialStateSpecialist)
-            .then_some(member.variant_id),
-        from_progress_state: from_progress_state && !reset_progress_state,
+        variant_id: member.kind.variant_id(),
+        from_progress_state: root == MemberRoot::AdvancedProgress,
     });
-    built.record(abstraction_id + 1, membership);
-
+    built.record(iteration, membership);
     Ok(BuiltMember {
-        report: built.report(),
         member: built,
-        built_from_initial_state: !from_progress_state,
-        reset_progress_state,
+        root,
     })
 }
 
 /// One member the collection has decided to build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScheduledMember {
-    /// `0` for the single member of a goal-free task.
     goal_id: usize,
-    /// For an initial-state specialist, `variants_per_goal`: it sits past the
-    /// scheduled variants and has no progress state.
-    variant_id: usize,
     kind: MemberKind,
 }
 
 enum NextMember {
     Build(ScheduledMember),
-    Stop(&'static str),
+    Stop(CollectionStopReason),
 }
 
 /// The progress state of one variant; see the module documentation.
@@ -434,11 +421,17 @@ struct VariantProgress {
     complete: bool,
 }
 
-/// Mutable state of one collection run.
+/// Mutable state of one collection run on a task with goals.
 ///
 /// With progress states enabled the collection keeps `variants_per_goal`
 /// independent progress states; see the module documentation.
 struct CollectionState<'task> {
+    goal_count: usize,
+    variants_per_goal: usize,
+    /// The `G * V` scheduled members.
+    abstraction_count: usize,
+    progress_states: bool,
+    single_goal_tasks: bool,
     /// The concrete states progress states move through.
     states: ExplicitStateSpace<'task>,
     /// The task initial state, which progress states start from and return
@@ -456,14 +449,16 @@ struct CollectionState<'task> {
 }
 
 impl<'task> CollectionState<'task> {
-    fn new(
-        task: &'task dyn AbstractNumericTask,
-        goal_count: usize,
-        variants_per_goal: usize,
-        progress_states: bool,
-    ) -> Result<Self> {
+    fn new(task: &'task dyn AbstractNumericTask, schedule: &GoalFocusedSchedule) -> Result<Self> {
+        let goal_count = task.get_num_goals();
+        assert!(goal_count > 0, "a goal-free task has a single member");
+        let variants_per_goal = schedule.variants_per_goal;
+        let abstraction_count = goal_count
+            .checked_mul(variants_per_goal)
+            .context("goal-focused collection abstraction count overflow")?;
         let states = ExplicitStateSpace::new(task);
-        let initial_state = (progress_states && goal_count > 0)
+        let initial_state = schedule
+            .progress_states
             .then(|| states.initial_state())
             .transpose()?;
         let progress = initial_state
@@ -480,6 +475,11 @@ impl<'task> CollectionState<'task> {
                     .collect()
             });
         Ok(Self {
+            goal_count,
+            variants_per_goal,
+            abstraction_count,
+            progress_states: schedule.progress_states,
+            single_goal_tasks: schedule.single_goal_tasks,
             states,
             initial_state,
             progress,
@@ -494,91 +494,69 @@ impl<'task> CollectionState<'task> {
     /// The progress state `member` refines from, `None` for an
     /// initial-state specialist and when progress states are off.
     fn progress(&self, member: &ScheduledMember) -> Option<&VariantProgress> {
-        (member.kind != MemberKind::InitialStateSpecialist && !self.progress.is_empty())
-            .then(|| &self.progress[member.variant_id])
+        member
+            .kind
+            .variant_id()
+            .filter(|_| !self.progress.is_empty())
+            .map(|variant_id| &self.progress[variant_id])
     }
 
     /// More scheduled members are due, a variant queued a retry, or some goal
     /// still lacks a member built from the task initial state.
-    fn has_work_left(&self, abstraction_count: usize, progress_states: bool) -> bool {
-        self.initial_abstractions_built < abstraction_count
+    fn has_work_left(&self) -> bool {
+        self.initial_abstractions_built < self.abstraction_count
             || !self.continuation_queue.is_empty()
-            || (progress_states
+            || (self.progress_states
                 && self
                     .goal_covered_from_initial_state
                     .iter()
                     .any(|covered| !covered))
     }
 
-    fn select_next_member(
-        &mut self,
-        goal_count: usize,
-        abstraction_count: usize,
-        variants_per_goal: usize,
-        progress_states: bool,
-        single_goal_tasks: bool,
-    ) -> Result<NextMember> {
-        let scheduled_member_pending = self.initial_abstractions_built < abstraction_count;
-        let specialist_goal = (!scheduled_member_pending && progress_states)
-            .then(|| {
-                self.goal_covered_from_initial_state
-                    .iter()
-                    .position(|covered| !covered)
-            })
-            .flatten();
-        let continuation =
-            if progress_states && !scheduled_member_pending && specialist_goal.is_none() {
-                self.pop_unsatisfied_continuation()
-            } else {
-                None
-            };
-
-        if goal_count == 0 {
-            // A goal-free task gets exactly one abstraction of the full task.
-            return Ok(NextMember::Build(ScheduledMember {
-                goal_id: 0,
-                variant_id: 0,
-                kind: MemberKind::Scheduled,
-            }));
-        }
-        if scheduled_member_pending {
-            let next_goal = if single_goal_tasks {
+    /// The scheduled members first, then with progress states the
+    /// initial-state specialists, then the retries.
+    fn select_next_member(&mut self) -> NextMember {
+        if self.initial_abstractions_built < self.abstraction_count {
+            let next_goal = if self.single_goal_tasks {
                 select_next_collection_goal(
                     &self.variants_built_by_goal,
                     &self.best_initial_h_by_goal,
-                    variants_per_goal,
+                    self.variants_per_goal,
                 )
             } else {
                 // Full-task members share one task: the goal is only a
                 // label, so there is no goal to focus on.
-                select_round_robin_goal(&self.variants_built_by_goal, variants_per_goal)
+                select_round_robin_goal(&self.variants_built_by_goal, self.variants_per_goal)
             };
             let Some(goal_id) = next_goal else {
-                return Ok(NextMember::Stop("requested abstraction count reached"));
+                return NextMember::Stop(CollectionStopReason::RequestedMembersBuilt);
             };
-            return Ok(NextMember::Build(ScheduledMember {
+            return NextMember::Build(ScheduledMember {
                 goal_id,
-                variant_id: self.variants_built_by_goal[goal_id],
-                kind: MemberKind::Scheduled,
-            }));
+                kind: MemberKind::Scheduled {
+                    variant_id: self.variants_built_by_goal[goal_id],
+                },
+            });
         }
-        if let Some(goal_id) = specialist_goal {
-            return Ok(NextMember::Build(ScheduledMember {
-                goal_id,
-                variant_id: variants_per_goal,
-                kind: MemberKind::InitialStateSpecialist,
-            }));
+        if self.progress_states {
+            if let Some(goal_id) = self
+                .goal_covered_from_initial_state
+                .iter()
+                .position(|covered| !covered)
+            {
+                return NextMember::Build(ScheduledMember {
+                    goal_id,
+                    kind: MemberKind::InitialStateSpecialist,
+                });
+            }
+            if let Some((goal_id, variant_id)) = self.pop_unsatisfied_continuation() {
+                return NextMember::Build(ScheduledMember {
+                    goal_id,
+                    kind: MemberKind::Continuation { variant_id },
+                });
+            }
         }
-        if let Some((goal_id, variant_id)) = continuation {
-            return Ok(NextMember::Build(ScheduledMember {
-                goal_id,
-                variant_id,
-                kind: MemberKind::Continuation,
-            }));
-        }
-        Ok(NextMember::Stop(
-            "requested abstractions and initial-state goal coverage reached",
-        ))
+        NextMember::Stop(CollectionStopReason::RequestedMembersAndInitialStateCoverage)
     }
 
     /// Drop queued retries whose goal the variant's progress state now
@@ -596,24 +574,13 @@ impl<'task> CollectionState<'task> {
         None
     }
 
-    fn record_built_member(
-        &mut self,
-        member: &ScheduledMember,
-        goal_count: usize,
-        built_from_initial_state: bool,
-        reset_progress_state: bool,
-        initial_h: f64,
-    ) {
-        if goal_count == 0 {
-            self.initial_abstractions_built += 1;
-            return;
-        }
-        if built_from_initial_state || reset_progress_state {
+    fn record_built_member(&mut self, member: &ScheduledMember, root: MemberRoot, initial_h: f64) {
+        if root != MemberRoot::AdvancedProgress {
             self.goal_covered_from_initial_state[member.goal_id] = true;
         }
         // Specialists and retries fill gaps; only scheduled members count
         // against the requested abstraction count.
-        if member.kind == MemberKind::Scheduled {
+        if let MemberKind::Scheduled { .. } = member.kind {
             self.variants_built_by_goal[member.goal_id] += 1;
             self.initial_abstractions_built += 1;
             self.best_initial_h_by_goal[member.goal_id] =
@@ -625,19 +592,21 @@ impl<'task> CollectionState<'task> {
     /// the next member of that variant refines from further along.
     fn advance_progress_state<B: GoalFocusedBackend>(
         &mut self,
-        goal_count: usize,
         member: &ScheduledMember,
+        root: MemberRoot,
         concrete_plan: Option<&[OperatorIndex]>,
-        reset_progress_state: bool,
     ) -> Result<()> {
-        let variant_id = member.variant_id;
         if self
             .progress(member)
             .is_none_or(|progress| progress.complete)
         {
             return Ok(());
         }
-        if reset_progress_state {
+        let variant_id = member
+            .kind
+            .variant_id()
+            .expect("a member with a progress state has a variant");
+        if root == MemberRoot::DeadProgress {
             self.complete_progress(variant_id);
             debug!(
                 "{} collection: dead progress state completed variant {variant_id} after rebuilding goal {} from the initial state",
@@ -668,12 +637,13 @@ impl<'task> CollectionState<'task> {
         progress.state = state;
         progress.satisfied_goals = satisfied_goals;
         debug!(
-            "{} collection: advanced the progress state of variant {variant_id} through {} concrete operators; satisfied_goals={satisfied_goals}/{goal_count}",
+            "{} collection: advanced the progress state of variant {variant_id} through {} concrete operators; satisfied_goals={satisfied_goals}/{}",
             B::NAME,
             operator_ids.len(),
+            self.goal_count,
         );
 
-        if satisfied_goals == goal_count {
+        if satisfied_goals == self.goal_count {
             self.complete_progress(variant_id);
             debug!(
                 "{} collection: full goal reached for variant {variant_id}; completed its progress",
@@ -728,11 +698,11 @@ impl<'task> CollectionState<'task> {
     fn log_summary<B: GoalFocusedBackend>(
         &self,
         member_count: usize,
-        goal_count: usize,
         states_used: usize,
         elapsed_secs: f64,
-        stop_reason: &str,
+        stop_reason: CollectionStopReason,
     ) {
+        let goal_count = self.goal_count;
         info!(
             "{} collection: abstractions={member_count}, states={states_used}, elapsed={elapsed_secs:.3}s, stop_reason={stop_reason}",
             B::NAME
@@ -747,16 +717,14 @@ impl<'task> CollectionState<'task> {
                     .collect::<Vec<_>>()
             );
         }
-        if !self.goal_covered_from_initial_state.is_empty() {
-            info!(
-                "{} collection: initial-state goal coverage={}/{goal_count}",
-                B::NAME,
-                self.goal_covered_from_initial_state
-                    .iter()
-                    .filter(|covered| **covered)
-                    .count(),
-            );
-        }
+        info!(
+            "{} collection: initial-state goal coverage={}/{goal_count}",
+            B::NAME,
+            self.goal_covered_from_initial_state
+                .iter()
+                .filter(|covered| **covered)
+                .count(),
+        );
     }
 }
 
@@ -775,8 +743,9 @@ fn select_round_robin_goal(
     })
 }
 
-/// Round-robin until every goal has `min(V, 2)` variants, then give the next
-/// variant to the goal with the largest best `h(s0)`, ties to the smaller id.
+/// Round-robin until every goal has `min(V, ROUND_ROBIN_VARIANTS)` variants,
+/// then give the next variant to the goal with the largest best `h(s0)`,
+/// ties to the smaller id.
 fn select_next_collection_goal(
     variants_built_by_goal: &[usize],
     best_initial_h_by_goal: &[f64],
@@ -787,7 +756,7 @@ fn select_next_collection_goal(
         best_initial_h_by_goal.len(),
         "collection goal statistics must have equal lengths"
     );
-    let guaranteed_variants = variants_per_goal.min(2);
+    let guaranteed_variants = variants_per_goal.min(ROUND_ROBIN_VARIANTS);
     if let Some(minimum_built) = variants_built_by_goal
         .iter()
         .copied()

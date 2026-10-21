@@ -13,8 +13,7 @@
 //! search.
 
 use std::collections::HashSet;
-use std::hash::Hash;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, VariableIndex};
@@ -22,230 +21,172 @@ use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
-use super::config::SplitKinds;
-use super::member::CollectionMember;
-use crate::evaluation::abstractions::common::cegar::SplitKind;
-use crate::evaluation::abstractions::common::cegar::initial_splits::InitialSplitVar;
+use super::budget::{CollectionBudget, CollectionLimits, CollectionStopReason};
+use super::config::{MemberConfig, SplitKinds};
+use super::generator::AbstractionGenerator;
+use super::member::{CollectionMember, MemberConstruction};
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    InitialSplitVar, RefinementScope,
+};
 use crate::resource_limits;
 
 /// The budgets and diversification of a standard collection.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StandardSchedule {
-    pub(crate) max_states: usize,
-    pub(crate) max_collection_size: usize,
-    /// Seconds per member; infinite when unbounded.
-    pub(crate) max_time: f64,
-    /// Seconds for the collection; infinite when unbounded.
-    pub(crate) total_max_time: f64,
-    /// Seconds without a new member after which the collection stagnates.
-    pub(crate) stagnation_limit: f64,
-    /// The share of `total_max_time` after which restarts blacklist.
-    pub(crate) blacklist_trigger_percentage: f64,
+    pub(crate) limits: CollectionLimits,
+    /// How long without a new member the collection stagnates after; never
+    /// when `None`.
+    pub(crate) stagnation_limit: Option<Duration>,
+    /// How long after the start restarts blacklist; only at stagnation when
+    /// `None`.
+    pub(crate) blacklist_start: Option<Duration>,
     /// Start blacklisting at stagnation instead of stopping.
     pub(crate) enable_blacklist_on_stagnation: bool,
-    /// The seed the restarts' seeds, initial splits and blacklists are drawn
-    /// with.
+    /// The seed the restarts' seeds and blacklists are drawn with.
     pub(crate) random_seed: u64,
+    /// The split kinds of the restarts, in order.
     pub(crate) split_kinds: SplitKinds,
+    /// The members' configured rank among tied best splits.
+    pub(crate) split_selection_rank: Option<usize>,
 }
 
-impl StandardSchedule {
-    /// The split kind of restart `iteration` (one-based).
-    pub(crate) fn split_kind(&self, iteration: usize) -> SplitKind {
-        assert!(iteration > 0, "restarts are one-based");
-        self.split_kinds.of(iteration - 1)
-    }
-}
-
-/// How one restart is built.
-#[derive(Debug, Clone)]
-pub struct StandardMember {
-    pub(crate) max_states: usize,
-    /// Seconds; infinite when unbounded.
-    pub(crate) max_time: f64,
-    pub(crate) seed: u64,
-    pub(crate) split_kind: SplitKind,
-    pub(crate) initial_split_var: Option<InitialSplitVar>,
-    pub(crate) blacklisted_prop_var_ids: HashSet<VariableIndex>,
-    pub(crate) blacklisted_numeric_var_ids: HashSet<VariableIndex>,
-}
-
-/// One abstraction backend of a standard collection.
-pub(crate) trait StandardBackend {
-    type Member: CollectionMember;
-    /// Equal exactly for members that are the same abstraction.
-    type Key: Eq + Hash;
-
-    const NAME: &'static str;
-
-    /// Builds the member; a deadline error ends the collection.
-    fn build(
-        &self,
-        task: &dyn AbstractNumericTask,
-        member: &StandardMember,
-    ) -> Result<Self::Member>;
-
-    fn key(&self, member: &Self::Member) -> Self::Key;
-}
-
-/// Builds the standard collection of `task` with `backend`.
-pub(crate) fn build_standard_collection<B: StandardBackend>(
+/// Builds the standard collection of `task` with members from `G`
+/// configured by `member`.
+pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
     task: &dyn AbstractNumericTask,
     schedule: &StandardSchedule,
-    backend: &B,
-) -> Result<Vec<B::Member>> {
+    member: &G::Config,
+) -> Result<Vec<G::Abstraction>> {
     let mut rng = SmallRng::seed_from_u64(schedule.random_seed);
     let candidates = initial_split_candidates(task);
 
     let start = Instant::now();
-    let mut remaining_collection_size = schedule.max_collection_size;
-    let mut keys: HashSet<B::Key> = HashSet::new();
-    let mut members: Vec<B::Member> = Vec::new();
-    let mut time_point_of_last_new_member = 0.0f64;
+    let mut budget = CollectionBudget::new(schedule.limits, start)?;
+    let mut keys: HashSet<G::Key> = HashSet::new();
+    let mut members: Vec<G::Abstraction> = Vec::new();
+    let mut last_new_member = start;
     let mut blacklisting = false;
-    let blacklist_start_time = schedule.total_max_time * schedule.blacklist_trigger_percentage;
     let mut iteration = 1usize;
-    let stop_reason: &str;
-    loop {
-        let elapsed = start.elapsed().as_secs_f64();
-        if !blacklisting && elapsed > blacklist_start_time {
+    let stop_reason = loop {
+        let iteration_start = Instant::now();
+        if !blacklisting
+            && schedule
+                .blacklist_start
+                .is_some_and(|blacklist_start| iteration_start - start > blacklist_start)
+        {
             blacklisting = true;
-            time_point_of_last_new_member = elapsed;
+            last_new_member = iteration_start;
         }
 
-        let remaining_total_time = if schedule.total_max_time.is_finite() {
-            (schedule.total_max_time - elapsed).max(0.0)
-        } else {
-            f64::INFINITY
-        };
-        let max_time = schedule.max_time.min(remaining_total_time);
-        let max_states = remaining_collection_size.min(schedule.max_states);
+        let max_states = budget.member_max_states();
         if max_states == 0 {
-            stop_reason = "collection size limit";
-            break;
+            break CollectionStopReason::SizeLimit;
         }
+        let max_time = budget.member_max_time();
         // Numeric FD constructs one abstraction before checking the
         // collection's time limit: a collection is never empty.
-        if max_time <= 0.0 && !members.is_empty() {
-            stop_reason = "collection time limit";
-            break;
+        if max_time == Some(Duration::ZERO) && !members.is_empty() {
+            break CollectionStopReason::TimeLimit;
         }
 
-        let mut blacklisted_prop_var_ids = HashSet::new();
-        let mut blacklisted_numeric_var_ids = HashSet::new();
-        if blacklisting {
-            for var in sample_blacklist(&candidates, &mut rng) {
-                match var {
-                    InitialSplitVar::Propositional(var_id) => {
-                        blacklisted_prop_var_ids.insert(var_id);
-                    }
-                    InitialSplitVar::Numeric(var_id) => {
-                        blacklisted_numeric_var_ids.insert(var_id);
-                    }
-                }
-            }
-        }
-        let member = StandardMember {
+        let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) = if blacklisting {
+            sample_blacklist(&candidates, &mut rng)
+        } else {
+            Default::default()
+        };
+        let construction = MemberConstruction {
             max_states,
             max_time,
-            seed: rng.next_u64(),
-            split_kind: schedule.split_kind(iteration),
-            initial_split_var: (!candidates.is_empty())
-                .then(|| candidates[iteration % candidates.len()]),
-            blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids,
+            random_seed: Some(rng.next_u64()),
+            split_kind: schedule.split_kinds.of(iteration - 1),
+            split_selection_rank: schedule.split_selection_rank,
+            scope: RefinementScope {
+                initial_split_var: (!candidates.is_empty())
+                    .then(|| candidates[iteration % candidates.len()]),
+                blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids,
+            },
         };
         debug!(
-            "{} collection: building restart {iteration}, max_time={max_time:.2}s, split_kind={}",
-            B::NAME,
-            member.split_kind
+            "{} collection: building restart {iteration}, max_time={max_time:?}, split_kind={}",
+            G::NAME,
+            construction.split_kind
         );
-        let mut built = match backend.build(task, &member) {
+        let mut built = match G::new(member.for_member(&construction))
+            .and_then(|generator| generator.generate_from_root(task, None))
+        {
             Ok(built) => built,
             Err(error) if resource_limits::is_deadline_exceeded(&error) => {
                 info!(
                     "{} collection: generation deadline expired at restart {iteration}; keeping {} members",
-                    B::NAME,
+                    G::NAME,
                     members.len()
                 );
-                stop_reason = "abstraction generation deadline";
-                break;
+                break CollectionStopReason::GenerationDeadline;
             }
             Err(error) => {
                 return Err(error).with_context(|| {
-                    format!("failed to build {} collection restart {iteration}", B::NAME)
+                    format!("failed to build {} collection restart {iteration}", G::NAME)
                 });
             }
         };
 
-        let report = built.report();
-        let elapsed_after_build = start.elapsed().as_secs_f64();
-        if keys.insert(backend.key(&built)) {
-            time_point_of_last_new_member = elapsed_after_build;
-            let consumed = report.num_states;
-            assert!(
-                consumed <= max_states,
-                "{} restart {iteration} has {consumed} states, over its limit of {max_states}",
-                B::NAME
-            );
-            remaining_collection_size -= consumed;
+        let settles = built.settles();
+        let iteration_end = Instant::now();
+        if keys.insert(G::key(&built)) {
+            last_new_member = iteration_end;
+            budget.charge(built.report().num_states);
             built.record(iteration, None);
             members.push(built);
             debug!(
-                "{} collection: added restart {iteration}, states={consumed}, remaining_collection_size={remaining_collection_size}, blacklisting={blacklisting}",
-                B::NAME
+                "{} collection: added restart {iteration}, remaining_collection_size={}, blacklisting={blacklisting}",
+                G::NAME,
+                budget.remaining_states()
             );
         }
 
-        if let Some(reason) = report.settles() {
-            stop_reason = reason;
-            break;
+        if let Some(reason) = settles {
+            break reason;
         }
-        let stagnated =
-            elapsed_after_build - time_point_of_last_new_member > schedule.stagnation_limit;
-        if remaining_collection_size == 0 {
-            stop_reason = "collection size limit";
-            break;
+        let stagnated = schedule
+            .stagnation_limit
+            .is_some_and(|limit| iteration_end - last_new_member > limit);
+        if budget.remaining_states() == 0 {
+            break CollectionStopReason::SizeLimit;
         }
-        if schedule.total_max_time.is_finite() && elapsed_after_build >= schedule.total_max_time {
-            stop_reason = "collection time limit";
-            break;
+        if budget.deadline_passed() {
+            break CollectionStopReason::TimeLimit;
         }
         if stagnated && (!schedule.enable_blacklist_on_stagnation || blacklisting) {
-            stop_reason = "stagnation limit";
-            break;
+            break CollectionStopReason::StagnationLimit;
         }
         // Release the reserved padding before the process reaches its hard
         // limit, leaving enough memory for search to report a useful result.
         if !resource_limits::poll_and_release_if_exceeded() {
             info!(
                 "{} collection: stopping at restart {iteration} because the memory padding was released (RSS limit reached)",
-                B::NAME
+                G::NAME
             );
-            stop_reason = "memory limit";
-            break;
+            break CollectionStopReason::MemoryLimit;
         }
         if stagnated && schedule.enable_blacklist_on_stagnation {
             blacklisting = true;
-            time_point_of_last_new_member = elapsed;
+            last_new_member = iteration_start;
         }
         iteration += 1;
-    }
+    };
 
     if members.is_empty() {
         bail!(
             "the {} collection failed to generate its mandatory first abstraction ({stop_reason})",
-            B::NAME
+            G::NAME
         )
     }
     info!(
         "{} collection finished: abstractions={}, states={}, elapsed={:.3}s, stop_reason={stop_reason}",
-        B::NAME,
+        G::NAME,
         members.len(),
-        members
-            .iter()
-            .map(|member| member.report().num_states)
-            .sum::<usize>(),
+        budget.used_states(),
         start.elapsed().as_secs_f64(),
     );
     Ok(members)
@@ -278,14 +219,25 @@ fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<InitialSplitV
     propositional.chain(numeric).collect()
 }
 
-/// A random non-empty subset of `candidates`, empty only without candidates.
-fn sample_blacklist(candidates: &[InitialSplitVar], rng: &mut SmallRng) -> Vec<InitialSplitVar> {
+/// A random non-empty subset of `candidates`, empty only without candidates,
+/// as propositional and numeric variables.
+fn sample_blacklist(
+    candidates: &[InitialSplitVar],
+    rng: &mut SmallRng,
+) -> (HashSet<VariableIndex>, HashSet<VariableIndex>) {
+    let mut propositional = HashSet::new();
+    let mut numeric = HashSet::new();
     if candidates.is_empty() {
-        return Vec::new();
+        return (propositional, numeric);
     }
     let size = rng.gen_range(1..=candidates.len());
     let mut shuffled = candidates.to_vec();
     shuffled.shuffle(rng);
-    shuffled.truncate(size);
-    shuffled
+    for var in shuffled.into_iter().take(size) {
+        match var {
+            InitialSplitVar::Propositional(var_id) => propositional.insert(var_id),
+            InitialSplitVar::Numeric(var_id) => numeric.insert(var_id),
+        };
+    }
+    (propositional, numeric)
 }
