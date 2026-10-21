@@ -454,8 +454,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
                 .with_context(|| {
                     format!("slow heuristic evaluation failed for state {state_id}")
                 })?;
-            // Lazy evaluations retain the historical counter until the separate
-            // evaluation-accounting change.
+            self.stats.evaluations += 1;
             if evaluation.is_dead_end {
                 return Ok(PopAction::Prune);
             }

@@ -454,8 +454,10 @@ fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
     assert_eq!(result.nodes_expanded, 2);
     assert_eq!(result.nodes_generated, 1);
     assert_eq!(result.nodes_evaluated, 2);
-    // Historical accounting; changed separately from the engine refactor.
-    assert_eq!(result.evaluations, 2);
+    assert_eq!(
+        result.evaluations, 4,
+        "count both primary and lazy evaluations"
+    );
     assert_eq!(calls.get(), 2);
 }
 
@@ -481,6 +483,10 @@ fn lazy_astar_prunes_infinite_and_both_kinds_of_dead_end_reports() {
         assert_eq!(result.status, SearchStatus::Failed);
         assert_eq!(result.nodes_expanded, 0);
         assert_eq!(result.dead_ends, 1);
+        assert_eq!(
+            result.evaluations, 2,
+            "count a lazy dead-end evaluation too"
+        );
         assert_eq!(calls.get(), 1);
     }
 }
