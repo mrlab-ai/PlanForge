@@ -7,7 +7,9 @@ use crate::evaluation::abstractions::collections::generator::AbstractionGenerato
 use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionUse, CegarAbstraction};
-use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    InitialSplitVar, RefinementScope,
+};
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{
     CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
@@ -938,7 +940,7 @@ fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initi
             ..CartesianAbstractionConfig::default().cegar
         },
         scope: RefinementScope {
-            initial_split_var: Some(VariableIndex::from_usize(0)),
+            initial_split_var: Some(InitialSplitVar::Propositional(VariableIndex::from_usize(0))),
             ..RefinementScope::default()
         },
     })
@@ -954,4 +956,24 @@ fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initi
         "{:?}",
         abstraction.hierarchy.nodes[0]
     );
+}
+
+#[test]
+fn a_numeric_initial_split_candidate_starts_from_the_trivial_abstraction() {
+    let task = two_counter_task();
+    let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        cegar: CegarOptions {
+            max_states: 1,
+            ..CartesianAbstractionConfig::default().cegar
+        },
+        scope: RefinementScope {
+            initial_split_var: Some(InitialSplitVar::Numeric(VariableIndex::from_usize(0))),
+            ..RefinementScope::default()
+        },
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    assert_eq!(abstraction.num_states(), 1);
+    assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::SizeLimit);
 }

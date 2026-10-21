@@ -7,7 +7,9 @@ use planforge_sas::utils::float_tolerance;
 
 use super::*;
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
-use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    InitialSplitVar, RefinementScope,
+};
 use crate::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitKind, SplitSelection,
 };
@@ -287,7 +289,7 @@ fn init_value_split_separates_the_initial_value() {
             ..DomainAbstractionConfig::default().cegar
         },
         scope: RefinementScope {
-            initial_split_var: Some(VariableIndex::from_usize(0)),
+            initial_split_var: Some(InitialSplitVar::Propositional(VariableIndex::from_usize(0))),
             ..RefinementScope::default()
         },
         ..Default::default()

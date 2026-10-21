@@ -25,6 +25,7 @@ use tracing::{debug, info};
 use super::member::CollectionMember;
 use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::cegar::initial_splits::InitialSplitVar;
 use crate::resource_limits;
 
 /// The budgets and diversification of a standard collection.
@@ -73,9 +74,7 @@ pub struct StandardMember {
     pub(crate) max_time: f64,
     pub(crate) seed: u64,
     pub(crate) split_kind: Option<SplitKind>,
-    /// The variable split initially, in the encoding of
-    /// [`initial_split_candidates`].
-    pub(crate) initial_split_var: Option<VariableIndex>,
+    pub(crate) initial_split_var: Option<InitialSplitVar>,
     pub(crate) blacklisted_prop_var_ids: HashSet<VariableIndex>,
     pub(crate) blacklisted_numeric_var_ids: HashSet<VariableIndex>,
 }
@@ -145,13 +144,20 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
             break;
         }
 
-        let blacklisted = if blacklisting {
-            sample_blacklist(&candidates, &mut rng)
-        } else {
-            HashSet::new()
-        };
-        let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
-            decode_variables(task, blacklisted);
+        let mut blacklisted_prop_var_ids = HashSet::new();
+        let mut blacklisted_numeric_var_ids = HashSet::new();
+        if blacklisting {
+            for var in sample_blacklist(&candidates, &mut rng) {
+                match var {
+                    InitialSplitVar::Propositional(var_id) => {
+                        blacklisted_prop_var_ids.insert(var_id);
+                    }
+                    InitialSplitVar::Numeric(var_id) => {
+                        blacklisted_numeric_var_ids.insert(var_id);
+                    }
+                }
+            }
+        }
         let member = StandardMember {
             max_states,
             max_time,
@@ -266,62 +272,39 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
 
 /// The variables restarts split initially and blacklist: every propositional
 /// variable no axiom writes, except condition variables that no goal
-/// mentions, and every regular numeric variable, encoded after the
-/// propositional ones.
-pub(crate) fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<VariableIndex> {
+/// mentions, and then every regular numeric variable.
+fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<InitialSplitVar> {
     let goal_var_ids: HashSet<VariableIndex> =
         task.goals().iter().map(ExplicitFact::var_index).collect();
     let axiom_var_ids: HashSet<VariableIndex> =
         task.axioms().iter().map(|axiom| axiom.var_id()).collect();
-    let mut candidates: Vec<VariableIndex> = (0..task.variables().len())
+    let propositional = (0..task.variables().len())
         .map(VariableIndex::from_usize)
         .filter(|var_id| {
             !axiom_var_ids.contains(var_id)
                 && (!task.numeric_conditions().is_condition_var(*var_id)
                     || goal_var_ids.contains(var_id))
         })
-        .collect();
-    let num_prop_vars = task.variables().len();
-    candidates.extend(
-        task.numeric_variables()
-            .iter()
-            .enumerate()
-            .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
-            .map(|(numeric_var_id, _)| VariableIndex::from_usize(num_prop_vars + numeric_var_id)),
-    );
-    candidates
-}
-
-/// Splits encoded candidates into propositional and numeric variable ids.
-fn decode_variables(
-    task: &dyn AbstractNumericTask,
-    encoded: HashSet<VariableIndex>,
-) -> (HashSet<VariableIndex>, HashSet<VariableIndex>) {
-    let num_prop_vars = task.variables().len();
-    let mut propositional = HashSet::new();
-    let mut numeric = HashSet::new();
-    for var_id in encoded {
-        if var_id.index() < num_prop_vars {
-            propositional.insert(var_id);
-        } else {
-            let numeric_var_id = var_id.index() - num_prop_vars;
-            assert!(
-                numeric_var_id < task.numeric_variables().len(),
-                "encoded variable {var_id} is out of range"
-            );
-            numeric.insert(VariableIndex::from_usize(numeric_var_id));
-        }
-    }
-    (propositional, numeric)
+        .map(InitialSplitVar::Propositional);
+    let numeric = task
+        .numeric_variables()
+        .iter()
+        .enumerate()
+        .filter(|(_, variable)| variable.get_type() == &NumericType::Regular)
+        .map(|(numeric_var_id, _)| {
+            InitialSplitVar::Numeric(VariableIndex::from_usize(numeric_var_id))
+        });
+    propositional.chain(numeric).collect()
 }
 
 /// A random non-empty subset of `candidates`, empty only without candidates.
-fn sample_blacklist(candidates: &[VariableIndex], rng: &mut SmallRng) -> HashSet<VariableIndex> {
+fn sample_blacklist(candidates: &[InitialSplitVar], rng: &mut SmallRng) -> Vec<InitialSplitVar> {
     if candidates.is_empty() {
-        return HashSet::new();
+        return Vec::new();
     }
     let size = rng.gen_range(1..=candidates.len());
     let mut shuffled = candidates.to_vec();
     shuffled.shuffle(rng);
-    shuffled.into_iter().take(size).collect()
+    shuffled.truncate(size);
+    shuffled
 }

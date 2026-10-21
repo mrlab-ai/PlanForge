@@ -3,7 +3,9 @@
 //! into its initial value and the rest; a condition variable's goal
 //! conditions are split at the initial values of the coordinates they refine
 //! along, so an operator can change them. A numeric variable gets no split of
-//! its own.
+//! its own: its restart starts from the trivial abstraction, as with the
+//! `init_value` initial splits of the numeric Fast Downward collections this
+//! ports.
 
 use std::collections::HashSet;
 
@@ -15,16 +17,21 @@ use rand::{Rng, SeedableRng};
 use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
-use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
+
+/// A variable a restart of a standard collection splits initially, and may
+/// blacklist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InitialSplitVar {
+    Propositional(VariableIndex),
+    Numeric(VariableIndex),
+}
 
 /// Which variables refinement starts from and may not refine.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RefinementScope {
-    /// The variable the trivial abstraction is split on before CEGAR, in the
-    /// encoding of
-    /// [`initial_split_candidates`](crate::evaluation::abstractions::collections::standard::initial_split_candidates);
-    /// none for the trivial abstraction.
-    pub initial_split_var: Option<VariableIndex>,
+    /// The variable the trivial abstraction is split on before CEGAR; none
+    /// for the trivial abstraction.
+    pub initial_split_var: Option<InitialSplitVar>,
     pub blacklisted_prop_var_ids: HashSet<VariableIndex>,
     pub blacklisted_numeric_var_ids: HashSet<VariableIndex>,
 }
@@ -89,20 +96,22 @@ impl InitialSplit {
 }
 
 /// The splits of the initial abstraction that `scope` asks for, in the
-/// order to apply them. Which side of a numeric boundary its own value falls
-/// on is drawn with `random_seed`.
+/// order to apply them: none without an initial split variable, for a
+/// numeric one, and for a blacklisted propositional variable that is no
+/// condition variable; a condition variable skips its blacklisted
+/// coordinates instead. Which side of a numeric boundary
+/// its own value falls on is drawn with `random_seed`, which every restart
+/// with an initial split has.
 pub(crate) fn initial_splits(
     semantics: &CegarSemantics<'_>,
     scope: &RefinementScope,
     random_seed: Option<u64>,
 ) -> Vec<InitialSplit> {
-    let Some(var) = scope.initial_split_var else {
-        return Vec::new();
+    let var = match scope.initial_split_var {
+        None | Some(InitialSplitVar::Numeric(_)) => return Vec::new(),
+        Some(InitialSplitVar::Propositional(var)) => var,
     };
     let task = semantics.task();
-    if var.index() >= task.variables().len() {
-        return Vec::new();
-    }
     if !task.numeric_conditions().is_condition_var(var) {
         if scope.blacklisted_prop_var_ids.contains(&var) {
             return Vec::new();
@@ -112,28 +121,34 @@ pub(crate) fn initial_splits(
             initial_value: task.get_initial_propositional_state_values()[var.index()],
         }];
     }
+    assert!(
+        task.goals().iter().any(|goal| goal.var_index() == var),
+        "condition variable {var} is an initial split candidate only as a goal variable"
+    );
     let coordinates = semantics.coordinates();
     let initial_values = coordinates.initial_values();
     let condition = task
         .numeric_conditions()
         .for_var(var)
         .expect("a condition variable has its condition");
-    let mut rng = SmallRng::seed_from_u64(random_seed.unwrap_or(DEFAULT_RANDOM_SEED));
+    let mut rng = SmallRng::seed_from_u64(
+        random_seed.expect("a restart with an initial split has its own seed"),
+    );
     let mut splits = Vec::new();
-    for _goal in task.goals().iter().filter(|goal| goal.var_index() == var) {
-        for numeric_var in coordinates.refinement_dimensions(condition) {
-            if scope.blacklisted_numeric_var_ids.contains(&numeric_var)
-                || !coordinates.is_coordinate(numeric_var)
-            {
-                continue;
-            }
-            splits.push(InitialSplit::Numeric {
-                var_id: numeric_var,
-                boundary: float_tolerance::canonicalize(initial_values[numeric_var.index()]),
-                lower_includes_boundary: rng.gen_range(0..2) == 0,
-                integer_lattice: semantics.numeric_integer_lattice()[numeric_var.index()],
-            });
+    for numeric_var in coordinates.refinement_dimensions(condition) {
+        assert!(
+            coordinates.is_coordinate(numeric_var),
+            "condition {var} refines along non-coordinate {numeric_var}"
+        );
+        if scope.blacklisted_numeric_var_ids.contains(&numeric_var) {
+            continue;
         }
+        splits.push(InitialSplit::Numeric {
+            var_id: numeric_var,
+            boundary: float_tolerance::canonicalize(initial_values[numeric_var.index()]),
+            lower_includes_boundary: rng.gen_range(0..2) == 0,
+            integer_lattice: semantics.numeric_integer_lattice()[numeric_var.index()],
+        });
     }
     splits
 }
