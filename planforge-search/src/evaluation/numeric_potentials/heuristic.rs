@@ -342,7 +342,7 @@ impl NumericPotentialHeuristic {
         }
         info!(
             "Numeric bounds statistics: provider={} finite_lower={} finite_upper={} finite_both={}",
-            config.bounds.as_str(),
+            config.bounds,
             potential_task
                 .global_feature_bounds
                 .iter()

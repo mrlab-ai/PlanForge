@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ConfigValue, FromOptionValue};
+use crate::config::option_enum;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 pub enum OptimizeFor {
@@ -24,48 +24,21 @@ pub enum BoundsProvider {
     All,
 }
 
-impl BoundsProvider {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Monotone => "monotone",
-            Self::Aibr => "aibr",
-            Self::All => "all",
-        }
-    }
-}
-
-macro_rules! option_enum {
-    ($type:ty, {$($text:literal => $value:expr),+ $(,)?}) => {
-        impl FromOptionValue for $type {
-            fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-                match value.as_atom()? {
-                    $($text => Ok($value),)+
-                    other => Err(format!(
-                        "invalid {} value `{other}`",
-                        stringify!($type)
-                    )),
-                }
-            }
-        }
-    };
-}
-
-option_enum!(OptimizeFor, {
-    "initial_state" => Self::InitialState,
-    "all_states" => Self::AllStates,
-    "samples" => Self::Samples,
-    "diverse_samples" => Self::DiverseSamples,
+option_enum!("opt", OptimizeFor {
+    InitialState => "initial_state",
+    AllStates => "all_states",
+    Samples => "samples",
+    DiverseSamples => "diverse_samples",
 });
-option_enum!(DiverseFallback, {
-    "largest_gap" => Self::LargestGap,
-    "random" => Self::Random,
+option_enum!("diverse_fallback", DiverseFallback {
+    LargestGap => "largest_gap",
+    Random => "random",
 });
-option_enum!(BoundsProvider, {
-    "none" => Self::None,
-    "monotone" => Self::Monotone,
-    "aibr" => Self::Aibr,
-    "all" => Self::All,
+option_enum!("bounds", BoundsProvider {
+    None => "none",
+    Monotone => "monotone",
+    Aibr => "aibr",
+    All => "all",
 });
 
 #[derive(

@@ -8,38 +8,12 @@ pub(crate) mod semantics;
 pub(crate) mod split;
 pub(crate) mod view;
 
-use std::fmt;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Generates the option-value parsing and display of a CEGAR option enum
-/// from its `(variant, name)` pairs.
-macro_rules! option_enum {
-    ($option:literal, $type:ident { $($variant:ident => $name:literal),+ $(,)? }) => {
-        impl fmt::Display for $type {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(match self {
-                    $(Self::$variant => $name),+
-                })
-            }
-        }
-
-        impl crate::config::FromOptionValue for $type {
-            fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-                match crate::config::atom(value)? {
-                    $($name => Ok(Self::$variant),)+
-                    other => Err(format!(
-                        "invalid {} `{other}`; expected one of {}",
-                        $option,
-                        [$($name),+].join(", ")
-                    )),
-                }
-            }
-        }
-    };
-}
+use crate::config::option_enum;
 
 /// How CEGAR finds the flaws of an abstract plan.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

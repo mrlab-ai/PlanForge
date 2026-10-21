@@ -1,8 +1,8 @@
 //! How a collection chooses its members, and the seeds its members derive.
 
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
+
+use crate::config::option_enum;
 
 /// How a collection chooses its members.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -34,28 +34,11 @@ impl CollectionStrategy {
     }
 }
 
-impl fmt::Display for CollectionStrategy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Standard => "standard",
-            Self::PerGoal => "per_goal",
-            Self::GoalFocused => "goal_focused",
-        })
-    }
-}
-
-impl crate::config::FromOptionValue for CollectionStrategy {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "standard" => Ok(Self::Standard),
-            "per_goal" => Ok(Self::PerGoal),
-            "goal_focused" => Ok(Self::GoalFocused),
-            other => Err(format!(
-                "invalid collection_strategy `{other}`; expected one of standard, per_goal, goal_focused"
-            )),
-        }
-    }
-}
+option_enum!("collection_strategy", CollectionStrategy {
+    Standard => "standard",
+    PerGoal => "per_goal",
+    GoalFocused => "goal_focused",
+});
 
 pub(crate) fn mix_seed(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
