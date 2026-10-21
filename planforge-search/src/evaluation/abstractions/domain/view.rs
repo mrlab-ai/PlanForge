@@ -2,11 +2,13 @@
 //! it.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 
 use anyhow::{Context, Result};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
+use rustc_hash::FxHashMap;
 
 use super::config::DomainAbstractionConfig;
 use super::factory::{DomainAbstractionFactory, DomainTransitions};
@@ -19,12 +21,16 @@ use crate::evaluation::abstractions::common::cegar::view::{
 use crate::resource_limits::Deadline;
 
 pub(super) struct DomainView<'a> {
-    pub(super) factory: &'a DomainAbstractionFactory,
-    pub(super) built: &'a DomainBuild,
-    pub(super) limits: RefinementLimits<'a>,
+    factory: &'a DomainAbstractionFactory,
+    built: &'a DomainBuild,
+    limits: RefinementLimits<'a>,
     /// Plan steps execute any label of their abstract operator, not just
     /// the first.
-    pub(super) wildcard_plans: bool,
+    wildcard_plans: bool,
+    /// The regions of the states the flaw search asked for. The abstraction
+    /// does not change while the view lives, and a cached region is lent
+    /// out by cloning its shared parts.
+    regions: RefCell<FxHashMap<usize, CartesianSet>>,
 }
 
 impl AbstractionView for DomainView<'_> {
@@ -44,7 +50,13 @@ impl AbstractionView for DomainView<'_> {
     }
 
     fn region(&self, state: usize) -> Cow<'_, CartesianSet> {
-        Cow::Owned(self.factory.state_region(state))
+        Cow::Owned(
+            self.regions
+                .borrow_mut()
+                .entry(state)
+                .or_insert_with(|| self.factory.state_region(state))
+                .clone(),
+        )
     }
 
     fn goal_distance(&self, state: usize) -> f64 {
@@ -180,6 +192,7 @@ impl Refinable for DomainRefinement<'_> {
             built,
             limits: self.limits,
             wildcard_plans: self.wildcard_plans,
+            regions: RefCell::default(),
         })
     }
 
