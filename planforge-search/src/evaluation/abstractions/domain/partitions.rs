@@ -1,14 +1,11 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, NumericValue, VariableIndex,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, VariableIndex};
 use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::cegar::split::numeric_split_intervals;
 
-use planforge_sas::numeric_conditions::ArithOp;
 use planforge_sas::utils::interval::Interval;
 
 use crate::evaluation::abstractions::common::regions::trivial_interval;
@@ -57,32 +54,20 @@ impl NumericPartitions {
         self.partitions(numeric_var_id)[partition_id]
     }
 
-    /// The partitions of `numeric_var_id` that applying `operation` with an
-    /// operand in `rhs` may lead to from partition `source_partition`.
-    pub fn reachable_partitions(
+    /// The partitions of `numeric_var_id` that `interval` intersects,
+    /// ascending. Partitions are disjoint and ordered, so they are one run
+    /// found by binary search.
+    pub fn intersecting(
         &self,
         numeric_var_id: VariableIndex,
-        source_partition: usize,
-        operation: &AssignmentOperation,
-        rhs: Interval,
+        interval: Interval,
     ) -> impl Iterator<Item = usize> + '_ {
-        let source_interval = self.partition_interval(numeric_var_id, source_partition);
-        // Concrete numeric states are canonicalized after every assignment.
-        // Keep abstract transition images on the same lattice so a rounding
-        // artifact cannot manufacture overlap with an adjacent partition.
-        let result_interval = match operation {
-            AssignmentOperation::Assign => rhs,
-            AssignmentOperation::Plus => ArithOp::Add.apply_interval(source_interval, rhs),
-            AssignmentOperation::Minus => ArithOp::Sub.apply_interval(source_interval, rhs),
-            AssignmentOperation::Times => ArithOp::Mul.apply_interval(source_interval, rhs),
-            AssignmentOperation::Divide => ArithOp::Div.apply_interval(source_interval, rhs),
-        }
-        .canonicalized();
-        self.partitions(numeric_var_id)
-            .iter()
-            .enumerate()
-            .filter(move |(_, target)| result_interval.intersects(target))
-            .map(|(target_id, _)| target_id)
+        let parts = self.partitions(numeric_var_id);
+        let first = parts.partition_point(|part| {
+            part.upper < interval.lower
+                || (part.upper == interval.lower && !(part.upper_closed && interval.lower_closed))
+        });
+        (first..parts.len()).take_while(move |&part_id| parts[part_id].intersects(&interval))
     }
 
     /// Split the partition of `numeric_var_id` that contains `value` at

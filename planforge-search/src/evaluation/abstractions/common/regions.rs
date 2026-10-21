@@ -246,7 +246,7 @@ impl<'task> RegionSemantics<'task> {
         target: Interval,
         var_id: VariableIndex,
     ) -> Result<bool> {
-        let Some(preimage) = self.coordinates.preimage(target, op_id, var_id)? else {
+        let Some(preimage) = self.coordinates.preimage(target, op_id, var_id) else {
             return Ok(false);
         };
         Ok(!source.is_empty() && preimage.intersects(&source))
@@ -326,7 +326,7 @@ impl<'task> RegionSemantics<'task> {
                 NumericType::Regular => {
                     let Some(preimage) =
                         self.coordinates
-                            .preimage(target.numeric[numeric_var_id], op_id, var_id)?
+                            .preimage(target.numeric[numeric_var_id], op_id, var_id)
                     else {
                         return Ok(None);
                     };
@@ -334,7 +334,7 @@ impl<'task> RegionSemantics<'task> {
                 }
                 NumericType::Derived if self.coordinates.views()[numeric_var_id].is_some() => self
                     .coordinates
-                    .preimage(target.numeric[numeric_var_id], op_id, var_id)?
+                    .preimage(target.numeric[numeric_var_id], op_id, var_id)
                     .expect("additive-view preimage is always defined"),
                 NumericType::Derived | NumericType::Cost => continue,
             };

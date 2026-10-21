@@ -498,7 +498,7 @@ pub(crate) fn split_deviation_candidates(
         }
         let preimage = semantics
             .coordinates()
-            .preimage(target_interval, op_id, var_id)?
+            .preimage(target_interval, op_id, var_id)
             .with_context(|| {
                 format!(
                     "abstract transition for operator {op_id} has no numeric preimage for var {var_id} and target {target_interval:?}"

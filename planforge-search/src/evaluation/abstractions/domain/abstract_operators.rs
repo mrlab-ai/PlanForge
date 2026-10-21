@@ -17,6 +17,7 @@ use super::comparison_inputs::fill_condition_intervals;
 use super::factory::DomainAbstractionFactory;
 use super::layout::StateLayout;
 use crate::evaluation::abstractions::common::coordinates::active_comparison_dimensions;
+use crate::evaluation::abstractions::common::coordinates::coordinate_image;
 use planforge_sas::utils::interval::Interval;
 
 /// The operation an expired generation deadline names.
@@ -834,7 +835,6 @@ fn compute_hash_effects_with_preconditions(
     deadline.ensure(OPERATOR_GENERATION)?;
     let layout = generator.layout();
     let numeric_domain_sizes = layout.numeric_domain_sizes();
-    let partitions = generator.factory.partitions();
     let additive_numeric_views = generator.factory.additive_numeric_views();
     let num_props = layout.domain_sizes().len();
 
@@ -900,43 +900,21 @@ fn compute_hash_effects_with_preconditions(
             let view = additive_numeric_views[v].as_ref().with_context(|| {
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
-            let delta = view.operator_delta(concrete_op_id);
-            if delta.value().abs() >= float_tolerance::ABS_EPSILON {
-                let delta_interval = Interval::singleton(delta);
-                let mut pairs = HashSet::new();
-                for src in 0..num_parts {
-                    for tgt in partitions.reachable_partitions(
-                        var_id,
-                        src,
-                        &planforge_sas::numeric_task::AssignmentOperation::Plus,
-                        delta_interval,
-                    ) {
-                        pairs.insert((src, tgt));
-                    }
-                }
-                let mut transitions = pairs.into_iter().collect::<Vec<_>>();
-                transitions.sort_unstable();
-                per_var.push((var_id, transitions));
+            if view.operator_delta(concrete_op_id).value().abs() >= float_tolerance::ABS_EPSILON {
+                per_var.push((
+                    var_id,
+                    partition_transitions(task, generator, concrete_op_id, var_id),
+                ));
             } else if needed_numeric_vars.contains(&var_id) {
                 per_var.push((var_id, (0..num_parts).map(|part| (part, part)).collect()));
             }
             continue;
         }
-        if let Some(eff) = effs.first() {
-            let rhs = eff.var_id();
-            let mut pairs: HashSet<(usize, usize)> = HashSet::new();
-            for src in 0..num_parts {
-                for &rhs_interval in partitions.partitions(rhs) {
-                    pairs.extend(
-                        partitions
-                            .reachable_partitions(var_id, src, eff.operation(), rhs_interval)
-                            .map(|tgt| (src, tgt)),
-                    );
-                }
-            }
-            let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
-            transitions.sort_unstable();
-            per_var.push((var_id, transitions));
+        if !effs.is_empty() {
+            per_var.push((
+                var_id,
+                partition_transitions(task, generator, concrete_op_id, var_id),
+            ));
         } else if needed_numeric_vars.contains(&var_id) {
             // An unaffected refined regular numeric variable that a comparison
             // precondition reads: frame it with identity partition transitions
@@ -980,6 +958,30 @@ fn compute_hash_effects_with_preconditions(
     )?;
 
     Ok(scratch.transitions)
+}
+
+/// The partition pairs `(source, target)` of coordinate `var_id` that
+/// `concrete_op_id` may lead between, ascending: every partition the image of
+/// a source partition intersects.
+fn partition_transitions(
+    task: &dyn AbstractNumericTask,
+    generator: &AbstractOperatorGenerator<'_>,
+    concrete_op_id: OperatorIndex,
+    var_id: VariableIndex,
+) -> Vec<(usize, usize)> {
+    let partitions = generator.factory.partitions();
+    let views = generator.factory.additive_numeric_views();
+    partitions
+        .partitions(var_id)
+        .iter()
+        .enumerate()
+        .flat_map(|(source, &interval)| {
+            let image = coordinate_image(task, views, interval, concrete_op_id, var_id);
+            partitions
+                .intersecting(var_id, image)
+                .map(move |target| (source, target))
+        })
+        .collect()
 }
 
 /// One concrete operator's numeric cross-product, fixed for the whole

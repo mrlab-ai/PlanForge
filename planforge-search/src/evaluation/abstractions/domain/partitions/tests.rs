@@ -115,20 +115,20 @@ fn reachable_partitions_overlaps_result_interval() {
     let partitions = NumericPartitions::with_partitions(parts);
 
     // From partition 0: (-inf,9) + 7 -> (-inf,16) overlaps both partitions.
-    let targets = partitions.reachable_partitions(
+    let targets = partitions.intersecting(
         VariableIndex::from_usize(0),
-        0,
-        &planforge_sas::numeric_task::AssignmentOperation::Plus,
-        Interval::singleton(NumericValue::new(7.0)),
+        (partitions.partition_interval(VariableIndex::from_usize(0), 0)
+            + Interval::singleton(NumericValue::new(7.0)))
+        .canonicalized(),
     );
     assert_eq!(targets.collect::<Vec<_>>(), vec![0, 1]);
 
     // From partition 1: [9,inf) + 7 -> [16,inf) overlaps only partition 1.
-    let targets = partitions.reachable_partitions(
+    let targets = partitions.intersecting(
         VariableIndex::from_usize(0),
-        1,
-        &planforge_sas::numeric_task::AssignmentOperation::Plus,
-        Interval::singleton(NumericValue::new(7.0)),
+        (partitions.partition_interval(VariableIndex::from_usize(0), 1)
+            + Interval::singleton(NumericValue::new(7.0)))
+        .canonicalized(),
     );
     assert_eq!(targets.collect::<Vec<_>>(), vec![1]);
 
@@ -136,7 +136,7 @@ fn reachable_partitions_overlaps_result_interval() {
 }
 
 #[test]
-fn reachable_partitions_use_the_numeric_state_lattice() {
+fn partition_images_use_the_numeric_state_lattice() {
     let mut partitions = NumericPartitions::with_partitions(vec![vec![Interval::unbounded()]]);
     assert!(partitions.split_at(
         VariableIndex::from_usize(0),
@@ -181,11 +181,11 @@ fn reachable_partitions_use_the_numeric_state_lattice() {
     // (-6.0, -5.9]. It therefore cannot enter the partition ending at -6.0.
     assert_eq!(
         partitions
-            .reachable_partitions(
+            .intersecting(
                 VariableIndex::from_usize(0),
-                2,
-                &planforge_sas::numeric_task::AssignmentOperation::Plus,
-                Interval::singleton(NumericValue::new(-0.2)),
+                (partitions.partition_interval(VariableIndex::from_usize(0), 2)
+                    + Interval::singleton(NumericValue::new(-0.2)))
+                .canonicalized(),
             )
             .collect::<Vec<_>>(),
         vec![1]

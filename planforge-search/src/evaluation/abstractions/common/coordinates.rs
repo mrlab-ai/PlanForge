@@ -3,7 +3,6 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::Result;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, INF_VALUE,
     NEG_INF_VALUE, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
@@ -351,12 +350,12 @@ impl<'task> Coordinates<'task> {
         target: Interval,
         op_id: OperatorIndex,
         coordinate: VariableIndex,
-    ) -> Result<Option<Interval>> {
+    ) -> Option<Interval> {
         let mut preimage = target;
         if let Some(view) = &self.views[coordinate.index()] {
             let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Ok(Some(preimage.canonicalized()));
+            return Some(preimage.canonicalized());
         }
         let initial = self.task.get_initial_numeric_state_values();
         for effect in self.task.get_operators()[op_id.index()]
@@ -369,13 +368,13 @@ impl<'task> Coordinates<'task> {
             match effect.operation() {
                 AssignmentOperation::Assign => {
                     if !preimage.contains(rhs) {
-                        return Ok(None);
+                        return None;
                     }
                     preimage = Interval::unbounded();
                 }
                 AssignmentOperation::Times if rhs == ZERO_VALUE => {
                     if !preimage.contains(ZERO_VALUE) {
-                        return Ok(None);
+                        return None;
                     }
                     preimage = Interval::unbounded();
                 }
@@ -383,7 +382,7 @@ impl<'task> Coordinates<'task> {
             }
             preimage = preimage.canonicalized();
         }
-        Ok(Some(preimage))
+        Some(preimage)
     }
 
     /// The values `op_id` maps coordinate `coordinate` to from `source`.
@@ -392,27 +391,41 @@ impl<'task> Coordinates<'task> {
         source: Interval,
         op_id: OperatorIndex,
         coordinate: VariableIndex,
-    ) -> Result<Interval> {
-        let mut image = source;
-        if let Some(view) = &self.views[coordinate.index()] {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
-            image.apply_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
-            return Ok(image.canonicalized());
-        }
-        let initial = self.task.get_initial_numeric_state_values();
-        for effect in self.task.get_operators()[op_id.index()]
-            .assignment_effects()
-            .iter()
-            .filter(|effect| effect.affected_var_id() == coordinate)
-        {
-            let rhs = Interval::singleton(float_tolerance::canonicalize(
-                initial[effect.var_id().index()],
-            ));
-            image.apply_op(effect.operation(), &rhs);
-            image = image.canonicalized();
-        }
-        Ok(image)
+    ) -> Interval {
+        coordinate_image(self.task, &self.views, source, op_id, coordinate)
     }
+}
+
+/// The values `op_id` maps coordinate `coordinate` to from `source`, in
+/// `task` with the additive views `views`: its view's delta added for a
+/// derived coordinate, else the operator's effects on it applied in order,
+/// canonicalized after every step as concrete states are.
+pub(crate) fn coordinate_image(
+    task: &dyn AbstractNumericTask,
+    views: &[Option<AdditiveNumericView>],
+    source: Interval,
+    op_id: OperatorIndex,
+    coordinate: VariableIndex,
+) -> Interval {
+    let mut image = source;
+    if let Some(view) = &views[coordinate.index()] {
+        let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
+        image.apply_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
+        return image.canonicalized();
+    }
+    let initial = task.get_initial_numeric_state_values();
+    for effect in task.get_operators()[op_id.index()]
+        .assignment_effects()
+        .iter()
+        .filter(|effect| effect.affected_var_id() == coordinate)
+    {
+        let rhs = Interval::singleton(float_tolerance::canonicalize(
+            initial[effect.var_id().index()],
+        ));
+        image.apply_op(effect.operation(), &rhs);
+        image = image.canonicalized();
+    }
+    image
 }
 
 fn is_coordinate(

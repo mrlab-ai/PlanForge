@@ -131,7 +131,6 @@ fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
 
     let preimage = coordinates
         .preimage(target, OperatorIndex::new(0), VariableIndex::from_usize(2))
-        .unwrap()
         .expect("an additive coordinate has a preimage");
 
     assert_eq!(preimage, preimage.canonicalized());

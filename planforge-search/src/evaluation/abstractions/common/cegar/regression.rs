@@ -318,11 +318,11 @@ fn regress(
         let var = VariableIndex::from_usize(index);
         let source_interval = source.numeric[index];
         let required = preconditions.numeric[index];
-        let Some(regressed) = coordinates.preimage(wanted, op_id, var)? else {
+        let Some(regressed) = coordinates.preimage(wanted, op_id, var) else {
             // Case 1: op_id assigns var a value outside p_step, which a_step
             // contains. Past it, the assignment is regressed anyway and
             // leaves only the precondition on var.
-            let assigned = coordinates.image(source_interval, op_id, var)?;
+            let assigned = coordinates.image(source_interval, op_id, var);
             if flaws.record(
                 step,
                 separate(var, wanted, assigned, target.numeric[index])?,
@@ -335,7 +335,7 @@ fn regress(
         let reaches_source = regressed.intersects(&source_interval);
         // Case 2; past it, p_{step-1} keeps the regressed values.
         if !reaches_source {
-            let image = coordinates.image(source_interval, op_id, var)?;
+            let image = coordinates.image(source_interval, op_id, var);
             if flaws.record(step, separate(var, wanted, image, target.numeric[index])?)? {
                 return Ok(None);
             }
