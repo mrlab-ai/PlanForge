@@ -131,3 +131,16 @@ pub(crate) fn minimum_action_cost(task: &dyn AbstractNumericTask) -> NumericValu
         ONE_VALUE
     }
 }
+
+/// Registry feature for the blind heuristic.
+pub struct BlindFeature;
+impl crate::heuristic_factory::HeuristicFeature for BlindFeature {
+    const NAME: &'static str = "blind";
+    type Config = crate::heuristic_factory::EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        Ok(Box::new(BlindHeuristic::for_task(&**context.task)))
+    }
+}

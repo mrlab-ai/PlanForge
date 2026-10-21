@@ -172,3 +172,35 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
         &self.name
     }
 }
+
+/// Registry feature for numeric LM-cut.
+pub struct LmCutNumericFeature;
+impl crate::heuristic_factory::HeuristicFeature for LmCutNumericFeature {
+    const NAME: &'static str = "lmcutnumeric";
+    type Config = LmCutNumericConfig;
+    fn validate(config: &Self::Config) -> Result<(), crate::config::ConfigError> {
+        for (name, value) in [("precision", config.precision), ("epsilon", config.epsilon)] {
+            if value < 0.0 {
+                return Err(crate::config::ConfigError::from(format!(
+                    "lmcutnumeric {name} must be non-negative"
+                ))
+                .at_option(name));
+            }
+        }
+        if config.random_pcf {
+            return Err(crate::config::ConfigError::from(
+                "lmcutnumeric random_pcf=true is not implemented yet",
+            )
+            .at_option("random_pcf"));
+        }
+        Ok(())
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        let heuristic = LandmarkCutNumericHeuristic::from_config(&**context.task, *config)
+            .map_err(|error| format!("failed to build lmcutnumeric heuristic: {error}"))?;
+        Ok(Box::new(heuristic))
+    }
+}

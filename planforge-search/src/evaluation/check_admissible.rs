@@ -311,3 +311,47 @@ fn minimum_action_cost(operator_costs: &[NumericValue]) -> Result<NumericValue, 
         minimum
     })
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct CheckAdmissibleConfig {
+    inner: crate::heuristic_factory::HeuristicConfig,
+}
+impl crate::config::ApplyOptions for CheckAdmissibleConfig {
+    fn apply_options(
+        &mut self,
+        args: &[crate::config::ConfigArg],
+    ) -> Result<(), crate::config::ConfigError> {
+        let spec =
+            crate::heuristic_factory::single_wrapped_heuristic_spec("check_admissible", args)?;
+        self.inner = crate::heuristic_factory::HeuristicConfig::from_spec(&spec)?;
+        Ok(())
+    }
+}
+pub struct CheckAdmissibleFeature;
+impl crate::heuristic_factory::HeuristicFeature for CheckAdmissibleFeature {
+    const NAME: &'static str = "check_admissible";
+    type Config = CheckAdmissibleConfig;
+    fn nested(config: &Self::Config) -> Vec<&crate::heuristic_factory::HeuristicConfig> {
+        vec![&config.inner]
+    }
+    fn nested_specs(
+        spec: &crate::config::HeuristicSpec,
+    ) -> Result<Vec<crate::config::HeuristicSpec>, String> {
+        Ok(vec![
+            crate::heuristic_factory::single_wrapped_heuristic_spec(
+                "check_admissible",
+                &spec.args,
+            )?,
+        ])
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        let inner = config.inner.build(context)?;
+        Ok(Box::new(CheckAdmissibleHeuristic::new(
+            inner,
+            context.task.clone(),
+        )?))
+    }
+}

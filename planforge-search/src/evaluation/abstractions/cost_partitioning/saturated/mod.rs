@@ -306,3 +306,30 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
 
 #[cfg(test)]
 mod tests;
+
+pub use registry_feature::ScpFeature;
+mod registry_feature {
+    use crate::config::ConfigError;
+    use crate::evaluation::Heuristic;
+    use crate::heuristic_factory::features::{source_requirements, validate_sources};
+    use crate::heuristic_factory::*;
+
+    pub struct ScpFeature;
+    impl HeuristicFeature for ScpFeature {
+        const NAME: &'static str = "scp";
+        type Config = ScpHeuristicConfig;
+        fn requirements(config: &Self::Config) -> TaskRequirements {
+            source_requirements(&config.sources)
+        }
+        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+            validate_sources(&config.sources)?;
+            config.scp.validate().map_err(Into::into)
+        }
+        fn build<'a>(
+            config: &Self::Config,
+            context: &BuildContext<'a>,
+        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+            build_scp_from_sources(context, config)
+        }
+    }
+}

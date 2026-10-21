@@ -3,7 +3,6 @@
 //! The implementation follows the potential system in the numeric Fast
 //! Downward fork. CPLEX is deliberately the only supported LP backend.
 
-mod config;
 mod function;
 mod heuristic;
 mod optimizer;
@@ -11,7 +10,9 @@ mod rays;
 mod sampling;
 mod task;
 
-pub use config::{BoundsProvider, DiverseFallback, NumericPotentialConfig, OptimizeFor};
+pub use crate::evaluation::numeric_potential_config::{
+    BoundsProvider, DiverseFallback, NumericPotentialConfig, OptimizeFor,
+};
 pub use function::NumericPotentialFunction;
 pub use heuristic::NumericPotentialHeuristic;
 pub use optimizer::{NumericPotentialOptimizer, OptimizationOutcome};

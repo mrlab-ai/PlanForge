@@ -1643,3 +1643,18 @@ impl Heuristic for FfHeuristic {
         "ff"
     }
 }
+
+/// Registry feature for FF.
+pub struct FfFeature;
+impl crate::heuristic_factory::HeuristicFeature for FfFeature {
+    const NAME: &'static str = "ff";
+    type Config = crate::heuristic_factory::EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, crate::heuristic_factory::HeuristicBuildError> {
+        let heuristic = FfHeuristic::new(&**context.task)
+            .map_err(|error| format!("failed to construct ff heuristic: {error}"))?;
+        Ok(Box::new(heuristic))
+    }
+}

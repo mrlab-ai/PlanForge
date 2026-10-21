@@ -31,7 +31,7 @@ use limits::{
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::{
-    ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
+    BuildContext, ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
 };
 use planforge_search::search::{
     AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchParams, SearchResult,
@@ -325,16 +325,17 @@ pub fn solve_task(
     memory_limit: Option<u64>,
 ) -> std::io::Result<SearchResult> {
     let state_registry = StateRegistry::for_task(task.clone());
+    let context = BuildContext::new(&task);
     let mut engine: Box<dyn SearchEngine + '_> = match spec {
         SearchConfig::AStar {
             heuristic,
             lazy,
             mpd,
         } => {
-            let heuristic = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
+            let heuristic = build_heuristic_from_spec(heuristic, &context)?;
             let lazy = lazy
                 .as_ref()
-                .map(|spec| build_heuristic_from_spec(spec, &*task, task.clone()))
+                .map(|spec| build_heuristic_from_spec(spec, &context))
                 .transpose()?;
             info!("Starting A* search, mpd={mpd}, lazy={}", lazy.is_some());
             Box::new(AStarSearch::new(
@@ -350,7 +351,7 @@ pub fn solve_task(
             ))
         }
         SearchConfig::Gbfs { heuristic } => {
-            let heuristic = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
+            let heuristic = build_heuristic_from_spec(heuristic, &context)?;
             info!("Starting GBFS search...");
             Box::new(GreedyBestFirstSearch::new(
                 &*task,
@@ -593,9 +594,8 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
 
 fn build_heuristic_from_spec<'a>(
     spec: &HeuristicSpec,
-    task_ref: &'a dyn AbstractNumericTask,
-    sampling_task: TaskRef<'a>,
+    context: &BuildContext<'a>,
 ) -> std::io::Result<Box<dyn planforge_search::evaluation::Heuristic + 'a>> {
-    planforge_search::heuristic_factory::build_heuristic_from_spec(spec, task_ref, sampling_task)
+    planforge_search::heuristic_factory::build_heuristic_from_spec(spec, context)
         .map_err(HeuristicBuildError::into_io_error)
 }

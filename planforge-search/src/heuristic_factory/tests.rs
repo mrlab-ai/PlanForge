@@ -5,10 +5,7 @@
 //! from `planforge-searcher` and the factory's internals stay private.
 
 use super::{AbstractionSource, SourcesConfig};
-use super::{
-    ExternalHeuristic, RequiredBackend, TaskRequirements, abstraction_config, heuristic_names,
-    register_external_heuristics,
-};
+use super::{ExternalHeuristic, abstraction_config, heuristic_names, register_external_heuristics};
 use crate::config::{ApplyOptions, ConfigArg, HeuristicSpec, configure, parse_heuristic_spec};
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionConfig;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
@@ -447,17 +444,7 @@ fn collection_seeds_split_kinds_and_stagnation_limits_parse_once() {
 }
 
 fn test_external(name: &'static str) -> ExternalHeuristic {
-    ExternalHeuristic {
-        name,
-        backend: RequiredBackend::None,
-        requirements: |_| Ok(TaskRequirements::ANY),
-        nested_heuristics: |_| Ok(Vec::new()),
-        build: |_, _, _| {
-            Ok(Box::new(crate::evaluation::heuristic::BlindHeuristic::new(
-                None,
-            )))
-        },
-    }
+    super::entry::<crate::evaluation::heuristic::BlindFeature>().with_name(name)
 }
 
 #[test]

@@ -14,7 +14,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use tracing::{debug, info, warn};
@@ -74,11 +74,11 @@ struct OnlineState {
 
 impl NumericPotentialHeuristic {
     pub fn from_config(
-        task: &dyn AbstractNumericTask,
         task_ref: TaskRef<'_>,
         config: NumericPotentialConfig,
     ) -> Result<Self, String> {
         config.validate()?;
+        let task = &*task_ref;
         let mut optimizer = NumericPotentialOptimizer::new(task, &config)?;
         let potential_task = optimizer.task().clone();
         let ordinary_columns = optimizer.num_columns();

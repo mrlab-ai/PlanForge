@@ -50,3 +50,29 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
         &self.name
     }
 }
+
+pub use registry_feature::MaxFeature;
+mod registry_feature {
+    use crate::config::ConfigError;
+    use crate::evaluation::Heuristic;
+    use crate::heuristic_factory::features::{source_requirements, validate_sources};
+    use crate::heuristic_factory::*;
+
+    pub struct MaxFeature;
+    impl HeuristicFeature for MaxFeature {
+        const NAME: &'static str = "max";
+        type Config = MaxSourcesConfig;
+        fn requirements(config: &Self::Config) -> TaskRequirements {
+            source_requirements(&config.0)
+        }
+        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+            validate_sources(&config.0)
+        }
+        fn build<'a>(
+            config: &Self::Config,
+            context: &BuildContext<'a>,
+        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+            build_max_from_sources(&**context.task, &config.0.sources, &context.name)
+        }
+    }
+}

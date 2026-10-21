@@ -1,60 +1,48 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
-use planforge_search::config::{HeuristicSpec, parse_heuristic_spec};
+use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
+use planforge_search::config::parse_heuristic_spec;
 use planforge_search::evaluation::Heuristic;
 use planforge_search::heuristic_factory::{
-    ExternalHeuristic, HeuristicBuildError, RequiredBackend, TaskRequirements,
-    build_heuristic_from_spec, heuristic_names, preflight_required_backends,
+    BuildContext, EmptyConfig, HeuristicBuildError, HeuristicFeature, RequiredBackend,
+    build_heuristic_from_spec, entry, heuristic_names, preflight_required_backends,
     register_external_heuristics, validate_heuristic_spec,
 };
 
 static BUILD_CALLED: AtomicBool = AtomicBool::new(false);
 
-fn any_task(_: &HeuristicSpec) -> Result<TaskRequirements, String> {
-    Ok(TaskRequirements::ANY)
-}
-
-fn no_nested_heuristics(_: &HeuristicSpec) -> Result<Vec<HeuristicSpec>, String> {
-    Ok(Vec::new())
-}
-
-fn build_test_heuristic<'a>(
-    spec: &HeuristicSpec,
-    _: &'a dyn AbstractNumericTask,
-    _: TaskRef<'a>,
-) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-    if !spec.args.is_empty() {
-        return Err("`external_test` does not accept arguments"
-            .to_string()
-            .into());
+struct ExternalTest;
+impl HeuristicFeature for ExternalTest {
+    const NAME: &'static str = "external_test";
+    type Config = EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        _: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        BUILD_CALLED.store(true, Ordering::SeqCst);
+        Ok(Box::new(
+            planforge_search::evaluation::heuristic::BlindHeuristic::new(None),
+        ))
     }
-    BUILD_CALLED.store(true, Ordering::SeqCst);
-    Ok(Box::new(
-        planforge_search::evaluation::heuristic::BlindHeuristic::new(None),
-    ))
+}
+struct ExternalCplexTest;
+impl HeuristicFeature for ExternalCplexTest {
+    const NAME: &'static str = "external_cplex_test";
+    const BACKEND: RequiredBackend = RequiredBackend::Cplex;
+    type Config = EmptyConfig;
+    fn build<'a>(
+        config: &Self::Config,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        ExternalTest::build(config, context)
+    }
 }
 
 #[test]
 fn external_heuristic_is_visible_to_every_registry_path() {
-    register_external_heuristics(vec![
-        ExternalHeuristic {
-            name: "external_test",
-            backend: RequiredBackend::None,
-            requirements: any_task,
-            nested_heuristics: no_nested_heuristics,
-            build: build_test_heuristic,
-        },
-        ExternalHeuristic {
-            name: "external_cplex_test",
-            backend: RequiredBackend::Cplex,
-            requirements: any_task,
-            nested_heuristics: no_nested_heuristics,
-            build: build_test_heuristic,
-        },
-    ])
-    .unwrap();
+    register_external_heuristics(vec![entry::<ExternalTest>(), entry::<ExternalCplexTest>()])
+        .unwrap();
 
     assert!(heuristic_names().any(|name| name == "external_test"));
 
@@ -73,7 +61,7 @@ fn external_heuristic_is_visible_to_every_registry_path() {
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"
     )));
-    let heuristic = build_heuristic_from_spec(&spec, &*task, task.clone()).unwrap();
+    let heuristic = build_heuristic_from_spec(&spec, &BuildContext::new(&task)).unwrap();
     assert_eq!(heuristic.heuristic_name(), "blind_heuristic");
     assert!(BUILD_CALLED.load(Ordering::SeqCst));
 

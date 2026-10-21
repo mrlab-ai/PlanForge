@@ -586,8 +586,7 @@ fn conditioned_achiever_couples_numeric_precondition_to_goal_cost() {
     online_config.num_heuristics = 1;
     online_config.online_reoptimization_interval = 1;
     online_config.max_online_functions = 1;
-    let heuristic =
-        NumericPotentialHeuristic::from_config(&*task, task.clone(), online_config).unwrap();
+    let heuristic = NumericPotentialHeuristic::from_config(task.clone(), online_config).unwrap();
     let mut online_registry = StateRegistry::for_task(task.clone());
     let online_initial = online_registry.get_initial_state();
     let eval_state = EvaluationState::new(&online_initial, &*task, &online_registry);

@@ -181,3 +181,34 @@ fn compute_max_additive_subsets_from_relevant_operators(
     maximal_cliques.dedup();
     maximal_cliques
 }
+
+pub use registry_feature::CanonicalFeature;
+mod registry_feature {
+    use crate::config::ConfigError;
+    use crate::evaluation::Heuristic;
+    use crate::heuristic_factory::features::{source_requirements, validate_sources};
+    use crate::heuristic_factory::*;
+
+    pub struct CanonicalFeature;
+    impl HeuristicFeature for CanonicalFeature {
+        const NAME: &'static str = "canonical";
+        type Config = SourcesConfig;
+        fn requirements(config: &Self::Config) -> TaskRequirements {
+            source_requirements(config)
+        }
+        fn validate(config: &Self::Config) -> Result<(), ConfigError> {
+            validate_sources(config)
+        }
+        fn build<'a>(
+            config: &Self::Config,
+            context: &BuildContext<'a>,
+        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+            build_canonical_from_sources(
+                &**context.task,
+                &config.sources,
+                &context.name,
+                context.deadline.earliest(config.deadline()?),
+            )
+        }
+    }
+}

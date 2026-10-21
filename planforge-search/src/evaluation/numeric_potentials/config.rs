@@ -202,3 +202,40 @@ impl NumericPotentialConfig {
         Ok(())
     }
 }
+
+/// Registry feature, available as metadata in builds without CPLEX.
+pub struct NumericPotentialFeature;
+impl crate::heuristic_factory::HeuristicFeature for NumericPotentialFeature {
+    const NAME: &'static str = "numeric_potential";
+    const BACKEND: crate::heuristic_factory::RequiredBackend =
+        crate::heuristic_factory::RequiredBackend::Cplex;
+    type Config = NumericPotentialConfig;
+    fn requirements(_: &Self::Config) -> crate::heuristic_factory::TaskRequirements {
+        crate::heuristic_factory::TaskRequirements::ABSTRACTABLE_GOAL
+    }
+    fn validate(config: &Self::Config) -> Result<(), crate::config::ConfigError> {
+        config.validate().map_err(Into::into)
+    }
+    fn build<'a>(
+        config: &Self::Config,
+        context: &crate::heuristic_factory::BuildContext<'a>,
+    ) -> Result<
+        Box<dyn crate::evaluation::Heuristic + 'a>,
+        crate::heuristic_factory::HeuristicBuildError,
+    > {
+        #[cfg(feature = "cplex")]
+        {
+            Ok(Box::new(
+                super::numeric_potentials::NumericPotentialHeuristic::from_config(
+                    context.task.clone(),
+                    config.clone(),
+                )?,
+            ))
+        }
+        #[cfg(not(feature = "cplex"))]
+        {
+            let _ = (config, context);
+            unreachable!("the registry checks backend availability before construction")
+        }
+    }
+}

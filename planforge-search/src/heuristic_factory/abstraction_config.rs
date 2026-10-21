@@ -72,6 +72,34 @@ pub enum AbstractionSource {
 }
 
 impl AbstractionSource {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let result = match self {
+            Self::Domain(config) => config.cegar.validate(),
+            Self::Cartesian(config) => config.cegar.validate(),
+            Self::DomainCollection(config) => config
+                .validate()
+                .and_then(|_| config.member.cegar.validate()),
+            Self::CartesianCollection(config) => config
+                .validate()
+                .and_then(|_| config.member.cegar.validate()),
+            Self::Icaps26Cartesian(config) => {
+                Icaps26CartesianGenerator::new(config.clone()).map(|_| ())
+            }
+            Self::Pdb(config) => {
+                if let PdbPatternsConfig::Systematic(patterns) = &config.patterns
+                    && !patterns.only_interesting_patterns
+                {
+                    return Err(ConfigError::from(
+                        "systematic naive numeric PDB patterns are not implemented",
+                    )
+                    .at_option("only_interesting_patterns"));
+                }
+                Ok(())
+            }
+        };
+        result.map_err(|error| ConfigError::from(error.to_string()).at(self.name()))
+    }
+
     pub fn requirements(&self) -> TaskRequirements {
         TaskRequirements {
             restricted: matches!(self, Self::Pdb(_) | Self::Icaps26Cartesian(_)),
@@ -98,6 +126,15 @@ impl AbstractionSource {
         remaining: Option<Duration>,
     ) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
         self.requirements().validate(task)?;
+        self.build_validated(task, purpose, remaining)
+    }
+
+    fn build_validated<'task>(
+        &self,
+        task: &'task dyn AbstractNumericTask,
+        purpose: AbstractionPurpose,
+        remaining: Option<Duration>,
+    ) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError> {
         match self {
             Self::Domain(config) => build_cegar_source::<DomainAbstractionGenerator>(
                 task,
@@ -319,7 +356,7 @@ impl ApplyOptions for SourcesConfig {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct ScpHeuristicConfig {
+pub struct ScpHeuristicConfig {
     pub sources: SourcesConfig,
     pub scp: ScpConfig,
 }
@@ -343,7 +380,7 @@ pub(crate) fn build_components<'task>(
     let mut components = Vec::new();
     for source in sources {
         let remaining = remaining_construction_time(deadline)?;
-        let built = source.build(task, purpose, remaining)?;
+        let built = source.build_validated(task, purpose, remaining)?;
         if built.is_empty() {
             return Err(format!(
                 "abstraction source `{}` produced no components",
