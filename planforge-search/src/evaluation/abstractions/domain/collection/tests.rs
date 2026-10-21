@@ -2,11 +2,18 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::evaluation::abstractions::collections::config::MemberSpecialization;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
+use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use crate::evaluation::abstractions::common::abstraction::{AbstractionUse, CegarAbstraction};
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{
-    FlawKind, FlawScope, SplitKind, SplitSelection,
+    CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
 };
-use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
+use crate::evaluation::abstractions::domain::config::{
+    DomainAbstractionCollectionConfig, DomainAbstractionConfig,
+};
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
@@ -115,7 +122,7 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 
     assert!(start.elapsed() < Duration::from_secs(60));
     assert_eq!(abstractions.len(), 1);
-    assert!(abstractions[0].metadata.solved_by_self);
+    assert!(abstractions[0].metadata.solved_by_self());
 }
 
 /// The default member with `max_states` and `max_time`, without operator
@@ -452,7 +459,7 @@ fn domain_members(
             let initial_h =
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
             let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
-            let member = AbstractionComponent::domain(None, abstraction).goal_focused_member();
+            let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
         .collect()
@@ -501,7 +508,7 @@ fn cartesian_members_with(
             let initial_h =
                 abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
             let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
-            let member = AbstractionComponent::cartesian(None, abstraction).goal_focused_member();
+            let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
         .collect()
@@ -699,7 +706,10 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
     assert_eq!(domain.len(), 4);
     assert_eq!(cartesian.len(), 4);
     for (index, (domain, cartesian)) in domain.iter().zip(&cartesian).enumerate() {
-        assert_eq!(domain.metadata.full_goal_task, Some(true));
+        assert_eq!(
+            domain.metadata.collection.map(|record| record.full_task),
+            Some(true)
+        );
         assert_eq!(domain.metadata.collection_member, None);
         assert_eq!(cartesian.metadata.collection_member, None);
         let expected_backward = index >= 2;
@@ -738,7 +748,7 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             assert_eq!(plan.map(Vec::len), Some(5), "{backend} member {index}");
         }
         assert!(
-            AbstractionComponent::domain(None, domain.clone())
+            AbstractionComponent::from(domain.clone())
                 .goal_focused_member()
                 .is_none()
         );
@@ -863,9 +873,9 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     .generate(&task)
     .unwrap();
     assert_eq!(domain.len(), 1);
-    assert!(domain[0].metadata.solved_by_self);
+    assert!(domain[0].metadata.solved_by_self());
     assert_eq!(cartesian.len(), 1);
-    assert!(cartesian[0].metadata.solved_by_self);
+    assert!(cartesian[0].metadata.solved_by_self());
 }
 
 #[test]

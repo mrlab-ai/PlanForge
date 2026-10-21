@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::evaluation::abstractions::collections::config::{
-    CollectionConfig, CollectionMember, MemberSpecialization,
+    CollectionConfig, MemberConfig, MemberSpecialization,
 };
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
@@ -54,7 +54,7 @@ impl Default for CartesianAbstractionConfig {
     }
 }
 
-impl CollectionMember for CartesianAbstractionConfig {
+impl MemberConfig for CartesianAbstractionConfig {
     fn cegar(&self) -> &CegarOptions {
         &self.cegar
     }

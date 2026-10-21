@@ -162,9 +162,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                     && partitions[best_index].is_empty()
                     && !partitions[candidate_index].is_empty())
             {
-                if self.debug_diagnostics {
-                    info!("scp: candidate order improved h {best_h} -> {candidate_h}");
-                }
                 best_h = candidate_h;
                 best_order = candidate;
                 best_index = candidate_index;
@@ -245,11 +242,10 @@ pub(super) fn abstraction_collection_iteration(
     components: &[AbstractionComponent<'_>],
     component_id: usize,
 ) -> usize {
-    components
-        .get(component_id)
-        .and_then(AbstractionComponent::as_domain)
-        .and_then(|abstraction| abstraction.metadata.collection_iteration)
-        .unwrap_or(usize::MAX)
+    components[component_id]
+        .as_domain()
+        .and_then(|abstraction| abstraction.metadata.collection)
+        .map_or(usize::MAX, |record| record.iteration)
 }
 
 pub(super) fn max_heuristic_greedy_order(

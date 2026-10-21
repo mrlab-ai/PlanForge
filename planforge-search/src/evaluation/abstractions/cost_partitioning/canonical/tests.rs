@@ -1,4 +1,8 @@
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, SplitKind};
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
     NumericRootTaskParts, Operator, OperatorCost, OperatorIndex, VariableIndex,
@@ -8,7 +12,7 @@ use planforge_sas::state_registry::StateRegistry;
 use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
-use crate::evaluation::abstractions::common::task::AbstractionUse;
+use crate::evaluation::abstractions::common::abstraction::AbstractionUse;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTask};
@@ -16,9 +20,7 @@ use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
-use crate::evaluation::abstractions::domain::abstraction::{
-    DomainAbstraction, compute_hash_multipliers,
-};
+use crate::evaluation::abstractions::domain::abstraction::{DomainAbstraction, hash_multipliers};
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 
@@ -90,8 +92,8 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         vec![],
     )
     .unwrap();
-    let hash_multipliers =
-        compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).unwrap();
+    let multipliers =
+        hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes()).unwrap();
 
     DomainAbstraction {
         factory,
@@ -100,17 +102,25 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             generating_op_ids: vec![None; 4],
             initial_state_hash: 0,
             goal_facts: vec![],
-            hash_multipliers: hash_multipliers.clone(),
+            hash_multipliers: multipliers,
             numeric_domain_sizes: vec![],
         },
-        hash_multipliers,
         combine_labels: false,
         relevant_operator_ids: Vec::new(),
         abstract_operators: Vec::new(),
         transition_data_retained: false,
         abstract_source_sets: Vec::new(),
         interval_transition_system: std::cell::RefCell::new(None),
-        metadata: Default::default(),
+        metadata: AbstractionMetadata::standalone(
+            CegarOutcome {
+                stop_reason: CegarStopReason::SizeLimit,
+                concrete_plan: None,
+                pending_flaw: None,
+                refinements: 0,
+            },
+            SplitKind::Concrete,
+            None,
+        ),
     }
 }
 
@@ -141,9 +151,9 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
         None,
         &task,
         vec![
-            AbstractionComponent::domain(Some("da0".to_string()), da0),
-            AbstractionComponent::domain(Some("da1".to_string()), da1),
-            AbstractionComponent::domain(Some("da2".to_string()), da2),
+            AbstractionComponent::from(da0),
+            AbstractionComponent::from(da1),
+            AbstractionComponent::from(da2),
         ],
         vec![vec![0, 1], vec![2]],
     )
@@ -180,9 +190,9 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
     let pdb = PatternDatabase::new(projected, 32).unwrap();
 
     vec![
-        AbstractionComponent::domain(Some("domain".to_string()), domain),
-        AbstractionComponent::cartesian(Some("Cartesian".to_string()), cartesian),
-        AbstractionComponent::pattern_database(pdb),
+        AbstractionComponent::from(domain),
+        AbstractionComponent::from(cartesian),
+        AbstractionComponent::from(pdb),
     ]
 }
 
@@ -212,22 +222,19 @@ fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() 
     let task = simple_task();
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
     domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata.solved_by_self = true;
+    domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
     domain.metadata.abstraction_use = AbstractionUse::Standalone;
-    let component = AbstractionComponent::domain(None, domain);
+    let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
     let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
     assert!(!max.proves_initial_state_optimal());
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
     domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata.solved_by_self = true;
+    domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
     domain.metadata.abstraction_use = AbstractionUse::Standalone;
-    let canonical = CanonicalAbstractionHeuristic::new(
-        None,
-        &task,
-        vec![AbstractionComponent::domain(None, domain)],
-    )
-    .unwrap();
+    let canonical =
+        CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
+            .unwrap();
     assert!(!canonical.proves_initial_state_optimal());
 }

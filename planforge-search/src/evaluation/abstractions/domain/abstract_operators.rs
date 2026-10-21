@@ -15,6 +15,7 @@ use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 
+use super::abstraction::hash_multipliers;
 use super::abstraction_numeric_var;
 use super::comparison_inputs::fill_derived_numeric_intervals_from_comparison_trees;
 use super::partitions::NumericPartitions;
@@ -663,7 +664,7 @@ impl AbstractOperatorGenerator {
             ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");
         }
 
-        let hash_multipliers = compute_hash_multipliers(&domain_sizes, &numeric_domain_sizes)?;
+        let hash_multipliers = hash_multipliers(&domain_sizes, &numeric_domain_sizes)?;
 
         let additive_numeric_views =
             AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
@@ -1637,27 +1638,4 @@ fn comparison_preconditions_admit_combo(
     !precondition_required
         .values()
         .any(|precondition| conditions.precondition_is_contradicted(precondition, source_inputs))
-}
-
-fn compute_hash_multipliers(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-) -> Result<Vec<usize>> {
-    let mut multipliers: Vec<usize> =
-        Vec::with_capacity(domain_sizes.len() + numeric_domain_sizes.len());
-    let mut num_states: usize = 1;
-
-    for &size in domain_sizes {
-        multipliers.push(num_states);
-        num_states = num_states
-            .checked_mul(size)
-            .ok_or_else(|| anyhow!("hash multiplier overflow (too many abstract states)"))?;
-    }
-    for &parts in numeric_domain_sizes {
-        multipliers.push(num_states);
-        num_states = num_states
-            .checked_mul(parts)
-            .ok_or_else(|| anyhow!("hash multiplier overflow (too many abstract states)"))?;
-    }
-    Ok(multipliers)
 }

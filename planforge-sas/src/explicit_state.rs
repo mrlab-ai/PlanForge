@@ -22,8 +22,9 @@ use crate::utils::float_tolerance;
 use crate::utils::state_packer::StatePacker;
 
 /// The propositional and numeric values of a state, closed under the axioms of
-/// the task whose [`ExplicitStateSpace`] made it.
-#[derive(Debug, Clone, PartialEq)]
+/// the task whose [`ExplicitStateSpace`] made it. The default is empty, a
+/// buffer to fill.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExplicitState {
     pub propositional: Vec<ExplicitValueIndex>,
     pub numeric: Vec<NumericValue>,

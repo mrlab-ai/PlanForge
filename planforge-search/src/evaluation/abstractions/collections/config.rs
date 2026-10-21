@@ -13,14 +13,14 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{FlawKind, SplitKind};
 
 /// The configuration of one member of a collection.
-pub trait CollectionMember: ApplyOptions + Clone {
+pub trait MemberConfig: ApplyOptions + Clone {
     fn cegar(&self) -> &CegarOptions;
 
     fn cegar_mut(&mut self) -> &mut CegarOptions;
 }
 
 /// How a collection specialises its member configuration.
-pub(crate) trait MemberSpecialization: CollectionMember {
+pub trait MemberSpecialization: MemberConfig {
     /// This configuration for restart `member` of a standard collection.
     fn for_restart(&self, member: &StandardMember) -> Self;
 
@@ -76,7 +76,7 @@ pub struct CollectionConfig<M: ApplyOptions> {
     pub member: M,
 }
 
-impl<M: CollectionMember> CollectionConfig<M> {
+impl<M: MemberConfig> CollectionConfig<M> {
     /// Rejects options the strategy does not follow.
     pub(crate) fn validate(&self) -> Result<()> {
         let strategy = self.collection_strategy;

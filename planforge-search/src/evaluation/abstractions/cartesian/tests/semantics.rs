@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 /// A goal on a comparison variable is refined until the comparison holds.
@@ -74,7 +75,7 @@ fn refines_through_a_comparison_goal() {
         abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
         2.0
     );
-    assert!(abstraction.metadata.solved_by_self);
+    assert!(abstraction.metadata.solved_by_self());
     assert_eq!(
         abstraction.metadata.stop_reason,
         CegarStopReason::ConcretePlan

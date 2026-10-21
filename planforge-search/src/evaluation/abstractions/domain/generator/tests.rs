@@ -1,4 +1,5 @@
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use planforge_sas::explicit_state::ExplicitState;
 use std::collections::HashSet;
 
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -155,8 +156,9 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
     };
 
     let outcome = refine_domain_abstraction(&config, &task).unwrap();
-    assert!(outcome.concrete_plan.is_some());
+    assert!(outcome.outcome.concrete_plan.is_some());
     let plan = outcome
+        .outcome
         .concrete_plan
         .expect("a solved abstraction has a plan")
         .into_operator_ids();
@@ -211,7 +213,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
     )
     .unwrap();
 
-    assert_eq!(outcome.stop_reason, CegarStopReason::SizeLimit);
+    assert_eq!(outcome.outcome.stop_reason, CegarStopReason::SizeLimit);
     assert_eq!(outcome.factory.domain_sizes(), [1]);
 }
 #[test]
@@ -245,7 +247,10 @@ fn blacklisted_propositional_vars_are_not_refined() {
         .insert(VariableIndex::from_usize(0));
     let outcome = refine_domain_abstraction(&config, &task).unwrap();
 
-    assert_eq!(outcome.stop_reason, CegarStopReason::NoRefinableFlaw);
+    assert_eq!(
+        outcome.outcome.stop_reason,
+        CegarStopReason::NoRefinableFlaw
+    );
     assert_eq!(outcome.factory.domain_sizes(), [1]);
 }
 
@@ -457,7 +462,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
         .unwrap()
         .generate(&task)
         .unwrap();
-        assert!(abstraction.metadata.solved_by_self, "x0={initial}");
+        assert!(abstraction.metadata.solved_by_self(), "x0={initial}");
         let partition_count = abstraction.factory.numeric_domain_sizes()[0];
         // Both sides of the old small/large lookup split are covered.
         assert_eq!(
@@ -469,7 +474,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
             abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
         assert_eq!(stored_h, 20.0 - initial, "x0={initial}");
 
-        let component = AbstractionComponent::domain(None, abstraction);
+        let component = AbstractionComponent::from(abstraction);
         for step in 0..=(20.0 - initial) as usize {
             let x = initial + step as f64;
             let goal_value = if x >= 20.0 {
@@ -478,10 +483,10 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
                 ConditionValue::False
             };
             let h = component
-                .standalone_value_from_state_values(
-                    &[ExplicitValueIndex::from_usize(goal_value.as_usize())],
-                    &[x, 1.0, 20.0].map(NumericValue::new),
-                )
+                .standalone_value(&ExplicitState {
+                    propositional: vec![ExplicitValueIndex::from_usize(goal_value.as_usize())],
+                    numeric: [x, 1.0, 20.0].map(NumericValue::new).to_vec(),
+                })
                 .unwrap();
             assert_eq!(
                 h,
@@ -524,7 +529,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 .generate(&task)
                 .unwrap();
                 assert!(
-                    abstraction.metadata.solved_by_self,
+                    abstraction.metadata.solved_by_self(),
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(

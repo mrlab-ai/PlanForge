@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -161,7 +162,7 @@ fn a_rooted_domain_abstraction_plans_from_the_root_and_reports_the_initial_state
         .generate_from_root(&task, Some(&root))
         .unwrap();
 
-    assert!(abstraction.metadata.solved_by_self);
+    assert!(abstraction.metadata.solved_by_self());
     assert_eq!(
         abstraction.metadata.concrete_plan_operator_ids,
         Some(vec![OperatorIndex::new(0); 2]),
@@ -184,9 +185,6 @@ fn a_dead_root_stops_refinement_as_a_dead_end() {
         .generate_from_root(&task, Some(&root))
         .unwrap();
 
-    assert_eq!(
-        abstraction.metadata.stop_reason,
-        Some(CegarStopReason::DeadEnd)
-    );
-    assert!(!abstraction.metadata.solved_by_self);
+    assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::DeadEnd);
+    assert!(!abstraction.metadata.solved_by_self());
 }

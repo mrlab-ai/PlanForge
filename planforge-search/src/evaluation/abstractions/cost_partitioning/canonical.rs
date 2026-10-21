@@ -12,7 +12,9 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::maximal_cliques::maximal_cliques;
 use crate::evaluation::state_value_cache::StateValueCache;
 
-use crate::evaluation::abstractions::component::{AbstractionComponent, ComponentStateValues};
+use planforge_sas::explicit_state::ExplicitState;
+
+use crate::evaluation::abstractions::component::AbstractionComponent;
 
 pub struct CanonicalAbstractionHeuristic<'task> {
     name: String,
@@ -21,7 +23,7 @@ pub struct CanonicalAbstractionHeuristic<'task> {
     relevant_operator_ids: Vec<BTreeSet<OperatorIndex>>,
     component_value_cache: RefCell<Vec<Option<f64>>>,
     state_value_cache: RefCell<StateValueCache>,
-    component_state_values: RefCell<ComponentStateValues>,
+    component_state_values: RefCell<ExplicitState>,
     diagnostics_logged: RefCell<bool>,
 }
 
@@ -91,7 +93,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             relevant_operator_ids,
             component_value_cache: RefCell::new(Vec::new()),
             state_value_cache: RefCell::new(StateValueCache::default()),
-            component_state_values: RefCell::new(ComponentStateValues::default()),
+            component_state_values: RefCell::default(),
             diagnostics_logged: RefCell::new(false),
         })
     }
@@ -107,7 +109,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
     fn component_value(
         &self,
         component_id: usize,
-        state_values: &ComponentStateValues,
+        state_values: &ExplicitState,
         cache: &mut [Option<f64>],
     ) -> Result<f64, EvaluationError> {
         let slot = cache.get_mut(component_id).ok_or_else(|| {
@@ -123,14 +125,12 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
                 "missing canonical abstraction component {component_id}"
             ))
         })?;
-        let value = component
-            .standalone_value_from_state_values(&state_values.propositional, &state_values.numeric)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to evaluate {} component {component_id}: {error}",
-                    component.kind()
-                ))
-            })?;
+        let value = component.standalone_value(state_values).map_err(|error| {
+            EvaluationError::ComputationFailed(format!(
+                "failed to evaluate {} component {component_id}: {error}",
+                component.kind()
+            ))
+        })?;
         if value.is_nan() || value < 0.0 {
             return Err(EvaluationError::ComputationFailed(format!(
                 "{} component {component_id} returned invalid heuristic value {value}",
@@ -146,7 +146,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
         eval_state: &EvaluationState<'_, '_>,
     ) -> Result<f64, EvaluationError> {
         let mut state_values = self.component_state_values.borrow_mut();
-        state_values.fill(eval_state)?;
+        eval_state.fill_values(&mut state_values)?;
         let mut cache = self.component_value_cache.borrow_mut();
         cache.clear();
         cache.resize(self.components.len(), None);

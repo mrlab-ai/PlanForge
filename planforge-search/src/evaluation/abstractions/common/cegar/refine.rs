@@ -100,6 +100,11 @@ pub(crate) fn refine<R: Refinable>(
                 pending_flaw = Some(split.description().to_string());
                 return Ok(CegarIterationResult::Stop(limit));
             }
+            tracing::debug!(
+                "CEGAR refinement {} at {} abstract states: {split:?}",
+                refinements + 1,
+                view.num_states()
+            );
             split
         };
         abstraction.apply_split(split)?;

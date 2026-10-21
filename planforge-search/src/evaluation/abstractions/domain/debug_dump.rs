@@ -5,30 +5,8 @@ use planforge_sas::numeric_task::VariableIndex;
 use planforge_sas::utils::interval::Interval;
 use tracing::{debug, info};
 
-use super::abstraction::compute_abstraction_size_u128;
 use super::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
-
-pub(crate) fn debug_print_abstraction_stats(
-    iteration: usize,
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-) {
-    let prop_vars = domain_sizes.len();
-    let num_vars = numeric_domain_sizes.len();
-    let refined_props = domain_sizes.iter().filter(|&&s| s > 1).count();
-    let refined_nums = numeric_domain_sizes.iter().filter(|&&s| s > 1).count();
-    let size = compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "<overflow>".to_string());
-
-    let prop_max = domain_sizes.iter().copied().max().unwrap_or(0);
-    let num_max = numeric_domain_sizes.iter().copied().max().unwrap_or(0);
-
-    debug!(
-        "[CEGAR] iteration {iteration}: abstract_states={size} (prop_vars={prop_vars}, num_vars={num_vars}, refined_prop={refined_props}, refined_num={refined_nums}, max_prop_size={prop_max}, max_num_parts={num_max})"
-    );
-}
 
 pub(crate) fn dump_distances(
     factory: &DomainAbstractionFactory,

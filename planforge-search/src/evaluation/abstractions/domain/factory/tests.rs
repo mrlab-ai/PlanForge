@@ -3,8 +3,6 @@ use ordered_float::NotNan;
 
 use std::collections::BTreeSet;
 
-use rand::{SeedableRng, rngs::SmallRng};
-
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, LabelSourceSet,
@@ -226,9 +224,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         global_constraint: ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let implicit = factory
-        .build_abstract_distance_table(&task, false, false)
-        .unwrap();
+    let implicit = factory.build_distance_table_for_test(&task, false).unwrap();
     let mut generator = factory.make_operator_generator(&task, false).unwrap();
     let abstract_operators = generator.build_abstract_operators(&task).unwrap();
     let transition_system = factory
@@ -406,6 +402,65 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
     let _gen = factory.make_operator_generator(&task, false).unwrap();
 }
 
+impl DomainAbstractionFactory {
+    /// Goal distances of every abstract state under the task's own operator
+    /// costs.
+    fn build_distance_table_for_test(
+        &self,
+        task: &dyn AbstractNumericTask,
+        combine_labels: bool,
+    ) -> Result<AbstractDistanceTable> {
+        let mut generator = self.make_operator_generator(task, combine_labels)?;
+        let operators = generator.build_abstract_operators(task)?;
+        self.build_distance_table(
+            task,
+            &generator,
+            &operators,
+            DistanceTableOptions::default(),
+        )
+    }
+}
+
+/// The concrete operators the first step of the optimal abstract plan from
+/// the initial state may execute, as CEGAR's progression replay sees them.
+fn first_plan_step(
+    task: &NumericRootTask,
+    combine_labels: bool,
+    use_wildcard_plans: bool,
+) -> Vec<OperatorIndex> {
+    use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+    use crate::evaluation::abstractions::common::cegar::refine::Refinable;
+    use crate::evaluation::abstractions::common::cegar::view::AbstractionView;
+    use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
+    use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
+    use crate::evaluation::abstractions::domain::view::DomainRefinement;
+
+    let config = DomainAbstractionConfig {
+        cegar: CegarOptions {
+            combine_labels,
+            ..DomainAbstractionConfig::default().cegar
+        },
+        use_wildcard_plans,
+        ..DomainAbstractionConfig::default()
+    };
+    let no_variables = std::collections::HashSet::new();
+    let limits = RefinementLimits {
+        max_states: usize::MAX,
+        blacklisted_prop_var_ids: &no_variables,
+        blacklisted_numeric_var_ids: &no_variables,
+    };
+    let factory = factory_identity_cutpoints(task).unwrap();
+    let mut refinement = DomainRefinement::new(task, factory, limits, &config);
+    let view = refinement.view(None).unwrap();
+    let initial = view
+        .abstract_state(
+            task.get_initial_propositional_state_values(),
+            task.get_initial_numeric_state_values(),
+        )
+        .unwrap();
+    view.step_operators(view.optimal_transition(initial).unwrap())
+}
+
 #[test]
 fn wildcard_plan_collects_all_equivalent_concrete_ops() {
     let variables = vec![ExplicitVariable::new(
@@ -457,15 +512,10 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let result = factory
-        .compute_wildcard_plan(&task, true, false)
-        .unwrap()
-        .expect("plan exists");
-    assert_eq!(result.wildcard_plan.len(), 1);
-    let mut step = result.wildcard_plan[0].clone();
-    step.sort_unstable();
-    assert_eq!(step, vec![OperatorIndex::new(0), OperatorIndex::new(1)]);
+    assert_eq!(
+        first_plan_step(&task, true, true),
+        [OperatorIndex::new(0), OperatorIndex::new(1)]
+    );
 }
 
 #[test]
@@ -519,13 +569,7 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let result = factory
-        .compute_wildcard_plan(&task, false, false)
-        .unwrap()
-        .expect("plan exists");
-    assert_eq!(result.wildcard_plan.len(), 1);
-    assert_eq!(result.wildcard_plan[0], vec![OperatorIndex::new(0)]);
+    assert_eq!(first_plan_step(&task, false, true), [OperatorIndex::new(0)]);
 }
 
 #[test]
@@ -579,86 +623,7 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let result = factory
-        .compute_plan(&task, true, false, false)
-        .unwrap()
-        .expect("plan exists");
-    assert_eq!(result.wildcard_plan.len(), 1);
-    assert!(
-        result.wildcard_plan[0].as_slice() == [OperatorIndex::new(0)]
-            || result.wildcard_plan[0].as_slice() == [OperatorIndex::new(1)]
-    );
-}
-
-#[test]
-fn singleton_plan_selection_uses_seeded_rng() {
-    let variables = vec![ExplicitVariable::new(
-        2,
-        "v".into(),
-        vec!["v0".into(), "v1".into()],
-        Some(0),
-        ExplicitValueIndex::new(0),
-    )];
-    let numeric_variables: Vec<NumericVariable> = vec![];
-    let goals = vec![ExplicitFact::propositional(0, 1)];
-    let op0 = Operator::new(
-        "set0".into(),
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(
-            vec![],
-            VariableIndex::new(0),
-            Some(ExplicitValueIndex::new(0)),
-            ExplicitValueIndex::new(1),
-        )],
-        vec![],
-        OperatorCost::new(1),
-    );
-    let op1 = Operator::new(
-        "set1".into(),
-        vec![ExplicitFact::propositional(0, 0)],
-        vec![Effect::new(
-            vec![],
-            VariableIndex::new(0),
-            Some(ExplicitValueIndex::new(0)),
-            ExplicitValueIndex::new(1),
-        )],
-        vec![],
-        OperatorCost::new(1),
-    );
-    let task = NumericRootTask::new(NumericRootTaskParts {
-        version: 4,
-        metric: Metric::new(true, None),
-        variables,
-        numeric_variables,
-        goals,
-        mutexes: vec![],
-        state: vec![ExplicitValueIndex::new(0)],
-        numeric_state: vec![],
-        operators: vec![op0, op1],
-        axioms: vec![],
-        comparison_axioms: vec![],
-        assignment_axioms: vec![],
-        global_constraint: ExplicitFact::propositional(0, 0),
-    });
-
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let mut rng = SmallRng::seed_from_u64(7);
-    let result = factory
-        .compute_plan_with_rng(
-            &task,
-            true,
-            false,
-            Some(&mut rng),
-            DistanceTableOptions::default(),
-        )
-        .unwrap()
-        .expect("plan exists");
-    assert_eq!(result.wildcard_plan.len(), 1);
-    assert!(
-        result.wildcard_plan[0].as_slice() == [OperatorIndex::new(0)]
-            || result.wildcard_plan[0].as_slice() == [OperatorIndex::new(1)]
-    );
+    assert_eq!(first_plan_step(&task, true, false), [OperatorIndex::new(0)]);
 }
 
 #[test]
@@ -697,32 +662,15 @@ fn initial_state_hash_is_unique() {
     });
 
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let table = factory
-        .build_abstract_distance_table(&task, true, false)
-        .unwrap();
+    let table = factory.build_distance_table_for_test(&task, true).unwrap();
 
     let generator = factory.make_operator_generator(&task, true).unwrap();
-    let hash_multipliers = generator.hash_multipliers().to_vec();
-    let domain_sizes = generator.domain_sizes().to_vec();
-    let numeric_domain_sizes = generator.numeric_domain_sizes().to_vec();
-    let init_hash = table.initial_state_hash;
-
-    let mut props: Vec<Vec<usize>> = Vec::new();
-    let mut nums: Vec<Vec<usize>> = Vec::new();
-    decode_state_to_vectors(
-        init_hash,
-        domain_sizes.len(),
-        &domain_sizes,
-        &numeric_domain_sizes,
-        &hash_multipliers,
-        &mut props,
-        &mut nums,
-    );
-    assert_eq!(props.len(), 1);
     assert_eq!(
-        props[0][0], 0,
+        generator.domain_sizes(),
+        [1],
         "condition variables keep their single abstract value"
     );
+    assert!(table.initial_state_hash < table.distances.len());
 }
 
 /// A goal on a variable the abstraction collapsed to one value is dropped.
@@ -1425,9 +1373,7 @@ fn source_set_one_finite_dim_suffices() {
     );
     assert_eq!(concrete.source.numeric[1], Interval::unbounded());
 
-    let table = factory
-        .build_abstract_distance_table(&task, false, false)
-        .unwrap();
+    let table = factory.build_distance_table_for_test(&task, false).unwrap();
     assert_eq!(table.distances[table.initial_state_hash], 2.0);
 }
 

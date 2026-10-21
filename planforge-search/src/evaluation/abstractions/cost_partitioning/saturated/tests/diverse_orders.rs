@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
@@ -54,9 +55,9 @@ fn diverse_orders_support_mixed_abstraction_representations() {
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&*task, &pattern).unwrap(), 32).unwrap();
     let components = vec![
-        AbstractionComponent::domain(None, domain),
-        AbstractionComponent::cartesian(None, cartesian_abstraction(&task)),
-        AbstractionComponent::pattern_database(pdb),
+        AbstractionComponent::from(domain),
+        AbstractionComponent::from(cartesian_abstraction(&task)),
+        AbstractionComponent::from(pdb),
     ];
     let mut config = scp_config(Saturator::All, true);
     config.diversify = true;
@@ -69,7 +70,6 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         &*task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
-            ..Default::default()
         },
     )
     .unwrap();
@@ -92,7 +92,7 @@ fn diverse_orders_support_mixed_abstraction_representations() {
 #[test]
 fn diverse_order_generator_requires_diversify() {
     let task = independent_goals_task();
-    let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+    let component = AbstractionComponent::from(cartesian_abstraction(&task));
     let mut config = scp_config(Saturator::All, true);
     config.order_generator = OrderGenerator::Diverse;
 
@@ -118,7 +118,7 @@ fn diverse_order_generator_requires_diversify() {
 #[test]
 fn diverse_orders_reject_nan_initial_order_budget() {
     let task = std::sync::Arc::new(independent_goals_task());
-    let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+    let component = AbstractionComponent::from(cartesian_abstraction(&task));
     let mut config = scp_config(Saturator::All, true);
     config.diversify = true;
     config.initial_order_generation_max_time = f64::NAN;
@@ -130,7 +130,6 @@ fn diverse_orders_reject_nan_initial_order_budget() {
         &*task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
-            ..Default::default()
         },
     );
     let error = match result {

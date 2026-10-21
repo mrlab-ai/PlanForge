@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -15,11 +16,12 @@ use planforge_sas::numeric_task::{
 
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianLimits, CartesianSemantics,
-    CartesianSet, CartesianView, CegarStopReason, FlawKind, FlawScope, OperatorBitSet,
-    RefinementNode, ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
+    CartesianView, FlawKind, FlawScope, OperatorBitSet, RefinementLimits, RefinementNode,
+    ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::selection::{
     push_unique_split, retain_min_growth_splits, select_refinement_split,
 };
@@ -89,7 +91,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
             "unexpected initial h for {flaw_scope}"
         );
         assert!(
-            abstraction.metadata.solved_by_self,
+            abstraction.metadata.solved_by_self(),
             "{flaw_scope} progression failed to produce a concrete plan"
         );
         assert_eq!(

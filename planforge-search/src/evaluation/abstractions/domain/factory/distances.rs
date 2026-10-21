@@ -92,40 +92,12 @@ pub(super) fn compute_num_states(
     domain_sizes: &[usize],
     numeric_domain_sizes: &[usize],
 ) -> Result<usize> {
-    let mut num: usize = 1;
-    for (i, &s) in domain_sizes.iter().enumerate() {
-        ensure!(s > 0, "domain size for var {i} must be > 0, got {s}");
-        num = num
-            .checked_mul(s)
-            .context("abstract state space too large (overflow)")?;
-    }
-    for &s in numeric_domain_sizes.iter() {
-        num = num
-            .checked_mul(s)
-            .context("abstract state space too large (overflow)")?;
-    }
-    Ok(num)
+    abstract_state_count(domain_sizes, numeric_domain_sizes)
+        .and_then(|states| usize::try_from(states).ok())
+        .context("the abstract state space does not fit usize")
 }
 
 impl DomainAbstractionFactory {
-    /// Goal distances of every abstract state under the task's own operator
-    /// costs.
-    pub fn build_abstract_distance_table(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        dump_distances: bool,
-    ) -> Result<AbstractDistanceTable> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
-        self.build_distance_table(
-            task,
-            &generator,
-            &operators,
-            DistanceTableOptions::default().with_dump_distances(dump_distances),
-        )
-    }
-
     /// Goal distances of every abstract state under `operator_costs`, without
     /// saturated costs. Used by the order generator during diversification.
     pub fn build_goal_distances(

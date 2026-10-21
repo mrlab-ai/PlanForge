@@ -6,10 +6,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use rand::seq::SliceRandom;
-use rand::{SeedableRng, rngs::SmallRng};
-use tracing::debug;
+use anyhow::{Context, Result, anyhow, ensure};
 
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
@@ -18,6 +15,7 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::float_tolerance;
 
 use super::abstract_operators::{AbstractOperator, AbstractOperatorGenerator, DomainMapping};
+use super::abstraction::abstract_state_count;
 use super::abstraction_numeric_var;
 use super::comparison_inputs::{
     AbstractStateHash, prepare_comparison_tree_inputs_from_abstract_state,
@@ -29,7 +27,6 @@ use crate::evaluation::abstractions::common::cegar::split::Split;
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 
 mod distances;
-mod plan_extraction;
 mod saturation;
 mod source_sets;
 mod state_encoding;
@@ -48,7 +45,6 @@ use crate::evaluation::abstractions::cost_partitioning::costs::{
     saturation_need,
 };
 pub use distances::*;
-pub use plan_extraction::*;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 use saturation::*;

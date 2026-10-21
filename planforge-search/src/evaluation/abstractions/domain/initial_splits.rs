@@ -11,7 +11,7 @@ use rand::Rng;
 use rand::rngs::SmallRng;
 
 use super::abstract_operators::DomainMapping;
-use super::abstraction::compute_abstraction_size_u128;
+use super::abstraction::abstract_state_count;
 use super::config::DomainAbstractionConfig;
 use super::partitions::NumericPartitions;
 
@@ -251,7 +251,7 @@ fn refined_size_fits(
         old_size > 0 && new_size > 0,
         "abstract domain sizes are positive, got {old_size} -> {new_size}"
     );
-    let Some(total_size) = compute_abstraction_size_u128(domain_sizes, numeric_domain_sizes) else {
+    let Some(total_size) = abstract_state_count(domain_sizes, numeric_domain_sizes) else {
         // The current abstraction is already larger than u128 and thus than
         // any limit.
         return false;

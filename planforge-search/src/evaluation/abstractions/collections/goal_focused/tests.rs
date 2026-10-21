@@ -111,7 +111,18 @@ struct Call {
 #[derive(Debug, Clone, PartialEq)]
 struct Member {
     call: Call,
+    report: BuiltReport,
     membership: Option<CollectionMembership>,
+}
+
+impl CollectionMember for Member {
+    fn report(&self) -> BuiltReport {
+        self.report.clone()
+    }
+
+    fn record(&mut self, _record: CollectionRecord, membership: Option<CollectionMembership>) {
+        self.membership = membership;
+    }
 }
 
 /// A backend that solves the counter goals exactly: the plan from root `x`
@@ -158,7 +169,7 @@ impl GoalFocusedBackend for ScriptedBackend {
         root: Option<&ExplicitState>,
         variant: &GoalVariant,
         budget: MemberBudget,
-    ) -> Result<(Member, BuiltReport)> {
+    ) -> Result<Member> {
         let call = Call {
             goal_id: variant.goal_id,
             variant_id: variant.variant_id,
@@ -179,13 +190,11 @@ impl GoalFocusedBackend for ScriptedBackend {
                 concrete_plan: Some(Vec::new()),
                 root_is_dead_end: false,
             };
-            return Ok((
-                Member {
-                    call,
-                    membership: None,
-                },
+            return Ok(Member {
+                call,
                 report,
-            ));
+                membership: None,
+            });
         };
         let goals = if variant.full_task {
             assert_eq!(
@@ -222,17 +231,11 @@ impl GoalFocusedBackend for ScriptedBackend {
                 .map(|length| vec![OperatorIndex::new(0); length]),
             root_is_dead_end: length.is_none(),
         };
-        Ok((
-            Member {
-                call,
-                membership: None,
-            },
+        Ok(Member {
+            call,
             report,
-        ))
-    }
-
-    fn record_membership(&self, member: &mut Member, membership: Option<CollectionMembership>) {
-        member.membership = membership;
+            membership: None,
+        })
     }
 }
 
@@ -394,6 +397,12 @@ fn a_goal_free_task_gets_one_full_task_member() {
                 root_x: None,
                 remaining_states: 1_000,
             },
+            report: BuiltReport {
+                initial_h: 0.0,
+                num_states: 1,
+                concrete_plan: Some(Vec::new()),
+                root_is_dead_end: false,
+            },
             membership: None,
         }]
     );
@@ -547,13 +556,10 @@ fn an_invalid_concrete_plan_is_an_error() {
             root: Option<&ExplicitState>,
             variant: &GoalVariant,
             budget: MemberBudget,
-        ) -> Result<(Member, BuiltReport)> {
-            let (member, mut report) = self.0.build(task, root, variant, budget)?;
-            report.concrete_plan.as_mut().unwrap().pop();
-            Ok((member, report))
-        }
-        fn record_membership(&self, member: &mut Member, membership: Option<CollectionMembership>) {
-            self.0.record_membership(member, membership);
+        ) -> Result<Member> {
+            let mut member = self.0.build(task, root, variant, budget)?;
+            member.report.concrete_plan.as_mut().unwrap().pop();
+            Ok(member)
         }
     }
 

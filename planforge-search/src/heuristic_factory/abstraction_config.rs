@@ -6,6 +6,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
 use crate::evaluation::abstractions::domain::config::{
@@ -425,10 +426,7 @@ pub(crate) fn build_components<'task>(
                             format!("failed to build domain abstraction source {source_index}"),
                         )
                     })?;
-                components.push(AbstractionComponent::domain(
-                    Some(format!("domain_{source_index}")),
-                    abstraction,
-                ));
+                components.push(AbstractionComponent::from(abstraction));
             }
             "domain_collection" => {
                 let mut config = configure(
@@ -462,14 +460,7 @@ pub(crate) fn build_components<'task>(
                 })?;
                     }
                 }
-                components.extend(abstractions.into_iter().enumerate().map(
-                    |(component_index, abstraction)| {
-                        AbstractionComponent::domain(
-                            Some(format!("domain_{source_index}_{component_index}")),
-                            abstraction,
-                        )
-                    },
-                ));
+                components.extend(abstractions.into_iter().map(AbstractionComponent::from));
             }
             "cartesian" => {
                 let mut config =
@@ -492,10 +483,7 @@ pub(crate) fn build_components<'task>(
                             format!("failed to build Cartesian abstraction source {source_index}"),
                         )
                     })?;
-                components.push(AbstractionComponent::cartesian(
-                    Some(format!("cartesian_{source_index}")),
-                    abstraction,
-                ));
+                components.push(AbstractionComponent::from(abstraction));
             }
             "cartesian_collection" => {
                 let mut config = configure(
@@ -518,14 +506,7 @@ pub(crate) fn build_components<'task>(
                     .map_err(|error| {
                     HeuristicBuildError::from_source(error, format!("failed to build Cartesian abstraction collection source {source_index}"))
                 })?;
-                components.extend(abstractions.into_iter().enumerate().map(
-                    |(component_index, abstraction)| {
-                        AbstractionComponent::cartesian(
-                            Some(format!("cartesian_{source_index}_{component_index}")),
-                            abstraction,
-                        )
-                    },
-                ));
+                components.extend(abstractions.into_iter().map(AbstractionComponent::from));
             }
             "icaps26_cartesian" => {
                 validate_restricted_task(task)?;
@@ -544,10 +525,7 @@ pub(crate) fn build_components<'task>(
                             "failed to build ICAPS 2026 Cartesian source {source_index}: {error:#}"
                         )
                     })?;
-                components.push(AbstractionComponent::cartesian(
-                    Some(format!("icaps26_cartesian_{source_index}")),
-                    abstraction,
-                ));
+                components.push(AbstractionComponent::from(abstraction));
             }
             "pdb" | "numeric_pdb" => {
                 validate_restricted_task(task)?;
@@ -564,7 +542,7 @@ pub(crate) fn build_components<'task>(
                     format!("failed to build numeric PDB source {source_index}: {error}")
                 })?
                 .into_pdbs();
-                components.extend(pdbs.into_iter().map(AbstractionComponent::pattern_database));
+                components.extend(pdbs.into_iter().map(AbstractionComponent::from));
             }
             other => {
                 return Err(format!(
@@ -604,7 +582,7 @@ pub(crate) fn build_components<'task>(
     let cartesian_transitions = components
         .iter()
         .filter_map(AbstractionComponent::as_cartesian)
-        .map(|abstraction| abstraction.metadata.transition_count)
+        .map(|abstraction| abstraction.transition_count)
         .try_fold(0usize, |total, transitions| {
             total
                 .checked_add(transitions)

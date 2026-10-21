@@ -53,20 +53,14 @@ pub(super) fn interval_stolen_costs(
     let mut regions_by_component = Vec::with_capacity(components.len());
     for (component_id, component) in components.iter().enumerate() {
         let (source_sets, expected_source_sets) = match component {
-            AbstractionComponent::Domain(heuristic) => {
-                let abstraction = heuristic.abstraction();
-                (
-                    abstraction.abstract_source_sets.as_slice(),
-                    abstraction.abstract_operators.len(),
-                )
-            }
-            AbstractionComponent::Cartesian(heuristic) => {
-                let abstraction = heuristic.abstraction();
-                (
-                    abstraction.abstract_source_sets.as_slice(),
-                    abstraction.transition_system.transitions.len(),
-                )
-            }
+            AbstractionComponent::Domain(abstraction) => (
+                abstraction.abstract_source_sets.as_slice(),
+                abstraction.abstract_operators.len(),
+            ),
+            AbstractionComponent::Cartesian(abstraction) => (
+                abstraction.abstract_source_sets.as_slice(),
+                abstraction.transition_system.transitions.len(),
+            ),
             AbstractionComponent::PatternDatabase(_) => {
                 regions_by_component.push(None);
                 continue;

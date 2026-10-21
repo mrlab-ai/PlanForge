@@ -5,9 +5,8 @@
 //! once. Dispatch, backend preflight, task-shape validation, legal names and
 //! CLI help are generated from that declaration.
 
-use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractionGenerator, CartesianAbstractionHeuristic,
-};
+use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 #[cfg(feature = "cplex")]
@@ -15,11 +14,8 @@ use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::Po
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
-#[cfg(feature = "cplex")]
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
-use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LandmarkCutNumericHeuristic;
@@ -33,6 +29,7 @@ mod abstraction_config;
 mod tests;
 
 use crate::config::{ConfigArg, HeuristicSpec, configure};
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredBackend {
@@ -429,7 +426,6 @@ fn build_scp_from_sources<'task>(
         task,
         ScpBuildOptions {
             sampling_task: Some(sampling_task),
-            ..Default::default()
         },
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
@@ -548,7 +544,7 @@ heuristic_registry! {
                 .generate(task)
                 .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
             Ok(Some(
-                Box::new(DomainAbstractionHeuristic::new(None, abstraction))
+                Box::new(AbstractionHeuristic::new(&spec.name, abstraction))
                     as Box<dyn Heuristic + 'a>,
             ))
         }
@@ -572,7 +568,7 @@ heuristic_registry! {
                 .generate(task)
                 .map_err(|error| format!("failed to build Cartesian abstraction: {error:#}"))?;
             Ok(Some(
-                Box::new(CartesianAbstractionHeuristic::new(None, abstraction))
+                Box::new(AbstractionHeuristic::new(&spec.name, abstraction))
                     as Box<dyn Heuristic + 'a>,
             ))
         }
@@ -581,24 +577,22 @@ heuristic_registry! {
     PosthocOptimization {
         names: ["posthoc_optimization", "pho"],
         backend: RequiredBackend::Cplex,
-        requirements: abstractable_task,
+        requirements: component_task_requirements,
         nested: no_nested_heuristics,
         build: {
             #[cfg(feature = "cplex")]
             {
-                use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
-                let mut cfg =
-                    configure(&spec.name, DomainAbstractionCollectionConfig::default(), &spec.args)?;
-                cfg.member.compute_source_sets = false;
-                let generator = DomainAbstractionCollectionGenerator::new(cfg)
-                    .map_err(|e| format!("invalid posthoc_optimization collection: {e:#}"))?;
-                info!("Building posthoc_optimization domain abstractions (CEGAR)...");
-                let abstractions = generator.generate(task).map_err(|e| {
-                    format!("failed to build posthoc_optimization domain abstractions: {e:#}")
-                })?;
-                let h = PostHocOptimizationHeuristic::new(None, task, abstractions).map_err(|e| {
-                    format!("failed to construct posthoc_optimization heuristic: {e}")
-                })?;
+                let (sources, construction_deadline) =
+                    abstraction_config::canonical_sources_and_deadline(&spec.args)?;
+                let components = build_components(
+                    task,
+                    &sources,
+                    ComponentUse::Standalone,
+                    construction_deadline,
+                )?;
+                remaining_construction_time(construction_deadline)?;
+                let h = PostHocOptimizationHeuristic::new(Some(spec.name.clone()), task, components)
+                    .map_err(|e| format!("failed to construct `{}`: {e}", spec.name))?;
                 Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
             }
             #[cfg(not(feature = "cplex"))]
@@ -620,7 +614,7 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-            use crate::config::for_each_option;
+            use crate::config::{FromOptionValue, for_each_option};
             use crate::evaluation::numeric_potentials::{
                 NumericPotentialConfig, PotentialAbstractionOcpHeuristic,
             };

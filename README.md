@@ -122,10 +122,10 @@ Common options:
 - `--search SPEC` — search algorithm with a heuristic configuration. Examples:
   - `astar(blind())`
   - `astar(lmcutnumeric())`
-  - `astar(canonical_abstractions::domain(...))`
+  - `astar(canonical(domain(...)))`
   - `astar(numeric_potential(opt=initial_state,max_potential=1e8))`
   - `astar(numeric_potential(opt=diverse_samples,num_heuristics=4,num_samples=100,max_potential=1e8,cache_estimates=true,invalidate_online_cache_on_growth=true),mpd=true)`
-  - `astar(posthoc_optimization(...))` — LP-based dominator of canonical; `pho(...)` is accepted as an alias
+  - `astar(posthoc_optimization(domain_collection(...)))` — LP-based dominator of canonical over the same abstraction sources; `pho(...)` is accepted as an alias
   - `astar(ff())`
   - `gbfs(ff())` — fast non-admissible search
   - `gbfs(lmcutnumeric())`

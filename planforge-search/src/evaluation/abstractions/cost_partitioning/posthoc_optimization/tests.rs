@@ -5,16 +5,22 @@ use super::*;
 fn test_heuristic(
     num_abstractions: usize,
     constraints: Vec<Vec<usize>>,
-) -> PostHocOptimizationHeuristic {
+) -> PostHocOptimizationHeuristic<'static> {
     PostHocOptimizationHeuristic {
         name: "posthoc_test".to_string(),
-        heuristics: Vec::new(),
+        components: Vec::new(),
         lp_model: RefCell::new(build_lp_model(num_abstractions, &constraints).unwrap()),
         constraints,
-        state_value_cache: RefCell::new(Vec::new()),
-        lookup_scratch: RefCell::new(DomainAbstractionLookupScratch::new()),
+        state_value_cache: RefCell::new(StateValueCache::default()),
+        values: RefCell::default(),
         diagnostics_logged: RefCell::new(false),
     }
+}
+
+fn operators(ids: &[usize]) -> BTreeSet<OperatorIndex> {
+    ids.iter()
+        .map(|&id| OperatorIndex::from_usize(id))
+        .collect()
 }
 
 #[test]
@@ -59,32 +65,22 @@ fn three_way_packing_picks_best() {
 
 #[test]
 fn build_constraints_drops_free_operators() {
-    let mut rel0: BTreeSet<usize> = BTreeSet::new();
-    rel0.insert(0);
-    rel0.insert(1);
-    let mut rel1: BTreeSet<usize> = BTreeSet::new();
-    rel1.insert(0);
+    let rel0 = operators(&[0, 1]);
+    let rel1 = operators(&[0]);
 
     // Operator 0 cost > 0, operator 1 cost = 0 → only operator 0 produces a
     // constraint, which mentions abstractions 0 and 1.
-    let cons = build_constraints(&[rel0, rel1], &[2.0, 0.0], 2);
+    let cons = build_constraints(&[rel0, rel1], &[2.0, 0.0]);
     assert_eq!(cons.len(), 1);
     assert_eq!(cons[0], vec![0, 1]);
 }
 
 #[test]
 fn build_constraints_deduplicates() {
-    let mut rel: BTreeSet<usize> = BTreeSet::new();
-    rel.insert(0);
-    rel.insert(1);
-
-    // Two operators with the same relevance pattern produce only one constraint.
-    let cons = build_constraints(&[rel.clone(), rel], &[1.0, 1.0], 2);
-    // Wait — that's two abstractions both relevant for the same two ops,
-    // not two operators sharing a pattern. Re-derive:
-    // operator_to_abstractions: op 0 -> [0,1] (relevant for both abstractions),
-    //                           op 1 -> [0,1]
-    // After dedup these collapse to one constraint.
+    // Operators 0 and 1 are relevant to both abstractions, so both give the
+    // constraint over abstractions 0 and 1, kept once.
+    let rel = operators(&[0, 1]);
+    let cons = build_constraints(&[rel.clone(), rel], &[1.0, 1.0]);
     assert_eq!(cons.len(), 1);
     assert_eq!(cons[0], vec![0, 1]);
 }

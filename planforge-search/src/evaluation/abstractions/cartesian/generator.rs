@@ -1,23 +1,27 @@
 use super::*;
+use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 
 pub struct CartesianAbstractionGenerator {
     pub(super) config: CartesianAbstractionConfig,
 }
 
-impl CartesianAbstractionGenerator {
-    pub fn new(config: CartesianAbstractionConfig) -> Result<Self> {
-        ensure!(
-            config.cegar.max_states > 0,
-            "Cartesian max_states must be > 0"
-        );
+impl AbstractionGenerator for CartesianAbstractionGenerator {
+    type Config = CartesianAbstractionConfig;
+    type Abstraction = CartesianAbstraction;
+    type Key = Vec<HierarchyKey>;
+
+    const NAME: &'static str = "Cartesian";
+
+    fn new(config: CartesianAbstractionConfig) -> Result<Self> {
+        config.cegar.validate()?;
         Ok(Self { config })
     }
 
-    pub fn generate(&self, task: &dyn AbstractNumericTask) -> Result<CartesianAbstraction> {
-        self.generate_from_root(task, None)
+    fn key(abstraction: &CartesianAbstraction) -> Vec<HierarchyKey> {
+        hierarchy_key(&abstraction.hierarchy)
     }
 
-    pub(super) fn generate_from_root(
+    fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
@@ -52,12 +56,11 @@ impl CartesianAbstractionGenerator {
             working,
             shortest_paths,
             semantics: &semantics,
-            limits: CartesianLimits {
+            limits: RefinementLimits {
                 max_states: self.config.cegar.max_states,
                 blacklisted_prop_var_ids: &self.config.blacklisted_prop_var_ids,
                 blacklisted_numeric_var_ids: &self.config.blacklisted_numeric_var_ids,
             },
-            debug: self.config.cegar.debug,
         };
         let outcome = refine(
             &mut refinement,
@@ -66,7 +69,10 @@ impl CartesianAbstractionGenerator {
                 flaw_kind: self.config.cegar.flaw_kind,
                 flaw_scope: self.config.cegar.flaw_scope,
                 refinement_root,
-                driver: CegarDriver::new(usize::MAX, self.config.cegar.max_time),
+                driver: CegarDriver::new(
+                    self.config.cegar.max_iterations,
+                    self.config.cegar.max_time,
+                ),
             },
             start,
         )?;
@@ -75,9 +81,6 @@ impl CartesianAbstractionGenerator {
             shortest_paths,
             ..
         } = refinement;
-        let stop_reason = outcome.stop_reason;
-        let solved_plan = outcome.concrete_plan;
-
         let working_transition_count = working.active_transition_ids().count();
         let initial_state_hash = working
             .hierarchy
@@ -104,7 +107,7 @@ impl CartesianAbstractionGenerator {
         } else {
             working_transition_count
         };
-        if let Some(plan) = &solved_plan {
+        if let Some(plan) = &outcome.concrete_plan {
             let root_state_id = working
                 .hierarchy
                 .map_state(&refinement_root.propositional, &refinement_root.numeric)?;
@@ -116,11 +119,12 @@ impl CartesianAbstractionGenerator {
             );
         }
         info!(
-            "Cartesian abstraction: states={}, transitions={}, refinements={}, h(init)={}, stop={stop_reason:?}, elapsed={:.3}s",
+            "Cartesian abstraction: states={}, transitions={}, refinements={}, h(init)={}, stop={:?}, elapsed={:.3}s",
             distance_table.distances.len(),
             transition_count,
             outcome.refinements,
             distance_table.distances[distance_table.initial_state_hash],
+            outcome.stop_reason,
             start.elapsed().as_secs_f64()
         );
         Ok(CartesianAbstraction {
@@ -129,18 +133,12 @@ impl CartesianAbstractionGenerator {
             transition_system,
             relevant_operator_ids,
             abstract_source_sets: source_sets,
-            metadata: CartesianAbstractionMetadata {
-                solved_by_self: solved_plan.is_some(),
-                abstraction_use: AbstractionUse::Standalone,
-                stop_reason,
-                pending_flaw: outcome.pending_flaw,
-                refinements: outcome.refinements,
-                collection_member: None,
-                split_kind: self.config.cegar.split_kind,
-                split_selection_rank: self.config.cegar.split_selection_rank,
-                concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
-                transition_count,
-            },
+            metadata: AbstractionMetadata::standalone(
+                outcome,
+                self.config.cegar.split_kind,
+                self.config.cegar.split_selection_rank,
+            ),
+            transition_count,
         })
     }
 }

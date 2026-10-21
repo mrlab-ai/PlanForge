@@ -22,6 +22,8 @@ use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
+use super::member::CollectionMember;
+use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::resource_limits;
 
@@ -65,9 +67,7 @@ impl StandardSchedule {
 
 /// How one restart is built.
 #[derive(Debug, Clone)]
-pub(crate) struct StandardMember {
-    /// One-based.
-    pub(crate) iteration: usize,
+pub struct StandardMember {
     pub(crate) max_states: usize,
     /// Seconds; infinite when unbounded.
     pub(crate) max_time: f64,
@@ -82,7 +82,7 @@ pub(crate) struct StandardMember {
 
 /// One abstraction backend of a standard collection.
 pub(crate) trait StandardBackend {
-    type Member;
+    type Member: CollectionMember;
     /// Equal exactly for members that are the same abstraction.
     type Key: Eq + Hash;
 
@@ -96,11 +96,6 @@ pub(crate) trait StandardBackend {
     ) -> Result<Self::Member>;
 
     fn key(&self, member: &Self::Member) -> Self::Key;
-
-    fn num_states(&self, member: &Self::Member) -> usize;
-
-    /// Why `member` settles the task, if it does.
-    fn settles(&self, member: &Self::Member) -> Option<&'static str>;
 }
 
 /// Builds the standard collection of `task` with `backend`.
@@ -158,7 +153,6 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
         let (blacklisted_prop_var_ids, blacklisted_numeric_var_ids) =
             decode_variables(task, blacklisted);
         let member = StandardMember {
-            iteration,
             max_states,
             max_time,
             seed: rng.next_u64(),
@@ -173,7 +167,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
             B::NAME,
             member.split_kind
         );
-        let built = match backend.build(task, &member) {
+        let mut built = match backend.build(task, &member) {
             Ok(built) => built,
             Err(error) if resource_limits::is_deadline_exceeded(&error) => {
                 info!(
@@ -191,12 +185,24 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
             }
         };
 
-        let settled_by = backend.settles(&built);
+        let report = built.report();
         let elapsed_after_build = start.elapsed().as_secs_f64();
         if keys.insert(backend.key(&built)) {
             time_point_of_last_new_member = elapsed_after_build;
-            let consumed = backend.num_states(&built).min(remaining_collection_size);
+            let consumed = report.num_states;
+            assert!(
+                consumed <= max_states,
+                "{} restart {iteration} has {consumed} states, over its limit of {max_states}",
+                B::NAME
+            );
             remaining_collection_size -= consumed;
+            built.record(
+                CollectionRecord {
+                    iteration,
+                    full_task: true,
+                },
+                None,
+            );
             members.push(built);
             debug!(
                 "{} collection: added restart {iteration}, states={consumed}, remaining_collection_size={remaining_collection_size}, blacklisting={blacklisting}",
@@ -204,7 +210,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
             );
         }
 
-        if let Some(reason) = settled_by {
+        if let Some(reason) = report.settles() {
             stop_reason = reason;
             break;
         }
@@ -251,7 +257,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
         members.len(),
         members
             .iter()
-            .map(|member| backend.num_states(member))
+            .map(|member| member.report().num_states)
             .sum::<usize>(),
         start.elapsed().as_secs_f64(),
     );

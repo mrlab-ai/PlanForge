@@ -34,6 +34,13 @@ pub struct CegarOptions {
 }
 
 impl CegarOptions {
+    /// Rejects limits no CEGAR run can follow.
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.max_states > 0, "`max_states` must be > 0");
+        anyhow::ensure!(self.max_iterations > 0, "`max_iterations` must be > 0");
+        Ok(())
+    }
+
     /// The options of restart `member` of a standard collection.
     pub(crate) fn for_restart(&self, member: &StandardMember) -> Self {
         Self {

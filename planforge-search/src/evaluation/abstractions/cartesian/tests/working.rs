@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
@@ -161,10 +162,7 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
         full.distance_table.distances
     );
     assert_eq!(standalone.relevant_operator_ids, full.relevant_operator_ids);
-    assert_eq!(
-        standalone.metadata.transition_count,
-        full.metadata.transition_count
-    );
+    assert_eq!(standalone.transition_count, full.transition_count);
     assert!(!full.transition_system.transitions.is_empty());
     assert!(standalone.transition_system.transitions.is_empty());
     assert!(standalone.transition_system.cartesian_sets.is_empty());

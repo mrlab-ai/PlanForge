@@ -1,15 +1,16 @@
 use std::cell::RefCell;
 
 use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use tracing::{info, warn};
 
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::{
     DistanceTableOptions, OcpTransitionSystemBuild,
 };
-use crate::evaluation::abstractions::domain::heuristic::DomainAbstractionHeuristic;
 use crate::evaluation::{EvaluationError, EvaluationState, Heuristic};
 
 use super::{
@@ -21,13 +22,14 @@ use super::{
 /// per-operator cost shares. The LP is solved once; state evaluation is one
 /// abstract lookup and one potential dot product.
 pub struct PotentialAbstractionOcpHeuristic {
-    lookup: DomainAbstractionHeuristic,
+    abstraction: DomainAbstraction,
+    values: RefCell<ExplicitState>,
     potential_task: PotentialTask,
     potential: NumericPotentialFunction,
     abstract_potentials: Option<Vec<f64>>,
     dead_end_certified: bool,
-    prop_scratch: RefCell<Vec<usize>>,
-    numeric_scratch: RefCell<Vec<f64>>,
+    prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
+    numeric_scratch: RefCell<Vec<NumericValue>>,
 }
 
 impl PotentialAbstractionOcpHeuristic {
@@ -63,8 +65,6 @@ impl PotentialAbstractionOcpHeuristic {
         };
         let initial_abstract_state = abstraction.distance_table.initial_state_hash;
         let abstraction_initial_h = abstraction.distance_table.distances[initial_abstract_state];
-        let lookup =
-            DomainAbstractionHeuristic::new(Some("pot_da_ocp_abstraction".into()), abstraction);
 
         let mut optimizer = NumericPotentialOptimizer::new(task, &potential_config)?;
         let potential_task = optimizer.task().clone();
@@ -86,7 +86,8 @@ impl PotentialAbstractionOcpHeuristic {
         };
         if dead_end_certified {
             return Ok(Self {
-                lookup,
+                abstraction,
+                values: RefCell::default(),
                 potential_task,
                 potential: plain_potential,
                 abstract_potentials: None,
@@ -100,7 +101,8 @@ impl PotentialAbstractionOcpHeuristic {
                 "pot_da_ocp transition enumeration exceeded its cap of {max_recorded_transitions} concrete-label transitions (at least {recorded_transition_count} required); continuing with the independently certified potential"
             );
             return Ok(Self {
-                lookup,
+                abstraction,
+                values: RefCell::default(),
                 potential_task,
                 potential: plain_potential,
                 abstract_potentials: None,
@@ -111,7 +113,8 @@ impl PotentialAbstractionOcpHeuristic {
         };
         if abstraction_initial_h.is_infinite() {
             return Ok(Self {
-                lookup,
+                abstraction,
+                values: RefCell::default(),
                 potential_task,
                 potential: plain_potential,
                 abstract_potentials: None,
@@ -123,7 +126,7 @@ impl PotentialAbstractionOcpHeuristic {
 
         let infinity = Model::infinity();
         let operator_count = potential_task.operators.len();
-        let state_count = lookup.abstraction().distance_table.distances.len();
+        let state_count = abstraction.distance_table.distances.len();
         let mut variables = Vec::new();
         for operator in &potential_task.operators {
             variables.push(if nonnegative {
@@ -148,7 +151,8 @@ impl PotentialAbstractionOcpHeuristic {
         let mut constraints = Vec::new();
         for transition in &transition_system.transitions {
             for &operator_id in &transition.concrete_op_ids {
-                if operator_id >= operator_count
+                let operator_column = operator_id.index();
+                if operator_column >= operator_count
                     || transition.source_hash >= state_count
                     || transition.target_hash >= state_count
                 {
@@ -160,7 +164,7 @@ impl PotentialAbstractionOcpHeuristic {
                         transition.target_hash
                     ));
                 }
-                let mut coefficients = vec![(operator_id, -1.0)];
+                let mut coefficients = vec![(operator_column, -1.0)];
                 if transition.source_hash != transition.target_hash {
                     coefficients.push((operator_count + transition.source_hash, 1.0));
                     coefficients.push((operator_count + transition.target_hash, -1.0));
@@ -251,7 +255,8 @@ impl PotentialAbstractionOcpHeuristic {
             }
         };
         Ok(Self {
-            lookup,
+            abstraction,
+            values: RefCell::default(),
             potential_task,
             potential,
             abstract_potentials,
@@ -283,7 +288,12 @@ impl Heuristic for PotentialAbstractionOcpHeuristic {
         let Some(abstract_potentials) = &self.abstract_potentials else {
             return Ok(potential.max(0.0));
         };
-        let hash = self.lookup.abstract_state_hash(eval_state)?;
+        let mut values = self.values.borrow_mut();
+        eval_state.fill_values(&mut values)?;
+        let hash = self
+            .abstraction
+            .abstract_state(&values.propositional, &values.numeric)
+            .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
         let abstract_value = abstract_potentials.get(hash).copied().ok_or_else(|| {
             EvaluationError::InvalidState(format!(
                 "pot_da_ocp abstract state {hash} is outside the joint LP"

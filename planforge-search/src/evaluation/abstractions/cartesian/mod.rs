@@ -13,7 +13,6 @@ mod config;
 mod distances;
 mod finalize;
 mod generator;
-mod heuristic;
 mod hierarchy;
 mod initial_splits;
 mod refinement;
@@ -23,11 +22,10 @@ mod tests;
 mod view;
 mod working;
 
-use super::common::cegar::progression::*;
 use super::common::cegar::refine::{CegarRun, Refinable, refine};
 use super::common::cegar::semantics::{CegarSemantics, SplitOptions};
 use super::common::cegar::split::*;
-use super::common::cegar::view::{AbstractionView, TransitionKey};
+use super::common::cegar::view::{AbstractionView, RefinementLimits, TransitionKey};
 use super::common::cegar::{SplitKind, SplitSelection};
 pub use abstraction::*;
 pub use collection::*;
@@ -35,7 +33,6 @@ pub use config::*;
 use distances::*;
 use finalize::*;
 pub use generator::*;
-pub use heuristic::*;
 pub use hierarchy::*;
 use initial_splits::*;
 use semantics::*;
@@ -57,25 +54,17 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
 
-use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use crate::evaluation::heuristic::Heuristic;
-
 use super::common::cegar::regression::ensure_regressable;
-use super::common::cegar::{CegarDriver, CegarStopReason, FlawKind, FlawScope};
+use super::common::cegar::{CegarDriver, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;
-use crate::evaluation::abstractions::collections::goal_focused::{
-    BuiltReport, CollectionMembership, GoalFocusedBackend, GoalVariant, MemberBudget,
-    build_goal_focused_collection,
-};
-use crate::evaluation::abstractions::collections::standard::{
-    StandardBackend, StandardMember, build_standard_collection,
-};
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
+use crate::evaluation::abstractions::collections::standard::StandardMember;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };
 use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
-use crate::evaluation::abstractions::common::task::AbstractionUse;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
     AbstractTransitionSystem, BackwardGraph, CostedTransitionSystem, LabelSourceSet,

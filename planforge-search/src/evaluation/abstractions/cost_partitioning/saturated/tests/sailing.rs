@@ -1,3 +1,4 @@
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -14,14 +15,17 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
-use crate::evaluation::abstractions::common::cegar::SplitKind;
-use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::abstraction::{
-    DomainAbstractionMetadata, compute_hash_multipliers,
+use crate::evaluation::abstractions::common::abstraction::{
+    AbstractionMetadata, AbstractionUse, CollectionRecord,
 };
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
+use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
+use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 
 #[test]
@@ -87,7 +91,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
     assert_eq!(
         abstractions
             .iter()
-            .map(CartesianAbstraction::num_states)
+            .map(CegarAbstraction::num_states)
             .sum::<usize>(),
         8_000
     );
@@ -143,7 +147,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
     let components = abstractions
         .iter()
         .cloned()
-        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .map(AbstractionComponent::from)
         .collect::<Vec<_>>();
     let goal_cover_order = goal_cover_order(
         &(0..abstractions.len()).collect::<Vec<_>>(),
@@ -195,7 +199,7 @@ fn initial_cartesian_scp_value(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components("scp", vec![], abstractions, vec![]),
+        collection_components(vec![], abstractions, vec![]),
         config,
         task,
         Default::default(),
@@ -229,15 +233,11 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
         let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
-        abstraction.metadata = DomainAbstractionMetadata {
-            collection_iteration: Some(index + 1),
-            collection_strategy: Some("handcrafted_full_task_sailing".to_string()),
-            flaw_kind: None,
-            full_goal_task: Some(false),
-            max_states: Some(10_000),
-            ..DomainAbstractionMetadata::default()
-        };
-        let states = abstraction_state_count(&abstraction);
+        abstraction.metadata.collection = Some(CollectionRecord {
+            iteration: index + 1,
+            full_task: false,
+        });
+        let states = abstraction.distance_table.distances.len();
         assert!(
             states <= 10_000,
             "{} has {states} states, expected at most 10000",
@@ -263,7 +263,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
 
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components("scp", abstractions, Vec::new(), vec![]),
+        collection_components(abstractions, Vec::new(), vec![]),
         config,
         transformed_task,
         Default::default(),
@@ -312,7 +312,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
             "HANDCRAFTED_FULL_TASK_ABS index={index} name={} abstraction_h={abstraction_h} scp_contribution={} states={} abstract_ops={} views={}",
             spec.name,
             contributions[index],
-            abstraction_state_count(abstraction),
+            abstraction.distance_table.distances.len(),
             abstraction.abstract_operators.len(),
             partition_report(transformed_task, abstraction, &spec.view_ids),
         );
@@ -442,19 +442,28 @@ fn build_handcrafted_abstraction(
         &abstract_operators,
         DistanceTableOptions::default(),
     )?;
-    let hash_multipliers =
-        compute_hash_multipliers(factory.domain_sizes(), factory.numeric_domain_sizes())?;
     Ok(DomainAbstraction {
         factory,
         distance_table,
-        hash_multipliers,
         combine_labels: false,
         relevant_operator_ids,
         abstract_operators,
         transition_data_retained: true,
         abstract_source_sets,
         interval_transition_system: RefCell::new(None),
-        metadata: DomainAbstractionMetadata::default(),
+        metadata: AbstractionMetadata {
+            abstraction_use: AbstractionUse::CollectionMember,
+            ..AbstractionMetadata::standalone(
+                CegarOutcome {
+                    stop_reason: CegarStopReason::SizeLimit,
+                    concrete_plan: None,
+                    pending_flaw: None,
+                    refinements: 0,
+                },
+                SplitKind::Concrete,
+                None,
+            )
+        },
     })
 }
 
@@ -462,27 +471,18 @@ fn initial_abstract_state_ids(
     heuristic: &SaturatedCostPartitioningHeuristic<'_>,
     task: &dyn AbstractNumericTask,
 ) -> Vec<Option<usize>> {
-    let prop = task.get_initial_propositional_state_values();
-    let numeric = task.get_initial_numeric_state_values();
+    let values = ExplicitState {
+        propositional: task.get_initial_propositional_state_values().to_vec(),
+        numeric: task.get_initial_numeric_state_values().to_vec(),
+    };
     heuristic
         .components
         .borrow()
         .iter()
-        .map(|component| match component {
-            AbstractionComponent::Domain(domain) => Some(
-                domain
-                    .abstract_state_hash_from_state_values(prop, numeric)
-                    .expect("failed to hash initial state for handcrafted abstraction"),
-            ),
-            AbstractionComponent::Cartesian(cartesian) => Some(
-                cartesian
-                    .abstraction()
-                    .abstract_state_id(prop, numeric)
-                    .expect("failed to map initial Cartesian state"),
-            ),
-            AbstractionComponent::PatternDatabase(pdb) => pdb
-                .abstract_state_id_from_source_state_values(prop, numeric)
-                .expect("failed to map initial PDB state"),
+        .map(|component| {
+            component
+                .abstract_state_id(&values)
+                .expect("failed to map the initial state")
         })
         .collect()
 }

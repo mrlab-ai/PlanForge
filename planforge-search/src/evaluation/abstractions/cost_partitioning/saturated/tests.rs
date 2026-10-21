@@ -1,4 +1,5 @@
 use super::diverse_orders::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 use super::orders::*;
@@ -173,7 +174,7 @@ pub(super) fn goal_cover_scp<'task>(
         .collect::<HashSet<_>>();
     let components = abstractions
         .into_iter()
-        .map(|abstraction| AbstractionComponent::cartesian(None, abstraction))
+        .map(AbstractionComponent::from)
         .collect();
     let mut config = scp_config(Saturator::All, true);
     config.diversify = true;
@@ -187,7 +188,6 @@ pub(super) fn goal_cover_scp<'task>(
         &**task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
-            ..Default::default()
         },
     )
     .unwrap();

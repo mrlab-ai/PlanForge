@@ -2,9 +2,10 @@
 //! under refinement.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use anyhow::Result;
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex};
 
 use super::CegarStopReason;
 use super::split::Split;
@@ -17,6 +18,15 @@ pub(crate) struct TransitionKey {
     pub(crate) source: usize,
     pub(crate) concrete_op_id: OperatorIndex,
     pub(crate) target: usize,
+}
+
+/// What an abstraction may still refine: a split must keep it within
+/// `max_states` abstract states and leave the blacklisted variables alone.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RefinementLimits<'a> {
+    pub(crate) max_states: usize,
+    pub(crate) blacklisted_prop_var_ids: &'a HashSet<VariableIndex>,
+    pub(crate) blacklisted_numeric_var_ids: &'a HashSet<VariableIndex>,
 }
 
 /// An abstraction under refinement, as the flaw search sees it: abstract
@@ -53,11 +63,28 @@ pub(crate) trait AbstractionView {
         vec![transition.concrete_op_id]
     }
 
+    fn limits(&self) -> RefinementLimits<'_>;
+
+    /// The number of abstract states after `split`.
+    fn states_after(&self, split: &Split) -> u128;
+
     /// The limit that keeps the abstraction from taking `split`, if any:
     /// [`CegarStopReason::SizeLimit`] or, for a variable it may not refine,
     /// [`CegarStopReason::NoRefinableFlaw`]. CEGAR stops with it when the
     /// chosen split has one.
-    fn refinement_limit(&self, split: &Split) -> Option<CegarStopReason>;
+    fn refinement_limit(&self, split: &Split) -> Option<CegarStopReason> {
+        let limits = self.limits();
+        let blacklisted = match split {
+            Split::Propositional { var_id, .. } => limits.blacklisted_prop_var_ids.contains(var_id),
+            Split::Numeric { var_id, .. } => limits.blacklisted_numeric_var_ids.contains(var_id),
+        };
+        if blacklisted {
+            Some(CegarStopReason::NoRefinableFlaw)
+        } else {
+            (self.states_after(split) > limits.max_states as u128)
+                .then_some(CegarStopReason::SizeLimit)
+        }
+    }
 
     /// Whether the abstraction can take `split` within its limits; split
     /// selection prefers such splits.

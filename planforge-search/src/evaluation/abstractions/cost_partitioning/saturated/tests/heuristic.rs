@@ -1,4 +1,5 @@
 use super::*;
+use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
@@ -32,7 +33,7 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
     let task = independent_goals_task();
     for saturator in [Saturator::All, Saturator::Perim, Saturator::Perimstar] {
         for abstract_operator in [false, true] {
-            let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+            let component = AbstractionComponent::from(cartesian_abstraction(&task));
             let heuristic = SaturatedCostPartitioningHeuristic::new(
                 None,
                 vec![component],
@@ -49,7 +50,7 @@ fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
 #[test]
 fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     let task = independent_goals_task();
-    let component = AbstractionComponent::cartesian(None, cartesian_abstraction(&task));
+    let component = AbstractionComponent::from(cartesian_abstraction(&task));
     let config = scp_config(Saturator::All, true);
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
@@ -100,9 +101,9 @@ fn interval_scp_combines_all_representations() {
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 32).unwrap();
     let components = vec![
-        AbstractionComponent::domain(None, domain),
-        AbstractionComponent::cartesian(None, cartesian_abstraction(&task)),
-        AbstractionComponent::pattern_database(pdb),
+        AbstractionComponent::from(domain),
+        AbstractionComponent::from(cartesian_abstraction(&task)),
+        AbstractionComponent::from(pdb),
     ];
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,

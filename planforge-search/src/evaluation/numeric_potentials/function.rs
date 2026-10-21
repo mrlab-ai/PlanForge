@@ -1,3 +1,4 @@
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
 use planforge_sas::state_registry::ConcreteStateView;
 
 use super::PotentialTask;
@@ -7,7 +8,7 @@ pub struct NumericPotentialFunction {
     fact_potentials: Vec<Vec<f64>>,
     numeric_potentials: Vec<(usize, f64)>,
     constant_potential: f64,
-    conditioned_goal: Option<(usize, usize)>,
+    conditioned_goal: Option<(VariableIndex, ExplicitValueIndex)>,
 }
 
 impl NumericPotentialFunction {
@@ -15,7 +16,7 @@ impl NumericPotentialFunction {
         fact_potentials: Vec<Vec<f64>>,
         numeric_potentials: Vec<f64>,
         constant_potential: f64,
-        conditioned_goal: Option<(usize, usize)>,
+        conditioned_goal: Option<(VariableIndex, ExplicitValueIndex)>,
     ) -> Self {
         Self {
             fact_potentials,
@@ -33,19 +34,19 @@ impl NumericPotentialFunction {
         &self,
         state: ConcreteStateView<'_>,
         task: &PotentialTask,
-        prop_scratch: &mut Vec<usize>,
-        numeric_scratch: &mut Vec<f64>,
+        prop_scratch: &mut Vec<ExplicitValueIndex>,
+        numeric_scratch: &mut Vec<NumericValue>,
     ) -> Result<f64, String> {
         state.fill_propositional(prop_scratch);
         if let Some((var, value)) = self.conditioned_goal
-            && prop_scratch.get(var).copied() == Some(value)
+            && prop_scratch[var.index()] == value
         {
             return Ok(0.0);
         }
         let mut result = self.constant_potential;
         for (var_id, potentials) in self.fact_potentials.iter().enumerate() {
             let value = prop_scratch[var_id];
-            result += potentials[value];
+            result += potentials[value.index()];
         }
         if !self.numeric_potentials.is_empty() {
             let feature_values = task.feature_values(state, numeric_scratch)?;
@@ -64,7 +65,7 @@ impl NumericPotentialFunction {
             .sum()
     }
 
-    pub fn conditioned_goal(&self) -> Option<(usize, usize)> {
+    pub fn conditioned_goal(&self) -> Option<(VariableIndex, ExplicitValueIndex)> {
         self.conditioned_goal
     }
 

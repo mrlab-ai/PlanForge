@@ -16,7 +16,6 @@ pub mod config;
 pub(crate) mod debug_dump;
 pub mod factory;
 pub mod generator;
-pub mod heuristic;
 pub mod initial_splits;
 pub mod partitions;
 mod view;

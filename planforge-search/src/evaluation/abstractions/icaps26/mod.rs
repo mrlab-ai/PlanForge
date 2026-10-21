@@ -61,9 +61,9 @@ use split_selection::*;
 use working::*;
 
 use super::cartesian::{
-    CartesianAbstraction, CartesianAbstractionMetadata, CartesianRefinementHierarchy, NumericSplit,
-    RefinementNode,
+    CartesianAbstraction, CartesianRefinementHierarchy, NumericSplit, RefinementNode,
 };
+use super::common::abstraction::{AbstractionMetadata, AbstractionUse};
 use super::common::cegar::SplitKind;
 
 use std::cell::RefCell;
@@ -94,9 +94,7 @@ use crate::evaluation::abstractions::common::cartesian_set::{
 use crate::evaluation::abstractions::common::coordinates::{
     AdditiveNumericView, comparison_refinement_dimensions,
 };
-use crate::evaluation::abstractions::common::task::{
-    AbstractionUse, validate_abstraction_operator,
-};
+use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
     AbstractTransitionSystem, CostedTransitionSystem, LabelSourceSet, backward_goal_distances,

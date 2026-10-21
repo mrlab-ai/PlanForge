@@ -4,6 +4,7 @@
 //! transition systems with their goal distances, and the task views
 //! abstractions are built for.
 
+pub mod abstraction;
 pub mod cartesian_set;
 pub mod cegar;
 pub(crate) mod coordinates;
