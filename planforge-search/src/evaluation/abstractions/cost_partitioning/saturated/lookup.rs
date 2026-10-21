@@ -18,7 +18,10 @@ impl CostPartitioningHeuristic {
     }
 
     pub(super) fn add_h_values(&mut self, abstraction_id: usize, distances: Vec<f64>) {
-        if distances.iter().any(|value| *value > 0.0) {
+        if distances
+            .iter()
+            .any(|value| *value > float_tolerance::SEARCH_EPSILON)
+        {
             self.lookup_tables.push(LookupTable {
                 abstraction_id,
                 distances,

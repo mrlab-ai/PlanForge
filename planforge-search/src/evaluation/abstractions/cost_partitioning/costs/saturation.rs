@@ -8,7 +8,7 @@ use anyhow::{Result, ensure};
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
 
-use super::{RemainingCosts, SCP_TABLE_CONSTRUCTION};
+use super::{RemainingCosts, SATURATION_POLL_STRIDE, SCP_TABLE_CONSTRUCTION};
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, BackwardGraph,
     LabelSourceSet, backward_goal_distances,
@@ -168,7 +168,7 @@ pub(crate) fn saturate_regions(
     // transition, with what remains of the label's cost on it.
     let mut label_costs = Vec::with_capacity(system.transitions.len());
     for (transition_id, transition) in system.transitions.iter().enumerate() {
-        if transition_id.is_multiple_of(1024) {
+        if transition_id.is_multiple_of(SATURATION_POLL_STRIDE) {
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         let costs = label_source_sets(source_sets, transition)
@@ -192,7 +192,7 @@ pub(crate) fn saturate_regions(
     for ((transition_id, transition), costs) in
         system.transitions.iter().enumerate().zip(label_costs)
     {
-        if transition_id.is_multiple_of(1024) {
+        if transition_id.is_multiple_of(SATURATION_POLL_STRIDE) {
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         let Some(need) = saturation_need(
@@ -296,7 +296,7 @@ fn saturated_operator_costs<G: SaturationGraph>(
     let mut saturated = vec![0.0_f64; num_operators];
     let mut incoming = Vec::new();
     for (target, &target_distance) in distances.iter().enumerate() {
-        if target.is_multiple_of(1024) {
+        if target.is_multiple_of(SATURATION_POLL_STRIDE) {
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         if !target_distance.is_finite() {

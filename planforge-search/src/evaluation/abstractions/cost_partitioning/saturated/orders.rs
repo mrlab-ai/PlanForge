@@ -2,6 +2,9 @@ use std::time::Duration;
 
 use super::*;
 
+/// How many components of an order an info line shows.
+const LOGGED_ORDER_PREFIX: usize = 24;
+
 pub(super) struct CandidateCostPartitions {
     pub(super) partitions: Vec<CostPartitioningHeuristic>,
     pub(super) best_index: usize,
@@ -27,7 +30,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         {
             info!(
                 "scp: using the goal-cover order, first abstractions {:?}",
-                goal_cover_order.iter().take(24).collect::<Vec<_>>()
+                goal_cover_order
+                    .iter()
+                    .take(LOGGED_ORDER_PREFIX)
+                    .collect::<Vec<_>>()
             );
             return goal_cover_order;
         }

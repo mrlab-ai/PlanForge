@@ -288,15 +288,22 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             self.config.initial_order_generation_max_time,
         )?;
         let best = candidates.partitions.swap_remove(candidates.best_index);
-        candidates.partitions.retain(|cp| !cp.is_empty());
-        if best.is_empty() && candidates.partitions.is_empty() {
+        if best.is_empty() {
+            // At an equal estimate the best order is one whose cost
+            // partitioning has lookup tables, and an empty one estimates 0.
+            assert!(
+                candidates
+                    .partitions
+                    .iter()
+                    .all(CostPartitioningHeuristic::is_empty),
+                "the best candidate order has lookup tables if any has"
+            );
             info!("scp: no candidate order gives a {mode} cost partitioning with lookup tables");
             return Ok(Vec::new());
         }
+        candidates.partitions.retain(|cp| !cp.is_empty());
         let mut initial_candidates = Vec::with_capacity(candidates.partitions.len() + 1);
-        if !best.is_empty() {
-            initial_candidates.push(best);
-        }
+        initial_candidates.push(best);
         initial_candidates.extend(candidates.partitions);
         self.select_diverse_orders(collection, state, initial_candidates, budget)
     }

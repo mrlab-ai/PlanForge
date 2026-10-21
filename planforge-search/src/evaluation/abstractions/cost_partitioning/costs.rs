@@ -44,6 +44,16 @@ pub use saturation::*;
 /// The operation an expired SCP table deadline names.
 const SCP_TABLE_CONSTRUCTION: &str = "SCP table construction";
 
+/// How many usage cells or allocation entries pass between two deadline
+/// checks. Each is a geometric operation on Cartesian sets, far costlier than
+/// reading the clock, so a passed deadline is noticed within a few of them.
+const GEOMETRIC_POLL_STRIDE: usize = 64;
+
+/// How many transitions or states a saturation pass handles between two
+/// deadline checks. Each is a few arithmetic operations, so the clock is
+/// read rarely enough to cost nothing measurable.
+const SATURATION_POLL_STRIDE: usize = 1024;
+
 #[derive(Debug)]
 pub struct RemainingCosts {
     operator_residuals: Vec<OperatorRemainingCost>,
@@ -128,7 +138,12 @@ impl TableRegionalEnvelope {
     }
 }
 
+/// The usage covers below this many cells are scanned: a scan of a few dozen
+/// overlap tests is cheaper than building and querying the sorted index.
 const REGIONAL_INDEX_MIN_CELLS: usize = 32;
+/// The cells of one index block, which a query skips when the block's
+/// largest upper bound lies below it: blocks this small skip most cells while
+/// keeping the per-block bounds few.
 const REGIONAL_INDEX_BLOCK_SIZE: usize = 32;
 
 #[derive(Debug, Clone)]
@@ -281,7 +296,7 @@ impl SourceSetUsage {
 
         let mut old_cells = old_cells.into_iter();
         while let Some(cell) = old_cells.next() {
-            if new_cells.len().is_multiple_of(64)
+            if new_cells.len().is_multiple_of(GEOMETRIC_POLL_STRIDE)
                 && let Err(error) = deadline.ensure(SCP_TABLE_CONSTRUCTION)
             {
                 // add_saturation_steps reduces costs before cp.add_h_values, so partial overlays never contribute h-values.
@@ -384,7 +399,10 @@ impl SourceSetUsageIndex {
                 let mut bounds = HashSet::with_capacity(cells.len());
                 for cell in cells {
                     let interval = cell.region.numeric[dimension];
-                    bounds.insert((interval.lower.to_bits(), interval.upper.to_bits()));
+                    bounds.insert((
+                        float_tolerance::canonical_bits(interval.lower),
+                        float_tolerance::canonical_bits(interval.upper),
+                    ));
                 }
                 bounds.len()
             })
@@ -530,7 +548,7 @@ impl RemainingCosts {
     ) -> Result<()> {
         let mut table_envelopes: HashMap<OperatorIndex, TableRegionalEnvelope> = HashMap::new();
         for (entry_id, entry) in allocation.entries().iter().enumerate() {
-            if entry_id.is_multiple_of(64) {
+            if entry_id.is_multiple_of(GEOMETRIC_POLL_STRIDE) {
                 deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
             }
             ensure!(

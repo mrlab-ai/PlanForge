@@ -1,6 +1,9 @@
 use super::*;
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    /// The cost partitionings diversification retains, starting from
+    /// `initial_candidates`, whose first is the best order's at the
+    /// evaluated state.
     pub(super) fn select_diverse_orders(
         &self,
         collection: PartitionedCollection<'_, '_>,
