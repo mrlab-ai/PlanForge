@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, NumericValue, TaskRef, metric_operator_cost_from_initial_values,
 };
-use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
+use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
@@ -14,7 +14,7 @@ use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
-use crate::successor_generator::SuccessorTree;
+use crate::successor_generator::RegistryExpander;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::SplitKind;

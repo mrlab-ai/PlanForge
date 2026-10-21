@@ -1198,26 +1198,11 @@ impl<'a> StateRegistry<'a> {
     ) -> Result<ConcreteState, StateInsertError> {
         let mut successor_values = Vec::new();
         let mut cost_values = Vec::new();
-        self.get_successor_state_with_buffers(
+        self.get_successor_state_with_buffers_and_cost(
             current_state,
             operator,
             &mut successor_values,
             &mut cost_values,
-        )
-    }
-
-    pub fn get_successor_state_with_buffers(
-        &mut self,
-        current_state: &ConcreteState,
-        operator: &Operator,
-        successor_values: &mut Vec<NumericValue>,
-        cost_values: &mut Vec<NumericValue>,
-    ) -> Result<ConcreteState, StateInsertError> {
-        self.get_successor_state_with_buffers_and_cost(
-            current_state,
-            operator,
-            successor_values,
-            cost_values,
         )
         .map(|(successor, _)| successor)
     }

@@ -1,28 +1,18 @@
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex, TaskRef,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 
-use crate::successor_generator::SuccessorTree;
+use crate::successor_generator::RegistryExpander;
 
 pub(crate) struct RandomWalkSampler {
-    successor_generator: SuccessorTree,
+    expander: RegistryExpander,
     rng: CppMt19937,
-    propositional: Vec<ExplicitValueIndex>,
-    applicable: Vec<OperatorIndex>,
-    successor_numeric: Vec<NumericValue>,
-    successor_cost: Vec<NumericValue>,
 }
 
 impl RandomWalkSampler {
     pub(crate) fn new(task: &dyn AbstractNumericTask, seed: u64) -> Self {
         Self {
-            successor_generator: SuccessorTree::new(task),
+            expander: RegistryExpander::new(task),
             rng: CppMt19937::new(seed as u32),
-            propositional: Vec::new(),
-            applicable: Vec::new(),
-            successor_numeric: Vec::new(),
-            successor_cost: Vec::new(),
         }
     }
 
@@ -51,29 +41,22 @@ impl RandomWalkSampler {
             let length = (0..trials).filter(|_| self.rng.real() < 0.5).count();
             let mut state = initial.clone();
             for _ in 0..length {
-                state.fill_state(registry, &mut self.propositional);
-                self.applicable.clear();
-                self.successor_generator
-                    .get_applicable_operators(&self.propositional, &mut self.applicable);
-                if self.applicable.is_empty() {
+                let mut expansion = self.expander.expand(registry, &state).map_err(|error| {
+                    format!("numeric_potential random walk failed expanding a state: {error:?}")
+                })?;
+                let applicable = expansion.applicable_operators();
+                if applicable.is_empty() {
                     break;
                 }
-                let operator_id = self.applicable[self.rng.index(self.applicable.len())];
+                let operator_id = applicable[self.rng.index(applicable.len())];
                 let operator = &task.get_operators()[operator_id.index()];
-                state = registry
-                    .get_successor_state_with_buffers(
-                        &state,
-                        operator,
-                        &mut self.successor_numeric,
-                        &mut self.successor_cost,
+                (state, _) = expansion.successor(registry, operator).map_err(|error| {
+                    format!(
+                        "numeric_potential random walk failed applying operator {} (`{}`): {error:?}",
+                        operator_id,
+                        operator.name()
                     )
-                    .map_err(|error| {
-                        format!(
-                            "numeric_potential random walk failed applying operator {} (`{}`): {error:?}",
-                            operator_id,
-                            operator.name()
-                        )
-                    })?;
+                })?;
             }
             samples.push(state);
         }

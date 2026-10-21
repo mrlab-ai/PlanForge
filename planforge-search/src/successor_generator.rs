@@ -3,9 +3,11 @@ mod tests;
 
 use planforge_sas::{
     numeric_task::{
-        AbstractNumericTask, ExplicitFact, ExplicitValueIndex, OperatorIndex, VariableIndex,
+        AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, Operator,
+        OperatorIndex, VariableIndex,
     },
-    utils::errors::ConstructError,
+    state_registry::{ConcreteState, ExpansionContext, StateRegistry},
+    utils::errors::{ConstructError, StateInsertError},
 };
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -170,6 +172,96 @@ impl SuccessorTree {
         if branch.default_child.is_valid() {
             self.walk(branch.default_child, state, out);
         }
+    }
+}
+
+/// Forward expansion of registered states: the successor generator and the
+/// scratch an expansion needs, reused from one expansion to the next.
+pub struct RegistryExpander {
+    successor_tree: SuccessorTree,
+    propositional: Vec<ExplicitValueIndex>,
+    applicable: Vec<OperatorIndex>,
+    context: ExpansionContext,
+    successor_numeric: Vec<NumericValue>,
+    successor_cost: Vec<NumericValue>,
+}
+
+impl RegistryExpander {
+    pub fn new(task: &dyn AbstractNumericTask) -> Self {
+        Self {
+            successor_tree: SuccessorTree::new(task),
+            propositional: Vec::new(),
+            applicable: Vec::new(),
+            context: ExpansionContext::default(),
+            successor_numeric: Vec::new(),
+            successor_cost: Vec::new(),
+        }
+    }
+
+    /// Decodes `state`, a state of `registry`, and lists the operators
+    /// applicable in it, in the successor generator's order.
+    pub fn expand<'e>(
+        &'e mut self,
+        registry: &StateRegistry<'_>,
+        state: &ConcreteState,
+    ) -> Result<Expansion<'e>, StateInsertError> {
+        registry
+            .view(state)
+            .fill_propositional(&mut self.propositional);
+        self.applicable.clear();
+        self.successor_tree
+            .get_applicable_operators(&self.propositional, &mut self.applicable);
+        registry.build_expansion_context(state, &mut self.context)?;
+        Ok(Expansion {
+            state: state.clone(),
+            propositional: &self.propositional,
+            applicable: &self.applicable,
+            context: &self.context,
+            successor_numeric: &mut self.successor_numeric,
+            successor_cost: &mut self.successor_cost,
+        })
+    }
+}
+
+/// An expanded state: its values, its applicable operators and its
+/// successors.
+pub struct Expansion<'e> {
+    state: ConcreteState,
+    propositional: &'e [ExplicitValueIndex],
+    applicable: &'e [OperatorIndex],
+    context: &'e ExpansionContext,
+    successor_numeric: &'e mut Vec<NumericValue>,
+    successor_cost: &'e mut Vec<NumericValue>,
+}
+
+impl<'e> Expansion<'e> {
+    pub fn propositional(&self) -> &'e [ExplicitValueIndex] {
+        self.propositional
+    }
+
+    /// The numeric values, derived ones included.
+    pub fn numeric(&self) -> &'e [NumericValue] {
+        &self.context.parent_numeric
+    }
+
+    pub fn applicable_operators(&self) -> &'e [OperatorIndex] {
+        self.applicable
+    }
+
+    /// The successor under `operator`, registered in the registry the state
+    /// was expanded from, and the operator's metric cost there.
+    pub fn successor(
+        &mut self,
+        registry: &mut StateRegistry<'_>,
+        operator: &Operator,
+    ) -> Result<(ConcreteState, NumericValue), StateInsertError> {
+        registry.apply_operator_in_context(
+            &self.state,
+            operator,
+            self.context,
+            self.successor_numeric,
+            self.successor_cost,
+        )
     }
 }
 

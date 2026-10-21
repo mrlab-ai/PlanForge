@@ -268,3 +268,42 @@ fn test_duplicate_successor_should_not_generate_new_id() {
         "Generating the same successor twice should yield the same state ID"
     );
 }
+
+#[test]
+fn registry_expander_matches_registry_successors() {
+    let task = get_root_task();
+    let mut registry = StateRegistry::for_task(Arc::new(&task));
+    let mut reference = StateRegistry::for_task(Arc::new(&task));
+    let initial = registry.get_initial_state();
+    let reference_initial = reference.get_initial_state();
+    let mut expander = RegistryExpander::new(&task);
+
+    let mut expansion = expander.expand(&registry, &initial).unwrap();
+    assert_eq!(expansion.propositional(), initial.get_state(&registry));
+    assert_eq!(
+        expansion.numeric(),
+        registry.get_numeric_vars(&initial).unwrap()
+    );
+    assert_eq!(expansion.applicable_operators(), [OperatorIndex::new(0)]);
+    for &operator_id in expansion.applicable_operators() {
+        let operator = &task.get_operators()[operator_id.index()];
+        let (successor, cost) = expansion.successor(&mut registry, operator).unwrap();
+        let (reference_successor, reference_cost) = reference
+            .get_successor_state_with_buffers_and_cost(
+                &reference_initial,
+                operator,
+                &mut Vec::new(),
+                &mut Vec::new(),
+            )
+            .unwrap();
+        assert_eq!(cost, reference_cost);
+        assert_eq!(
+            successor.get_state(&registry),
+            reference_successor.get_state(&reference)
+        );
+        assert_eq!(
+            registry.get_numeric_vars(&successor).unwrap(),
+            reference.get_numeric_vars(&reference_successor).unwrap()
+        );
+    }
+}
