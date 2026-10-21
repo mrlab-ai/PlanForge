@@ -75,14 +75,14 @@ impl DomainAbstractionFactory {
         options: DistanceTableOptions<'_>,
     ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
         let deadline = options.deadline;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let mut operators = self.abstract_operators(task, combine_labels, deadline)?;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         let match_tree = MatchTree::new(&self.layout, &operators);
         let table =
             self.build_distance_table_with_match_tree(task, &operators, &match_tree, options)?;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let saturated_costs = saturated_operator_costs(task, &operators, &match_tree, &table)?;
         Ok((table, saturated_costs))
     }
@@ -119,7 +119,7 @@ impl DomainAbstractionFactory {
     ) -> Result<(AbstractDistanceTable, SourceSetCostAllocation)> {
         let deadline = options.deadline;
         let cap_state_id = options.cap_state_id;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         ensure!(
             transition_system.cartesian_sets.is_empty(),
             "precise domain regional SCP expects lazy state regions"
@@ -140,7 +140,7 @@ impl DomainAbstractionFactory {
         let mut transition_costs = Vec::with_capacity(transition_system.transitions.len());
         for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
             if transition_id.is_multiple_of(1024) {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             let source_region =
                 self.cached_cartesian_set(&mut source_regions, transition.source_hash);
@@ -211,10 +211,10 @@ impl DomainAbstractionFactory {
         let mut entries = Vec::new();
         for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
             if transition_id.is_multiple_of(1024) {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             let saturated = tcf.transition_costs[transition_id];
-            if !saturated.is_finite() || saturated <= 1e-9 {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             let source_region =
@@ -229,7 +229,7 @@ impl DomainAbstractionFactory {
                 let current_residual =
                     residual_costs.cost_for_source_set(abstraction_id, transition_id, &source_set);
                 ensure!(
-                    saturated <= current_residual + 1e-7,
+                    saturated <= current_residual + float_tolerance::AGREEMENT_EPSILON,
                     "regional transition allocation {saturated} exceeds residual {current_residual} for transition {transition_id}, operator {concrete_op_id}"
                 );
                 entries.push(SourceSetCost {

@@ -331,7 +331,8 @@ pub(super) fn update_shortest_paths_after_split(
             let actual = shortest_paths.distances[state_id];
             let expected = reference.distances[state_id];
             assert!(
-                (actual == expected) || (actual - expected).abs() <= 1e-7,
+                (actual == expected)
+                    || (actual - expected).abs() <= float_tolerance::AGREEMENT_EPSILON,
                 "incremental Cartesian distance mismatch at state {state_id}: {actual} vs {expected}"
             );
         }

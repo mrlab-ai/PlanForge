@@ -10,6 +10,16 @@ use super::semantics::CegarSemantics;
 use super::split::{Split, SplitIdentity};
 use super::view::AbstractionView;
 
+// The decisions split selection draws a seeded choice for: the splits of a
+// failed goal, precondition or deviation, of a comparison fact, and of all
+// flaws of the plan. Each tag spells four letters of its decision in ASCII
+// ("GOAL", "PREC", "DEVI", "COMP", "ENTI" for the entire plan).
+pub(crate) const GOAL_TAG: u64 = 0x474F_414C;
+pub(crate) const PRECONDITION_TAG: u64 = 0x5052_4543;
+pub(crate) const DEVIATION_TAG: u64 = 0x4445_5649;
+pub(crate) const COMPARISON_TAG: u64 = 0x434F_4D50;
+const WHOLE_PLAN_TAG: u64 = 0x454E_5449;
+
 /// Keep the candidates whose split grows the abstraction least, among the
 /// refinable ones if there are any.
 pub(crate) fn retain_min_growth_splits<V: AbstractionView, T>(
@@ -90,7 +100,7 @@ pub(crate) fn select_refinement(
         view,
         semantics,
         candidates,
-        0x454E_5449,
+        WHOLE_PLAN_TAG,
     )?))
 }
 

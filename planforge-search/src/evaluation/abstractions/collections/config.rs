@@ -11,6 +11,7 @@ use super::strategy::CollectionStrategy;
 use crate::config::ApplyOptions;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{FlawKind, SplitKind};
+use crate::resource_limits::min_time_limit;
 
 /// The configuration of one member of a collection.
 pub trait MemberConfig: ApplyOptions + Clone {
@@ -128,9 +129,9 @@ impl<M: MemberConfig> CollectionConfig<M> {
 
     /// Bounds the collection and each member by `limit`.
     pub(crate) fn cap_construction_time(&mut self, limit: Duration) {
-        self.total_max_time = Some(self.total_max_time.map_or(limit, |time| time.min(limit)));
+        self.total_max_time = min_time_limit(self.total_max_time, Some(limit));
         let cegar = self.member.cegar_mut();
-        cegar.max_time = Some(cegar.max_time.map_or(limit, |time| time.min(limit)));
+        cegar.max_time = min_time_limit(cegar.max_time, Some(limit));
     }
 
     pub(crate) fn standard_schedule(&self) -> StandardSchedule {

@@ -213,7 +213,9 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory.build_distance_table_for_test(&task, false).unwrap();
-    let abstract_operators = factory.abstract_operators(&task, false, None).unwrap();
+    let abstract_operators = factory
+        .abstract_operators(&task, false, Deadline::NONE)
+        .unwrap();
     let transition_system = factory
         .build_abstract_transition_system_from_operators(
             &task,
@@ -221,9 +223,13 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
             DistanceTableOptions::default().without_cartesian_sets(),
         )
         .unwrap();
-    let (explicit, _) =
-        build_explicit_label_cost_partitioning_table(&transition_system, &[1.0, 1.0], None, None)
-            .unwrap();
+    let (explicit, _) = build_explicit_label_cost_partitioning_table(
+        &transition_system,
+        &[1.0, 1.0],
+        None,
+        Deadline::NONE,
+    )
+    .unwrap();
 
     assert_eq!(explicit, implicit.distances);
     assert_eq!(explicit[implicit.initial_state_hash], 2.0);
@@ -266,7 +272,9 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         global_constraint: ExplicitFact::propositional(0, 1),
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let abstract_operators = factory.abstract_operators(&task, false, None).unwrap();
+    let abstract_operators = factory
+        .abstract_operators(&task, false, Deadline::NONE)
+        .unwrap();
     assert_eq!(abstract_operators.len(), 1);
     let transition_system = factory
         .build_abstract_transition_system_from_operators(
@@ -304,7 +312,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         vec![ExplicitValueIndex::new(0)]
     );
     residuals
-        .reduce_by_source_set_allocation_with_deadline(&allocation, None)
+        .reduce_by_source_set_allocation_with_deadline(&allocation, Deadline::NONE)
         .unwrap();
 
     let disjoint_source = LabelSourceSet {
@@ -389,7 +397,7 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
     ) -> Result<AbstractDistanceTable> {
-        let operators = self.abstract_operators(task, combine_labels, None)?;
+        let operators = self.abstract_operators(task, combine_labels, Deadline::NONE)?;
         self.build_distance_table(task, &operators, DistanceTableOptions::default())
     }
 }
@@ -424,7 +432,7 @@ fn first_plan_step(
     };
     let factory = factory_identity_cutpoints(task).unwrap();
     let mut refinement = DomainRefinement::new(task, factory, limits, &config);
-    let view = refinement.view(None).unwrap();
+    let view = refinement.view(Deadline::NONE).unwrap();
     let initial = view
         .abstract_state(
             task.get_initial_propositional_state_values(),

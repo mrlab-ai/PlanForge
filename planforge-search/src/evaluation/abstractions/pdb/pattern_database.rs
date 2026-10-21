@@ -20,6 +20,7 @@ use tracing::info;
 
 type HashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 
+use crate::config::option_enum;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 use crate::evaluation::numeric_landmarks::numeric_lm_cut_landmarks::LandmarkCutLandmarks;
 use crate::successor_generator::GroundedSuccessorGenerator;
@@ -312,26 +313,11 @@ pub enum PdbInternalHeuristic {
     Lmcut,
 }
 
-impl fmt::Display for PdbInternalHeuristic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Zero => write!(f, "zero"),
-            Self::Blind => write!(f, "blind"),
-            Self::Lmcut => write!(f, "lmcut"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for PdbInternalHeuristic {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "zero" => Ok(Self::Zero),
-            "blind" => Ok(Self::Blind),
-            "lmcut" => Ok(Self::Lmcut),
-            other => Err(format!("invalid PdbInternalHeuristic `{other}`")),
-        }
-    }
-}
+option_enum!("PDB internal heuristic", PdbInternalHeuristic {
+    Zero => "zero",
+    Blind => "blind",
+    Lmcut => "lmcut",
+});
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PdbHeuristicConfig {

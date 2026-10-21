@@ -14,6 +14,7 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitKind, SplitSelection,
 };
+use crate::evaluation::seed::RANDOM_SPLIT_SEED;
 
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct DomainAbstractionConfig {
@@ -49,7 +50,7 @@ impl Default for DomainAbstractionConfig {
                 max_iterations: usize::MAX,
                 max_time: None,
                 combine_labels: true,
-                random_seed: Some(2011),
+                random_seed: Some(RANDOM_SPLIT_SEED),
                 flaw_kind: FlawKind::Progression,
                 flaw_scope: FlawScope::First,
                 split_kind: SplitKind::Concrete,

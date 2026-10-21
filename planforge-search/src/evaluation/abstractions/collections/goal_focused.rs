@@ -34,10 +34,12 @@ use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
 use super::member::{BuiltReport, CollectionMember};
-use super::strategy::{CollectionStrategy, derive_variant_seed};
+use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
+use crate::evaluation::seed::{DEFAULT_RANDOM_SEED, derive_variant_seed};
+use crate::resource_limits::Deadline;
 
 /// Why the collection is building a member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,7 +162,7 @@ impl GoalFocusedSchedule {
             MemberKind::InitialStateSpecialist => 0,
             MemberKind::Scheduled | MemberKind::Continuation => member.variant_id,
         };
-        let base_seed = self.random_seed.unwrap_or(0);
+        let base_seed = self.random_seed.unwrap_or(DEFAULT_RANDOM_SEED);
         let derived_seed =
             || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
         assert!(
@@ -233,6 +235,7 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
     let progress_states = schedule.progress_states;
 
     let start = Instant::now();
+    let deadline = Deadline::after(start, schedule.total_max_time)?;
     let mut remaining_states = schedule.max_collection_states;
     let mut members = Vec::with_capacity(abstraction_count);
     let mut state = CollectionState::new(task, goal_count, variants_per_goal, progress_states)?;
@@ -256,14 +259,13 @@ pub(crate) fn build_goal_focused_collection<B: GoalFocusedBackend>(
                 break;
             }
         };
-        let remaining_time =
-            match remaining_collection_time(schedule.total_max_time, start, members.is_empty()) {
-                CollectionBudget::Remaining(remaining) => remaining,
-                CollectionBudget::Exhausted => {
-                    stop_reason = "collection time limit";
-                    break;
-                }
-            };
+        // An empty collection is useless, so the first member is built even
+        // with no time left -- with a zero budget, which stops it immediately.
+        let remaining_time = deadline.remaining();
+        if remaining_time.is_some_and(|remaining| remaining.is_zero()) && !members.is_empty() {
+            stop_reason = "collection time limit";
+            break;
+        }
 
         let variant = schedule.goal_variant(&member, goal_count);
         let built = build_member(
@@ -441,36 +443,6 @@ struct ScheduledMember {
 enum NextMember {
     Build(ScheduledMember),
     Stop(&'static str),
-}
-
-/// What is left of the collection's total time budget.
-enum CollectionBudget {
-    /// Time limit for the next member, `None` when the collection is
-    /// unbounded.
-    Remaining(Option<Duration>),
-    /// The budget is spent and the collection already has a member.
-    Exhausted,
-}
-
-fn remaining_collection_time(
-    total_max_time: Option<Duration>,
-    start: Instant,
-    collection_is_empty: bool,
-) -> CollectionBudget {
-    let Some(total_max_time) = total_max_time else {
-        return CollectionBudget::Remaining(None);
-    };
-    let elapsed = start.elapsed();
-    if elapsed < total_max_time {
-        return CollectionBudget::Remaining(Some(total_max_time - elapsed));
-    }
-    if collection_is_empty {
-        // An empty collection is useless, so the first member is built even
-        // with no time left -- with a zero budget, which stops it immediately.
-        CollectionBudget::Remaining(Some(Duration::ZERO))
-    } else {
-        CollectionBudget::Exhausted
-    }
 }
 
 /// The progress state of one variant; see the module documentation.

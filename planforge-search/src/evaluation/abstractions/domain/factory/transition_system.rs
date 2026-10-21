@@ -86,14 +86,14 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         operators: &[AbstractOperator],
         contents: TransitionSystemContents,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<OcpTransitionSystemBuild> {
         let TransitionSystemContents {
             materialize_cartesian_sets,
             include_self_loops,
             max_concrete_label_transitions,
         } = contents;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let goal_facts = self.compute_abstract_goals(task);
         let num_states = self.layout.num_states();
         let match_tree = MatchTree::new(&self.layout, operators);
@@ -122,7 +122,7 @@ impl DomainAbstractionFactory {
         let mut incoming = Vec::new();
         for (target_hash, target_backward) in backward.iter_mut().enumerate() {
             if target_hash % 64 == 0 {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             graph.incoming(target_hash, &mut incoming)?;
             for &(source_hash, abstract_op_id, _) in &incoming {

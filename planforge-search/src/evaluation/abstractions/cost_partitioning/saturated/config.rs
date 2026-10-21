@@ -1,8 +1,8 @@
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
+use crate::config::option_enum;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
+use crate::resource_limits::time_limit_from_secs;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -15,24 +15,10 @@ pub enum OrderGenerator {
     Diverse,
 }
 
-impl fmt::Display for OrderGenerator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            OrderGenerator::Greedy => write!(f, "greedy_orders"),
-            OrderGenerator::Diverse => write!(f, "diverse_orders"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for OrderGenerator {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "greedy_orders" | "greedy_orders()" => Ok(Self::Greedy),
-            "diverse_orders" | "diverse_orders()" => Ok(Self::Diverse),
-            other => Err(format!("invalid OrderGenerator `{other}`")),
-        }
-    }
-}
+option_enum!("orders", OrderGenerator {
+    Greedy => "greedy_orders" | "greedy_orders()",
+    Diverse => "diverse_orders" | "diverse_orders()",
+});
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -42,15 +28,11 @@ pub enum Saturator {
     Perimstar,
 }
 
-impl fmt::Display for Saturator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Saturator::All => write!(f, "all"),
-            Saturator::Perim => write!(f, "perim"),
-            Saturator::Perimstar => write!(f, "perimstar"),
-        }
-    }
-}
+option_enum!("saturator", Saturator {
+    All => "all",
+    Perim => "perim",
+    Perimstar => "perimstar",
+});
 
 impl Saturator {
     /// The saturation passes over one abstraction, each with its log label and
@@ -61,17 +43,6 @@ impl Saturator {
             Self::All => &[("all", false)],
             Self::Perim => &[("perim", true)],
             Self::Perimstar => &[("perimstar/perim", true), ("perimstar/all", false)],
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for Saturator {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "all" => Ok(Self::All),
-            "perim" => Ok(Self::Perim),
-            "perimstar" => Ok(Self::Perimstar),
-            other => Err(format!("invalid Saturator `{other}`")),
         }
     }
 }
@@ -89,24 +60,10 @@ impl CostPartitioningMethod {
     }
 }
 
-impl fmt::Display for CostPartitioningMethod {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Label => write!(f, "label"),
-            Self::Region => write!(f, "region"),
-        }
-    }
-}
-
-impl crate::config::FromOptionValue for CostPartitioningMethod {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        match crate::config::atom(value)? {
-            "label" => Ok(Self::Label),
-            "region" => Ok(Self::Region),
-            other => Err(format!("invalid cost partitioning method `{other}`")),
-        }
-    }
-}
+option_enum!("partitioning", CostPartitioningMethod {
+    Label => "label",
+    Region => "region",
+});
 
 /// Configuration of SCP over a collection of abstractions. All cost
 /// partitionings are built at the first evaluated state, before search, and
@@ -176,11 +133,18 @@ impl ScpConfig {
         if self.diversify && self.max_orders == 0 {
             return fail("SCP diversification requires max_orders > 0");
         }
-        if self.diversify
-            && (self.initial_order_generation_max_time.is_nan()
-                || self.initial_order_generation_max_time < 0.0)
-        {
-            return fail("SCP diversification requires initial_order_generation_max_time >= 0");
+        for (option, seconds) in [
+            ("max_time", self.max_time),
+            (
+                "table_construction_max_time",
+                self.table_construction_max_time,
+            ),
+            (
+                "initial_order_generation_max_time",
+                self.initial_order_generation_max_time,
+            ),
+        ] {
+            time_limit_from_secs(seconds).map_err(|error| format!("SCP {option}: {error}"))?;
         }
         if self.diversify && !has_sampling_task {
             return fail("SCP diversification requires an owned task reference for sampling");
@@ -189,9 +153,15 @@ impl ScpConfig {
     }
 
     /// Bound every phase of SCP construction by the caller's remaining time.
+    /// An invalid limit stays as it is, for [`Self::validate`] to reject.
     pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
-        self.table_construction_max_time = self.table_construction_max_time.min(max_seconds);
-        self.initial_order_generation_max_time =
-            self.initial_order_generation_max_time.min(max_seconds);
+        for limit in [
+            &mut self.table_construction_max_time,
+            &mut self.initial_order_generation_max_time,
+        ] {
+            if *limit > max_seconds {
+                *limit = max_seconds;
+            }
+        }
     }
 }

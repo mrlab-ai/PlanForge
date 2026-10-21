@@ -304,13 +304,13 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         goals: &[ExplicitFact],
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<Vec<usize>> {
         let mut intervals = Vec::new();
         let mut goal_states = Vec::new();
         for state in 0..self.layout.num_states() {
             if state.is_multiple_of(1024) {
-                ensure_online_scp_deadline(deadline)?;
+                deadline.ensure(ONLINE_SCP)?;
             }
             if self.is_goal_state(task, state, goals, &mut intervals)? {
                 goal_states.push(state);

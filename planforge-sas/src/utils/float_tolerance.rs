@@ -4,6 +4,11 @@ pub const ABS_EPSILON: f64 = 1e-12;
 pub const REL_EPSILON: f64 = 1e-12;
 pub const DIJKSTRA_EPSILON: f64 = 1e-12;
 pub const SEARCH_EPSILON: f64 = 1e-9;
+/// How closely two computations of the same cost or value agree, as in a
+/// concrete plan's cost and the abstract goal distance it realises.
+pub const AGREEMENT_EPSILON: f64 = 1e-7;
+/// How closely a value matches an LP optimum it should dominate or reach.
+pub const LP_EPSILON: f64 = 1e-6;
 
 const _: () = assert!(ABS_EPSILON > f64::EPSILON);
 const _: () = assert!(REL_EPSILON > f64::EPSILON);

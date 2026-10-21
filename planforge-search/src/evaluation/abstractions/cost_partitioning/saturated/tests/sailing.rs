@@ -412,7 +412,7 @@ fn build_handcrafted_abstraction(
         .collect::<Vec<_>>();
     let factory =
         DomainAbstractionFactory::new(transformed_task, domain_mapping, domain_sizes, partitions)?;
-    let abstract_operators = factory.abstract_operators(transformed_task, false, None)?;
+    let abstract_operators = factory.abstract_operators(transformed_task, false, Deadline::NONE)?;
     let abstract_source_sets =
         factory.build_abstract_source_sets(transformed_task, &abstract_operators)?;
     let distance_table = factory.build_distance_table(

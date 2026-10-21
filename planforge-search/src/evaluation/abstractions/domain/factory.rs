@@ -4,7 +4,6 @@ mod tests;
 #[cfg(any(test, debug_assertions))]
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, ensure};
 
@@ -41,6 +40,7 @@ use crate::evaluation::abstractions::cost_partitioning::costs::{
     AbstractTransitionCostFunction, RemainingCosts, SourceSetCost, SourceSetCostAllocation,
     saturation_need,
 };
+use crate::resource_limits::Deadline;
 pub use distances::*;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
@@ -49,9 +49,8 @@ use source_sets::*;
 use state_encoding::*;
 pub use transition_system::*;
 
-fn ensure_online_scp_deadline(deadline: Option<Instant>) -> Result<()> {
-    crate::resource_limits::ensure_before_deadline(deadline, "online SCP")
-}
+/// The operation an expired online SCP deadline names.
+const ONLINE_SCP: &str = "online SCP";
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstractionFactory {
@@ -282,7 +281,7 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<Vec<AbstractOperator>> {
         build_abstract_operators(self, task, combine_labels, deadline)
     }

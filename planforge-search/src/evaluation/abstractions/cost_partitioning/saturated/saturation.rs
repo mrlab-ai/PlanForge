@@ -55,7 +55,7 @@ pub(super) struct ComponentStepContext<'a, 'task> {
     pub(super) component: &'a AbstractionComponent<'task>,
     pub(super) task: &'a dyn AbstractNumericTask,
     pub(super) abstract_state_ids: &'a [Option<usize>],
-    pub(super) deadline: Option<Instant>,
+    pub(super) deadline: Deadline,
     pub(super) cost_space: SaturationCostSpace,
     pub(super) saturator: Saturator,
     pub(super) step_prefix: &'a str,
@@ -67,7 +67,7 @@ impl ComponentSaturation<'_, '_> {
         residual: &RemainingCosts,
         component_id: usize,
         cap_state_id: Option<usize>,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError> {
         match (self.component, self.cost_space) {
             (AbstractionComponent::Domain(abstraction), SaturationCostSpace::Label) => {
@@ -377,16 +377,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         )
     }
 
-    pub(super) fn is_deadline_error(error: &anyhow::Error) -> bool {
-        crate::resource_limits::is_deadline_exceeded(error)
-    }
-
     pub(super) fn is_deadline_exceeded(error: &EvaluationError) -> bool {
         matches!(error, EvaluationError::ConstructionDeadlineExceeded)
     }
 
     pub(super) fn construction_error(context: &str, error: anyhow::Error) -> EvaluationError {
-        if Self::is_deadline_error(&error) {
+        if crate::resource_limits::is_deadline_exceeded(&error) {
             EvaluationError::ConstructionDeadlineExceeded
         } else {
             EvaluationError::ComputationFailed(format!("{context}: {error:#}"))
@@ -396,12 +392,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     pub(super) fn reduce_source_set_allocation(
         remaining_costs: &mut RemainingCosts,
         allocation: &SourceSetCostAllocation,
-        deadline: Option<Instant>,
+        deadline: Deadline,
         context: &str,
     ) -> Result<bool, EvaluationError> {
         match remaining_costs.reduce_by_source_set_allocation_with_deadline(allocation, deadline) {
             Ok(()) => Ok(true),
-            Err(error) if Self::is_deadline_error(&error) => Ok(false),
+            Err(error) if crate::resource_limits::is_deadline_exceeded(&error) => Ok(false),
             Err(error) => Err(EvaluationError::ComputationFailed(format!(
                 "{context}: {error:#}"
             ))),
@@ -414,7 +410,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         &self,
         collection: PartitionedCollection<'_, '_>,
         order: &[usize],
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         match self.config.partitioning {
             CostPartitioningMethod::Label => self.build_label_cp(collection, order, deadline),
@@ -428,7 +424,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         &self,
         collection: PartitionedCollection<'_, '_>,
         order: &[usize],
-        deadline: Option<Instant>,
+        deadline: Deadline,
         saturator: Saturator,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let PartitionedCollection {
@@ -442,7 +438,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut remaining_costs = RemainingCosts::from_operator_costs(original_costs);
 
         for &component_id in order {
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if deadline.passed() {
                 break;
             }
             let component = components.get(component_id).ok_or_else(|| {
@@ -499,7 +495,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         &self,
         collection: PartitionedCollection<'_, '_>,
         order: &[usize],
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<CostPartitioningHeuristic, EvaluationError> {
         let PartitionedCollection {
             task,
@@ -512,7 +508,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut remaining_costs = original_costs.to_vec();
 
         for &component_id in order {
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if deadline.passed() {
                 break;
             }
             let component = components.get(component_id).ok_or_else(|| {
@@ -554,7 +550,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
         remaining_costs: &[f64],
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
         let start = Instant::now();
         let (table, saturated) = abstraction
@@ -614,7 +610,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         }
         let mut operators = abstraction
             .factory
-            .abstract_operators(task, combine_labels, None)
+            .abstract_operators(task, combine_labels, Deadline::NONE)
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(
                     "failed to build abstract operators for PERIM: {error:#}"
@@ -663,7 +659,7 @@ pub(super) fn should_skip_zero_current_table(
         return false;
     }
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    if current_h > 1e-9 {
+    if current_h > float_tolerance::SEARCH_EPSILON {
         return false;
     }
     debug!("scp: skipping {step} abstraction {abstraction_id}: current_h=0");
@@ -739,16 +735,16 @@ pub(super) fn reduce_costs(
                 "saturated cost for operator {op_id} must be finite"
             )));
         }
-        if *s < -1e-9 {
+        if *s < -float_tolerance::SEARCH_EPSILON {
             return Err(EvaluationError::ComputationFailed(format!(
                 "negative saturated cost for operator {op_id}: {s}"
             )));
         }
-        if *s <= 1e-9 {
+        if *s <= float_tolerance::SEARCH_EPSILON {
             continue;
         }
         let new_remaining = *r - *s;
-        if new_remaining < -1e-9 {
+        if new_remaining < -float_tolerance::SEARCH_EPSILON {
             return Err(EvaluationError::ComputationFailed(format!(
                 "label residual cost underflow for operator {op_id}: remaining={r}, saturated={s}, result={new_remaining}"
             )));
@@ -791,7 +787,7 @@ pub(super) fn saturate_original_costs(
                 &abstraction.transition_system,
                 original_costs,
                 None,
-                None,
+                Deadline::NONE,
             )
             .map_err(|error| {
                 EvaluationError::ComputationFailed(format!(

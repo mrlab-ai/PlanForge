@@ -8,7 +8,7 @@ pub struct DistanceTableOptions<'a> {
     /// Override the task goals for this distance-table build.
     pub goal_facts: Option<&'a [ExplicitFact]>,
     /// Give up once the online-SCP budget is spent.
-    pub deadline: Option<Instant>,
+    pub deadline: Deadline,
     /// State whose distance bounds perimeter saturation.
     pub cap_state_id: Option<usize>,
     /// Materialize concrete regions for abstract states.
@@ -23,7 +23,7 @@ impl Default for DistanceTableOptions<'_> {
     fn default() -> Self {
         Self {
             goal_facts: None,
-            deadline: None,
+            deadline: Deadline::NONE,
             cap_state_id: None,
             materialize_cartesian_sets: true,
             include_self_loops: false,
@@ -33,7 +33,7 @@ impl Default for DistanceTableOptions<'_> {
 }
 
 impl<'a> DistanceTableOptions<'a> {
-    pub fn with_deadline(mut self, deadline: Option<Instant>) -> Self {
+    pub fn with_deadline(mut self, deadline: Deadline) -> Self {
         self.deadline = deadline;
         self
     }
@@ -79,7 +79,7 @@ impl DomainAbstractionFactory {
         operator_costs: &[f64],
         goal_facts: &[ExplicitFact],
     ) -> Result<AbstractDistanceTable> {
-        let mut operators = self.abstract_operators(task, combine_labels, None)?;
+        let mut operators = self.abstract_operators(task, combine_labels, Deadline::NONE)?;
         apply_operator_costs(&mut operators, operator_costs)?;
         self.build_distance_table(
             task,
@@ -109,7 +109,7 @@ impl DomainAbstractionFactory {
         options: DistanceTableOptions<'_>,
     ) -> Result<AbstractDistanceTable> {
         let deadline = options.deadline;
-        ensure_online_scp_deadline(deadline)?;
+        deadline.ensure(ONLINE_SCP)?;
         let computed_goal_facts;
         let goal_facts = match options.goal_facts {
             Some(goal_facts) => goal_facts,
@@ -129,7 +129,7 @@ impl DomainAbstractionFactory {
                 applicable: Vec::new(),
             },
             &goal_states,
-            || ensure_online_scp_deadline(deadline),
+            || deadline.ensure(ONLINE_SCP),
             Some(&mut generating_op_ids),
         )?;
         Ok(AbstractDistanceTable {

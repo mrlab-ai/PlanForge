@@ -4,6 +4,7 @@ use std::borrow::Cow;
 
 use super::refinement::{SplitStates, replacement_transitions};
 use super::*;
+use crate::resource_limits::Deadline;
 
 pub(super) struct CartesianView<'a> {
     pub(super) working: &'a WorkingAbstraction,
@@ -27,7 +28,7 @@ impl Refinable for CartesianRefinement<'_> {
     where
         Self: 'b;
 
-    fn view(&mut self, _deadline: Option<Instant>) -> Result<CartesianView<'_>> {
+    fn view(&mut self, _deadline: Deadline) -> Result<CartesianView<'_>> {
         Ok(CartesianView {
             working: &self.working,
             semantics: self.semantics,

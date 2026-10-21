@@ -19,6 +19,7 @@ use planforge_sas::numeric_task::{
     ZERO_VALUE,
 };
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
+use planforge_sas::utils::float_tolerance;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -508,7 +509,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
         let previous_h = entry.h_value.into_inner();
         assert!(
-            evaluation.h_value + 1e-9 >= previous_h,
+            evaluation.h_value + float_tolerance::SEARCH_EPSILON >= previous_h,
             "dynamic heuristic decreased for state {} at revision {}: {} -> {}",
             entry.state_id(),
             evaluation.heuristic_revision,

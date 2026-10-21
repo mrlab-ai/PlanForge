@@ -22,6 +22,7 @@ use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
 use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason};
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::resource_limits::Deadline;
 
 use super::abstract_operators::AbstractOperator;
 use super::abstraction::DomainAbstraction;
@@ -56,7 +57,7 @@ pub(super) fn refine_domain_abstraction(
         config
             .cegar
             .random_seed
-            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+            .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
     );
     let (mut domain_mapping, mut domain_sizes) =
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
@@ -150,7 +151,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             Some(built) => built,
             None => {
                 let operators = factory
-                    .abstract_operators(task, combine_labels, None)
+                    .abstract_operators(task, combine_labels, Deadline::NONE)
                     .context("failed to build abstract operators")?;
                 let table = factory
                     .build_distance_table(task, &operators, DistanceTableOptions::default())

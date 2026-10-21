@@ -3,7 +3,6 @@
 //! construction.
 
 use std::cell::{Ref, RefCell};
-use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 
@@ -18,6 +17,7 @@ use crate::evaluation::abstractions::common::transition_system::AbstractDistance
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransitionSystem,
 };
+use crate::resource_limits::Deadline;
 
 /// Fully built abstraction artifact that can be used to evaluate concrete states.
 #[derive(Debug, Clone)]
@@ -96,7 +96,7 @@ impl DomainAbstraction {
     pub fn interval_transition_system<'a>(
         &'a self,
         task: &dyn AbstractNumericTask,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<Ref<'a, AbstractTransitionSystem>> {
         if self.interval_transition_system.borrow().is_none() {
             let transition_system = self

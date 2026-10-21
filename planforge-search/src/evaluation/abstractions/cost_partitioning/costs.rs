@@ -19,11 +19,11 @@
 #[cfg(test)]
 mod tests;
 
+use crate::resource_limits::Deadline;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{NEG_INF_VALUE, NumericValue, OperatorIndex};
@@ -42,6 +42,9 @@ use crate::evaluation::abstractions::common::transition_system::{
 };
 
 pub use explicit::*;
+
+/// The operation an expired SCP table deadline names.
+const SCP_TABLE_CONSTRUCTION: &str = "SCP table construction";
 
 #[derive(Debug)]
 pub struct RemainingCosts {
@@ -100,7 +103,7 @@ impl TableRegionalEnvelope {
         region: &CartesianSet,
         amount: f64,
         base_cost: f64,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount > 0.0);
         debug_assert!(base_cost.is_finite() && base_cost > 0.0);
@@ -237,12 +240,7 @@ impl SourceSetUsage {
     /// envelope of one abstraction table: a concrete transition maps to one
     /// abstract transition in that table, even when conservative operator regions
     /// overlap.
-    fn maximize(
-        &mut self,
-        region: &CartesianSet,
-        amount: f64,
-        deadline: Option<Instant>,
-    ) -> Result<()> {
+    fn maximize(&mut self, region: &CartesianSet, amount: f64, deadline: Deadline) -> Result<()> {
         debug_assert!(amount.is_finite() && amount >= 0.0);
         if amount <= float_tolerance::SEARCH_EPSILON {
             return Ok(());
@@ -254,7 +252,7 @@ impl SourceSetUsage {
     /// therefore add across completed tables.
     #[cfg(test)]
     fn add(&mut self, region: &CartesianSet, amount: f64) {
-        self.add_with_deadline(region, amount, None)
+        self.add_with_deadline(region, amount, Deadline::NONE)
             .expect("an unbounded regional-usage update cannot exceed a deadline");
     }
 
@@ -262,7 +260,7 @@ impl SourceSetUsage {
         &mut self,
         region: &CartesianSet,
         amount: f64,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<()> {
         debug_assert!(amount.is_finite() && amount >= 0.0);
         if amount <= float_tolerance::SEARCH_EPSILON {
@@ -276,7 +274,7 @@ impl SourceSetUsage {
         region: &CartesianSet,
         update_existing: impl Fn(f64) -> f64,
         uncovered_amount: f64,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<()> {
         debug_assert!(cartesian_set_is_nonempty(region));
         let old_cells = std::mem::take(&mut self.cells);
@@ -286,7 +284,7 @@ impl SourceSetUsage {
         let mut old_cells = old_cells.into_iter();
         while let Some(cell) = old_cells.next() {
             if new_cells.len().is_multiple_of(64)
-                && let Err(error) = ensure_scp_table_deadline(deadline)
+                && let Err(error) = deadline.ensure(SCP_TABLE_CONSTRUCTION)
             {
                 // add_saturation_steps reduces costs before cp.add_h_values, so partial overlays never contribute h-values.
                 new_cells.push(cell);
@@ -537,7 +535,7 @@ impl RemainingCosts {
         producing_abstraction_id: usize,
         source_sets: &[AbstractOperatorSourceSets],
         operator_costs: &[f64],
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<SourceSetCostAllocation> {
         ensure!(
             source_sets.len() >= operator_costs.len(),
@@ -549,7 +547,7 @@ impl RemainingCosts {
         let mut entries = Vec::new();
         for (abstract_op_id, &saturated) in operator_costs.iter().enumerate() {
             if abstract_op_id.is_multiple_of(64) {
-                ensure_scp_table_deadline(deadline)?;
+                deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
             }
             ensure!(
                 !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
@@ -617,20 +615,20 @@ impl RemainingCosts {
             producing_abstraction_id,
             source_sets,
             operator_costs,
-            None,
+            Deadline::NONE,
         )?;
-        self.reduce_by_source_set_allocation_with_deadline(&allocation, None)
+        self.reduce_by_source_set_allocation_with_deadline(&allocation, Deadline::NONE)
     }
 
     pub fn reduce_by_source_set_allocation_with_deadline(
         &mut self,
         allocation: &SourceSetCostAllocation,
-        deadline: Option<Instant>,
+        deadline: Deadline,
     ) -> Result<()> {
         let mut table_envelopes: HashMap<OperatorIndex, TableRegionalEnvelope> = HashMap::new();
         for (entry_id, entry) in allocation.entries().iter().enumerate() {
             if entry_id.is_multiple_of(64) {
-                ensure_scp_table_deadline(deadline)?;
+                deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
             }
             ensure!(
                 entry.amount.is_finite() && entry.amount >= -float_tolerance::SEARCH_EPSILON,
@@ -672,7 +670,7 @@ impl RemainingCosts {
         }
 
         for (concrete_op_id, envelope) in table_envelopes {
-            ensure_scp_table_deadline(deadline)?;
+            deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
             let residual = self
                 .operator_residuals
                 .get_mut(concrete_op_id.index())

@@ -44,7 +44,7 @@ impl LinearExpression {
     pub fn is_constant(&self) -> bool {
         self.coefficients
             .iter()
-            .all(|coefficient| coefficient.abs() < 1e-12)
+            .all(|coefficient| coefficient.abs() < float_tolerance::ABS_EPSILON)
     }
 
     pub fn add(&self, rhs: &Self) -> Self {
@@ -367,7 +367,7 @@ fn linearize_assignment_axiom_expr(
                     operator: "/",
                 });
             }
-            if rhs.constant.abs() < 1e-12 {
+            if rhs.constant.abs() < float_tolerance::ABS_EPSILON {
                 return Err(LinearizationError::DivisionByZeroConstant {
                     numeric_var_id: numeric_var_id.index(),
                 });
@@ -404,7 +404,7 @@ fn linearize_assignment_delta(
                     operator: "/",
                 });
             }
-            if source_expression.constant.abs() < 1e-12 {
+            if source_expression.constant.abs() < float_tolerance::ABS_EPSILON {
                 return Err(LinearizationError::DivisionByZeroConstant {
                     numeric_var_id: affected_var_id.index(),
                 });

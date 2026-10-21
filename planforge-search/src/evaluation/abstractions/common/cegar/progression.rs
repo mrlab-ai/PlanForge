@@ -14,7 +14,10 @@ use planforge_sas::numeric_task::OperatorIndex;
 
 use super::FlawScope;
 use super::fact_splits::{DeviationWitness, split_deviation_candidates, split_failed_fact};
-use super::selection::{push_unique_split, select_refinement, select_refinement_split};
+use super::selection::{
+    DEVIATION_TAG, GOAL_TAG, PRECONDITION_TAG, push_unique_split, select_refinement,
+    select_refinement_split,
+};
 use super::semantics::CegarSemantics;
 use super::split::{Split, approximately_equal};
 use super::view::AbstractionView;
@@ -38,11 +41,6 @@ impl ConcretePlan {
         self.operator_ids
     }
 }
-
-/// The decisions split selection draws a seeded choice for, by flaw kind.
-const GOAL_TAG: u64 = 0x474F_414C;
-const PRECONDITION_TAG: u64 = 0x5052_4543;
-const DEVIATION_TAG: u64 = 0x4445_5649;
 
 pub(crate) enum PlanCheck {
     ConcretePlan(ConcretePlan),

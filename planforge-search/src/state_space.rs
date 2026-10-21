@@ -17,6 +17,7 @@ use planforge_sas::state_registry::{ExpansionContext, StateRegistry};
 use crate::evaluation::abstractions::common::transition_system::{
     BackwardGraph, backward_goal_distances,
 };
+use crate::resource_limits::Deadline;
 use crate::successor_generator::SuccessorTree;
 
 #[derive(Debug, Clone, Copy)]
@@ -211,21 +212,13 @@ impl BackwardGraph for ConcreteBackwardGraph<'_> {
     }
 }
 
-fn limit_deadline(start: Instant, limit: Duration) -> Result<Instant, StateSpaceEnumerationError> {
-    start.checked_add(limit).ok_or_else(|| {
-        StateSpaceEnumerationError::InvalidLimit(
-            "max_time is too large for the platform clock".to_string(),
-        )
-    })
-}
-
 fn check_time_limit(
-    deadline: Instant,
+    deadline: Deadline,
     limit: Duration,
     states: usize,
     transitions: usize,
 ) -> Result<(), StateSpaceEnumerationError> {
-    if Instant::now() >= deadline {
+    if deadline.passed() {
         return Err(StateSpaceEnumerationError::TimeLimit {
             limit,
             states,
@@ -240,8 +233,8 @@ pub fn enumerate_state_space(
     limits: EnumerationLimits,
 ) -> Result<OwnedStateSpace, StateSpaceEnumerationError> {
     let limits = limits.validate()?;
-    let start = Instant::now();
-    let deadline = limit_deadline(start, limits.max_time)?;
+    let deadline = Deadline::after(Instant::now(), Some(limits.max_time))
+        .map_err(|error| StateSpaceEnumerationError::InvalidLimit(format!("max_time: {error}")))?;
     check_time_limit(deadline, limits.max_time, 0, 0)?;
 
     let successor_generator = SuccessorTree::new(&*task);
@@ -447,7 +440,7 @@ pub fn enumerate_state_space(
         &mut backward_graph,
         &goal_state_ids,
         || -> AnyResult<()> {
-            if Instant::now() >= deadline {
+            if deadline.passed() {
                 timed_out.set(true);
                 bail!("state-space enumeration time limit reached");
             }

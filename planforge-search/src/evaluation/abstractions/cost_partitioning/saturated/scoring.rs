@@ -121,7 +121,7 @@ pub(super) fn interval_stolen_costs(
                     right_amount,
                     base_cost,
                 );
-                if conflict > 1e-9 {
+                if conflict > float_tolerance::SEARCH_EPSILON {
                     *scores[left]
                         .as_mut()
                         .expect("regional component must have a conflict score") += conflict;
@@ -143,7 +143,7 @@ pub(super) fn pairwise_interval_stolen_cost(
     base_cost: f64,
 ) -> f64 {
     let excess = (left_amount + right_amount - base_cost).max(0.0);
-    if excess <= 1e-9 {
+    if excess <= float_tolerance::SEARCH_EPSILON {
         return 0.0;
     }
     if left_regions

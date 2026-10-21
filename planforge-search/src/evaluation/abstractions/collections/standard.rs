@@ -107,7 +107,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
     let mut rng = SmallRng::seed_from_u64(
         schedule
             .random_seed
-            .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+            .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
     );
     let candidates = initial_split_candidates(task);
 

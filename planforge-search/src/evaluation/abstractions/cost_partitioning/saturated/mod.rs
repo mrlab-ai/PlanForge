@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use planforge_sas::numeric_task::{
     AbstractNumericTask, NumericValue, TaskRef, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
+use planforge_sas::utils::float_tolerance;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
@@ -14,6 +15,7 @@ use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
 use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::resource_limits::Deadline;
 use crate::successor_generator::SuccessorTree;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
@@ -71,7 +73,7 @@ struct ScpState {
 
 impl ScpState {
     fn new(seed: Option<u64>) -> Self {
-        let seed = seed.unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED);
+        let seed = seed.unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED);
         Self {
             built: false,
             cp_heuristics: Vec::new(),
@@ -218,13 +220,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         abstract_state_ids: &[Option<usize>],
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
         let components = self.components.borrow();
-        let deadline = self
-            .config
-            .table_construction_max_time
-            .is_finite()
-            .then(|| {
-                Instant::now() + Duration::from_secs_f64(self.config.table_construction_max_time)
-            });
+        let deadline = deadline_from_now(
+            "table_construction_max_time",
+            self.config.table_construction_max_time,
+        )?;
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
             task,

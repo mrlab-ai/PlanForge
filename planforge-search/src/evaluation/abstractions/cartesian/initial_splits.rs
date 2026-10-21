@@ -28,7 +28,7 @@ pub(super) fn apply_initial_split(
             config
                 .cegar
                 .random_seed
-                .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
+                .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
         );
         let coordinates = semantics.cegar().coordinates();
         let initial_numeric = coordinates.initial_values();

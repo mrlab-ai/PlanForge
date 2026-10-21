@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests;
 
+use crate::resource_limits::Deadline;
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 
 use anyhow::{Context, Result};
 
@@ -21,11 +21,8 @@ use super::layout::StateLayout;
 use crate::evaluation::abstractions::common::coordinates::active_comparison_dimensions;
 use planforge_sas::utils::interval::Interval;
 
-const EPSILON: f64 = 1e-12;
-
-fn ensure_generation_deadline(deadline: Option<Instant>) -> Result<()> {
-    crate::resource_limits::ensure_before_deadline(deadline, "abstract operator generation")
-}
+/// The operation an expired generation deadline names.
+const OPERATOR_GENERATION: &str = "abstract operator generation";
 
 pub type DomainMapping = Vec<Vec<ExplicitValueIndex>>;
 
@@ -506,9 +503,9 @@ fn materialize_skeletons_into(
     skeletons: &[AbstractOperatorSkeleton],
     finalizer: &mut AbstractOperatorFinalizer<'_>,
     candidate_scratch: &mut AbstractOperatorCandidate,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<()> {
-    ensure_generation_deadline(deadline)?;
+    deadline.ensure(OPERATOR_GENERATION)?;
     let Some(first) = skeletons.first() else {
         return Ok(());
     };
@@ -522,7 +519,7 @@ fn materialize_skeletons_into(
     )?;
 
     for skeleton in skeletons {
-        ensure_generation_deadline(deadline)?;
+        deadline.ensure(OPERATOR_GENERATION)?;
         debug_assert_eq!(skeleton.ass_effects, first.ass_effects);
         debug_assert_eq!(skeleton.op_preconditions, first.op_preconditions);
         for trans in &transitions {
@@ -540,13 +537,13 @@ pub(super) fn build_abstract_operators(
     factory: &DomainAbstractionFactory,
     task: &dyn AbstractNumericTask,
     combine_labels: bool,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<Vec<AbstractOperator>> {
     let mut generator = AbstractOperatorGenerator::new(factory, task);
     let mut finalizer = AbstractOperatorFinalizer::new(combine_labels, factory.layout());
     let mut candidate_scratch = AbstractOperatorCandidate::default();
     for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-        ensure_generation_deadline(deadline)?;
+        deadline.ensure(OPERATOR_GENERATION)?;
         let skeletons = generator.build_for_concrete_operator(
             task,
             op,
@@ -835,9 +832,9 @@ fn compute_hash_effects_with_preconditions(
     concrete_op_id: OperatorIndex,
     op_preconditions: &[ExplicitFact],
     ass_effects: &[AssignmentEffect],
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<Vec<TransitionInfo>> {
-    ensure_generation_deadline(deadline)?;
+    deadline.ensure(OPERATOR_GENERATION)?;
     let layout = generator.layout();
     let numeric_domain_sizes = layout.numeric_domain_sizes();
     let partitions = generator.factory.partitions();
@@ -859,7 +856,7 @@ fn compute_hash_effects_with_preconditions(
     }
     for (numeric_var_id, view) in additive_numeric_views.iter() {
         if numeric_domain_sizes[numeric_var_id] > 1
-            && view.operator_delta(concrete_op_id).value().abs() >= EPSILON
+            && view.operator_delta(concrete_op_id).value().abs() >= float_tolerance::ABS_EPSILON
         {
             affected_numeric_vars.insert(VariableIndex::from_usize(numeric_var_id));
         }
@@ -903,7 +900,7 @@ fn compute_hash_effects_with_preconditions(
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
             let delta = view.operator_delta(concrete_op_id);
-            if delta.value().abs() >= EPSILON {
+            if delta.value().abs() >= float_tolerance::ABS_EPSILON {
                 let delta_interval = Interval::singleton(delta);
                 let mut pairs = HashSet::new();
                 for src in 0..num_parts {
@@ -996,7 +993,7 @@ struct PartitionComboEnumeration<'a> {
     per_var: &'a [(VariableIndex, Vec<(usize, usize)>)],
     num_props: usize,
     op_has_comparison_preconditions: bool,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 }
 
 /// What one enumeration shares across recursive frames: the partition facts and
@@ -1028,7 +1025,7 @@ fn enumerate_partition_combos(
         deadline,
     } = *enumeration;
     if pos.is_multiple_of(4) {
-        ensure_generation_deadline(deadline)?;
+        deadline.ensure(OPERATOR_GENERATION)?;
     }
     if pos == per_var.len() {
         // Leaf: emit a TransitionInfo for the current (source, target,

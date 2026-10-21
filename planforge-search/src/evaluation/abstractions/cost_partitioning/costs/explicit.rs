@@ -1,12 +1,12 @@
-use std::time::Instant;
-
 use anyhow::{Context, Result, ensure};
+use planforge_sas::utils::float_tolerance;
 
-use super::RemainingCosts;
+use super::{RemainingCosts, SCP_TABLE_CONSTRUCTION};
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransitionSystem, CostedTransitionSystem, LabelSourceSet,
     backward_goal_distances,
 };
+use crate::resource_limits::Deadline;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransitionCostFunction {
@@ -38,9 +38,9 @@ pub fn build_explicit_label_cost_partitioning_table(
     transition_system: &AbstractTransitionSystem,
     operator_costs: &[f64],
     cap_state_id: Option<usize>,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<(Vec<f64>, Vec<f64>)> {
-    ensure_scp_table_deadline(deadline)?;
+    deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
     let transition_costs = transition_system
         .transitions
         .iter()
@@ -104,7 +104,7 @@ pub fn build_explicit_regional_cost_partitioning_table(
     residual_costs: &RemainingCosts,
     abstraction_id: usize,
     cap_state_id: Option<usize>,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
     let operator_costs = abstract_operator_costs_from_source_sets(
         source_sets.len(),
@@ -137,14 +137,10 @@ pub fn build_explicit_regional_cost_partitioning_table(
     Ok((global_distances, allocation))
 }
 
-pub(super) fn ensure_scp_table_deadline(deadline: Option<Instant>) -> Result<()> {
-    crate::resource_limits::ensure_before_deadline(deadline, "SCP table construction")
-}
-
 pub(crate) fn build_explicit_goal_distances(
     transition_system: &AbstractTransitionSystem,
     transition_costs: &[f64],
-    deadline: Option<Instant>,
+    deadline: Deadline,
     generating: Option<&mut [Option<usize>]>,
 ) -> Result<Vec<f64>> {
     ensure!(
@@ -159,7 +155,7 @@ pub(crate) fn build_explicit_goal_distances(
             transition_costs,
         },
         &transition_system.goal_state_hashes,
-        || ensure_scp_table_deadline(deadline),
+        || deadline.ensure(SCP_TABLE_CONSTRUCTION),
         generating,
     )
 }
@@ -277,7 +273,7 @@ pub(crate) fn saturation_need(
     }
     let needed = (source_h - target_h).max(0.0);
     ensure!(
-        needed <= residual_budget + 1e-7,
+        needed <= residual_budget + float_tolerance::AGREEMENT_EPSILON,
         "{context} {needed} exceeds residual cost {residual_budget}"
     );
     Ok(Some(needed))
@@ -288,7 +284,7 @@ fn abstract_operator_costs_from_source_sets(
     source_sets: &[AbstractOperatorSourceSets],
     residual_costs: &RemainingCosts,
     abstraction_id: usize,
-    deadline: Option<Instant>,
+    deadline: Deadline,
 ) -> Result<Vec<f64>> {
     ensure!(
         source_sets.len() >= num_operators,
@@ -299,7 +295,7 @@ fn abstract_operator_costs_from_source_sets(
     let mut operator_costs = vec![f64::INFINITY; num_operators];
     for abstract_op_id in 0..num_operators {
         if abstract_op_id.is_multiple_of(64) {
-            ensure_scp_table_deadline(deadline)?;
+            deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         let source_set = &source_sets[abstract_op_id];
         ensure!(

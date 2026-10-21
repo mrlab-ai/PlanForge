@@ -18,14 +18,11 @@ use super::options::CegarOptions;
 use super::regression::ensure_regressable;
 use super::split::{Split, SplitDimension, approximately_equal};
 use super::{FlawKind, SplitKind, SplitSelection};
-use crate::evaluation::abstractions::collections::strategy::{mix_seed, stable_text_seed};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
+use crate::evaluation::seed::{RANDOM_SPLIT_SEED, mix_seed, stable_text_seed};
 use crate::evaluation::validate_abstractable_goal;
-
-/// The seed of random split selection when none is configured.
-const RANDOM_SPLIT_SEED: u64 = 2011;
 
 /// How CEGAR places and chooses splits.
 #[derive(Debug, Clone, Copy)]

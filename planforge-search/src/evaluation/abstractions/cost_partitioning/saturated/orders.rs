@@ -84,7 +84,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         &self,
         collection: PartitionedCollection<'_, '_>,
         incumbent_order: &mut Vec<usize>,
-        baseline_deadline: Option<Instant>,
+        baseline_deadline: Deadline,
         optimization_max_time: f64,
     ) -> Result<CandidateCostPartitions, EvaluationError> {
         let PartitionedCollection {
@@ -105,10 +105,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut best_h = baseline.compute_heuristic(abstract_state_ids);
         let mut partitions = vec![baseline];
         let mut best_index = 0;
-        let candidate_deadline = earliest_deadline(
-            baseline_deadline,
-            optimization_deadline(optimization_max_time),
-        );
+        let candidate_deadline = baseline_deadline.earliest(deadline_from_now(
+            "initial_order_generation_max_time",
+            optimization_max_time,
+        )?);
         let candidates = if !optimization_max_time.is_sign_positive() {
             Vec::new()
         } else if interval {
@@ -121,7 +121,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         };
 
         for (goal_id, candidate) in candidates {
-            if candidate_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            if candidate_deadline.passed() {
                 break;
             }
             if candidate == best_order {
@@ -199,7 +199,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             random_order.shuffle(&mut SmallRng::seed_from_u64(
                 self.config
                     .random_seed
-                    .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED)
+                    .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED)
                     .wrapping_add(seed_offset),
             ));
             orders.push((None, random_order));
