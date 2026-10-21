@@ -4,7 +4,7 @@
 //! operator variable.
 
 use anyhow::{Context, Result, bail, ensure};
-use planforge_sas::numeric_task::ExplicitFact;
+use planforge_sas::numeric_task::{ExplicitFact, ExplicitValueIndex};
 
 use super::ConcreteWitness;
 use super::comparison::split_comparison;
@@ -85,7 +85,7 @@ fn split_on_fact(
     if goal == FactGoal::Exclude && is_default {
         // The witness's value is derived by an axiom whose conditions it
         // satisfies, so guaranteeing that value excludes the default.
-        let derived = ExplicitFact::propositional(var_id.index(), witness_value.index());
+        let derived = with_value(fact, witness_value);
         return split_on_fact(
             view,
             semantics,
@@ -145,11 +145,15 @@ fn split_on_fact(
         return match goal {
             FactGoal::Exclude => split_on_fact(view, semantics, state_id, condition, goal, witness),
             FactGoal::Guarantee => {
-                let violated =
-                    ExplicitFact::propositional(condition.var(), witness.value(condition).index());
+                let violated = with_value(condition, witness.value(condition));
                 split_on_fact(view, semantics, state_id, &violated, goal, witness)
             }
         };
     }
     bail!("abstract state {state_id} meets {goal:?} for {fact:?} on no admitted axiom")
+}
+
+/// The fact on the variable of `fact` with `value`.
+fn with_value(fact: &ExplicitFact, value: ExplicitValueIndex) -> ExplicitFact {
+    ExplicitFact::in_namespace(fact.namespace(), fact.var(), value.index())
 }
