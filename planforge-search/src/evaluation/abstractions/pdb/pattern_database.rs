@@ -1094,9 +1094,9 @@ impl<'task> PatternDatabase<'task> {
         Ok((distances, saturated_costs))
     }
 
-    /// Builds goal distances using the supplied operator costs without computing
-    /// saturated costs.  Used by the SCP online order generator.
-    pub fn build_goal_distances(&self, operator_costs: &[f64]) -> Result<Vec<f64>, String> {
+    /// The goal distances of the enumerated states under `operator_costs`,
+    /// seeded at zero from the goal states and, when truncated, the frontier.
+    fn build_goal_distances(&self, operator_costs: &[f64]) -> Result<Vec<f64>, String> {
         let mut distances = vec![f64::INFINITY; self.states.len()];
         let mut heap: BinaryHeap<(Reverse<NotNan<f64>>, usize)> = BinaryHeap::new();
 
@@ -1151,7 +1151,8 @@ impl<'task> PatternDatabase<'task> {
         Ok(distances)
     }
 
-    /// Builds a PERIM cost-partitioned distance table.
+    /// Builds a PERIM cost-partitioned distance table, capped at the goal
+    /// distance of `cap_state_id` under `operator_costs`.
     ///
     /// The perimeter table is used only to derive saturated costs. The returned
     /// lookup table is recomputed globally from the nonnegative saturated costs,
@@ -1160,9 +1161,15 @@ impl<'task> PatternDatabase<'task> {
     pub fn build_cost_partitioned_distance_table_capped(
         &self,
         operator_costs: &[f64],
-        h_cap: f64,
+        cap_state_id: usize,
     ) -> Result<(Vec<f64>, Vec<f64>), String> {
         let mut distances = self.build_goal_distances(operator_costs)?;
+        assert!(
+            cap_state_id < distances.len(),
+            "PERIM cap state {cap_state_id} out of range for a PDB with {} states",
+            distances.len()
+        );
+        let h_cap = distances[cap_state_id];
 
         if h_cap.is_finite() {
             for h in &mut distances {
@@ -1174,14 +1181,7 @@ impl<'task> PatternDatabase<'task> {
 
         let saturated_costs =
             self.saturated_costs_from_distances(&distances, operator_costs.len())?;
-
-        let mut lookup_costs = saturated_costs.clone();
-        for cost in &mut lookup_costs {
-            if !cost.is_finite() {
-                *cost = 0.0;
-            }
-        }
-        let global_distances = self.build_goal_distances(&lookup_costs)?;
+        let global_distances = self.build_goal_distances(&saturated_costs)?;
 
         Ok((global_distances, saturated_costs))
     }
@@ -1219,11 +1219,19 @@ impl<'task> PatternDatabase<'task> {
             }
         }
 
+        // An operator on no transition between two finite distances saturates
+        // nothing; every other cost is a maximum of nonnegative differences.
         for cost in &mut saturated_costs {
             if *cost == f64::NEG_INFINITY {
                 *cost = 0.0;
             }
         }
+        assert!(
+            saturated_costs
+                .iter()
+                .all(|cost| cost.is_finite() && *cost >= 0.0),
+            "PDB saturated costs must be finite and nonnegative"
+        );
 
         Ok(saturated_costs)
     }
