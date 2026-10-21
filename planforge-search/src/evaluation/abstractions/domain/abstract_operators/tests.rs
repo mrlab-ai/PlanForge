@@ -5,9 +5,9 @@ use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, INF_VALUE, Metric,
-    NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
-    OperatorCost, VariableIndex,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, INF_VALUE,
+    Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
@@ -436,11 +436,9 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     ]);
 
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
+    let transitions = numeric_partition_transitions(
         &task,
-        &generator,
+        &factory,
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
@@ -671,11 +669,9 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
     ]);
 
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
+    let transitions = numeric_partition_transitions(
         &task,
-        &generator,
+        &factory,
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
@@ -770,11 +766,9 @@ fn additive_view_filters_false_equality_precondition() {
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
+    let transitions = numeric_partition_transitions(
         &task,
-        &generator,
+        &factory,
         OperatorIndex::new(0),
         &[ExplicitFact::propositional(0, 0)],
         &[],
@@ -834,13 +828,11 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
     ]);
 
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
     let mut intervals = Vec::new();
-    prepare_comparison_tree_inputs_for_combo_into(
+    fill_source_intervals(
         &task,
-        &generator,
-        &[(VariableIndex::from_usize(0), 0, 1)],
+        &factory,
+        &[(VariableIndex::from_usize(0), 0)],
         &mut intervals,
     );
 

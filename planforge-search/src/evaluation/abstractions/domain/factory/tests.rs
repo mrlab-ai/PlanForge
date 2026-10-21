@@ -1519,14 +1519,10 @@ fn singleton_preimage_is_preserved_exactly() {
 }
 
 /// A refinement changes which propositional variables an abstract state can
-/// constrain, so the factory's cached list has to move with it.
-///
-/// Regression test: the list used to be derived once in the constructor, which
-/// runs before the CEGAR loop, while refinement mutated `domain_sizes` through
-/// it afterwards. State regions were then stamped with a list naming only the
-/// seed-split variables, so the sparse propositional overlap skipped a
-/// dimension that had genuinely been narrowed, reported two disjoint regions as
-/// overlapping, and let one operator's cost be claimed twice.
+/// constrain, so the factory's cached list has to move with it. A list that
+/// misses a narrowed dimension makes the sparse propositional overlap skip it,
+/// so two disjoint regions look overlapping and one operator's cost is claimed
+/// twice.
 #[test]
 fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
     let task = NumericRootTask::new(NumericRootTaskParts {
