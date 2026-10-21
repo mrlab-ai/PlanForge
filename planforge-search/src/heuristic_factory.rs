@@ -146,11 +146,20 @@ fn restricted_abstractable_task(_: &HeuristicSpec) -> Result<TaskRequirements, S
 }
 
 fn component_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
-    let restricted = spec.contains_call("pdb") || spec.contains_call("numeric_pdb");
-    Ok(TaskRequirements {
-        restricted,
-        abstractable_goal: true,
-    })
+    let sources = if matches!(spec.name.as_str(), "scp" | "cost_partitioning") {
+        configure(&spec.name, ScpHeuristicConfig::default(), &spec.args)?.sources
+    } else {
+        configure(&spec.name, SourcesConfig::default(), &spec.args)?
+    };
+    Ok(sources
+        .sources
+        .iter()
+        .fold(TaskRequirements::ANY, |mut requirements, source| {
+            let source = source.requirements();
+            requirements.restricted |= source.restricted;
+            requirements.abstractable_goal |= source.abstractable_goal;
+            requirements
+        }))
 }
 
 fn no_nested_heuristics(_: &HeuristicSpec) -> Result<Vec<HeuristicSpec>, String> {
@@ -299,10 +308,10 @@ pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> 
 }
 
 use crate::evaluation::Heuristic;
-use abstraction_config::{
-    ComponentUse, ScpSourceConfig, build_components, component_source_help,
-    remaining_construction_time, require_only_component_sources,
+pub use abstraction_config::{
+    AbstractionPurpose, AbstractionSource, PdbSourceConfig, SourcesConfig,
 };
+use abstraction_config::{ScpHeuristicConfig, build_components, remaining_construction_time};
 
 #[derive(Debug)]
 pub enum HeuristicBuildError {
@@ -361,10 +370,15 @@ impl From<String> for HeuristicBuildError {
 
 fn build_max_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
-    sources: &[crate::config::ConfigCall],
+    sources: &[AbstractionSource],
     name: &str,
 ) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
-    let components = build_components(task, sources, ComponentUse::Standalone, Deadline::NONE)?;
+    let components = build_components(
+        task,
+        sources,
+        AbstractionPurpose::Standalone,
+        Deadline::NONE,
+    )?;
     let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     Ok(Box::new(heuristic))
@@ -372,14 +386,14 @@ fn build_max_from_sources<'task>(
 
 fn build_canonical_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
-    sources: &[crate::config::ConfigCall],
+    sources: &[AbstractionSource],
     name: &str,
     construction_deadline: Deadline,
 ) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
     let components = build_components(
         task,
         sources,
-        ComponentUse::Standalone,
+        AbstractionPurpose::Standalone,
         construction_deadline,
     )?;
     remaining_construction_time(construction_deadline)?;
@@ -389,32 +403,25 @@ fn build_canonical_from_sources<'task>(
     Ok(Box::new(heuristic))
 }
 
-/// Builds `name(...)` from its sources and the configuration that
-/// [`abstraction_config::scp_sources_config_and_deadline`] parsed.
+/// Build SCP from its already configured sources and cost-partitioning options.
 fn build_scp_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sampling_task: TaskRef<'task>,
-    source_config: ScpSourceConfig,
+    source_config: ScpHeuristicConfig,
     name: &str,
 ) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
-    let ScpSourceConfig {
+    let construction_deadline = source_config.sources.deadline()?;
+    let ScpHeuristicConfig {
         sources,
-        config,
-        construction_deadline,
+        scp: config,
     } = source_config;
-    if sources.is_empty() {
-        return Err(format!(
-            "`{name}` requires at least one abstraction source: {}",
-            component_source_help(),
-        )
-        .into());
-    }
     let component_use = if config.partitioning.uses_regions() {
-        ComponentUse::RegionalCostPartitioning
+        AbstractionPurpose::RegionalCostPartitioning
     } else {
-        ComponentUse::LabelCostPartitioning
+        AbstractionPurpose::LabelCostPartitioning
     };
-    let components = build_components(task, &sources, component_use, construction_deadline)?;
+    let components =
+        build_components(task, &sources.sources, component_use, construction_deadline)?;
     remaining_construction_time(construction_deadline)?;
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         Some(name.to_string()),
@@ -504,8 +511,11 @@ heuristic_registry! {
         requirements: component_task_requirements,
         nested: no_nested_heuristics,
         build: {
-            let sources = require_only_component_sources("max", &spec.args)?;
-            build_max_from_sources(task, &sources, "max")
+            let config = configure("max", SourcesConfig::default(), &spec.args)?;
+            if config.construction_max_time != crate::config::TimeLimit::UNLIMITED {
+                return Err("`max` does not accept construction_max_time".to_string().into());
+            }
+            build_max_from_sources(task, &config.sources, "max")
         }
     }
 
@@ -515,9 +525,8 @@ heuristic_registry! {
         requirements: component_task_requirements,
         nested: no_nested_heuristics,
         build: {
-            let (sources, construction_deadline) =
-                abstraction_config::canonical_sources_and_deadline(&spec.args)?;
-            build_canonical_from_sources(task, &sources, "canonical", construction_deadline)
+            let config = configure("canonical", SourcesConfig::default(), &spec.args)?;
+            build_canonical_from_sources(task, &config.sources, "canonical", config.deadline()?)
         }
     }
 
@@ -528,7 +537,7 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             let source_config =
-                abstraction_config::scp_sources_config_and_deadline(&spec.name, &spec.args)?;
+                configure(&spec.name, ScpHeuristicConfig::default(), &spec.args)?;
             build_scp_from_sources(task, sampling_task, source_config, spec.name.as_str())
         }
     }
@@ -557,12 +566,12 @@ heuristic_registry! {
         build: {
             #[cfg(feature = "cplex")]
             {
-                let (sources, construction_deadline) =
-                    abstraction_config::canonical_sources_and_deadline(&spec.args)?;
+                let config = configure(&spec.name, SourcesConfig::default(), &spec.args)?;
+                let construction_deadline = config.deadline()?;
                 let components = build_components(
                     task,
-                    &sources,
-                    ComponentUse::Standalone,
+                    &config.sources,
+                    AbstractionPurpose::Standalone,
                     construction_deadline,
                 )?;
                 remaining_construction_time(construction_deadline)?;
@@ -617,16 +626,8 @@ heuristic_registry! {
         requirements: restricted_abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            let source = crate::config::ConfigCall::new(
-                "pdb",
-                vec![crate::config::ConfigArg::new(
-                    Some("patterns".to_string()),
-                    crate::config::ConfigValue::Call(crate::config::ConfigCall::new(
-                        "greedy",
-                        spec.args.clone(),
-                    )),
-                )],
-            );
+            let config = configure("greedy_numeric_pdb", crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig::default(), &spec.args)?;
+            let source = AbstractionSource::Pdb(PdbSourceConfig::greedy(config));
             build_max_from_sources(task, &[source], "greedy_numeric_pdb")
         }
     }
@@ -637,7 +638,8 @@ heuristic_registry! {
         requirements: restricted_abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            let source = crate::config::ConfigCall::new("pdb", spec.args.clone());
+            let config = configure(&spec.name, PdbSourceConfig::default(), &spec.args)?;
+            let source = AbstractionSource::Pdb(config);
             build_canonical_from_sources(task, &[source], "canonical_numeric_pdb", Deadline::NONE)
         }
     }
@@ -648,7 +650,8 @@ heuristic_registry! {
         requirements: restricted_abstractable_task,
         nested: no_nested_heuristics,
         build: {
-            let source = crate::config::ConfigCall::new("pdb", spec.args.clone());
+            let config = configure(&spec.name, PdbSourceConfig::default(), &spec.args)?;
+            let source = AbstractionSource::Pdb(config);
             build_max_from_sources(task, &[source], "max_numeric_pdb")
         }
     }

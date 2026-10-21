@@ -20,7 +20,9 @@ pub use planforge_config_derive::{ApplyOptions, FromOptionValue};
 
 mod parser;
 mod search;
+mod time_limit;
 pub use search::{SearchConfig, parse_search_spec};
+pub use time_limit::TimeLimit;
 
 /// Declares a name-indexed static plugin table and its lookup function.
 ///
@@ -428,8 +430,7 @@ impl<T: FromOptionValue> FromOptionValue for Vec<T> {
 /// A time limit in seconds; `infinity` is none.
 impl FromOptionValue for Option<Duration> {
     fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        crate::resource_limits::time_limit_from_secs(f64::from_option_value(value)?)
-            .map_err(|error| error.to_string())
+        TimeLimit::from_option_value(value).map(|limit| limit.0)
     }
 }
 
