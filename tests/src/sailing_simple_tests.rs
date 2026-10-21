@@ -251,7 +251,6 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
             random_seed: Some(1),
             ..DomainAbstractionConfig::default().cegar
         },
-        compute_source_sets: false,
         ..Default::default()
     })
     .expect("unrestricted domain abstraction generator should construct")
@@ -276,7 +275,6 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
             max_states: usize::MAX,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: false,
         ..Default::default()
     })
     .expect("unrestricted Cartesian abstraction generator should construct")
@@ -489,12 +487,12 @@ fn sailing_simple_ratchet_equilibrium() {
             let near_count = abstraction
                 .factory
                 .partitions()
-                .partitions(VariableIndex::from_usize(near_x))?
+                .partitions(VariableIndex::from_usize(near_x))
                 .len();
             let far_count = abstraction
                 .factory
                 .partitions()
-                .partitions(VariableIndex::from_usize(far_x))?
+                .partitions(VariableIndex::from_usize(far_x))
                 .len();
             (near_count > 1 && far_count > 1).then_some((near_count, far_count))
         })

@@ -416,7 +416,6 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
                 max_states: 10_000,
                 ..DomainAbstractionCollectionConfig::default().member.cegar
             },
-            compute_source_sets: false,
             ..DomainAbstractionCollectionConfig::default().member
         },
         ..Default::default()

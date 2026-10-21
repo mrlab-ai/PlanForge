@@ -529,7 +529,7 @@ where
         .map_err(|error| {
             HeuristicBuildError::from_source(error, format!("failed to build `{}`", source.name()))
         })?;
-    finish_cegar_components(task, vec![abstraction], component_use, source)
+    Ok(vec![abstraction.into()])
 }
 
 /// The abstraction collection source `source` describes, built by `G` for
@@ -557,36 +557,6 @@ where
         .map_err(|error| {
             HeuristicBuildError::from_source(error, format!("failed to build `{}`", source.name()))
         })?;
-    finish_cegar_components(task, abstractions, component_use, source)
-}
-
-/// `abstractions` as components, with the source sets regional cost
-/// partitioning reads. They are built after generation, so they take nothing
-/// from its budget.
-fn finish_cegar_components<'task, A>(
-    task: &dyn AbstractNumericTask,
-    mut abstractions: Vec<A>,
-    component_use: ComponentUse,
-    source: &ConfigCall,
-) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError>
-where
-    A: CegarAbstraction + Into<AbstractionComponent<'task>>,
-{
-    if component_use.needs_source_sets() {
-        for (index, abstraction) in abstractions.iter_mut().enumerate() {
-            abstraction
-                .ensure_abstract_source_sets(task)
-                .map_err(|error| {
-                    HeuristicBuildError::from_source(
-                        error,
-                        format!(
-                            "failed to build the source sets of abstraction {index} of `{}`",
-                            source.name()
-                        ),
-                    )
-                })?;
-        }
-    }
     Ok(abstractions.into_iter().map(Into::into).collect())
 }
 

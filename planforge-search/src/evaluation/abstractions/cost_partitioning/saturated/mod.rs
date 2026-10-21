@@ -138,8 +138,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         config
             .validate(sampling_task.is_some())
             .map_err(EvaluationError::ComputationFailed)?;
+        let mut components = components;
         if config.partitioning.uses_regions() {
-            for (component_id, component) in components.iter().enumerate() {
+            for (component_id, component) in components.iter_mut().enumerate() {
+                component
+                    .ensure_abstract_source_sets(task)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to build the source sets of component {component_id}: {error:#}"
+                        ))
+                    })?;
                 if matches!(component, AbstractionComponent::PatternDatabase(_)) {
                     info!(
                         "PDB component {component_id}: partitioning=region requested, using label cost partitioning (PDBs have no source sets)"

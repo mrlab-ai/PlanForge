@@ -58,6 +58,19 @@ impl<'task> AbstractionComponent<'task> {
         }
     }
 
+    /// Builds the source sets regional cost partitioning reads; a pattern
+    /// database has none.
+    pub fn ensure_abstract_source_sets(
+        &mut self,
+        task: &dyn AbstractNumericTask,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Domain(abstraction) => abstraction.ensure_abstract_source_sets(task),
+            Self::Cartesian(abstraction) => abstraction.ensure_abstract_source_sets(task),
+            Self::PatternDatabase(_) => Ok(()),
+        }
+    }
+
     pub fn discard_transition_data(&mut self) {
         match self {
             Self::Domain(abstraction) => abstraction.discard_transition_data(),
