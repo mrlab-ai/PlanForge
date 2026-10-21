@@ -81,7 +81,7 @@ fn split_on_fact(
         });
     }
 
-    let is_default = fact.value_index() == semantics.regions().axiom_default(var_id)?;
+    let is_default = fact.value_index() == semantics.regions().axiom_default(var_id);
     if goal == FactGoal::Exclude && is_default {
         // The witness's value is derived by an axiom whose conditions it
         // satisfies, so guaranteeing that value excludes the default.
