@@ -220,15 +220,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 }
 
+/// The iteration that built component `component_id` of its collection;
+/// components outside a collection come last.
 pub(super) fn abstraction_collection_iteration(
     components: &[AbstractionComponent<'_>],
     component_id: usize,
 ) -> usize {
-    match &components[component_id] {
-        AbstractionComponent::Domain(abstraction) => abstraction.metadata.collection,
-        AbstractionComponent::Cartesian(_) | AbstractionComponent::PatternDatabase(_) => None,
-    }
-    .map_or(usize::MAX, |record| record.iteration)
+    components[component_id]
+        .cegar()
+        .and_then(|abstraction| abstraction.metadata().collection)
+        .map_or(usize::MAX, |record| record.iteration)
 }
 
 pub(super) fn max_heuristic_greedy_order(
