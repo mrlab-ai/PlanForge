@@ -135,7 +135,7 @@ impl NumericPartitions {
 /// The partition of `partitions` that contains `value`.
 ///
 /// This is the one value-to-partition mapping of domain abstractions: CEGAR's
-/// flaw search and splits, the initial-state hash of the distance tables, and
+/// flaw search and splits, the initial abstract state of the distance tables, and
 /// the heuristic's state lookup all go through it, so a value is assigned to
 /// the same abstract value everywhere.
 ///

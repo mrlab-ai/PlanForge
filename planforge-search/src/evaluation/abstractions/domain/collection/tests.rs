@@ -457,7 +457,7 @@ fn domain_members(
         .into_iter()
         .map(|abstraction| {
             let initial_h =
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state];
             let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
@@ -506,7 +506,7 @@ fn cartesian_members_with(
         .into_iter()
         .map(|abstraction| {
             let initial_h =
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+                abstraction.distance_table.distances[abstraction.distance_table.initial_state];
             let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
@@ -735,12 +735,12 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
         for (backend, initial_h, plan) in [
             (
                 "domain",
-                domain.distance_table.distances[domain.distance_table.initial_state_hash],
+                domain.distance_table.distances[domain.distance_table.initial_state],
                 domain.metadata.concrete_plan_operator_ids.as_ref(),
             ),
             (
                 "Cartesian",
-                cartesian.distance_table.distances[cartesian.distance_table.initial_state_hash],
+                cartesian.distance_table.distances[cartesian.distance_table.initial_state],
                 cartesian.metadata.concrete_plan_operator_ids.as_ref(),
             ),
         ] {

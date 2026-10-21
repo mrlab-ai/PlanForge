@@ -524,7 +524,7 @@ fn desired_region_uses_additive_snp_coordinate() {
     .unwrap();
 
     assert_eq!(
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+        abstraction.distance_table.distances[abstraction.distance_table.initial_state],
         1.0
     );
     assert!(abstraction.metadata.solved_by_self());

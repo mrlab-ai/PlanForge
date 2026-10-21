@@ -16,8 +16,8 @@ pub struct AbstractTransition {
     pub transition_id: usize,
     pub abstract_op_id: usize,
     pub concrete_op_ids: Vec<OperatorIndex>,
-    pub source_hash: usize,
-    pub target_hash: usize,
+    pub source_state: usize,
+    pub target_state: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,8 +37,8 @@ pub struct AbstractTransitionSystem {
     /// The transitions into each state.
     pub backward: Vec<Vec<usize>>,
     pub goal_facts: Vec<ExplicitFact>,
-    pub goal_state_hashes: Vec<usize>,
-    pub initial_state_hash: usize,
+    pub goal_states: Vec<usize>,
+    pub initial_state: usize,
     /// The region of every state, or empty if the system was built without.
     pub cartesian_sets: Vec<Arc<CartesianSet>>,
 }
@@ -48,7 +48,7 @@ pub struct AbstractDistanceTable {
     pub distances: Vec<f64>,
     // Per-state operator leading to a goal along a shortest path.
     pub generating_op_ids: Vec<Option<usize>>,
-    pub initial_state_hash: usize,
+    pub initial_state: usize,
     pub goal_facts: Vec<ExplicitFact>,
 }
 
@@ -88,9 +88,9 @@ impl BackwardGraph for CostedTransitionSystem<'_> {
         incoming.clear();
         for &transition_id in &self.system.backward[target] {
             let transition = &self.system.transitions[transition_id];
-            debug_assert_eq!(transition.target_hash, target);
+            debug_assert_eq!(transition.target_state, target);
             incoming.push((
-                transition.source_hash,
+                transition.source_state,
                 transition.abstract_op_id,
                 self.transition_costs[transition_id],
             ));

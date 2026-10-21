@@ -146,7 +146,7 @@ impl Icaps26CartesianGenerator {
             &initial_propositions,
             &mut initial_prop_values,
         );
-        let initial_state_hash = working
+        let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_prop_values, &initial_numeric)?;
         let (transition_system, distance_table, relevant_operator_ids, source_sets) =
@@ -154,7 +154,7 @@ impl Icaps26CartesianGenerator {
                 finalize_abstraction(
                     &working,
                     &semantics,
-                    initial_state_hash,
+                    initial_abstract_state,
                     self.config.combine_labels,
                     self.config.compute_source_sets,
                 )?
@@ -163,7 +163,7 @@ impl Icaps26CartesianGenerator {
                     &working,
                     &semantics,
                     &shortest_paths,
-                    initial_state_hash,
+                    initial_abstract_state,
                 )?
             };
         let transition_count = if self.config.retain_transition_system {
@@ -200,7 +200,7 @@ impl Icaps26CartesianGenerator {
             distance_table.distances.len(),
             transition_count,
             refinements,
-            distance_table.distances[distance_table.initial_state_hash],
+            distance_table.distances[distance_table.initial_state],
             start.elapsed().as_secs_f64()
         );
         Ok(CartesianAbstraction {

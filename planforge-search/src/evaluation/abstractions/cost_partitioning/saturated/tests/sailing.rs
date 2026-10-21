@@ -134,13 +134,13 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
     let standalone_max = abstractions
         .iter()
         .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
         })
         .fold(0.0f64, f64::max);
     let abstraction_h = abstractions
         .iter()
         .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
         })
         .collect::<Vec<_>>();
     let components = abstractions

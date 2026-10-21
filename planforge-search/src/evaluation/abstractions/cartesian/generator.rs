@@ -82,7 +82,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             ..
         } = refinement;
         let working_transition_count = working.active_transition_ids().count();
-        let initial_state_hash = working
+        let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_state.propositional, &initial_state.numeric)?;
         let (transition_system, distance_table, relevant_operator_ids, source_sets) =
@@ -90,7 +90,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                 finalize_abstraction(
                     &working,
                     &semantics,
-                    initial_state_hash,
+                    initial_abstract_state,
                     self.config.cegar.combine_labels,
                     self.config.compute_source_sets,
                 )?
@@ -99,7 +99,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                     &working,
                     &semantics,
                     &shortest_paths,
-                    initial_state_hash,
+                    initial_abstract_state,
                 )?
             };
         let transition_count = if self.config.retain_transition_system {
@@ -123,7 +123,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             distance_table.distances.len(),
             transition_count,
             outcome.refinements,
-            distance_table.distances[distance_table.initial_state_hash],
+            distance_table.distances[distance_table.initial_state],
             outcome.stop_reason,
             start.elapsed().as_secs_f64()
         );

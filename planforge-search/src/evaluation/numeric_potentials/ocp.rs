@@ -63,7 +63,7 @@ impl PotentialAbstractionOcpHeuristic {
                 (None, required_at_least)
             }
         };
-        let initial_abstract_state = abstraction.distance_table.initial_state_hash;
+        let initial_abstract_state = abstraction.distance_table.initial_state;
         let abstraction_initial_h = abstraction.distance_table.distances[initial_abstract_state];
 
         let mut optimizer = NumericPotentialOptimizer::new(task, &potential_config)?;
@@ -136,7 +136,7 @@ impl PotentialAbstractionOcpHeuristic {
             });
         }
         let mut is_goal = vec![false; state_count];
-        for &goal in &transition_system.goal_state_hashes {
+        for &goal in &transition_system.goal_states {
             if goal < state_count {
                 is_goal[goal] = true;
             }
@@ -153,21 +153,21 @@ impl PotentialAbstractionOcpHeuristic {
             for &operator_id in &transition.concrete_op_ids {
                 let operator_column = operator_id.index();
                 if operator_column >= operator_count
-                    || transition.source_hash >= state_count
-                    || transition.target_hash >= state_count
+                    || transition.source_state >= state_count
+                    || transition.target_state >= state_count
                 {
                     return Err(format!(
                         "pot_da_ocp recorded invalid transition {}: {} --{}--> {}",
                         transition.transition_id,
-                        transition.source_hash,
+                        transition.source_state,
                         operator_id,
-                        transition.target_hash
+                        transition.target_state
                     ));
                 }
                 let mut coefficients = vec![(operator_column, -1.0)];
-                if transition.source_hash != transition.target_hash {
-                    coefficients.push((operator_count + transition.source_hash, 1.0));
-                    coefficients.push((operator_count + transition.target_hash, -1.0));
+                if transition.source_state != transition.target_state {
+                    coefficients.push((operator_count + transition.source_state, 1.0));
+                    coefficients.push((operator_count + transition.target_state, -1.0));
                 }
                 coefficients.sort_unstable_by_key(|(column, _)| *column);
                 constraints.push(Constraint::new(-infinity, 0.0, coefficients));

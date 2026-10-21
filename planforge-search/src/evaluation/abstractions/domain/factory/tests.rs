@@ -233,7 +233,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
     .unwrap();
 
     assert_eq!(explicit, implicit.distances);
-    assert_eq!(explicit[implicit.initial_state_hash], 2.0);
+    assert_eq!(explicit[implicit.initial_state], 2.0);
 }
 
 #[test]
@@ -301,7 +301,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         &transition_system,
         &source_sets,
         |transition, source_set| {
-            source_set_within(&factory.state_region(transition.source_hash), source_set)
+            source_set_within(&factory.state_region(transition.source_state), source_set)
         },
         &residuals,
         None,
@@ -309,7 +309,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     )
     .unwrap();
 
-    assert_eq!(distances[transition_system.initial_state_hash], 1.0);
+    assert_eq!(distances[transition_system.initial_state], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
         allocation.entries()[0].source_set.source.propositions()[0],
@@ -654,7 +654,7 @@ fn initial_state_hash_is_unique() {
         [1],
         "condition variables keep their single abstract value"
     );
-    assert!(table.initial_state_hash < table.distances.len());
+    assert!(table.initial_state < table.distances.len());
 }
 
 /// A goal on a variable the abstraction collapsed to one value is dropped.
@@ -1315,7 +1315,7 @@ fn source_set_one_finite_dim_suffices() {
     assert_eq!(concrete.source.numeric[1], Interval::unbounded());
 
     let table = factory.build_distance_table_for_test(&task, false).unwrap();
-    assert_eq!(table.distances[table.initial_state_hash], 2.0);
+    assert_eq!(table.distances[table.initial_state], 2.0);
 }
 
 #[test]

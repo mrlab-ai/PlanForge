@@ -93,13 +93,13 @@ fn two_state_transition_system() -> AbstractTransitionSystem {
             transition_id: 0,
             abstract_op_id: 0,
             concrete_op_ids: vec![OperatorIndex::new(0)],
-            source_hash: 0,
-            target_hash: 1,
+            source_state: 0,
+            target_state: 1,
         }],
         backward: vec![vec![], vec![0]],
         goal_facts: vec![],
-        goal_state_hashes: vec![1],
-        initial_state_hash: 0,
+        goal_states: vec![1],
+        initial_state: 0,
         cartesian_sets: vec![cartesian_set(0).into(), cartesian_set(1).into()],
     }
 }

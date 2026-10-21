@@ -175,8 +175,8 @@ impl DomainAbstraction {
             &system,
             &self.abstract_source_sets,
             |transition, source_set| {
-                let region = regions[transition.source_hash]
-                    .get_or_insert_with(|| self.factory.state_region(transition.source_hash));
+                let region = regions[transition.source_state]
+                    .get_or_insert_with(|| self.factory.state_region(transition.source_state));
                 source_set_within(region, source_set)
             },
             remaining,

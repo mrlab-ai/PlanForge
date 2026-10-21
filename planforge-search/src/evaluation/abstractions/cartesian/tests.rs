@@ -86,7 +86,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
         .generate(task)
         .unwrap();
         assert_eq!(
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state],
             expected_h,
             "unexpected initial h for {flaw_scope}"
         );

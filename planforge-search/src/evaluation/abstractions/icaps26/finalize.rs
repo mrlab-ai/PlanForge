@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn finalize_abstraction(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
-    initial_state_hash: usize,
+    initial_state: usize,
     combine_labels: bool,
     compute_source_sets: bool,
 ) -> Result<(
@@ -94,15 +94,15 @@ pub(super) fn finalize_abstraction(
             transition_id,
             abstract_op_id: transition_id,
             concrete_op_ids: labels,
-            source_hash: source,
-            target_hash: target,
+            source_state: source,
+            target_state: target,
         });
         backward[target].push(transition_id);
     }
-    let mut goal_state_hashes = Vec::new();
+    let mut goal_states = Vec::new();
     for (state_id, region) in working.states().iter().enumerate() {
         if semantics.region_is_goal(region)? {
-            goal_state_hashes.push(state_id);
+            goal_states.push(state_id);
         }
     }
     let transition_system = AbstractTransitionSystem {
@@ -111,8 +111,8 @@ pub(super) fn finalize_abstraction(
         goal_facts: (0..semantics.task().get_num_goals())
             .map(|goal_id| *semantics.task().get_goal_fact(goal_id))
             .collect(),
-        goal_state_hashes,
-        initial_state_hash,
+        goal_states,
+        initial_state,
         cartesian_sets: shared_cartesian_sets,
     };
     let transition_costs = transition_system
@@ -132,14 +132,14 @@ pub(super) fn finalize_abstraction(
             system: &transition_system,
             transition_costs: &transition_costs,
         },
-        &transition_system.goal_state_hashes,
+        &transition_system.goal_states,
         || Ok(()),
         Some(&mut generating_op_ids),
     )?;
     let distance_table = AbstractDistanceTable {
         distances,
         generating_op_ids,
-        initial_state_hash,
+        initial_state,
         goal_facts: transition_system.goal_facts.clone(),
     };
     let mut relevant_operator_ids: Vec<_> = relevant.into_iter().collect();
@@ -156,7 +156,7 @@ pub(super) fn finalize_standalone_abstraction(
     working: &WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
     shortest_paths: &ShortestPaths,
-    initial_state_hash: usize,
+    initial_state: usize,
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
@@ -180,15 +180,15 @@ pub(super) fn finalize_standalone_abstraction(
     let distance_table = AbstractDistanceTable {
         distances: shortest_paths.distances().to_vec(),
         generating_op_ids: vec![None; working.states().len()],
-        initial_state_hash,
+        initial_state,
         goal_facts: goal_facts.clone(),
     };
     let transition_system = AbstractTransitionSystem {
         transitions: Vec::new(),
         backward: Vec::new(),
         goal_facts,
-        goal_state_hashes: Vec::new(),
-        initial_state_hash,
+        goal_states: Vec::new(),
+        initial_state,
         cartesian_sets: Vec::new(),
     };
     Ok((

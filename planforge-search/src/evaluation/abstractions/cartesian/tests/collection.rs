@@ -120,13 +120,13 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 .transition_system
                 .transitions
                 .iter()
-                .filter(|transition| transition.source_hash != transition.target_hash)
+                .filter(|transition| transition.source_state != transition.target_state)
                 .flat_map(|transition| transition.concrete_op_ids.iter().copied())
                 .collect::<Vec<_>>();
             expected_relevant.sort_unstable();
             expected_relevant.dedup();
             assert_eq!(abstraction.relevant_operator_ids, expected_relevant);
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
         })
         .collect::<Vec<_>>();
     assert_eq!(initial_h, vec![2.0, 3.0, 2.0, 3.0, 3.0, 2.0]);
@@ -373,7 +373,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
         "the second CEGAR run must start after the first concrete plan"
     );
     let second_initial_h =
-        abstractions[1].distance_table.distances[abstractions[1].distance_table.initial_state_hash];
+        abstractions[1].distance_table.distances[abstractions[1].distance_table.initial_state];
     assert!(second_initial_h <= 4.0);
     assert_eq!(
         abstractions[2]
@@ -875,7 +875,7 @@ fn goal_collection_preserves_empty_goal_tasks() {
 
     assert_eq!(abstractions.len(), 1);
     assert_eq!(
-        abstractions[0].distance_table.distances[abstractions[0].distance_table.initial_state_hash],
+        abstractions[0].distance_table.distances[abstractions[0].distance_table.initial_state],
         0.0
     );
     assert!(abstractions[0].metadata.solved_by_self());

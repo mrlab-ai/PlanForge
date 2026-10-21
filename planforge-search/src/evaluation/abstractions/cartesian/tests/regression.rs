@@ -105,8 +105,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
-                    abstraction.distance_table.distances
-                        [abstraction.distance_table.initial_state_hash],
+                    abstraction.distance_table.distances[abstraction.distance_table.initial_state],
                     optimal_cost,
                     "{name}, {flaw_scope}, {split_kind}"
                 );

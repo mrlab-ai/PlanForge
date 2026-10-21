@@ -121,7 +121,7 @@ pub trait CegarAbstraction {
     /// The goal distance of the task's initial state.
     fn initial_h(&self) -> f64 {
         let table = self.distance_table();
-        table.distances[table.initial_state_hash]
+        table.distances[table.initial_state]
     }
 }
 

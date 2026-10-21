@@ -97,7 +97,7 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
         distance_table: AbstractDistanceTable {
             distances,
             generating_op_ids: vec![None; 4],
-            initial_state_hash: 0,
+            initial_state: 0,
             goal_facts: vec![],
         },
         combine_labels: false,

@@ -46,7 +46,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let abstraction_h = abstractions
         .iter()
         .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
         })
         .collect::<Vec<_>>();
     let components = abstractions
@@ -112,7 +112,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let mixed_h = mixed
         .iter()
         .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash]
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
         })
         .collect::<Vec<_>>();
     let structural_id = mixed.len() - 1;

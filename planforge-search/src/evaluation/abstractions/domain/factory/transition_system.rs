@@ -103,19 +103,19 @@ impl DomainAbstractionFactory {
             Vec::new()
         };
         // Debug-only triple-uniqueness witness: every pushed AbstractTransition
-        // must have a unique `(abstract_op_id, source_hash, target_hash)`.
+        // must have a unique `(abstract_op_id, source_state, target_state)`.
         #[cfg(debug_assertions)]
         let mut seen_transition_triples: HashSet<(usize, usize, usize)> = HashSet::new();
 
         let mut graph = MatchTreeGraph::new(operators, &match_tree, num_states, &[]);
         let mut incoming = Vec::new();
-        for (target_hash, target_backward) in backward.iter_mut().enumerate() {
-            if target_hash % 64 == 0 {
+        for (target_state, target_backward) in backward.iter_mut().enumerate() {
+            if target_state % 64 == 0 {
                 deadline.ensure(TRANSITION_SYSTEM)?;
             }
-            graph.incoming(target_hash, &mut incoming)?;
-            for &(source_hash, abstract_op_id, _) in &incoming {
-                if source_hash == target_hash && !include_self_loops {
+            graph.incoming(target_state, &mut incoming)?;
+            for &(source_state, abstract_op_id, _) in &incoming {
+                if source_state == target_state && !include_self_loops {
                     continue;
                 }
                 let op = &operators[abstract_op_id];
@@ -128,7 +128,7 @@ impl DomainAbstractionFactory {
                 concrete_label_transition_count = required;
                 #[cfg(debug_assertions)]
                 {
-                    let triple = (abstract_op_id, source_hash, target_hash);
+                    let triple = (abstract_op_id, source_state, target_state);
                     debug_assert!(
                         seen_transition_triples.insert(triple),
                         "duplicate AbstractTransition triple {triple:?}"
@@ -139,8 +139,8 @@ impl DomainAbstractionFactory {
                     transition_id,
                     abstract_op_id,
                     concrete_op_ids: op.concrete_op_ids.clone(),
-                    source_hash,
-                    target_hash,
+                    source_state,
+                    target_state,
                 });
                 target_backward.push(transition_id);
             }
@@ -152,8 +152,8 @@ impl DomainAbstractionFactory {
         // (build_abstract_operators → enumerate_partition_combos) bakes the
         // numeric (source_partition, target_partition) pair into the abstract
         // operator's identity, so two transitions sharing the abstract op can
-        // only differ in propositional wildcard dimensions of `source_hash` /
-        // `target_hash`. This homogeneity is the property that lets the
+        // only differ in propositional wildcard dimensions of `source_state` /
+        // `target_state`. This homogeneity is the property that lets the
         // finite-support cost-partitioning gate decide stealability per abstract
         // op rather than per individual transition.
         #[cfg(debug_assertions)]
@@ -162,16 +162,16 @@ impl DomainAbstractionFactory {
                 std::collections::HashMap::new();
             for transition in &transitions {
                 match representative_per_op.get(&transition.abstract_op_id) {
-                    Some(&(rep_src_hash, rep_tgt_hash)) => {
+                    Some(&(representative_source, representative_target)) => {
                         debug_assert_eq!(
-                            cartesian_sets[rep_src_hash].numeric,
-                            cartesian_sets[transition.source_hash].numeric,
+                            cartesian_sets[representative_source].numeric,
+                            cartesian_sets[transition.source_state].numeric,
                             "abstract_op_id {} has transitions with differing numeric source regions",
                             transition.abstract_op_id
                         );
                         debug_assert_eq!(
-                            cartesian_sets[rep_tgt_hash].numeric,
-                            cartesian_sets[transition.target_hash].numeric,
+                            cartesian_sets[representative_target].numeric,
+                            cartesian_sets[transition.target_state].numeric,
                             "abstract_op_id {} has transitions with differing numeric target regions",
                             transition.abstract_op_id
                         );
@@ -179,21 +179,21 @@ impl DomainAbstractionFactory {
                     None => {
                         representative_per_op.insert(
                             transition.abstract_op_id,
-                            (transition.source_hash, transition.target_hash),
+                            (transition.source_state, transition.target_state),
                         );
                     }
                 }
             }
         }
 
-        let goal_state_hashes = self.goal_states(task, &goal_facts, deadline)?;
+        let goal_states = self.goal_states(task, &goal_facts, deadline)?;
         Ok(OcpTransitionSystemBuild::Complete(
             AbstractTransitionSystem {
                 transitions,
                 backward,
                 goal_facts,
-                goal_state_hashes,
-                initial_state_hash: self.initial_state(task)?,
+                goal_states,
+                initial_state: self.initial_state(task)?,
                 cartesian_sets,
             },
         ))

@@ -472,7 +472,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
             "x0={initial}: {partition_count} partitions"
         );
         let stored_h =
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+            abstraction.distance_table.distances[abstraction.distance_table.initial_state];
         assert_eq!(stored_h, 20.0 - initial, "x0={initial}");
 
         let component = AbstractionComponent::from(abstraction);
@@ -534,8 +534,7 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
-                    abstraction.distance_table.distances
-                        [abstraction.distance_table.initial_state_hash],
+                    abstraction.distance_table.distances[abstraction.distance_table.initial_state],
                     optimal_cost,
                     "{name}, {flaw_scope}, {split_kind}"
                 );

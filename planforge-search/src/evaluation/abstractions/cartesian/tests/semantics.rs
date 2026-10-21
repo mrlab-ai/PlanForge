@@ -72,7 +72,7 @@ fn refines_through_a_comparison_goal() {
     .unwrap();
 
     assert_eq!(
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash],
+        abstraction.distance_table.distances[abstraction.distance_table.initial_state],
         2.0
     );
     assert!(abstraction.metadata.solved_by_self());

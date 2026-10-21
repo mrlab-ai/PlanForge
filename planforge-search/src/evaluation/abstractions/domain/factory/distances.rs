@@ -24,7 +24,7 @@ impl DomainAbstractionFactory {
         Ok(AbstractDistanceTable {
             distances,
             generating_op_ids,
-            initial_state_hash: self.initial_state(task)?,
+            initial_state: self.initial_state(task)?,
             goal_facts,
         })
     }

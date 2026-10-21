@@ -115,8 +115,7 @@ fn a_rooted_domain_abstraction_plans_from_the_root_and_reports_the_initial_state
     );
     // h(s0) uses the base task's initial state and its pinned unit costs: the
     // abstraction never overestimates the four increments from x=0.
-    let initial_h =
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state_hash];
+    let initial_h = abstraction.distance_table.distances[abstraction.distance_table.initial_state];
     assert!(initial_h <= 4.0, "h(s0)={initial_h} overestimates h*=4");
     assert!(initial_h.is_finite());
 }

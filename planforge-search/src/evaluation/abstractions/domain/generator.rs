@@ -170,13 +170,13 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             // Regional SCP builds them from the finished abstraction.
             Vec::new()
         };
-        let initial_h = distance_table.distances[distance_table.initial_state_hash];
+        let initial_h = distance_table.distances[distance_table.initial_state];
         // The refinement root is reachable from the initial state, so a dead
         // initial state means a dead root, which is where CEGAR stops.
         ensure!(
             initial_h.is_finite() || stop_reason == CegarStopReason::DeadEnd,
-            "domain abstraction initial state is abstract-dead, but CEGAR stopped with {stop_reason:?}; initial_hash={}, states={}, abstract_ops={}, prop_domains={:?}, numeric_domains={:?}",
-            distance_table.initial_state_hash,
+            "domain abstraction initial state is abstract-dead, but CEGAR stopped with {stop_reason:?}; initial_state={}, states={}, abstract_ops={}, prop_domains={:?}, numeric_domains={:?}",
+            distance_table.initial_state,
             distance_table.distances.len(),
             abstract_operators.len(),
             factory.domain_sizes(),

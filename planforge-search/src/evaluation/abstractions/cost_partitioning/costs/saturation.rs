@@ -74,9 +74,9 @@ impl BackwardGraph for ExplicitSaturationGraph<'_> {
         incoming.clear();
         for &transition_id in &self.system.backward[target] {
             let transition = &self.system.transitions[transition_id];
-            debug_assert_eq!(transition.target_hash, target);
+            debug_assert_eq!(transition.target_state, target);
             incoming.push((
-                transition.source_hash,
+                transition.source_state,
                 transition_id,
                 self.transition_costs[transition_id],
             ));
@@ -87,7 +87,7 @@ impl BackwardGraph for ExplicitSaturationGraph<'_> {
 
 impl SaturationGraph for ExplicitSaturationGraph<'_> {
     fn goal_states(&self) -> &[usize] {
-        &self.system.goal_state_hashes
+        &self.system.goal_states
     }
 
     fn set_operator_costs(&mut self, operator_costs: &[f64]) {
@@ -185,8 +185,8 @@ pub(crate) fn saturate_regions(
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         let Some(need) = saturation_need(
-            saturation_distances[transition.source_hash],
-            saturation_distances[transition.target_hash],
+            saturation_distances[transition.source_state],
+            saturation_distances[transition.target_state],
             graph.transition_costs[transition_id],
             "saturated transition cost",
         )?
