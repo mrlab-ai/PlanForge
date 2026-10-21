@@ -49,7 +49,7 @@ fn run(path: &str) {
         &*task,
         registry,
         planforge_search::search::SearchParams {
-            heuristic: heuristic,
+            heuristic,
             lazy: None,
             reevaluate_dynamic: false,
             time_limit: Some(Duration::from_secs(5)),
