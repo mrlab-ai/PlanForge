@@ -11,7 +11,7 @@ pub struct CartesianAbstractionGenerator {
 impl AbstractionGenerator for CartesianAbstractionGenerator {
     type Config = CartesianAbstractionConfig;
     type Abstraction = CartesianAbstraction;
-    type Key = Vec<HierarchyKey>;
+    type Key = CartesianRefinementHierarchy;
 
     const KIND: AbstractionKind = AbstractionKind::Cartesian;
 
@@ -20,8 +20,8 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
         Ok(Self { config })
     }
 
-    fn key(abstraction: &CartesianAbstraction) -> Vec<HierarchyKey> {
-        hierarchy_key(&abstraction.hierarchy)
+    fn key(abstraction: &CartesianAbstraction) -> CartesianRefinementHierarchy {
+        abstraction.hierarchy.clone()
     }
 
     fn generate_from_root(

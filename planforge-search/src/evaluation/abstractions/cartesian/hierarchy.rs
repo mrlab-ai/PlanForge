@@ -1,5 +1,7 @@
 use super::*;
 
+/// Equal for the same split with the same children; numeric boundaries
+/// compare by their canonical bits.
 #[derive(Debug, Clone)]
 pub(crate) enum RefinementNode {
     Leaf {
@@ -20,7 +22,96 @@ pub(crate) enum RefinementNode {
     },
 }
 
-#[derive(Debug, Clone)]
+impl PartialEq for RefinementNode {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Leaf { state_id },
+                Self::Leaf {
+                    state_id: other_state_id,
+                },
+            ) => state_id == other_state_id,
+            (
+                Self::Propositional {
+                    var_id,
+                    wanted,
+                    wanted_child,
+                    other_child,
+                },
+                Self::Propositional {
+                    var_id: other_var_id,
+                    wanted: other_wanted,
+                    wanted_child: other_wanted_child,
+                    other_child: other_other_child,
+                },
+            ) => {
+                var_id == other_var_id
+                    && wanted == other_wanted
+                    && wanted_child == other_wanted_child
+                    && other_child == other_other_child
+            }
+            (
+                Self::Numeric {
+                    var_id,
+                    boundary,
+                    lower_includes_boundary,
+                    lower_child,
+                    upper_child,
+                },
+                Self::Numeric {
+                    var_id: other_var_id,
+                    boundary: other_boundary,
+                    lower_includes_boundary: other_lower_includes_boundary,
+                    lower_child: other_lower_child,
+                    upper_child: other_upper_child,
+                },
+            ) => {
+                var_id == other_var_id
+                    && float_tolerance::canonical_bits(*boundary)
+                        == float_tolerance::canonical_bits(*other_boundary)
+                    && lower_includes_boundary == other_lower_includes_boundary
+                    && lower_child == other_lower_child
+                    && upper_child == other_upper_child
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for RefinementNode {}
+
+impl std::hash::Hash for RefinementNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Leaf { state_id } => state_id.hash(state),
+            Self::Propositional {
+                var_id,
+                wanted,
+                wanted_child,
+                other_child,
+            } => (var_id, wanted, wanted_child, other_child).hash(state),
+            Self::Numeric {
+                var_id,
+                boundary,
+                lower_includes_boundary,
+                lower_child,
+                upper_child,
+            } => (
+                var_id,
+                float_tolerance::canonical_bits(*boundary),
+                lower_includes_boundary,
+                lower_child,
+                upper_child,
+            )
+                .hash(state),
+        }
+    }
+}
+
+/// Equal for Cartesian abstractions that the same splits refined in the
+/// same order.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CartesianRefinementHierarchy {
     pub(crate) nodes: Vec<RefinementNode>,
 }

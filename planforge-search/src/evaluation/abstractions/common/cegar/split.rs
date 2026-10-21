@@ -61,55 +61,90 @@ impl Split {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum SplitIdentity {
-    Propositional {
-        state_id: usize,
-        var_id: VariableIndex,
-        wanted: Vec<ExplicitValueIndex>,
-        witness_value: ExplicitValueIndex,
-    },
-    Numeric {
-        state_id: usize,
-        var_id: VariableIndex,
-        boundary_bits: u64,
-        lower_includes_boundary: bool,
-        witness_bits: u64,
-        integer_lattice: bool,
-    },
+/// Equal for the same split of the same state; numeric values compare by
+/// their canonical bits.
+impl PartialEq for Split {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Propositional {
+                    state_id,
+                    var_id,
+                    wanted,
+                    witness_value,
+                },
+                Self::Propositional {
+                    state_id: other_state_id,
+                    var_id: other_var_id,
+                    wanted: other_wanted,
+                    witness_value: other_witness_value,
+                },
+            ) => {
+                state_id == other_state_id
+                    && var_id == other_var_id
+                    && wanted == other_wanted
+                    && witness_value == other_witness_value
+            }
+            (
+                Self::Numeric {
+                    state_id,
+                    var_id,
+                    boundary,
+                    lower_includes_boundary,
+                    witness_value,
+                    integer_lattice,
+                },
+                Self::Numeric {
+                    state_id: other_state_id,
+                    var_id: other_var_id,
+                    boundary: other_boundary,
+                    lower_includes_boundary: other_lower_includes_boundary,
+                    witness_value: other_witness_value,
+                    integer_lattice: other_integer_lattice,
+                },
+            ) => {
+                state_id == other_state_id
+                    && var_id == other_var_id
+                    && float_tolerance::canonical_bits(*boundary)
+                        == float_tolerance::canonical_bits(*other_boundary)
+                    && lower_includes_boundary == other_lower_includes_boundary
+                    && float_tolerance::canonical_bits(*witness_value)
+                        == float_tolerance::canonical_bits(*other_witness_value)
+                    && integer_lattice == other_integer_lattice
+            }
+            _ => false,
+        }
+    }
 }
 
-impl From<&Split> for SplitIdentity {
-    fn from(split: &Split) -> Self {
-        match split {
-            Split::Propositional {
+impl Eq for Split {}
+
+impl std::hash::Hash for Split {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::Propositional {
                 state_id,
                 var_id,
                 wanted,
                 witness_value,
-                ..
-            } => Self::Propositional {
-                state_id: *state_id,
-                var_id: *var_id,
-                wanted: wanted.clone(),
-                witness_value: *witness_value,
-            },
-            Split::Numeric {
+            } => (state_id, var_id, wanted, witness_value).hash(state),
+            Self::Numeric {
                 state_id,
                 var_id,
                 boundary,
                 lower_includes_boundary,
                 witness_value,
                 integer_lattice,
-                ..
-            } => Self::Numeric {
-                state_id: *state_id,
-                var_id: *var_id,
-                boundary_bits: float_tolerance::canonical_bits(*boundary),
-                lower_includes_boundary: *lower_includes_boundary,
-                witness_bits: float_tolerance::canonical_bits(*witness_value),
-                integer_lattice: *integer_lattice,
-            },
+            } => (
+                state_id,
+                var_id,
+                float_tolerance::canonical_bits(*boundary),
+                lower_includes_boundary,
+                float_tolerance::canonical_bits(*witness_value),
+                integer_lattice,
+            )
+                .hash(state),
         }
     }
 }

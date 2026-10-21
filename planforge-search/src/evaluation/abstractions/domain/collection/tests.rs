@@ -20,6 +20,7 @@ use crate::evaluation::abstractions::domain::config::{
 };
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
+use planforge_sas::numeric_task::VariableIndex;
 use planforge_sas::numeric_task::{
     AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitValueIndex,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,

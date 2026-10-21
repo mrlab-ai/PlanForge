@@ -10,9 +10,26 @@ use planforge_sas::utils::interval::Interval;
 
 use crate::evaluation::abstractions::common::regions::trivial_interval;
 
+/// The partitions of every numeric variable. Boundaries are canonical, so
+/// equal partitions hash alike by their canonical bits.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NumericPartitions {
     partitions_by_numeric_var: Vec<Vec<Interval>>,
+}
+
+impl Eq for NumericPartitions {}
+
+impl std::hash::Hash for NumericPartitions {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        for partitions in &self.partitions_by_numeric_var {
+            partitions.len().hash(state);
+            for interval in partitions {
+                float_tolerance::canonical_bits(interval.lower).hash(state);
+                float_tolerance::canonical_bits(interval.upper).hash(state);
+                (interval.lower_closed, interval.upper_closed).hash(state);
+            }
+        }
+    }
 }
 
 impl NumericPartitions {

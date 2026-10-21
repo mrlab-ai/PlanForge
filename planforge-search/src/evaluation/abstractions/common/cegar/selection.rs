@@ -7,7 +7,7 @@ use anyhow::{Context, Result, ensure};
 use super::SplitSelection;
 use super::progression::PlanCheck;
 use super::semantics::CegarSemantics;
-use super::split::{Split, SplitIdentity};
+use super::split::Split;
 use super::view::AbstractionView;
 
 // The decisions split selection draws a seeded choice for: the splits of a
@@ -106,10 +106,10 @@ pub(crate) fn select_refinement(
 
 pub(crate) fn push_unique_split(
     candidates: &mut Vec<Split>,
-    identities: &mut HashSet<SplitIdentity>,
+    seen: &mut HashSet<Split>,
     split: Split,
 ) {
-    if identities.insert(SplitIdentity::from(&split)) {
+    if seen.insert(split.clone()) {
         candidates.push(split);
     }
 }

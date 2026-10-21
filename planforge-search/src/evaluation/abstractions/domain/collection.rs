@@ -5,60 +5,23 @@
 #[cfg(test)]
 mod tests;
 
-use planforge_sas::numeric_task::VariableIndex;
-use planforge_sas::utils::float_tolerance;
-use planforge_sas::utils::interval::Interval;
-
 use super::abstract_operators::DomainMapping;
 use super::abstraction::DomainAbstraction;
 use super::generator::DomainAbstractionGenerator;
+use super::partitions::NumericPartitions;
 use crate::evaluation::abstractions::collections::generator::CollectionGenerator;
 
 pub type DomainAbstractionCollectionGenerator = CollectionGenerator<DomainAbstractionGenerator>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct IntervalFingerprint {
-    lower: u64,
-    upper: u64,
-    lower_closed: bool,
-    upper_closed: bool,
-}
+/// Equal for domain abstractions with the same domain mapping and numeric
+/// partitions.
+pub type AbstractionKey = (DomainMapping, NumericPartitions);
 
-impl IntervalFingerprint {
-    fn from_interval(interval: Interval) -> Self {
-        Self {
-            lower: float_tolerance::canonical_bits(interval.lower),
-            upper: float_tolerance::canonical_bits(interval.upper),
-            lower_closed: interval.lower_closed,
-            upper_closed: interval.upper_closed,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AbstractionKey {
-    domain_mapping: DomainMapping,
-    numeric_fingerprint: Vec<Vec<IntervalFingerprint>>,
-}
-
-impl AbstractionKey {
-    pub(super) fn from_abstraction(abstraction: &DomainAbstraction) -> Self {
-        let factory = abstraction.factory();
-        let numeric_fingerprint = (0..factory.numeric_domain_sizes().len())
-            .map(|numeric_var_id| {
-                factory
-                    .partitions()
-                    .partitions(VariableIndex::from_usize(numeric_var_id))
-                    .iter()
-                    .copied()
-                    .map(IntervalFingerprint::from_interval)
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-
-        Self {
-            domain_mapping: factory.domain_mapping().clone(),
-            numeric_fingerprint,
-        }
-    }
+/// The key standard collections drop duplicate members by.
+pub(super) fn abstraction_key(abstraction: &DomainAbstraction) -> AbstractionKey {
+    let factory = abstraction.factory();
+    (
+        factory.domain_mapping().clone(),
+        factory.partitions().clone(),
+    )
 }

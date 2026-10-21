@@ -24,7 +24,7 @@ use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
 use crate::resource_limits::Deadline;
 
 use super::abstraction::DomainAbstraction;
-use super::collection::AbstractionKey;
+use super::collection::{AbstractionKey, abstraction_key};
 use super::debug_dump::log_final_abstraction;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::component::AbstractionKind;
@@ -108,7 +108,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     }
 
     fn key(abstraction: &DomainAbstraction) -> AbstractionKey {
-        AbstractionKey::from_abstraction(abstraction)
+        abstraction_key(abstraction)
     }
 
     /// The root only chooses counterexamples. The abstraction still partitions
