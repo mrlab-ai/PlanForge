@@ -20,11 +20,8 @@ pub struct CartesianSet {
     /// subtraction only have to look at the dimensions constrained on *both*
     /// sides.
     ///
-    /// This is what makes regional cost partitioning affordable. Measured over
-    /// 935 operator regions on delivery/pfile1, a region constrains a median of
-    /// 0 and a mean of 0.64 of its 49 propositional dimensions, so walking all
-    /// of them spends essentially all of its time confirming that universal
-    /// dimensions are universal.
+    /// A region typically constrains few of its dimensions, so these
+    /// operations cost the length of the lists, not the number of variables.
     ///
     /// A superset is always sound -- it only costs time -- so derived regions
     /// may carry the union of their inputs' lists rather than recomputing which
@@ -95,10 +92,9 @@ impl CartesianSet {
 
     /// A region whose every propositional dimension counts as constrained.
     ///
-    /// Test regions are written without a notion of domain size, so this takes
-    /// the sound superset: treating every dimension as possibly constrained is
-    /// exactly the behaviour that predates the sparse dimension list, which
-    /// keeps the tests measuring what they were written to measure.
+    /// For test regions, which are written without domain sizes: listing
+    /// every dimension is the sound superset, so the sparse operations walk
+    /// all of them.
     #[cfg(test)]
     pub(crate) fn with_all_props_constrained(
         propositions: Vec<Vec<ExplicitValueIndex>>,
@@ -179,12 +175,11 @@ impl CartesianSet {
     /// narrowed a dimension without recording it.
     #[cfg(debug_assertions)]
     fn debug_sparse_overlap_matches_dense(&self, other: &Self) -> bool {
-        let dense = self.propositions.len() == other.propositions.len()
-            && self
-                .propositions
-                .iter()
-                .zip(other.propositions.iter())
-                .all(|(left, right)| sorted_value_sets_overlap(left, right));
+        let dense = self
+            .propositions
+            .iter()
+            .zip(other.propositions.iter())
+            .all(|(left, right)| sorted_value_sets_overlap(left, right));
         prop_regions_overlap(self, other) == dense
     }
 }
@@ -286,11 +281,8 @@ pub(crate) fn cartesian_set_intersection(
         right.numeric.len(),
         "state-region numeric dimension mismatch"
     );
-    // When one side contains the other, the intersection *is* that side. Taking
-    // it is four `Arc` clones, against rebuilding every value set. This is the
-    // common case rather than a lucky one: operator regions constrain a median
-    // of zero dimensions, so intersecting a transition's source region with one
-    // usually returns the source region unchanged.
+    // When one side contains the other, the intersection is that side, which
+    // shares its storage instead of rebuilding every value set.
     if region_contains(right, left) {
         return Some(left.clone());
     }
@@ -434,9 +426,11 @@ fn regional_regions_are_disjoint(regions: &[CartesianSet]) -> bool {
 /// intersects the two constrained-dimension lists instead of walking every
 /// dimension.
 fn prop_regions_overlap(left: &CartesianSet, right: &CartesianSet) -> bool {
-    if left.propositions.len() != right.propositions.len() {
-        return false;
-    }
+    assert_eq!(
+        left.propositions.len(),
+        right.propositions.len(),
+        "state-region propositional dimension mismatch"
+    );
     // Walk the shorter list and probe the longer one: a merge of both would cost
     // their combined length, while the dimensions that actually need testing are
     // only those in the intersection, which is typically near-empty.
@@ -472,9 +466,11 @@ pub(crate) fn sorted_value_sets_overlap(
 }
 
 fn numeric_regions_overlap(left: &[Interval], right: &[Interval]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
+    assert_eq!(
+        left.len(),
+        right.len(),
+        "state-region numeric dimension mismatch"
+    );
     left.iter().zip(right.iter()).all(|(l, r)| l.intersects(r))
 }
 
