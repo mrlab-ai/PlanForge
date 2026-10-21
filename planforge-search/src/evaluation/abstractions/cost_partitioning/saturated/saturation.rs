@@ -169,14 +169,15 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             log_abstract_source_set_summary(component_id, source_sets);
         }
         let state_id = abstract_state_ids[component_id];
-        let saturator = self.config.saturator;
-        if saturator != Saturator::All && state_id.is_none() {
-            return Err(EvaluationError::InvalidState(format!(
-                "missing abstract state id for PERIM component {component_id}"
-            )));
-        }
-        for &(phase, limited) in saturator.passes() {
-            let perimeter_state = if limited { state_id } else { None };
+        for &(phase, limited) in self.config.saturator.passes() {
+            let perimeter_state = match (limited, state_id) {
+                (false, _) => None,
+                (true, Some(state_id)) => Some(state_id),
+                // A component without an abstract state for the evaluated
+                // state estimates nothing there, so its perimeter holds no
+                // state and the pass saturates nothing.
+                (true, None) => continue,
+            };
             let (distances, saturated) = saturate_component(
                 component,
                 task,
