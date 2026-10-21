@@ -41,32 +41,19 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                 working.add_transition(0, OperatorIndex::from_usize(op_id), 0);
             }
         }
-        let initial_state = semantics.cegar().states().initial_state()?;
-        let refinement_root = refinement_root.unwrap_or(&initial_state);
         apply_initial_splits(&mut working, &semantics, &self.config)?;
         let shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let mut refinement = CartesianRefinement {
             working,
             shortest_paths,
             semantics: &semantics,
-            limits: RefinementLimits {
-                max_states: self.config.cegar.max_states,
-                blacklisted_prop_var_ids: &self.config.scope.blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids: &self.config.scope.blacklisted_numeric_var_ids,
-            },
+            limits: RefinementLimits::new(&self.config.cegar, &self.config.scope),
         };
-        let outcome = refine(
+        let outcome = refine_from_root(
             &mut refinement,
-            &CegarRun {
-                semantics: semantics.cegar(),
-                flaw_kind: self.config.cegar.flaw_kind,
-                flaw_scope: self.config.cegar.flaw_scope,
-                refinement_root,
-                driver: CegarDriver::new(
-                    self.config.cegar.max_iterations,
-                    self.config.cegar.max_time,
-                ),
-            },
+            semantics.cegar(),
+            &self.config.cegar,
+            refinement_root,
             start,
         )?;
         let CartesianRefinement {
@@ -74,6 +61,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             shortest_paths,
             ..
         } = refinement;
+        let initial_state = semantics.cegar().states().initial_state()?;
         let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_state.propositional, &initial_state.numeric)?;

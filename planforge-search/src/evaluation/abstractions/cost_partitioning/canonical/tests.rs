@@ -110,7 +110,7 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             None,
         ),
     };
-    let mut abstraction = DomainAbstraction::new(factory, core, transitions);
+    let mut abstraction = DomainAbstraction::new(factory, core, Some(transitions));
     abstraction.discard_transition_data();
     abstraction
 }

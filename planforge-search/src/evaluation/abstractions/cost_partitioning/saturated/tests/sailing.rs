@@ -430,7 +430,7 @@ fn build_handcrafted_abstraction(
             )
         },
     };
-    let mut abstraction = DomainAbstraction::new(factory, core, transitions);
+    let mut abstraction = DomainAbstraction::new(factory, core, Some(transitions));
     abstraction
         .prepare_regional_saturation(&RegionSemantics::new(transformed_task)?, Deadline::NONE)?;
     Ok(abstraction)

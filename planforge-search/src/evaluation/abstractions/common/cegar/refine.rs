@@ -8,6 +8,7 @@ use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::float_tolerance;
 
+use super::options::CegarOptions;
 use super::progression::{ConcretePlan, PlanCheck, progression_plan_check, validate_concrete_plan};
 use super::regression::regression_plan_check;
 use super::semantics::CegarSemantics;
@@ -29,6 +30,36 @@ pub(crate) trait Refinable {
 
     /// Refines the abstraction by `split`, which its view found refinable.
     fn apply_split(&mut self, split: Split) -> Result<()>;
+}
+
+/// Refines `abstraction` by CEGAR under `options`, searching for flaws from
+/// `refinement_root`, or from the task's initial state when `None`.
+pub(crate) fn refine_from_root<R: Refinable>(
+    abstraction: &mut R,
+    semantics: &CegarSemantics<'_>,
+    options: &CegarOptions,
+    refinement_root: Option<&ExplicitState>,
+    start: Instant,
+) -> Result<CegarOutcome> {
+    let initial_state;
+    let refinement_root = match refinement_root {
+        Some(root) => root,
+        None => {
+            initial_state = semantics.states().initial_state()?;
+            &initial_state
+        }
+    };
+    refine(
+        abstraction,
+        &CegarRun {
+            semantics,
+            flaw_kind: options.flaw_kind,
+            flaw_scope: options.flaw_scope,
+            refinement_root,
+            driver: CegarDriver::new(options.max_iterations, options.max_time),
+        },
+        start,
+    )
 }
 
 /// Where a CEGAR run searches for flaws and what it may spend.

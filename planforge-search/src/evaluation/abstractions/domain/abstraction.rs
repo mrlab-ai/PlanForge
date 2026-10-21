@@ -38,12 +38,12 @@ impl DomainAbstraction {
     pub(crate) fn new(
         factory: DomainAbstractionFactory,
         core: AbstractionCore,
-        transitions: DomainTransitions,
+        transitions: Option<DomainTransitions>,
     ) -> Self {
         Self {
             factory,
             core,
-            transitions: Some(DomainTransitionData {
+            transitions: transitions.map(|transitions| DomainTransitionData {
                 transitions,
                 regional: None,
             }),

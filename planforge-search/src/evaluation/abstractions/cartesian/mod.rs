@@ -22,7 +22,7 @@ mod tests;
 mod view;
 mod working;
 
-use super::common::cegar::refine::{CegarRun, Refinable, refine};
+use super::common::cegar::refine::{Refinable, refine_from_root};
 use super::common::cegar::semantics::CegarSemantics;
 use super::common::cegar::split::*;
 use super::common::cegar::view::{AbstractionView, RefinementLimits, TransitionKey};
@@ -52,7 +52,6 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::common::cegar::CegarDriver;
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cartesian_set::{

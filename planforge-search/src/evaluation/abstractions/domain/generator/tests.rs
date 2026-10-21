@@ -6,6 +6,7 @@ use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::utils::float_tolerance;
 
 use super::*;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::{

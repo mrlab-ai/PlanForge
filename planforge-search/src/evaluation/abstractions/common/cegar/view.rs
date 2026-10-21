@@ -8,6 +8,8 @@ use anyhow::Result;
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex};
 
 use super::CegarStopReason;
+use super::initial_splits::RefinementScope;
+use super::options::CegarOptions;
 use super::split::Split;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 
@@ -27,6 +29,16 @@ pub(crate) struct RefinementLimits<'a> {
     pub(crate) max_states: usize,
     pub(crate) blacklisted_prop_var_ids: &'a HashSet<VariableIndex>,
     pub(crate) blacklisted_numeric_var_ids: &'a HashSet<VariableIndex>,
+}
+
+impl<'a> RefinementLimits<'a> {
+    pub(crate) fn new(options: &CegarOptions, scope: &'a RefinementScope) -> Self {
+        Self {
+            max_states: options.max_states,
+            blacklisted_prop_var_ids: &scope.blacklisted_prop_var_ids,
+            blacklisted_numeric_var_ids: &scope.blacklisted_numeric_var_ids,
+        }
+    }
 }
 
 /// An abstraction under refinement, as the flaw search sees it: abstract

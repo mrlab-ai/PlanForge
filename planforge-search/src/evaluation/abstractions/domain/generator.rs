@@ -15,11 +15,10 @@ use super::initial_splits::trivial_domain_mapping_and_sizes;
 use super::partitions::NumericPartitions;
 use super::view::{DomainBuild, DomainRefinement};
 use crate::evaluation::abstractions::common::abstraction::{
-    AbstractionCore, AbstractionMetadata, CegarAbstraction, finish_abstraction,
+    AbstractionCore, AbstractionMetadata, finish_abstraction,
 };
-use crate::evaluation::abstractions::common::cegar::CegarDriver;
 use crate::evaluation::abstractions::common::cegar::initial_splits::initial_splits;
-use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
+use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, refine_from_root};
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
 use crate::resource_limits::Deadline;
@@ -69,29 +68,17 @@ pub(super) fn refine_domain_abstraction(
         }
     }
 
-    let initial_state;
-    let root = match refinement_root {
-        Some(root) => root,
-        None => {
-            initial_state = semantics.states().initial_state()?;
-            &initial_state
-        }
-    };
-    let limits = RefinementLimits {
-        max_states: config.cegar.max_states,
-        blacklisted_prop_var_ids: &config.scope.blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids: &config.scope.blacklisted_numeric_var_ids,
-    };
-    let mut refinement = DomainRefinement::new(task, factory, limits, config);
-    let outcome = refine(
+    let mut refinement = DomainRefinement::new(
+        task,
+        factory,
+        RefinementLimits::new(&config.cegar, &config.scope),
+        config,
+    );
+    let outcome = refine_from_root(
         &mut refinement,
-        &CegarRun {
-            semantics: &semantics,
-            flaw_kind: config.cegar.flaw_kind,
-            flaw_scope: config.cegar.flaw_scope,
-            refinement_root: root,
-            driver: CegarDriver::new(config.cegar.max_iterations, config.cegar.max_time),
-        },
+        &semantics,
+        &config.cegar,
+        refinement_root,
         start,
     )?;
     let (factory, built) = refinement.into_parts();
@@ -167,11 +154,15 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
                 self.config.cegar.split_selection_rank,
             ),
         };
-        let mut abstraction = DomainAbstraction::new(factory, core, transitions);
+        let abstraction = DomainAbstraction::new(
+            factory,
+            core,
+            self.config
+                .cegar
+                .keep_transition_system
+                .then_some(transitions),
+        );
         finish_abstraction(&abstraction, start.elapsed())?;
-        if !self.config.cegar.keep_transition_system {
-            abstraction.discard_transition_data();
-        }
         Ok(abstraction)
     }
 }
