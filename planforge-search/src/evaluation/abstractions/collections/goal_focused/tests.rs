@@ -10,9 +10,17 @@ use planforge_sas::numeric_task::{
 
 use std::time::Duration;
 
-use super::super::member::BuiltReport;
+use planforge_sas::explicit_state::ExplicitStateSpace;
+use planforge_sas::numeric_task::OperatorIndex;
+
+use super::schedule::select_next_collection_goal;
 use super::*;
+use crate::evaluation::abstractions::collections::budget::CollectionLimits;
+use crate::evaluation::abstractions::collections::config::SplitKinds;
+use crate::evaluation::abstractions::collections::member::BuiltReport;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
+use crate::evaluation::seed::derive_variant_seed;
 
 /// One goal of the counter task: `x >= bound` or `x <= bound`.
 #[derive(Debug, Clone, Copy)]
