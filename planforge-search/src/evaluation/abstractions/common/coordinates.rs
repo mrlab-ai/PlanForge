@@ -39,21 +39,6 @@ impl AdditiveNumericView {
     }
 }
 
-pub(crate) fn initial_numeric_values_with_additive_views(
-    task: &dyn AbstractNumericTask,
-) -> Vec<NumericValue> {
-    let mut values = task.get_initial_numeric_state_values().to_vec();
-    for numeric_var_id in 0..task.numeric_variables().len() {
-        let Some(view) =
-            analyze_additive_numeric_view(task, VariableIndex::from_usize(numeric_var_id))
-        else {
-            continue;
-        };
-        values[numeric_var_id] = view.evaluate(&values);
-    }
-    values
-}
-
 /// Active derived views, indexed by the task's numeric variable IDs.
 #[derive(Clone, Debug)]
 pub(crate) struct AdditiveNumericViews {
@@ -195,38 +180,6 @@ fn numeric_expression_depends_on_cost(
     )
 }
 
-pub(crate) fn is_refinable_numeric_dimension(
-    task: &dyn AbstractNumericTask,
-    numeric_var_id: VariableIndex,
-) -> bool {
-    task.numeric_variables()
-        .get(numeric_var_id.index())
-        .is_some_and(|variable| match variable.get_type() {
-            NumericType::Regular => true,
-            NumericType::Derived => analyze_additive_numeric_view(task, numeric_var_id).is_some(),
-            NumericType::Constant | NumericType::Cost => false,
-        })
-}
-
-/// Prefer exact task-level coordinates at a comparison's two roots. If a
-/// nonlinear or non-additive derived root cannot serve as a coordinate, fall
-/// back to its regular leaves, preserving the existing general behavior.
-pub(crate) fn comparison_refinement_dimensions(
-    task: &dyn AbstractNumericTask,
-    tree: &NumericCondition,
-) -> Vec<VariableIndex> {
-    let mut direct = [tree.left_numeric_var_id(), tree.right_numeric_var_id()]
-        .into_iter()
-        .filter(|&numeric_var_id| is_refinable_numeric_dimension(task, numeric_var_id))
-        .collect::<Vec<_>>();
-    direct.sort_unstable();
-    direct.dedup();
-    if !direct.is_empty() {
-        return direct;
-    }
-    tree.regular_numeric_var_dependencies().to_vec()
-}
-
 /// Every refined coordinate that can constrain evaluation of `tree`.
 pub(crate) fn active_comparison_dimensions(
     tree: &NumericCondition,
@@ -333,6 +286,9 @@ fn constant_effect_delta(
 pub(crate) struct Coordinates<'task> {
     task: &'task dyn AbstractNumericTask,
     views: Vec<Option<AdditiveNumericView>>,
+    /// Per numeric condition, its requirement on the one coordinate it
+    /// constrains when it holds and when it does not, if it constrains one.
+    requirements: Vec<[Option<CoordinateRequirement>; 2]>,
 }
 
 /// The values a condition allows for the one coordinate it constrains.
@@ -344,10 +300,24 @@ pub(crate) struct CoordinateRequirement {
 
 impl<'task> Coordinates<'task> {
     pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Self {
-        let views = (0..task.numeric_variables().len())
+        let views: Vec<_> = (0..task.numeric_variables().len())
             .map(|var_id| analyze_additive_numeric_view(task, VariableIndex::from_usize(var_id)))
             .collect();
-        Self { task, views }
+        let is_coordinate = |var_id: VariableIndex| is_coordinate(task, &views, var_id);
+        let requirements = task
+            .numeric_conditions()
+            .iter()
+            .map(|condition| {
+                [0, 1].map(|prop_value| {
+                    condition_requirement(task, condition, prop_value, &is_coordinate)
+                })
+            })
+            .collect();
+        Self {
+            task,
+            views,
+            requirements,
+        }
     }
 
     /// The additive view of every numeric variable that has one.
@@ -355,14 +325,52 @@ impl<'task> Coordinates<'task> {
         &self.views
     }
 
+    /// Whether numeric variable `var_id` is a coordinate: regular, or derived
+    /// with an additive view.
+    pub(crate) fn is_coordinate(&self, var_id: VariableIndex) -> bool {
+        is_coordinate(self.task, &self.views, var_id)
+    }
+
+    /// The numeric variables a split refines `condition` along: the
+    /// coordinates among its two operands, or its regular leaves if neither
+    /// operand is a coordinate.
+    pub(crate) fn refinement_dimensions(&self, condition: &NumericCondition) -> Vec<VariableIndex> {
+        let mut direct = [
+            condition.left_numeric_var_id(),
+            condition.right_numeric_var_id(),
+        ]
+        .into_iter()
+        .filter(|&numeric_var_id| self.is_coordinate(numeric_var_id))
+        .collect::<Vec<_>>();
+        direct.sort_unstable();
+        direct.dedup();
+        if !direct.is_empty() {
+            return direct;
+        }
+        condition.regular_numeric_var_dependencies().to_vec()
+    }
+
+    /// The values of the task's numeric variables in its initial state, with
+    /// every derived coordinate evaluated through its view.
+    pub(crate) fn initial_values(&self) -> Vec<NumericValue> {
+        let mut values = self.task.get_initial_numeric_state_values().to_vec();
+        for (numeric_var_id, view) in self.views.iter().enumerate() {
+            if let Some(view) = view {
+                // A view reads regular variables only, which keep their values.
+                values[numeric_var_id] = view.evaluate(&values);
+            }
+        }
+        values
+    }
+
     /// The requirement of the comparison fact `fact` on its coordinate, or
     /// `None` if `fact` is not a comparison over exactly one coordinate.
     pub(crate) fn requirement(&self, fact: &ExplicitFact) -> Option<CoordinateRequirement> {
-        let (coordinate, values) = numeric_requirement_for_comparison_fact(self.task, fact)?;
-        Some(CoordinateRequirement {
-            coordinate: VariableIndex::from_usize(coordinate),
-            values,
-        })
+        let condition_id = self
+            .task
+            .numeric_conditions()
+            .id_for_var(fact.var_index())?;
+        *self.requirements[condition_id].get(fact.value())?
     }
 
     /// The states whose coordinate `coordinate` `op_id` maps into `target`,
@@ -438,38 +446,57 @@ impl<'task> Coordinates<'task> {
     }
 }
 
-pub(crate) fn numeric_requirement_for_comparison_fact(
+fn is_coordinate(
     task: &dyn AbstractNumericTask,
-    fact: &ExplicitFact,
-) -> Option<(usize, Interval)> {
-    let tree = task.numeric_conditions().for_var(fact.var_index())?;
-    let required_op = required_comparison_op(tree.op(), fact.value())?;
+    views: &[Option<AdditiveNumericView>],
+    var_id: VariableIndex,
+) -> bool {
+    match task.numeric_variables()[var_id.index()].get_type() {
+        NumericType::Regular => true,
+        NumericType::Derived => views[var_id.index()].is_some(),
+        NumericType::Constant | NumericType::Cost => false,
+    }
+}
+
+/// The requirement of `tree` on its one coordinate where its comparison
+/// variable has `prop_value`, if it constrains exactly one coordinate.
+fn condition_requirement(
+    task: &dyn AbstractNumericTask,
+    tree: &NumericCondition,
+    prop_value: usize,
+    is_coordinate: &impl Fn(VariableIndex) -> bool,
+) -> Option<CoordinateRequirement> {
+    let required_op = required_comparison_op(tree.op(), prop_value)?;
     let left = linearize_numeric_var(task, tree.left_numeric_var_id()).ok()?;
     let right = linearize_numeric_var(task, tree.right_numeric_var_id()).ok()?;
     let num_numeric_vars = task.numeric_variables().len();
-    if is_refinable_numeric_dimension(task, tree.left_numeric_var_id()) && right.is_constant() {
+    let requirement = |(coordinate, values): (usize, Interval)| CoordinateRequirement {
+        coordinate: VariableIndex::from_usize(coordinate),
+        values,
+    };
+    if is_coordinate(tree.left_numeric_var_id()) && right.is_constant() {
         let expression =
             LinearExpression::variable(num_numeric_vars, tree.left_numeric_var_id()).subtract(
                 &LinearExpression::constant(num_numeric_vars, right.constant),
             );
-        if let Some(requirement) =
+        if let Some(found) =
             single_var_interval_for_linear_zero_comparison(&expression, required_op)
         {
-            return Some(requirement);
+            return Some(requirement(found));
         }
     }
-    if is_refinable_numeric_dimension(task, tree.right_numeric_var_id()) && left.is_constant() {
+    if is_coordinate(tree.right_numeric_var_id()) && left.is_constant() {
         let expression = LinearExpression::constant(num_numeric_vars, left.constant).subtract(
             &LinearExpression::variable(num_numeric_vars, tree.right_numeric_var_id()),
         );
-        if let Some(requirement) =
+        if let Some(found) =
             single_var_interval_for_linear_zero_comparison(&expression, required_op)
         {
-            return Some(requirement);
+            return Some(requirement(found));
         }
     }
     let expression = left.subtract(&right);
-    single_var_interval_for_linear_zero_comparison(&expression, required_op)
+    single_var_interval_for_linear_zero_comparison(&expression, required_op).map(requirement)
 }
 
 fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {

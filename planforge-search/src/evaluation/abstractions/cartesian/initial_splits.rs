@@ -7,9 +7,6 @@
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 
 use super::*;
-use crate::evaluation::abstractions::common::coordinates::{
-    initial_numeric_values_with_additive_views, is_refinable_numeric_dimension,
-};
 
 /// Splits `working` on the encoded variable `var`; see the module
 /// documentation. Blacklisted variables stay unsplit.
@@ -33,7 +30,8 @@ pub(super) fn apply_initial_split(
                 .random_seed
                 .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
         );
-        let initial_numeric = initial_numeric_values_with_additive_views(task);
+        let coordinates = semantics.cegar().coordinates();
+        let initial_numeric = coordinates.initial_values();
         for goal_id in 0..task.get_num_goals() {
             if task.get_goal_fact(goal_id).var_index() != var {
                 continue;
@@ -42,9 +40,9 @@ pub(super) fn apply_initial_split(
                 .numeric_conditions()
                 .for_var(var)
                 .expect("a condition variable has its condition");
-            for numeric_var in comparison_refinement_dimensions(task, condition) {
+            for numeric_var in coordinates.refinement_dimensions(condition) {
                 if config.blacklisted_numeric_var_ids.contains(&numeric_var)
-                    || !is_refinable_numeric_dimension(task, numeric_var)
+                    || !coordinates.is_coordinate(numeric_var)
                 {
                     continue;
                 }

@@ -91,9 +91,7 @@ use super::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };
-use crate::evaluation::abstractions::common::coordinates::{
-    AdditiveNumericView, comparison_refinement_dimensions,
-};
+use crate::evaluation::abstractions::common::coordinates::AdditiveNumericView;
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,

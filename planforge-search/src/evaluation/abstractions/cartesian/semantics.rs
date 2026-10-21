@@ -23,7 +23,7 @@ pub(super) fn mark_fact_split_dependencies(
     let var_id = fact.var_index();
     if let Some(condition) = task.numeric_conditions().for_var(var_id) {
         let mut dimensions = condition.regular_numeric_var_dependencies().to_vec();
-        dimensions.extend(comparison_refinement_dimensions(task, condition));
+        dimensions.extend(regions.coordinates().refinement_dimensions(condition));
         dimensions.sort_unstable();
         dimensions.dedup();
         for numeric_var_id in dimensions {

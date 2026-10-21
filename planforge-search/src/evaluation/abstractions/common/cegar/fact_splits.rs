@@ -16,7 +16,6 @@ use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::AbstractionView;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
 
 pub(crate) fn split_failed_fact(
     view: &impl AbstractionView,
@@ -297,7 +296,7 @@ fn comparison_refinement(
     let mut candidates = Vec::new();
     // The coordinates the condition is over, or its regular operands when it
     // is over no coordinate.
-    for var_id in comparison_refinement_dimensions(semantics.task(), tree) {
+    for var_id in semantics.coordinates().refinement_dimensions(tree) {
         let witness_value =
             float_tolerance::canonicalize(match &semantics.coordinates().views()[var_id.index()] {
                 Some(view) => view.evaluate(numeric_values),

@@ -14,10 +14,7 @@ use super::abstract_operators::DomainMapping;
 use super::config::DomainAbstractionConfig;
 use super::partitions::NumericPartitions;
 
-use crate::evaluation::abstractions::common::coordinates::{
-    comparison_refinement_dimensions, initial_numeric_values_with_additive_views,
-    is_refinable_numeric_dimension,
-};
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 
 /// The task's goal facts, sorted and deduplicated.
 ///
@@ -69,14 +66,16 @@ pub(super) fn initial_split_mapping(
 /// its own. The numeric operands of goal conditions on selected variables are
 /// split at their initial values, so an operator can change the condition.
 pub(super) fn apply_initial_goal_splits(
-    task: &dyn AbstractNumericTask,
+    semantics: &CegarSemantics<'_>,
     config: &DomainAbstractionConfig,
-    numeric_integer_lattice: &[bool],
     rng: &mut SmallRng,
     domain_mapping: &mut DomainMapping,
     domain_sizes: &mut [usize],
     partitions: &mut NumericPartitions,
 ) -> Result<()> {
+    let task = semantics.task();
+    let coordinates = semantics.coordinates();
+    let numeric_integer_lattice = semantics.numeric_integer_lattice();
     let blacklisted_prop_var_ids = &config.blacklisted_prop_var_ids;
     let blacklisted_numeric_var_ids = &config.blacklisted_numeric_var_ids;
     let mut numeric_domain_sizes = partitions.numeric_domain_sizes();
@@ -127,7 +126,7 @@ pub(super) fn apply_initial_goal_splits(
     // every goal condition, lets the members of a collection focus on
     // different conditions; seeding them all made every member refine the
     // same conditions, which left canonical heuristics no additive subsets.
-    let initial_numeric = initial_numeric_values_with_additive_views(task);
+    let initial_numeric = coordinates.initial_values();
     for goal in &goals {
         if let Some(selected) = &config.init_split_var_ids
             && !selected.contains(&goal.var_index())
@@ -137,9 +136,9 @@ pub(super) fn apply_initial_goal_splits(
         let Some(condition) = task.numeric_conditions().for_var(goal.var_index()) else {
             continue;
         };
-        for numeric_var_id in comparison_refinement_dimensions(task, condition) {
+        for numeric_var_id in coordinates.refinement_dimensions(condition) {
             if blacklisted_numeric_var_ids.contains(&numeric_var_id)
-                || !is_refinable_numeric_dimension(task, numeric_var_id)
+                || !coordinates.is_coordinate(numeric_var_id)
                 || !can_refine_numeric_variable(
                     domain_sizes,
                     &numeric_domain_sizes,

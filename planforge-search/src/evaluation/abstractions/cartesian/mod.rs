@@ -63,7 +63,6 @@ use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };
-use crate::evaluation::abstractions::common::coordinates::comparison_refinement_dimensions;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
     AbstractTransitionSystem, BackwardGraph, CostedTransitionSystem, LabelSourceSet,

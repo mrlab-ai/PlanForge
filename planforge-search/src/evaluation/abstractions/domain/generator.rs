@@ -62,9 +62,8 @@ pub(super) fn refine_domain_abstraction(
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
     let mut partitions = NumericPartitions::trivial(task);
     apply_initial_goal_splits(
-        task,
+        &semantics,
         config,
-        semantics.numeric_integer_lattice(),
         &mut rng,
         &mut domain_mapping,
         &mut domain_sizes,
