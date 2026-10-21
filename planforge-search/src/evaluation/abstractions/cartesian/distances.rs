@@ -52,6 +52,13 @@ impl ShortestPaths {
         self.is_goal[state_id]
     }
 
+    /// The goal states, ascending.
+    pub(super) fn goal_states(&self) -> Vec<usize> {
+        (0..self.is_goal.len())
+            .filter(|&state_id| self.is_goal[state_id])
+            .collect()
+    }
+
     pub(super) fn generating_transition(&self, state_id: usize) -> Option<TransitionKey> {
         self.generating_transition[state_id]
     }

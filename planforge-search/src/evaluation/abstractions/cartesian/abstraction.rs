@@ -1,24 +1,65 @@
 use super::*;
-use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
+use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
+use crate::evaluation::abstractions::common::regions::SOURCE_SETS;
+use crate::evaluation::abstractions::component::AbstractionKind;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     ExplicitSaturationGraph, RemainingCosts, SourceSetCostAllocation, saturate_labels,
     saturate_regions,
 };
 use crate::resource_limits::Deadline;
 
+/// A Cartesian abstraction: the refinement hierarchy that maps concrete
+/// states to abstract ones, and, until discarded, its transitions.
 #[derive(Debug, Clone)]
 pub struct CartesianAbstraction {
-    pub hierarchy: CartesianRefinementHierarchy,
-    pub distance_table: AbstractDistanceTable,
-    pub transition_system: AbstractTransitionSystem,
-    pub relevant_operator_ids: Vec<OperatorIndex>,
-    pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
-    pub metadata: AbstractionMetadata,
-    /// The non-loop transitions CEGAR built, retained or not.
-    pub transition_count: usize,
+    pub(crate) hierarchy: CartesianRefinementHierarchy,
+    core: AbstractionCore,
+    pub(super) transitions: Option<CartesianTransitions>,
+}
+
+/// The transitions of a Cartesian abstraction, with the region of every
+/// abstract state and, once regional saturation was prepared, the source
+/// sets of every transition's labels.
+#[derive(Debug, Clone)]
+pub(crate) struct CartesianTransitions {
+    pub(crate) system: AbstractTransitionSystem,
+    pub(crate) regions: Vec<Arc<CartesianSet>>,
+    pub(crate) source_sets: Option<Vec<AbstractOperatorSourceSets>>,
+}
+
+impl CartesianAbstraction {
+    pub(crate) fn new(
+        hierarchy: CartesianRefinementHierarchy,
+        core: AbstractionCore,
+        transitions: Option<CartesianTransitions>,
+    ) -> Self {
+        Self {
+            hierarchy,
+            core,
+            transitions,
+        }
+    }
+
+    fn transitions(&self) -> Result<&CartesianTransitions> {
+        self.transitions
+            .as_ref()
+            .context("the Cartesian abstraction's transitions were discarded")
+    }
 }
 
 impl CegarAbstraction for CartesianAbstraction {
+    fn kind(&self) -> AbstractionKind {
+        AbstractionKind::Cartesian
+    }
+
+    fn core(&self) -> &AbstractionCore {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut AbstractionCore {
+        &mut self.core
+    }
+
     fn abstract_state(
         &self,
         propositional: &[ExplicitValueIndex],
@@ -27,110 +68,81 @@ impl CegarAbstraction for CartesianAbstraction {
         self.hierarchy.map_state(propositional, numeric)
     }
 
-    fn distance_table(&self) -> &AbstractDistanceTable {
-        &self.distance_table
+    fn discard_transition_data(&mut self) {
+        self.transitions = None;
     }
 
-    fn metadata(&self) -> &AbstractionMetadata {
-        &self.metadata
+    fn retains_transitions(&self) -> bool {
+        self.transitions.is_some()
     }
 
-    fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
-        &mut self.metadata
-    }
-
-    fn num_abstract_operators(&self) -> usize {
-        self.transition_count
-    }
-
-    fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets] {
-        &self.abstract_source_sets
-    }
-
-    fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
-        let system = &self.transition_system;
-        if !self.abstract_source_sets.is_empty() || system.transitions.is_empty() {
+    /// Every abstract operator is one transition, so its source sets are
+    /// those of the transition.
+    fn prepare_regional_saturation(
+        &mut self,
+        regions: &RegionSemantics<'_>,
+        deadline: Deadline,
+    ) -> Result<()> {
+        let transitions = self
+            .transitions
+            .as_mut()
+            .context("cannot build source sets after the transitions were discarded")?;
+        if transitions.source_sets.is_some() {
             return Ok(());
         }
-        ensure!(
-            !system.cartesian_sets.is_empty(),
-            "cannot build source sets after the transition system was discarded"
-        );
-        let regions = RegionSemantics::new(task)?;
-        self.abstract_source_sets = system
+        let source_sets = transitions
+            .system
             .transitions
             .iter()
             .map(|transition| {
-                let source = &system.cartesian_sets[transition.source_state];
-                let target = &system.cartesian_sets[transition.target_state];
-                let labels = transition
-                    .concrete_op_ids
-                    .iter()
-                    .map(|&concrete_op_id| {
-                        let source_set = regions
-                            .transition_source_set(source, concrete_op_id, target)?
-                            .with_context(|| {
-                                format!(
-                                    "transition {} has an empty source set for operator {concrete_op_id}",
-                                    transition.transition_id
-                                )
-                            })?;
-                        // A label that can leave from anywhere in the source
-                        // state shares its region.
-                        let source = if source_set == **source {
-                            Arc::clone(source)
-                        } else {
-                            Arc::new(source_set)
-                        };
-                        Ok(LabelSourceSet {
-                            concrete_op_id,
-                            source,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok(AbstractOperatorSourceSets { labels })
+                if transition.transition_id.is_multiple_of(1024) {
+                    deadline.ensure(SOURCE_SETS)?;
+                }
+                regions
+                    .abstract_operator_source_sets(
+                        &transitions.regions[transition.source_state],
+                        &transition.concrete_op_ids,
+                        &transitions.regions[transition.target_state],
+                    )
+                    .with_context(|| format!("transition {}", transition.transition_id))
             })
             .collect::<Result<_>>()?;
+        transitions.source_sets = Some(source_sets);
         Ok(())
     }
 
-    fn discard_transition_data(&mut self) {
-        self.transition_system.transitions = Vec::new();
-        self.transition_system.backward = Vec::new();
-        self.transition_system.cartesian_sets = Vec::new();
-        self.abstract_source_sets = Vec::new();
+    fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
+        self.transitions.as_ref()?.source_sets.as_deref()
     }
-}
 
-impl CartesianAbstraction {
-    /// Label saturation of the abstraction under `operator_costs`; see
-    /// [`saturate_labels`].
-    pub(crate) fn saturate_labels(
+    fn saturate_labels(
         &self,
         operator_costs: &[f64],
         perimeter_state: Option<usize>,
         deadline: Deadline,
     ) -> Result<(Vec<f64>, Vec<f64>)> {
         saturate_labels(
-            &mut ExplicitSaturationGraph::new(&self.transition_system),
+            &mut ExplicitSaturationGraph::new(&self.transitions()?.system),
             operator_costs,
             perimeter_state,
             deadline,
         )
     }
 
-    /// Regional saturation of the abstraction under `remaining`; see
-    /// [`saturate_regions`]. Every abstract operator is one transition, so
-    /// its source sets are already those of the transition.
-    pub(crate) fn saturate_regions(
+    fn saturate_regions(
         &self,
         remaining: &RemainingCosts,
         perimeter_state: Option<usize>,
         deadline: Deadline,
     ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
+        let transitions = self.transitions()?;
+        let source_sets = transitions
+            .source_sets
+            .as_deref()
+            .context("regional saturation of a Cartesian abstraction needs its source sets")?;
         saturate_regions(
-            &self.transition_system,
-            &self.abstract_source_sets,
+            &transitions.system,
+            source_sets,
             |_, source_set| Ok(source_set.clone()),
             remaining,
             perimeter_state,

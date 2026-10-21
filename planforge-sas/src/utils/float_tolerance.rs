@@ -20,6 +20,13 @@ pub fn tolerance(lhs: NumericValue, rhs: NumericValue) -> NumericValue {
     NumericValue::new(ABS_EPSILON.max(REL_EPSILON * lhs.abs().max(rhs.abs()).value()))
 }
 
+/// TODO(canonical values): multiplying by the inexact `ABS_EPSILON` moves
+/// some integers by one ulp from about 1e7 on (636192524 becomes
+/// 636192523.9999999), and from |v| >= 2^53 * 1e-12 (about 9007) the grid is
+/// finer than f64 resolution, so no noise is removed there. Keeping integers
+/// fixed (identity above that bound, `(v * 1e12).round() / 1e12` below) would
+/// let comparisons of canonical values be exact; it changes search state
+/// hashing, so it needs its own gated change.
 #[inline]
 pub fn canonicalize(value: NumericValue) -> NumericValue {
     if value.is_nan() || value.is_infinite() {

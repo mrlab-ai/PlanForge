@@ -5,17 +5,21 @@ use std::cell::RefCell;
 
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
-};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
 
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;
 use super::cegar::{CegarStopReason, SplitKind};
-use super::transition_system::{AbstractDistanceTable, AbstractOperatorSourceSets};
+use super::regions::RegionSemantics;
+use super::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
+use crate::evaluation::abstractions::component::AbstractionKind;
+use crate::evaluation::abstractions::cost_partitioning::costs::{
+    RemainingCosts, SourceSetCostAllocation,
+};
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
+use crate::resource_limits::Deadline;
 
 /// Whether an abstraction stands alone or is a member of a collection.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -86,11 +90,41 @@ impl AbstractionMetadata {
     pub fn solved_by_self(&self) -> bool {
         self.stop_reason == CegarStopReason::ConcretePlan
     }
+
+    /// The abstraction's goal distance of the initial state is the optimal
+    /// plan cost: CEGAR found a concrete plan on the abstraction of the full
+    /// task.
+    pub fn proves_initial_state_optimal(&self) -> bool {
+        self.solved_by_self() && self.abstraction_use.permits_initial_optimality_proof()
+    }
+}
+
+/// What every abstraction CEGAR built records, whatever its representation.
+#[derive(Debug, Clone)]
+pub struct AbstractionCore {
+    /// The goal distance of every abstract state.
+    pub(crate) distances: Vec<f64>,
+    /// The abstract state of the task's initial state.
+    pub(crate) initial_state: usize,
+    /// The concrete operators that label a transition between two distinct
+    /// abstract states, ascending.
+    pub(crate) relevant_operator_ids: Vec<OperatorIndex>,
+    /// The abstract operators CEGAR built; a Cartesian abstraction has one
+    /// per transition.
+    pub(crate) num_abstract_operators: usize,
+    pub(crate) metadata: AbstractionMetadata,
 }
 
 /// An abstraction CEGAR built: an abstraction function with the goal
-/// distances of its abstract states.
-pub trait CegarAbstraction {
+/// distances of its abstract states, and, until discarded, the transitions
+/// cost partitioning saturates.
+pub trait CegarAbstraction: std::fmt::Debug {
+    fn kind(&self) -> AbstractionKind;
+
+    fn core(&self) -> &AbstractionCore;
+
+    fn core_mut(&mut self) -> &mut AbstractionCore;
+
     /// The abstract state containing the concrete state with these values.
     fn abstract_state(
         &self,
@@ -98,44 +132,89 @@ pub trait CegarAbstraction {
         numeric: &[NumericValue],
     ) -> Result<usize>;
 
-    fn distance_table(&self) -> &AbstractDistanceTable;
-
-    fn metadata(&self) -> &AbstractionMetadata;
-
-    fn metadata_mut(&mut self) -> &mut AbstractionMetadata;
-
-    /// Drops what only cost partitioning reads: the transitions and the
-    /// operators' source sets. Lookups stay intact.
+    /// Drops the transitions, which only cost partitioning reads. Lookups
+    /// stay intact; saturation fails afterwards.
     fn discard_transition_data(&mut self);
 
-    /// The number of abstract operators; a Cartesian abstraction has one
-    /// per transition.
-    fn num_abstract_operators(&self) -> usize;
+    /// The transitions were not discarded.
+    fn retains_transitions(&self) -> bool;
 
-    /// The source set of every abstract operator's labels, which regional
-    /// cost partitioning attaches costs to; empty when not built.
-    fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets];
+    /// Builds what regional saturation reads: the source set of every
+    /// abstract operator's labels, unless built already. Fails once the
+    /// transitions were discarded.
+    fn prepare_regional_saturation(
+        &mut self,
+        regions: &RegionSemantics<'_>,
+        deadline: Deadline,
+    ) -> Result<()>;
 
-    /// Builds the abstract operators' source sets, unless built already.
-    /// Fails once the transition data was discarded.
-    fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()>;
+    /// The source sets regional cost partitioning attaches costs to; `None`
+    /// until [`Self::prepare_regional_saturation`] built them.
+    fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]>;
+
+    /// The goal distances under `operator_costs` and the saturated cost of
+    /// every operator; see [`saturate_labels`](crate::evaluation::abstractions::cost_partitioning::costs::saturate_labels).
+    fn saturate_labels(
+        &self,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>)>;
+
+    /// The goal distances under `remaining` and what every transition
+    /// needs of its labels' source sets; see [`saturate_regions`](crate::evaluation::abstractions::cost_partitioning::costs::saturate_regions).
+    fn saturate_regions(
+        &self,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation)>;
+
+    fn metadata(&self) -> &AbstractionMetadata {
+        &self.core().metadata
+    }
+
+    fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
+        &mut self.core_mut().metadata
+    }
+
+    fn distances(&self) -> &[f64] {
+        &self.core().distances
+    }
 
     fn num_states(&self) -> usize {
-        self.distance_table().distances.len()
+        self.core().distances.len()
+    }
+
+    fn num_abstract_operators(&self) -> usize {
+        self.core().num_abstract_operators
+    }
+
+    fn relevant_operator_ids(&self) -> &[OperatorIndex] {
+        &self.core().relevant_operator_ids
     }
 
     /// The goal distance of the task's initial state.
     fn initial_h(&self) -> f64 {
-        let table = self.distance_table();
-        table.distances[table.initial_state]
+        let core = self.core();
+        core.distances[core.initial_state]
+    }
+
+    /// The goal distance of the abstract state of the concrete state with
+    /// these values.
+    fn goal_distance(
+        &self,
+        propositional: &[ExplicitValueIndex],
+        numeric: &[NumericValue],
+    ) -> Result<f64> {
+        Ok(self.core().distances[self.abstract_state(propositional, numeric)?])
     }
 }
 
-/// Checks and logs an abstraction `G::NAME` built in `elapsed`: CEGAR
+/// Checks and logs an abstraction built in `elapsed`: CEGAR
 /// reaches a refinement root from the initial state, so an initial state
 /// without finite goal distance means CEGAR stopped at a dead end.
 pub(crate) fn finish_abstraction(
-    name: &str,
     abstraction: &impl CegarAbstraction,
     elapsed: std::time::Duration,
 ) -> Result<()> {
@@ -143,11 +222,13 @@ pub(crate) fn finish_abstraction(
     let initial_h = abstraction.initial_h();
     anyhow::ensure!(
         initial_h.is_finite() || metadata.stop_reason == CegarStopReason::DeadEnd,
-        "the initial state of a {name} abstraction has no finite goal distance, but CEGAR stopped with {:?}",
+        "the initial state of a {} has no finite goal distance, but CEGAR stopped with {:?}",
+        abstraction.kind(),
         metadata.stop_reason
     );
     tracing::info!(
-        "{name} abstraction: states={}, abstract_operators={}, refinements={}, h(init)={initial_h}, stop={:?}, elapsed={:.3}s",
+        "{}: states={}, abstract_operators={}, refinements={}, h(init)={initial_h}, stop={:?}, elapsed={:.3}s",
+        abstraction.kind(),
         abstraction.num_states(),
         abstraction.num_abstract_operators(),
         metadata.refinements,
@@ -187,16 +268,13 @@ impl<A: CegarAbstraction> Heuristic for AbstractionHeuristic<A> {
     ) -> Result<f64, EvaluationError> {
         let mut values = self.values.borrow_mut();
         eval_state.fill_values(&mut values)?;
-        let state_id = self
-            .abstraction
-            .abstract_state(&values.propositional, &values.numeric)
-            .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
-        Ok(self.abstraction.distance_table().distances[state_id])
+        self.abstraction
+            .goal_distance(&values.propositional, &values.numeric)
+            .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))
     }
 
     fn proves_initial_state_optimal(&self) -> bool {
-        let metadata = self.abstraction.metadata();
-        metadata.solved_by_self() && metadata.abstraction_use.permits_initial_optimality_proof()
+        self.abstraction.metadata().proves_initial_state_optimal()
     }
 
     fn heuristic_name(&self) -> &str {

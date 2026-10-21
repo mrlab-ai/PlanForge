@@ -1,5 +1,6 @@
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -16,7 +17,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
 use crate::evaluation::abstractions::common::abstraction::{
-    AbstractionMetadata, AbstractionUse, CollectionRecord,
+    AbstractionCore, AbstractionMetadata, AbstractionUse, CollectionRecord,
 };
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
@@ -98,15 +99,15 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             .iter()
             .filter(|abstraction| {
                 abstraction
-                    .metadata
+                    .metadata()
                     .collection_member
                     .map(|member| member.goal_id)
                     == Some(goal_id)
             })
             .map(|abstraction| {
                 (
-                    abstraction.metadata.split_kind,
-                    abstraction.metadata.split_selection_rank,
+                    abstraction.metadata().split_kind,
+                    abstraction.metadata().split_selection_rank,
                 )
             })
             .collect::<Vec<_>>();
@@ -132,15 +133,11 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
 
     let standalone_max = abstractions
         .iter()
-        .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
-        })
+        .map(|abstraction| abstraction.initial_h())
         .fold(0.0f64, f64::max);
     let abstraction_h = abstractions
         .iter()
-        .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
-        })
+        .map(|abstraction| abstraction.initial_h())
         .collect::<Vec<_>>();
     let components = abstractions
         .iter()
@@ -204,7 +201,7 @@ fn initial_cartesian_scp_value(
     .expect("failed to construct oracle SCP heuristic");
     let mut state = heuristic.state.borrow_mut();
     let mut partitions = heuristic
-        .build_cost_partitionings(task, &mut state, &abstract_state_ids)
+        .build_cost_partitionings(&mut state, &abstract_state_ids)
         .expect("oracle SCP construction failed");
     assert_eq!(partitions.len(), 1);
     partitions
@@ -230,11 +227,11 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
         let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
-        abstraction.metadata.collection = Some(CollectionRecord {
+        abstraction.metadata_mut().collection = Some(CollectionRecord {
             iteration: index + 1,
             full_task: false,
         });
-        let states = abstraction.distance_table.distances.len();
+        let states = abstraction.distances().len();
         assert!(
             states <= 10_000,
             "{} has {states} states, expected at most 10000",
@@ -257,6 +254,11 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         ..Default::default()
     };
 
+    let partition_reports = specs
+        .iter()
+        .zip(&abstractions)
+        .map(|(spec, abstraction)| partition_report(transformed_task, abstraction, &spec.view_ids))
+        .collect::<Vec<_>>();
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         collection_components(abstractions, Vec::new(), vec![]),
@@ -269,7 +271,7 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     {
         let mut state = heuristic.state.borrow_mut();
         let mut partitions = heuristic
-            .build_cost_partitionings(transformed_task, &mut state, &abstract_state_ids)
+            .build_cost_partitionings(&mut state, &abstract_state_ids)
             .expect("initial SCP construction failed");
         assert_eq!(partitions.len(), 1);
         SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partitions.pop().unwrap());
@@ -296,20 +298,17 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
 
     for (index, (spec, component)) in specs.iter().zip(components.iter()).enumerate() {
         let abstraction = component
-            .as_domain()
+            .cegar()
             .expect("handcrafted diagnostic uses domain components");
-        let abstraction_h = current_h_for_distances(
-            index,
-            &abstraction.distance_table.distances,
-            &abstract_state_ids,
-        );
+        let abstraction_h =
+            current_h_for_distances(index, abstraction.distances(), &abstract_state_ids);
         println!(
             "HANDCRAFTED_FULL_TASK_ABS index={index} name={} abstraction_h={abstraction_h} scp_contribution={} states={} abstract_ops={} views={}",
             spec.name,
             contributions[index],
-            abstraction.distance_table.distances.len(),
-            abstraction.abstract_operators.len(),
-            partition_report(transformed_task, abstraction, &spec.view_ids),
+            abstraction.distances().len(),
+            abstraction.num_abstract_operators(),
+            partition_reports[index],
         );
     }
     println!("HANDCRAFTED_FULL_TASK_CONTRIBUTIONS {contributions:?}");
@@ -410,22 +409,13 @@ fn build_handcrafted_abstraction(
         .collect::<Vec<_>>();
     let factory =
         DomainAbstractionFactory::new(transformed_task, domain_mapping, domain_sizes, partitions)?;
-    let abstract_operators = factory.abstract_operators(transformed_task, false, Deadline::NONE)?;
-    let abstract_source_sets =
-        factory.build_abstract_source_sets(transformed_task, &abstract_operators)?;
-    let distance_table =
-        factory.build_distance_table(transformed_task, &abstract_operators, Deadline::NONE)?;
-    let relevant_operator_ids =
-        factory.relevant_operator_ids(transformed_task, &abstract_operators);
-    Ok(DomainAbstraction {
-        factory,
-        distance_table,
-        combine_labels: false,
-        relevant_operator_ids,
-        abstract_operators,
-        transition_data_retained: true,
-        abstract_source_sets,
-        interval_transition_system: RefCell::new(None),
+    let transitions = factory.transitions(transformed_task, false, Deadline::NONE)?;
+    let (distances, _) = transitions.goal_distances(Deadline::NONE)?;
+    let core = AbstractionCore {
+        distances,
+        initial_state: factory.initial_state(transformed_task)?,
+        relevant_operator_ids: transitions.relevant_operator_ids(),
+        num_abstract_operators: transitions.operators.len(),
         metadata: AbstractionMetadata {
             abstraction_use: AbstractionUse::CollectionMember,
             ..AbstractionMetadata::standalone(
@@ -439,7 +429,11 @@ fn build_handcrafted_abstraction(
                 None,
             )
         },
-    })
+    };
+    let mut abstraction = DomainAbstraction::new(factory, core, transitions);
+    abstraction
+        .prepare_regional_saturation(&RegionSemantics::new(transformed_task)?, Deadline::NONE)?;
+    Ok(abstraction)
 }
 
 fn initial_abstract_state_ids(
@@ -594,7 +588,7 @@ fn partition_report(
         .map(|&view_id| {
             let name = task.numeric_variables()[view_id].name();
             let num_parts = abstraction
-                .factory
+                .factory()
                 .partitions()
                 .partitions(VariableIndex::from_usize(view_id))
                 .len();

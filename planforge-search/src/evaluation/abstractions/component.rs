@@ -42,8 +42,7 @@ pub struct GoalFocusedMember {
 
 /// An abstraction that collection heuristics combine.
 pub enum AbstractionComponent<'task> {
-    Domain(Box<DomainAbstraction>),
-    Cartesian(Box<CartesianAbstraction>),
+    Cegar(Box<dyn CegarAbstraction>),
     PatternDatabase(Box<PatternDatabase<'task>>),
 }
 
@@ -52,53 +51,35 @@ impl<'task> AbstractionComponent<'task> {
     /// database.
     pub fn cegar(&self) -> Option<&dyn CegarAbstraction> {
         match self {
-            Self::Domain(abstraction) => Some(abstraction.as_ref()),
-            Self::Cartesian(abstraction) => Some(abstraction.as_ref()),
+            Self::Cegar(abstraction) => Some(abstraction.as_ref()),
             Self::PatternDatabase(_) => None,
-        }
-    }
-
-    /// Builds the source sets regional cost partitioning reads; a pattern
-    /// database has none.
-    pub fn ensure_abstract_source_sets(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-    ) -> anyhow::Result<()> {
-        match self {
-            Self::Domain(abstraction) => abstraction.ensure_abstract_source_sets(task),
-            Self::Cartesian(abstraction) => abstraction.ensure_abstract_source_sets(task),
-            Self::PatternDatabase(_) => Ok(()),
         }
     }
 
     pub fn discard_transition_data(&mut self) {
         match self {
-            Self::Domain(abstraction) => abstraction.discard_transition_data(),
-            Self::Cartesian(abstraction) => abstraction.discard_transition_data(),
+            Self::Cegar(abstraction) => abstraction.discard_transition_data(),
             Self::PatternDatabase(_) => {}
         }
     }
 
     pub fn kind(&self) -> AbstractionKind {
         match self {
-            Self::Domain(_) => AbstractionKind::Domain,
-            Self::Cartesian(_) => AbstractionKind::Cartesian,
+            Self::Cegar(abstraction) => abstraction.kind(),
             Self::PatternDatabase(_) => AbstractionKind::PatternDatabase,
         }
     }
 
     pub fn num_states(&self) -> usize {
         match self {
+            Self::Cegar(abstraction) => abstraction.num_states(),
             Self::PatternDatabase(pdb) => pdb.num_states(),
-            _ => self.cegar().expect("not a pattern database").num_states(),
         }
     }
 
     pub fn proves_initial_state_optimal(&self) -> bool {
-        self.cegar().is_some_and(|abstraction| {
-            let metadata = abstraction.metadata();
-            metadata.solved_by_self() && metadata.abstraction_use.permits_initial_optimality_proof()
-        })
+        self.cegar()
+            .is_some_and(|abstraction| abstraction.metadata().proves_initial_state_optimal())
     }
 
     /// The abstract state of the concrete state `values`; `None` for a state
@@ -108,21 +89,22 @@ impl<'task> AbstractionComponent<'task> {
         values: &ExplicitState,
     ) -> Result<Option<usize>, EvaluationError> {
         match self {
-            Self::PatternDatabase(pdb) => pdb
-                .abstract_state_id_from_source_state_values(&values.propositional, &values.numeric)
-                .map_err(EvaluationError::ComputationFailed),
-            _ => self
-                .cegar()
-                .expect("not a pattern database")
+            Self::Cegar(abstraction) => abstraction
                 .abstract_state(&values.propositional, &values.numeric)
                 .map(Some)
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
+            Self::PatternDatabase(pdb) => pdb
+                .abstract_state_id_from_source_state_values(&values.propositional, &values.numeric)
+                .map_err(EvaluationError::ComputationFailed),
         }
     }
 
     /// The goal distance this component alone estimates for `values`.
     pub fn standalone_value(&self, values: &ExplicitState) -> Result<f64, EvaluationError> {
         match self {
+            Self::Cegar(abstraction) => abstraction
+                .goal_distance(&values.propositional, &values.numeric)
+                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}"))),
             // A pattern database projects the state itself, and falls back
             // for a state it did not enumerate.
             Self::PatternDatabase(pdb) => pdb
@@ -131,13 +113,6 @@ impl<'task> AbstractionComponent<'task> {
                     &values.numeric,
                 )
                 .map_err(EvaluationError::ComputationFailed),
-            _ => {
-                let abstraction = self.cegar().expect("not a pattern database");
-                let state_id = abstraction
-                    .abstract_state(&values.propositional, &values.numeric)
-                    .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
-                Ok(abstraction.distance_table().distances[state_id])
-            }
         }
     }
 
@@ -146,8 +121,7 @@ impl<'task> AbstractionComponent<'task> {
         task: &dyn AbstractNumericTask,
     ) -> Result<BTreeSet<OperatorIndex>, String> {
         let ids: Vec<OperatorIndex> = match self {
-            Self::Domain(abstraction) => abstraction.relevant_operator_ids.clone(),
-            Self::Cartesian(abstraction) => abstraction.relevant_operator_ids.clone(),
+            Self::Cegar(abstraction) => abstraction.relevant_operator_ids().to_vec(),
             Self::PatternDatabase(pdb) => pdb.relevant_operator_ids(),
         };
         let operator_count = task.get_operators().len();
@@ -174,38 +148,23 @@ impl<'task> AbstractionComponent<'task> {
             })
     }
 
-    #[cfg(test)]
-    pub fn as_domain(&self) -> Option<&DomainAbstraction> {
-        match self {
-            Self::Domain(abstraction) => Some(abstraction),
-            Self::Cartesian(_) | Self::PatternDatabase(_) => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn as_cartesian(&self) -> Option<&CartesianAbstraction> {
-        match self {
-            Self::Cartesian(abstraction) => Some(abstraction),
-            Self::Domain(_) | Self::PatternDatabase(_) => None,
-        }
-    }
-
     /// The source sets of the abstract operators, which regional cost
-    /// partitioning attaches costs to; `None` for a pattern database.
+    /// partitioning attaches costs to; `None` for a pattern database and
+    /// before regional saturation was prepared.
     pub fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
-        self.cegar().map(CegarAbstraction::abstract_source_sets)
+        self.cegar()?.abstract_source_sets()
     }
 }
 
 impl<'task> From<DomainAbstraction> for AbstractionComponent<'task> {
     fn from(abstraction: DomainAbstraction) -> Self {
-        Self::Domain(Box::new(abstraction))
+        Self::Cegar(Box::new(abstraction))
     }
 }
 
 impl<'task> From<CartesianAbstraction> for AbstractionComponent<'task> {
     fn from(abstraction: CartesianAbstraction) -> Self {
-        Self::Cartesian(Box::new(abstraction))
+        Self::Cegar(Box::new(abstraction))
     }
 }
 

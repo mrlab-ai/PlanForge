@@ -19,10 +19,11 @@ use crate::evaluation::abstractions::pdb::projected_task::{Pattern, ProjectedTas
 use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
+use crate::resource_limits::Deadline;
 
 fn simple_var(name: &str) -> ExplicitVariable {
     ExplicitVariable::new(
@@ -92,20 +93,12 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
     )
     .unwrap();
 
-    DomainAbstraction {
-        factory,
-        distance_table: AbstractDistanceTable {
-            distances,
-            generating_op_ids: vec![None; 4],
-            initial_state: 0,
-            goal_facts: vec![],
-        },
-        combine_labels: false,
+    let transitions = factory.transitions(task, false, Deadline::NONE).unwrap();
+    let core = AbstractionCore {
+        distances,
+        initial_state: 0,
         relevant_operator_ids: Vec::new(),
-        abstract_operators: Vec::new(),
-        transition_data_retained: false,
-        abstract_source_sets: Vec::new(),
-        interval_transition_system: std::cell::RefCell::new(None),
+        num_abstract_operators: 0,
         metadata: AbstractionMetadata::standalone(
             CegarOutcome {
                 stop_reason: CegarStopReason::SizeLimit,
@@ -116,7 +109,10 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             SplitKind::Concrete,
             None,
         ),
-    }
+    };
+    let mut abstraction = DomainAbstraction::new(factory, core, transitions);
+    abstraction.discard_transition_data();
+    abstraction
 }
 
 #[test]
@@ -136,11 +132,11 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     let mut registry = StateRegistry::for_task(std::sync::Arc::new(&task));
     let initial_state = registry.get_initial_state();
     let mut da0 = make_abstraction(&task, vec![2.0, 0.0, 0.0, 0.0]);
-    da0.relevant_operator_ids = vec![OperatorIndex::new(0)];
+    da0.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
     let mut da1 = make_abstraction(&task, vec![3.0, 0.0, 0.0, 0.0]);
-    da1.relevant_operator_ids = vec![OperatorIndex::new(1)];
+    da1.core_mut().relevant_operator_ids = vec![OperatorIndex::new(1)];
     let mut da2 = make_abstraction(&task, vec![4.0, 0.0, 0.0, 0.0]);
-    da2.relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
+    da2.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
 
     let heuristic = CanonicalAbstractionHeuristic::with_explicit_subsets(
         None,
@@ -162,7 +158,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
 
 fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionComponent<'task>> {
     let mut domain = make_abstraction(task, vec![2.0, 0.0, 2.0, 0.0]);
-    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
+    domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
 
     let cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
@@ -215,18 +211,18 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
 fn collection_combinators_never_claim_the_standalone_initial_optimality_proof() {
     let task = simple_task();
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
-    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
-    domain.metadata.abstraction_use = AbstractionUse::Standalone;
+    domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
+    domain.metadata_mut().stop_reason = CegarStopReason::ConcretePlan;
+    domain.metadata_mut().abstraction_use = AbstractionUse::Standalone;
     let component = AbstractionComponent::from(domain);
     assert!(component.proves_initial_state_optimal());
     let max = MaxAbstractionHeuristic::new(None, vec![component]).unwrap();
     assert!(!max.proves_initial_state_optimal());
 
     let mut domain = make_abstraction(&task, vec![5.0, 0.0, 0.0, 0.0]);
-    domain.relevant_operator_ids = vec![OperatorIndex::new(0)];
-    domain.metadata.stop_reason = CegarStopReason::ConcretePlan;
-    domain.metadata.abstraction_use = AbstractionUse::Standalone;
+    domain.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0)];
+    domain.metadata_mut().stop_reason = CegarStopReason::ConcretePlan;
+    domain.metadata_mut().abstraction_use = AbstractionUse::Standalone;
     let canonical =
         CanonicalAbstractionHeuristic::new(None, &task, vec![AbstractionComponent::from(domain)])
             .unwrap();

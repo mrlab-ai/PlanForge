@@ -52,7 +52,9 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         .unwrap()
         .generate(&*task)
         .unwrap();
-    domain.ensure_abstract_source_sets(&*task).unwrap();
+    domain
+        .prepare_regional_saturation(&RegionSemantics::new(&*task).unwrap(), Deadline::NONE)
+        .unwrap();
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&*task, &pattern).unwrap(), 32).unwrap();
     let components = vec![
@@ -85,8 +87,8 @@ fn diverse_orders_support_mixed_abstraction_representations() {
     assert!(heuristic.sampling_task.borrow().is_none());
     assert!(heuristic.components.borrow().iter().all(|component| {
         component
-            .as_cartesian()
-            .is_none_or(|abstraction| abstraction.transition_system.transitions.is_empty())
+            .cegar()
+            .is_none_or(|abstraction| !abstraction.retains_transitions())
     }));
 }
 

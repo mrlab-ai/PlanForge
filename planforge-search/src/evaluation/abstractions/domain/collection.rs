@@ -43,7 +43,7 @@ pub struct AbstractionKey {
 
 impl AbstractionKey {
     pub(super) fn from_abstraction(abstraction: &DomainAbstraction) -> Self {
-        let factory = &abstraction.factory;
+        let factory = abstraction.factory();
         let numeric_fingerprint = (0..factory.numeric_domain_sizes().len())
             .map(|numeric_var_id| {
                 factory

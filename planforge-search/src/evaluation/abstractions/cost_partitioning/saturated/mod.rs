@@ -17,6 +17,7 @@ use crate::successor_generator::RegistryExpander;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
@@ -138,18 +139,20 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .map_err(EvaluationError::ComputationFailed)?;
         let mut components = components;
         if config.partitioning.uses_regions() {
+            let regions = RegionSemantics::new(task)
+                .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
-                component
-                    .ensure_abstract_source_sets(task)
-                    .map_err(|error| {
-                        EvaluationError::ComputationFailed(format!(
-                            "failed to build the source sets of component {component_id}: {error:#}"
-                        ))
-                    })?;
-                if matches!(component, AbstractionComponent::PatternDatabase(_)) {
-                    info!(
+                match component {
+                    AbstractionComponent::Cegar(abstraction) => abstraction
+                        .prepare_regional_saturation(&regions, Deadline::NONE)
+                        .map_err(|error| {
+                            EvaluationError::ComputationFailed(format!(
+                                "failed to build the source sets of component {component_id}: {error:#}"
+                            ))
+                        })?,
+                    AbstractionComponent::PatternDatabase(_) => info!(
                         "PDB component {component_id}: partitioning=region requested, using label cost partitioning (PDBs have no source sets)"
-                    );
+                    ),
                 }
             }
         }
@@ -165,7 +168,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             Vec::with_capacity(components.len());
         for (component_id, component) in components.iter().enumerate() {
             let (distances, saturated) =
-                saturate_component_labels(component, task, &original_costs, None, Deadline::NONE)
+                saturate_component_labels(component, &original_costs, None, Deadline::NONE)
                     .map_err(|error| {
                         EvaluationError::ComputationFailed(format!(
                             "failed to saturate component {component_id} under the original costs: {error:#}"
@@ -217,7 +220,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// random-walk samples.
     fn build_cost_partitionings(
         &self,
-        task: &dyn AbstractNumericTask,
         state: &mut ScpState,
         abstract_state_ids: &[Option<usize>],
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
@@ -228,7 +230,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         )?;
         let abstraction_h = abstraction_heuristic_values(state, abstract_state_ids);
         let collection = PartitionedCollection {
-            task,
             components: &components,
             abstract_state_ids,
             abstraction_h: &abstraction_h,
@@ -311,8 +312,7 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
             return Ok(f64::INFINITY);
         }
 
-        let cost_partitionings =
-            self.build_cost_partitionings(eval_state.task(), &mut state, abstract_state_ids)?;
+        let cost_partitionings = self.build_cost_partitionings(&mut state, abstract_state_ids)?;
         state.goal_distances_by_abstraction = Vec::new();
         for cp in cost_partitionings {
             Self::retain_cp(&mut state, cp);

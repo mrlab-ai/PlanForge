@@ -1,32 +1,82 @@
 use super::*;
 
+/// The abstract operators of a domain abstraction, with the match tree that
+/// finds the operators regressing from a state, and the abstract goal states.
+#[derive(Debug, Clone)]
+pub(crate) struct DomainTransitions {
+    pub(crate) operators: Vec<AbstractOperator>,
+    match_tree: MatchTree,
+    /// Ascending.
+    goal_states: Vec<usize>,
+    num_states: usize,
+}
+
 impl DomainAbstractionFactory {
-    /// The goal distances of every abstract state under `operators`, to the
-    /// task's abstract goals.
-    pub(crate) fn build_distance_table(
+    /// The abstract operators of the abstraction, with labels combined if
+    /// `combine_labels`, and its goal states.
+    pub(crate) fn transitions(
         &self,
         task: &dyn AbstractNumericTask,
-        operators: &[AbstractOperator],
+        combine_labels: bool,
         deadline: Deadline,
-    ) -> Result<AbstractDistanceTable> {
+    ) -> Result<DomainTransitions> {
+        let operators = build_abstract_operators(self, task, combine_labels, deadline)?;
         deadline.ensure(DISTANCE_TABLE)?;
-        let goal_facts = self.compute_abstract_goals(task);
-        let goal_states = self.goal_states(task, &goal_facts, deadline)?;
-        let match_tree = MatchTree::new(&self.layout, operators);
-        let num_states = self.layout.num_states();
-        let mut generating_op_ids = vec![None; num_states];
+        let goal_states = self.goal_states(task, &self.compute_abstract_goals(task), deadline)?;
+        Ok(DomainTransitions {
+            match_tree: MatchTree::new(&self.layout, &operators),
+            operators,
+            goal_states,
+            num_states: self.layout.num_states(),
+        })
+    }
+}
+
+impl DomainTransitions {
+    pub(crate) fn graph(&self) -> MatchTreeGraph<'_> {
+        MatchTreeGraph::new(
+            &self.operators,
+            &self.match_tree,
+            self.num_states,
+            &self.goal_states,
+        )
+    }
+
+    pub(crate) fn is_goal(&self, state: usize) -> bool {
+        self.goal_states.binary_search(&state).is_ok()
+    }
+
+    /// The goal distance of every abstract state under the operators' own
+    /// costs, and the abstract operator each state's cheapest goal path
+    /// starts with.
+    pub(crate) fn goal_distances(
+        &self,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<Option<usize>>)> {
+        let mut generating_op_ids = vec![None; self.num_states];
         let distances = backward_goal_distances(
-            &mut MatchTreeGraph::new(operators, &match_tree, num_states, &goal_states),
-            &goal_states,
+            &mut self.graph(),
+            &self.goal_states,
             || deadline.ensure(DISTANCE_TABLE),
             Some(&mut generating_op_ids),
         )?;
-        Ok(AbstractDistanceTable {
-            distances,
-            generating_op_ids,
-            initial_state: self.initial_state(task)?,
-            goal_facts,
-        })
+        Ok((distances, generating_op_ids))
+    }
+
+    /// The concrete operators that label a transition between two distinct
+    /// abstract states, ascending: the labels of every operator that changes
+    /// the state. Every abstract operator applies in some state of the
+    /// product state space.
+    pub(crate) fn relevant_operator_ids(&self) -> Vec<OperatorIndex> {
+        let mut relevant = self
+            .operators
+            .iter()
+            .filter(|operator| operator.regression_offset != 0)
+            .flat_map(|operator| operator.concrete_op_ids.iter().copied())
+            .collect::<Vec<_>>();
+        relevant.sort_unstable();
+        relevant.dedup();
+        relevant
     }
 }
 

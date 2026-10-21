@@ -62,21 +62,17 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     .unwrap();
 
     assert!(
-        !heuristic.components.borrow()[0]
-            .as_cartesian()
+        heuristic.components.borrow()[0]
+            .cegar()
             .unwrap()
-            .transition_system
-            .transitions
-            .is_empty()
+            .retains_transitions()
     );
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
     assert!(
-        heuristic.components.borrow()[0]
-            .as_cartesian()
+        !heuristic.components.borrow()[0]
+            .cegar()
             .unwrap()
-            .transition_system
-            .transitions
-            .is_empty()
+            .retains_transitions()
     );
     assert!(heuristic.state.borrow().built);
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
@@ -97,7 +93,9 @@ fn interval_scp_combines_all_representations() {
         .unwrap()
         .generate(&task)
         .unwrap();
-    domain.ensure_abstract_source_sets(&task).unwrap();
+    domain
+        .prepare_regional_saturation(&RegionSemantics::new(&task).unwrap(), Deadline::NONE)
+        .unwrap();
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 32).unwrap();
     let components = vec![

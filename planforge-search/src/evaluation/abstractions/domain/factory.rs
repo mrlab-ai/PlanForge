@@ -31,12 +31,12 @@ use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, cartesian_set_intersection,
 };
 use crate::evaluation::abstractions::common::transition_system::{
-    AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, BackwardGraph, LabelSourceSet, backward_goal_distances,
+    AbstractTransition, AbstractTransitionSystem, BackwardGraph, LabelSourceSet,
+    backward_goal_distances,
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{SaturationGraph, cheapest_label};
 use crate::resource_limits::Deadline;
-pub(crate) use distances::MatchTreeGraph;
+pub(crate) use distances::{DomainTransitions, MatchTreeGraph};
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 pub(crate) use source_sets::source_set_within;
@@ -163,11 +163,6 @@ impl DomainAbstractionFactory {
     }
 
     pub fn layout(&self) -> &StateLayout {
-        &self.layout
-    }
-
-    /// The layout as the match trees built over it share it.
-    pub(crate) fn shared_layout(&self) -> &Arc<StateLayout> {
         &self.layout
     }
 

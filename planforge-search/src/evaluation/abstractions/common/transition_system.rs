@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{ExplicitFact, OperatorIndex};
+use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
 
 use super::cartesian_set::CartesianSet;
@@ -31,25 +31,14 @@ pub struct LabelSourceSet {
     pub source: Arc<CartesianSet>,
 }
 
+/// An explicit abstract transition system.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransitionSystem {
     pub transitions: Vec<AbstractTransition>,
     /// The transitions into each state.
     pub backward: Vec<Vec<usize>>,
-    pub goal_facts: Vec<ExplicitFact>,
+    /// The abstract goal states, ascending.
     pub goal_states: Vec<usize>,
-    pub initial_state: usize,
-    /// The region of every state, or empty if the system was built without.
-    pub cartesian_sets: Vec<Arc<CartesianSet>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct AbstractDistanceTable {
-    pub distances: Vec<f64>,
-    // Per-state operator leading to a goal along a shortest path.
-    pub generating_op_ids: Vec<Option<usize>>,
-    pub initial_state: usize,
-    pub goal_facts: Vec<ExplicitFact>,
 }
 
 /// A graph whose goal distances [`backward_goal_distances`] computes.

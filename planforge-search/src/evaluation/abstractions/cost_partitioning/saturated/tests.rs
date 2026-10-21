@@ -103,7 +103,9 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
     .unwrap()
     .generate(task)
     .unwrap();
-    abstraction.ensure_abstract_source_sets(task).unwrap();
+    abstraction
+        .prepare_regional_saturation(&RegionSemantics::new(task).unwrap(), Deadline::NONE)
+        .unwrap();
     abstraction
 }
 
@@ -205,13 +207,15 @@ pub(super) fn goal_cover_scp<'task>(
         .generate(&**task)
         .unwrap();
     for abstraction in &mut abstractions {
-        abstraction.ensure_abstract_source_sets(&**task).unwrap();
+        abstraction
+            .prepare_regional_saturation(&RegionSemantics::new(&**task).unwrap(), Deadline::NONE)
+            .unwrap();
     }
     let expected_goals = abstractions
         .iter()
         .filter_map(|abstraction| {
             abstraction
-                .metadata
+                .metadata()
                 .collection_member
                 .map(|member| member.goal_id)
         })

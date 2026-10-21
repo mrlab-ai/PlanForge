@@ -59,7 +59,6 @@ use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };
 use crate::evaluation::abstractions::common::transition_system::{
-    AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, BackwardGraph, CostedTransitionSystem, LabelSourceSet,
+    AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, BackwardGraph,
     backward_goal_distances,
 };

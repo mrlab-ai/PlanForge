@@ -44,9 +44,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let base_order = (0..abstractions.len()).collect::<Vec<_>>();
     let abstraction_h = abstractions
         .iter()
-        .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
-        })
+        .map(|abstraction| abstraction.initial_h())
         .collect::<Vec<_>>();
     let components = abstractions
         .iter()
@@ -58,7 +56,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     };
     let goal = |component_id: usize| {
         abstractions[component_id]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id)
             .unwrap()
@@ -70,8 +68,8 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     assert_eq!(baseline.len(), 3);
     assert_eq!(goal(baseline[0]), goal(baseline[1]));
     assert_ne!(goal(baseline[0]), goal(baseline[2]));
-    let first = &abstractions[baseline[0]].metadata;
-    let complement = &abstractions[baseline[1]].metadata;
+    let first = &abstractions[baseline[0]].metadata();
+    let complement = &abstractions[baseline[1]].metadata();
     assert_ne!(first.split_kind, complement.split_kind);
     assert_eq!(first.split_selection_rank, complement.split_selection_rank);
 
@@ -110,9 +108,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let mixed_order = (0..mixed.len()).collect::<Vec<_>>();
     let mixed_h = mixed
         .iter()
-        .map(|abstraction| {
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
-        })
+        .map(|abstraction| abstraction.initial_h())
         .collect::<Vec<_>>();
     let structural_id = mixed.len() - 1;
     let mixed_components = mixed

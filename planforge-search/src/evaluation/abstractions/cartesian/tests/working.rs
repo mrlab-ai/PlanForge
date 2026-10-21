@@ -99,10 +99,18 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
     .generate(&task)
     .unwrap();
 
-    assert!(abstraction.transition_system.transitions.is_empty());
-    assert!(abstraction.abstract_source_sets.is_empty());
-    assert!(abstraction.relevant_operator_ids.is_empty());
-    assert_eq!(abstraction.distance_table.distances, vec![0.0]);
+    assert!(
+        abstraction
+            .transitions
+            .as_ref()
+            .unwrap()
+            .system
+            .transitions
+            .is_empty()
+    );
+    assert!(abstraction.abstract_source_sets().is_none());
+    assert!(abstraction.relevant_operator_ids().is_empty());
+    assert_eq!(abstraction.distances(), vec![0.0]);
 }
 
 #[test]
@@ -155,15 +163,25 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
 
     let full = generate(true);
     let standalone = generate(false);
+    assert_eq!(standalone.distances(), full.distances());
     assert_eq!(
-        standalone.distance_table.distances,
-        full.distance_table.distances
+        standalone.relevant_operator_ids(),
+        full.relevant_operator_ids()
     );
-    assert_eq!(standalone.relevant_operator_ids, full.relevant_operator_ids);
-    assert_eq!(standalone.transition_count, full.transition_count);
-    assert!(!full.transition_system.transitions.is_empty());
-    assert!(standalone.transition_system.transitions.is_empty());
-    assert!(standalone.transition_system.cartesian_sets.is_empty());
+    assert_eq!(
+        standalone.num_abstract_operators(),
+        full.num_abstract_operators()
+    );
+    assert!(
+        !full
+            .transitions
+            .as_ref()
+            .unwrap()
+            .system
+            .transitions
+            .is_empty()
+    );
+    assert!(standalone.transitions.is_none());
 }
 
 #[test]

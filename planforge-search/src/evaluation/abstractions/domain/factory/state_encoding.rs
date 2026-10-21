@@ -320,7 +320,7 @@ impl DomainAbstractionFactory {
     }
 
     /// The abstract state of the task's initial state.
-    pub(super) fn initial_state(&self, task: &dyn AbstractNumericTask) -> Result<usize> {
+    pub(crate) fn initial_state(&self, task: &dyn AbstractNumericTask) -> Result<usize> {
         self.abstract_state(
             task.get_initial_propositional_state_values(),
             task.get_initial_numeric_state_values(),

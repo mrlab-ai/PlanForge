@@ -97,10 +97,7 @@ fn two_state_transition_system() -> AbstractTransitionSystem {
             target_state: 1,
         }],
         backward: vec![vec![], vec![0]],
-        goal_facts: vec![],
         goal_states: vec![1],
-        initial_state: 0,
-        cartesian_sets: vec![cartesian_set(0).into(), cartesian_set(1).into()],
     }
 }
 

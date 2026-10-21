@@ -98,7 +98,7 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
 
         assert_eq!(abstractions.len(), 1, "{collection_strategy}");
         assert_eq!(
-            abstractions[0].metadata.abstraction_use,
+            abstractions[0].metadata().abstraction_use,
             AbstractionUse::CollectionMember
         );
     }
@@ -123,7 +123,7 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
 
     assert!(start.elapsed() < Duration::from_secs(60));
     assert_eq!(abstractions.len(), 1);
-    assert!(abstractions[0].metadata.solved_by_self());
+    assert!(abstractions[0].metadata().solved_by_self());
 }
 
 /// The default member with `max_states` and `max_time`, without operator
@@ -454,9 +454,8 @@ fn domain_members(
         .unwrap()
         .into_iter()
         .map(|abstraction| {
-            let initial_h =
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state];
-            let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
+            let initial_h = abstraction.initial_h();
+            let plan = abstraction.metadata().concrete_plan_operator_ids.clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
@@ -503,9 +502,8 @@ fn cartesian_members_with(
         .unwrap()
         .into_iter()
         .map(|abstraction| {
-            let initial_h =
-                abstraction.distance_table.distances[abstraction.distance_table.initial_state];
-            let plan = abstraction.metadata.concrete_plan_operator_ids.clone();
+            let initial_h = abstraction.initial_h();
+            let plan = abstraction.metadata().concrete_plan_operator_ids.clone();
             let member = AbstractionComponent::from(abstraction).goal_focused_member();
             (member, initial_h, plan)
         })
@@ -705,14 +703,14 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
     assert_eq!(cartesian.len(), 4);
     for (index, (domain, cartesian)) in domain.iter().zip(&cartesian).enumerate() {
         assert_eq!(
-            domain.metadata.collection.map(|record| record.full_task),
+            domain.metadata().collection.map(|record| record.full_task),
             Some(true)
         );
-        assert_eq!(domain.metadata.collection_member, None);
-        assert_eq!(cartesian.metadata.collection_member, None);
+        assert_eq!(domain.metadata().collection_member, None);
+        assert_eq!(cartesian.metadata().collection_member, None);
         let expected_backward = index >= 2;
         assert_eq!(
-            domain.metadata.split_kind,
+            domain.metadata().split_kind,
             if expected_backward {
                 SplitKind::Wanted
             } else {
@@ -720,26 +718,26 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             }
         );
         assert_eq!(
-            cartesian.metadata.split_kind,
+            cartesian.metadata().split_kind,
             if expected_backward {
                 SplitKind::Wanted
             } else {
                 SplitKind::Concrete
             }
         );
-        assert_eq!(domain.metadata.split_selection_rank, Some(0));
-        assert_eq!(cartesian.metadata.split_selection_rank, Some(0));
+        assert_eq!(domain.metadata().split_selection_rank, Some(0));
+        assert_eq!(cartesian.metadata().split_selection_rank, Some(0));
         // Both abstract the full task: the plan reaches x >= 2 and y >= 3.
         for (backend, initial_h, plan) in [
             (
                 "domain",
-                domain.distance_table.distances[domain.distance_table.initial_state],
-                domain.metadata.concrete_plan_operator_ids.as_ref(),
+                domain.initial_h(),
+                domain.metadata().concrete_plan_operator_ids.as_ref(),
             ),
             (
                 "Cartesian",
-                cartesian.distance_table.distances[cartesian.distance_table.initial_state],
-                cartesian.metadata.concrete_plan_operator_ids.as_ref(),
+                cartesian.initial_h(),
+                cartesian.metadata().concrete_plan_operator_ids.as_ref(),
             ),
         ] {
             assert_eq!(initial_h, 5.0, "{backend} member {index}");
@@ -839,11 +837,11 @@ fn both_representations_build_one_per_goal_member_per_goal() {
     .unwrap();
     let domain_goals: Vec<_> = domain
         .iter()
-        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .map(|member| member.metadata().collection_member.unwrap().goal_id)
         .collect();
     let cartesian_goals: Vec<_> = cartesian
         .iter()
-        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .map(|member| member.metadata().collection_member.unwrap().goal_id)
         .collect();
     assert_eq!(domain_goals, [0, 1]);
     assert_eq!(cartesian_goals, [0, 1]);
@@ -871,9 +869,9 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     .generate(&task)
     .unwrap();
     assert_eq!(domain.len(), 1);
-    assert!(domain[0].metadata.solved_by_self());
+    assert!(domain[0].metadata().solved_by_self());
     assert_eq!(cartesian.len(), 1);
-    assert!(cartesian[0].metadata.solved_by_self());
+    assert!(cartesian[0].metadata().solved_by_self());
 }
 
 #[test]
@@ -902,7 +900,7 @@ fn standard_cartesian_restarts_are_distinct_full_task_abstractions() {
     assert!(
         members
             .iter()
-            .all(|member| member.metadata.collection_member.is_none())
+            .all(|member| member.metadata().collection_member.is_none())
     );
 }
 
@@ -923,7 +921,7 @@ fn cartesian_cegar_leaves_blacklisted_variables_alone() {
     .generate(&task)
     .unwrap();
     assert_eq!(
-        abstraction.metadata.stop_reason,
+        abstraction.metadata().stop_reason,
         CegarStopReason::NoRefinableFlaw
     );
     assert_eq!(abstraction.num_states(), 1);

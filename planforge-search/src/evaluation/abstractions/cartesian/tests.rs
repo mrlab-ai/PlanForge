@@ -1,6 +1,8 @@
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use crate::resource_limits::Deadline;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,23 +88,31 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
         .unwrap()
         .generate(task)
         .unwrap();
-        abstraction.ensure_abstract_source_sets(task).unwrap();
+        abstraction
+            .prepare_regional_saturation(&RegionSemantics::new(task).unwrap(), Deadline::NONE)
+            .unwrap();
         assert_eq!(
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state],
+            abstraction.initial_h(),
             expected_h,
             "unexpected initial h for {flaw_scope}"
         );
         assert!(
-            abstraction.metadata.solved_by_self(),
+            abstraction.metadata().solved_by_self(),
             "{flaw_scope} progression failed to produce a concrete plan"
         );
         assert_eq!(
-            abstraction.metadata.stop_reason,
+            abstraction.metadata().stop_reason,
             CegarStopReason::ConcretePlan
         );
         assert_eq!(
-            abstraction.abstract_source_sets.len(),
-            abstraction.transition_system.transitions.len()
+            abstraction.abstract_source_sets().unwrap().len(),
+            abstraction
+                .transitions
+                .as_ref()
+                .unwrap()
+                .system
+                .transitions
+                .len()
         );
     }
 }

@@ -4,6 +4,7 @@ use ordered_float::NotNan;
 use std::collections::BTreeSet;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, LabelSourceSet,
 };
@@ -217,12 +218,7 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         .abstract_operators(&task, false, Deadline::NONE)
         .unwrap();
     let transition_system = factory
-        .build_transition_system(
-            &task,
-            &abstract_operators,
-            StateRegions::Omit,
-            Deadline::NONE,
-        )
+        .build_transition_system(&task, &abstract_operators, Deadline::NONE)
         .unwrap();
     let (explicit, _) = saturate_labels(
         &mut ExplicitSaturationGraph::new(&transition_system),
@@ -278,12 +274,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         .unwrap();
     assert_eq!(abstract_operators.len(), 1);
     let transition_system = factory
-        .build_transition_system(
-            &task,
-            &abstract_operators,
-            StateRegions::Omit,
-            Deadline::NONE,
-        )
+        .build_transition_system(&task, &abstract_operators, Deadline::NONE)
         .unwrap();
     let source_sets = vec![AbstractOperatorSourceSets {
         labels: vec![LabelSourceSet {
@@ -309,7 +300,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     )
     .unwrap();
 
-    assert_eq!(distances[transition_system.initial_state], 1.0);
+    assert_eq!(distances[factory.initial_state(&task).unwrap()], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
         allocation.entries()[0].source_set.source.propositions()[0],
@@ -400,10 +391,21 @@ impl DomainAbstractionFactory {
         &self,
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
-    ) -> Result<AbstractDistanceTable> {
-        let operators = self.abstract_operators(task, combine_labels, Deadline::NONE)?;
-        self.build_distance_table(task, &operators, Deadline::NONE)
+    ) -> Result<TestDistances> {
+        let (distances, _) = self
+            .transitions(task, combine_labels, Deadline::NONE)?
+            .goal_distances(Deadline::NONE)?;
+        Ok(TestDistances {
+            distances,
+            initial_state: self.initial_state(task)?,
+        })
     }
+}
+
+/// The goal distances of a domain abstraction and its initial state.
+struct TestDistances {
+    distances: Vec<f64>,
+    initial_state: usize,
 }
 
 /// The concrete operators the first step of the optimal abstract plan from
@@ -929,7 +931,9 @@ fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
@@ -959,7 +963,9 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
@@ -985,7 +991,9 @@ fn source_set_active_preimage_allows_boundary_charge() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
@@ -1011,9 +1019,9 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
     };
 
     let error = factory
-        .build_abstract_source_sets(&task, &[op])
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap_err();
-    assert!(error.to_string().contains("empty source set"));
+    assert!(format!("{error:#}").contains("empty source set"));
 }
 
 #[test]
@@ -1029,7 +1037,9 @@ fn abstract_source_set_allocates_unbounded_changed_tail() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(concrete.concrete_op_id, OperatorIndex::new(0));
@@ -1092,7 +1102,9 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         changed_numeric_vars: vec![],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
@@ -1187,7 +1199,9 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
@@ -1306,7 +1320,9 @@ fn source_set_one_finite_dim_suffices() {
         ],
         changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
     assert_eq!(
         concrete.source.numeric[0],
@@ -1407,7 +1423,9 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
 
     assert_eq!(
@@ -1444,7 +1462,9 @@ fn source_set_width_does_not_change_valid_preimage() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     assert_eq!(
         source_sets[0].labels[0].source.numeric[0],
         Interval::new(NumericValue::new(4.0), NumericValue::new(5.0), false, true)
@@ -1470,7 +1490,9 @@ fn singleton_preimage_is_preserved_exactly() {
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
-    let source_sets = factory.build_abstract_source_sets(&task, &[op]).unwrap();
+    let source_sets = factory
+        .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
+        .unwrap();
     let concrete = &source_sets[0].labels[0];
     assert_eq!(
         concrete.source.numeric[0],

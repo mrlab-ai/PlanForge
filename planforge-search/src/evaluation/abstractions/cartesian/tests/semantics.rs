@@ -71,13 +71,10 @@ fn refines_through_a_comparison_goal() {
     .generate(&task)
     .unwrap();
 
+    assert_eq!(abstraction.initial_h(), 2.0);
+    assert!(abstraction.metadata().solved_by_self());
     assert_eq!(
-        abstraction.distance_table.distances[abstraction.distance_table.initial_state],
-        2.0
-    );
-    assert!(abstraction.metadata.solved_by_self());
-    assert_eq!(
-        abstraction.metadata.stop_reason,
+        abstraction.metadata().stop_reason,
         CegarStopReason::ConcretePlan
     );
 }

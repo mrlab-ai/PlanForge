@@ -55,7 +55,9 @@ use planforge_search::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use planforge_search::evaluation::abstractions::collections::strategy::CollectionStrategy;
-use planforge_search::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
+use planforge_search::evaluation::abstractions::common::abstraction::{
+    AbstractionHeuristic, CegarAbstraction,
+};
 use planforge_search::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_search::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitSelection,
@@ -257,11 +259,11 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     .generate(&task)
     .expect("unrestricted domain abstraction should solve sailing-simple");
     assert!(
-        domain_abstraction.metadata.solved_by_self(),
+        domain_abstraction.metadata().solved_by_self(),
         "unrestricted domain abstraction stopped without a real plan: metadata={:?}, prop_domains={:?}, numeric_domains={:?}",
-        domain_abstraction.metadata,
-        domain_abstraction.factory.domain_sizes(),
-        domain_abstraction.factory.numeric_domain_sizes()
+        domain_abstraction.metadata(),
+        domain_abstraction.factory().domain_sizes(),
+        domain_abstraction.factory().numeric_domain_sizes()
     );
     assert_exact_single_abstraction_search(
         &task,
@@ -280,7 +282,7 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
     .expect("unrestricted Cartesian abstraction generator should construct")
     .generate(&task)
     .expect("unrestricted Cartesian abstraction should solve sailing-simple");
-    assert!(cartesian_abstraction.metadata.solved_by_self());
+    assert!(cartesian_abstraction.metadata().solved_by_self());
     assert_exact_single_abstraction_search(
         &task,
         AbstractionHeuristic::new("abstraction", cartesian_abstraction),
@@ -468,7 +470,7 @@ fn sailing_simple_ratchet_equilibrium() {
         .iter()
         .filter_map(|abstraction| {
             if abstraction
-                .metadata
+                .metadata()
                 .collection
                 .map(|record| record.full_task)
                 != Some(false)
@@ -485,12 +487,12 @@ fn sailing_simple_ratchet_equilibrium() {
                 &["difference", "x(?boat_0)", "(b1, p0)"],
             )?;
             let near_count = abstraction
-                .factory
+                .factory()
                 .partitions()
                 .partitions(VariableIndex::from_usize(near_x))
                 .len();
             let far_count = abstraction
-                .factory
+                .factory()
                 .partitions()
                 .partitions(VariableIndex::from_usize(far_x))
                 .len();
@@ -562,7 +564,7 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
     for goal_id in 0..task.get_num_goals() {
         let variants = abstractions
             .iter()
-            .filter_map(|abstraction| abstraction.metadata.collection_member)
+            .filter_map(|abstraction| abstraction.metadata().collection_member)
             .filter(|member| member.goal_id == goal_id && member.variant_id < 2)
             .map(|member| member.variant_id)
             .collect::<std::collections::BTreeSet<_>>();
@@ -574,7 +576,7 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
     }
     assert!(
         abstractions.iter().all(|abstraction| abstraction
-            .metadata
+            .metadata()
             .collection
             .map(|record| record.full_task)
             == Some(false)),

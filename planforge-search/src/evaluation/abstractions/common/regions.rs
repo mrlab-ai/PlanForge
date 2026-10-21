@@ -24,8 +24,14 @@ use planforge_sas::utils::interval::Interval;
 
 use super::cartesian_set::{CartesianSet, sorted_value_sets_overlap};
 use super::coordinates::Coordinates;
+use super::transition_system::{AbstractOperatorSourceSets, LabelSourceSet};
 
-pub(crate) struct RegionSemantics<'task> {
+/// The deadline operation of building source sets.
+pub(crate) const SOURCE_SETS: &str = "abstract source sets";
+
+/// What regions of the concrete state space admit, guarantee, and let an
+/// operator lead into.
+pub struct RegionSemantics<'task> {
     task: &'task dyn AbstractNumericTask,
     coordinates: Coordinates<'task>,
     /// The propositional axioms writing each propositional variable.
@@ -338,6 +344,38 @@ impl<'task> RegionSemantics<'task> {
             }
         }
         Ok(Some(source_set))
+    }
+
+    /// The source sets of an abstract operator from `source` to `target`
+    /// with `labels`: for each label, the states of `source` from which it
+    /// may lead into `target`. A label that may leave from all of `source`
+    /// shares it.
+    pub(crate) fn abstract_operator_source_sets(
+        &self,
+        source: &Arc<CartesianSet>,
+        labels: &[OperatorIndex],
+        target: &CartesianSet,
+    ) -> Result<AbstractOperatorSourceSets> {
+        let labels = labels
+            .iter()
+            .map(|&concrete_op_id| {
+                let source_set = self
+                    .transition_source_set(source, concrete_op_id, target)?
+                    .with_context(|| {
+                        format!("operator {concrete_op_id} has an empty source set")
+                    })?;
+                let source = if source_set == **source {
+                    Arc::clone(source)
+                } else {
+                    Arc::new(source_set)
+                };
+                Ok(LabelSourceSet {
+                    concrete_op_id,
+                    source,
+                })
+            })
+            .collect::<Result<_>>()?;
+        Ok(AbstractOperatorSourceSets { labels })
     }
 
     fn unvisited(&self) -> Vec<bool> {

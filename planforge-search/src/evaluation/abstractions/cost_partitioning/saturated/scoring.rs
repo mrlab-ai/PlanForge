@@ -56,7 +56,11 @@ pub(super) fn interval_stolen_costs(
             regions_by_component.push(None);
             continue;
         };
-        let source_sets = abstraction.abstract_source_sets();
+        let source_sets = abstraction.abstract_source_sets().ok_or_else(|| {
+            EvaluationError::ComputationFailed(format!(
+                "region SCP component {component_id} has no source sets"
+            ))
+        })?;
         let expected_source_sets = abstraction.num_abstract_operators();
         if source_sets.len() != expected_source_sets {
             return Err(EvaluationError::ComputationFailed(format!(

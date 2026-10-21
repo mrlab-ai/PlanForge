@@ -15,6 +15,14 @@ use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 
 /// Whether two costs or values agree up to a relative tolerance of
 /// [`float_tolerance::AGREEMENT_EPSILON`].
+///
+/// TODO(canonical values): this is also the integer-lattice test (here and in
+/// `semantics.rs`), where a relative tolerance is wrong: from |v| >= 5e6 a
+/// half-integer counts as an integer, and an integer-lattice split at it
+/// drops the states between `b` and `b + 1`. If every numeric value is
+/// canonical, the test should be exact (`v == v.round()`), but
+/// [`float_tolerance::canonicalize`] does not yet keep large integers fixed
+/// (see there). Decide both together; costs keep this tolerance.
 pub(crate) fn approximately_equal(left: f64, right: f64) -> bool {
     (left - right).abs()
         <= float_tolerance::AGREEMENT_EPSILON * left.abs().max(right.abs()).max(1.0)

@@ -1,48 +1,100 @@
 //! A built domain abstraction: the factory that maps concrete states to
-//! abstract ones, its goal distances, and what was recorded about its
-//! construction.
+//! abstract ones, its goal distances, and, until discarded, its transitions.
 
-use std::cell::{Ref, RefCell};
+use anyhow::{Context, Result};
 
-use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
-};
-
-use super::abstract_operators::AbstractOperator;
-use super::factory::{
-    DomainAbstractionFactory, MatchTree, MatchTreeGraph, StateRegions, source_set_within,
-};
-use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
+use super::factory::{DomainAbstractionFactory, DomainTransitions, source_set_within};
+use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransitionSystem,
 };
+use crate::evaluation::abstractions::component::AbstractionKind;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     RemainingCosts, SourceSetCostAllocation, saturate_labels, saturate_regions,
 };
 use crate::resource_limits::Deadline;
 
-/// Fully built abstraction artifact that can be used to evaluate concrete states.
 #[derive(Debug, Clone)]
 pub struct DomainAbstraction {
-    pub factory: DomainAbstractionFactory,
-    pub distance_table: AbstractDistanceTable,
-    pub combine_labels: bool,
-    pub relevant_operator_ids: Vec<OperatorIndex>,
-    pub abstract_operators: Vec<AbstractOperator>,
-    /// `abstract_operators` holds the abstraction's operators; false once
-    /// they were discarded or for a lookup-only abstraction. An abstraction
-    /// may have no operators at all, so emptiness cannot tell.
-    pub transition_data_retained: bool,
-    pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
-    pub(crate) interval_transition_system: RefCell<Option<AbstractTransitionSystem>>,
-    pub metadata: AbstractionMetadata,
+    factory: DomainAbstractionFactory,
+    core: AbstractionCore,
+    transitions: Option<DomainTransitionData>,
+}
+
+/// The transitions of a domain abstraction and, once regional saturation was
+/// prepared, the explicit transition system it saturates with the source sets
+/// of every abstract operator's labels.
+#[derive(Debug, Clone)]
+struct DomainTransitionData {
+    transitions: DomainTransitions,
+    regional: Option<(AbstractTransitionSystem, Vec<AbstractOperatorSourceSets>)>,
+}
+
+impl DomainAbstraction {
+    pub(crate) fn new(
+        factory: DomainAbstractionFactory,
+        core: AbstractionCore,
+        transitions: DomainTransitions,
+    ) -> Self {
+        Self {
+            factory,
+            core,
+            transitions: Some(DomainTransitionData {
+                transitions,
+                regional: None,
+            }),
+        }
+    }
+
+    /// The abstraction function: which abstract value every concrete value
+    /// maps to.
+    pub fn factory(&self) -> &DomainAbstractionFactory {
+        &self.factory
+    }
+
+    /// The abstract operators and goal states; fails once discarded.
+    pub(crate) fn transitions(&self) -> Result<&DomainTransitions> {
+        self.transitions
+            .as_ref()
+            .map(|data| &data.transitions)
+            .context("the domain abstraction's transitions were discarded")
+    }
+
+    /// The explicit transition system of `task` with self-loops, which
+    /// potential/abstraction OCP constrains.
+    #[cfg(feature = "cplex")]
+    pub(crate) fn ocp_transition_system(
+        &self,
+        task: &dyn planforge_sas::numeric_task::AbstractNumericTask,
+        max_concrete_label_transitions: usize,
+        deadline: Deadline,
+    ) -> Result<super::factory::OcpTransitionSystemBuild> {
+        self.factory.build_ocp_transition_system(
+            task,
+            &self.transitions()?.operators,
+            max_concrete_label_transitions,
+            deadline,
+        )
+    }
 }
 
 impl CegarAbstraction for DomainAbstraction {
+    fn kind(&self) -> AbstractionKind {
+        AbstractionKind::Domain
+    }
+
+    fn core(&self) -> &AbstractionCore {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut AbstractionCore {
+        &mut self.core
+    }
+
     fn abstract_state(
         &self,
         propositional: &[ExplicitValueIndex],
@@ -51,129 +103,76 @@ impl CegarAbstraction for DomainAbstraction {
         self.factory.abstract_state(propositional, numeric)
     }
 
-    fn distance_table(&self) -> &AbstractDistanceTable {
-        &self.distance_table
+    fn discard_transition_data(&mut self) {
+        self.transitions = None;
     }
 
-    fn metadata(&self) -> &AbstractionMetadata {
-        &self.metadata
+    fn retains_transitions(&self) -> bool {
+        self.transitions.is_some()
     }
 
-    fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
-        &mut self.metadata
-    }
-
-    fn num_abstract_operators(&self) -> usize {
-        self.abstract_operators.len()
-    }
-
-    fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets] {
-        &self.abstract_source_sets
-    }
-
-    fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
-        if !self.abstract_source_sets.is_empty() {
-            ensure!(
-                self.abstract_source_sets.len() == self.abstract_operators.len(),
-                "domain abstraction has {} operator regions for {} abstract operators",
-                self.abstract_source_sets.len(),
-                self.abstract_operators.len()
-            );
+    fn prepare_regional_saturation(
+        &mut self,
+        regions: &RegionSemantics<'_>,
+        deadline: Deadline,
+    ) -> Result<()> {
+        let data = self
+            .transitions
+            .as_mut()
+            .context("cannot build source sets after the transitions were discarded")?;
+        if data.regional.is_some() {
             return Ok(());
         }
-        ensure!(
-            self.transition_data_retained,
-            "cannot construct regional operator regions after abstract operators were discarded"
-        );
-        self.abstract_source_sets = self
+        let operators = &data.transitions.operators;
+        let system = self
             .factory
-            .build_abstract_source_sets(task, &self.abstract_operators)
-            .context("failed to build abstract-operator regions")?;
-        ensure!(
-            self.abstract_source_sets.len() == self.abstract_operators.len(),
-            "domain operator-region construction produced {} entries for {} abstract operators",
-            self.abstract_source_sets.len(),
-            self.abstract_operators.len()
-        );
+            .build_transition_system(regions.task(), operators, deadline)
+            .context("failed to build the explicit transition system")?;
+        let source_sets = self
+            .factory
+            .build_abstract_source_sets(regions, operators, deadline)?;
+        data.regional = Some((system, source_sets));
         Ok(())
     }
 
-    fn discard_transition_data(&mut self) {
-        self.abstract_operators.clear();
-        self.transition_data_retained = false;
-        self.abstract_source_sets.clear();
-        self.interval_transition_system.get_mut().take();
-    }
-}
-
-impl DomainAbstraction {
-    pub fn interval_transition_system<'a>(
-        &'a self,
-        task: &dyn AbstractNumericTask,
-        deadline: Deadline,
-    ) -> Result<Ref<'a, AbstractTransitionSystem>> {
-        if self.interval_transition_system.borrow().is_none() {
-            let transition_system = self.factory.build_transition_system(
-                task,
-                &self.abstract_operators,
-                StateRegions::Omit,
-                deadline,
-            )?;
-            *self.interval_transition_system.borrow_mut() = Some(transition_system);
-        }
-        Ok(Ref::map(
-            self.interval_transition_system.borrow(),
-            |transition_system| {
-                transition_system
-                    .as_ref()
-                    .expect("regional transition system was initialized")
-            },
-        ))
+    fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
+        let (_, source_sets) = self.transitions.as_ref()?.regional.as_ref()?;
+        Some(source_sets)
     }
 
-    /// Label saturation of the abstraction under `operator_costs`; see
-    /// [`saturate_labels`].
-    pub(crate) fn saturate_labels(
+    fn saturate_labels(
         &self,
-        task: &dyn AbstractNumericTask,
         operator_costs: &[f64],
         perimeter_state: Option<usize>,
         deadline: Deadline,
     ) -> Result<(Vec<f64>, Vec<f64>)> {
-        ensure!(
-            self.transition_data_retained,
-            "cannot saturate a domain abstraction whose abstract operators were discarded"
-        );
-        let goal_states =
-            self.factory
-                .goal_states(task, &self.distance_table.goal_facts, deadline)?;
-        let match_tree = MatchTree::new(self.factory.shared_layout(), &self.abstract_operators);
-        let mut graph = MatchTreeGraph::new(
-            &self.abstract_operators,
-            &match_tree,
-            self.factory.layout().num_states(),
-            &goal_states,
-        );
-        saturate_labels(&mut graph, operator_costs, perimeter_state, deadline)
+        saturate_labels(
+            &mut self.transitions()?.graph(),
+            operator_costs,
+            perimeter_state,
+            deadline,
+        )
     }
 
-    /// Regional saturation of the abstraction under `remaining`; see
-    /// [`saturate_regions`]. A transition's labels cost what remains on the
-    /// part of their source sets inside its source state.
-    pub(crate) fn saturate_regions(
+    /// A transition's labels cost what remains on the part of their source
+    /// sets inside its source state.
+    fn saturate_regions(
         &self,
-        task: &dyn AbstractNumericTask,
         remaining: &RemainingCosts,
         perimeter_state: Option<usize>,
         deadline: Deadline,
     ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
-        let system = self.interval_transition_system(task, deadline)?;
+        let (system, source_sets) = self
+            .transitions
+            .as_ref()
+            .and_then(|data| data.regional.as_ref())
+            .context("regional saturation of a domain abstraction needs its source sets")?;
         // Several transitions leave the same state, and both passes of the
         // saturation ask for its region, so each is materialized once.
         let mut regions: Vec<Option<CartesianSet>> = vec![None; system.backward.len()];
         saturate_regions(
-            &system,
-            &self.abstract_source_sets,
+            system,
+            source_sets,
             |transition, source_set| {
                 let region = regions[transition.source_state]
                     .get_or_insert_with(|| self.factory.state_region(transition.source_state));

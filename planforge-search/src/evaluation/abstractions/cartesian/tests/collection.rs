@@ -1,6 +1,8 @@
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use crate::resource_limits::Deadline;
 
 #[test]
 fn goal_collection_builds_every_goal_with_source_sets() {
@@ -107,7 +109,9 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         .generate(&task)
         .unwrap();
     for abstraction in &mut abstractions {
-        abstraction.ensure_abstract_source_sets(&task).unwrap();
+        abstraction
+            .prepare_regional_saturation(&RegionSemantics::new(&task).unwrap(), Deadline::NONE)
+            .unwrap();
     }
 
     assert_eq!(abstractions.len(), 6);
@@ -115,11 +119,20 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         .iter()
         .map(|abstraction| {
             assert_eq!(
-                abstraction.abstract_source_sets.len(),
-                abstraction.transition_system.transitions.len()
+                abstraction.abstract_source_sets().unwrap().len(),
+                abstraction
+                    .transitions
+                    .as_ref()
+                    .unwrap()
+                    .system
+                    .transitions
+                    .len()
             );
             let mut expected_relevant = abstraction
-                .transition_system
+                .transitions
+                .as_ref()
+                .unwrap()
+                .system
                 .transitions
                 .iter()
                 .filter(|transition| transition.source_state != transition.target_state)
@@ -127,87 +140,87 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                 .collect::<Vec<_>>();
             expected_relevant.sort_unstable();
             expected_relevant.dedup();
-            assert_eq!(abstraction.relevant_operator_ids, expected_relevant);
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state]
+            assert_eq!(abstraction.relevant_operator_ids(), expected_relevant);
+            abstraction.initial_h()
         })
         .collect::<Vec<_>>();
     assert_eq!(initial_h, vec![2.0, 3.0, 2.0, 3.0, 3.0, 2.0]);
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(0)
     );
     assert_eq!(
         abstractions[2]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[2]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(1)
     );
     assert_eq!(
         abstractions[3]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(1)
     );
     assert_eq!(
         abstractions[3]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(1)
     );
     assert_eq!(
         abstractions[4]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(1)
     );
     assert_eq!(
         abstractions[4]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(2)
     );
     assert_eq!(
         abstractions[5]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[5]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(2)
     );
-    assert_eq!(abstractions[0].metadata.split_kind, SplitKind::Concrete);
-    assert_eq!(abstractions[0].metadata.split_selection_rank, Some(0));
-    assert_eq!(abstractions[2].metadata.split_kind, SplitKind::Wanted);
-    assert_eq!(abstractions[2].metadata.split_selection_rank, Some(0));
-    assert_eq!(abstractions[4].metadata.split_kind, SplitKind::Concrete);
-    assert_eq!(abstractions[4].metadata.split_selection_rank, Some(1));
+    assert_eq!(abstractions[0].metadata().split_kind, SplitKind::Concrete);
+    assert_eq!(abstractions[0].metadata().split_selection_rank, Some(0));
+    assert_eq!(abstractions[2].metadata().split_kind, SplitKind::Wanted);
+    assert_eq!(abstractions[2].metadata().split_selection_rank, Some(0));
+    assert_eq!(abstractions[4].metadata().split_kind, SplitKind::Concrete);
+    assert_eq!(abstractions[4].metadata().split_selection_rank, Some(1));
 
     let standard =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
@@ -235,8 +248,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         .generate(&task)
         .unwrap();
     assert!(standard.iter().all(|abstraction| {
-        abstraction.metadata.split_kind == SplitKind::Concrete
-            && abstraction.metadata.split_selection_rank.is_none()
+        abstraction.metadata().split_kind == SplitKind::Concrete
+            && abstraction.metadata().split_selection_rank.is_none()
     }));
 
     let bounded =
@@ -357,7 +370,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
     assert_eq!(abstractions.len(), 3);
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_ref()
             .unwrap()
@@ -366,7 +379,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
     );
     assert_eq!(
         abstractions[1]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_ref()
             .unwrap()
@@ -374,32 +387,31 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
         2,
         "the second CEGAR run must start after the first concrete plan"
     );
-    let second_initial_h =
-        abstractions[1].distance_table.distances[abstractions[1].distance_table.initial_state];
+    let second_initial_h = abstractions[1].initial_h();
     assert!(second_initial_h <= 4.0);
     assert_eq!(
         abstractions[2]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(1)
     );
     assert_eq!(
         abstractions[2]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(1)
     );
     assert!(
         !abstractions[2]
-            .metadata
+            .metadata()
             .collection_member
             .is_some_and(|member| member.from_progress_state)
     );
     assert_eq!(
         abstractions[2]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_ref()
             .expect("initial-state specialist must find the concrete goal")
@@ -424,7 +436,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             ("initial-state specialist", &abstractions[2]),
         ] {
             let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
-            let h = abstraction.distance_table.distances[state_id];
+            let h = abstraction.distances()[state_id];
             assert!(
                 h <= true_distance,
                 "{kind} abstraction overestimates at x={x}: h={h}, h*={true_distance}"
@@ -522,7 +534,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
         abstractions
             .iter()
             .map(|abstraction| abstraction
-                .metadata
+                .metadata()
                 .collection_member
                 .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
@@ -533,7 +545,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             .iter()
             .map(|abstraction| {
                 abstraction
-                    .metadata
+                    .metadata()
                     .concrete_plan_operator_ids
                     .as_ref()
                     .expect("unbounded one-dimensional abstraction must find a plan")
@@ -547,7 +559,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
         abstractions
             .iter()
             .map(|abstraction| abstraction
-                .metadata
+                .metadata()
                 .collection_member
                 .is_some_and(|member| member.from_progress_state))
             .collect::<Vec<_>>(),
@@ -647,19 +659,19 @@ fn progress_states_complete_after_a_dead_progress_state() {
             .iter()
             .map(|abstraction| (
                 abstraction
-                    .metadata
+                    .metadata()
                     .collection_member
                     .map(|member| member.goal_id),
                 abstraction
-                    .metadata
+                    .metadata()
                     .collection_member
                     .map(|member| member.variant_id),
                 abstraction
-                    .metadata
+                    .metadata()
                     .collection_member
                     .is_some_and(|member| member.from_progress_state),
-                abstraction.metadata.stop_reason,
-                abstraction.metadata.concrete_plan_operator_ids.as_deref(),
+                abstraction.metadata().stop_reason,
+                abstraction.metadata().concrete_plan_operator_ids.as_deref(),
             ))
             .collect::<Vec<_>>()
     );
@@ -667,7 +679,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
         abstractions
             .iter()
             .map(|abstraction| abstraction
-                .metadata
+                .metadata()
                 .collection_member
                 .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
@@ -675,14 +687,14 @@ fn progress_states_complete_after_a_dead_progress_state() {
     );
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_deref(),
         Some([OperatorIndex::new(0)].as_slice())
     );
     assert_eq!(
         abstractions[1]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_deref(),
         Some([].as_slice()),
@@ -690,7 +702,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
     );
     assert!(
         !abstractions[1]
-            .metadata
+            .metadata()
             .collection_member
             .is_some_and(|member| member.from_progress_state)
     );
@@ -786,7 +798,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
         abstractions
             .iter()
             .map(|abstraction| abstraction
-                .metadata
+                .metadata()
                 .collection_member
                 .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
@@ -794,13 +806,13 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
     );
     assert!(
         abstractions[0]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .is_none()
     );
     assert_eq!(
         abstractions[1]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_ref()
             .unwrap()
@@ -809,7 +821,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
     );
     assert_eq!(
         abstractions[2]
-            .metadata
+            .metadata()
             .concrete_plan_operator_ids
             .as_ref()
             .unwrap()
@@ -830,9 +842,9 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
                 NumericValue::new(2.0),
             ];
             let state_id = abstraction.abstract_state(&propositions, &numeric).unwrap();
-            let h = abstraction.distance_table.distances[state_id];
+            let h = abstraction.distances()[state_id];
             let goal = abstraction
-                .metadata
+                .metadata()
                 .collection_member
                 .map(|member| member.goal_id)
                 .unwrap();
@@ -876,21 +888,18 @@ fn goal_collection_preserves_empty_goal_tasks() {
     .unwrap();
 
     assert_eq!(abstractions.len(), 1);
-    assert_eq!(
-        abstractions[0].distance_table.distances[abstractions[0].distance_table.initial_state],
-        0.0
-    );
-    assert!(abstractions[0].metadata.solved_by_self());
+    assert_eq!(abstractions[0].initial_h(), 0.0);
+    assert!(abstractions[0].metadata().solved_by_self());
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         None
     );
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         None
@@ -961,19 +970,19 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
 
     assert_eq!(abstractions.len(), 1);
     assert_eq!(
-        abstractions[0].metadata.stop_reason,
+        abstractions[0].metadata().stop_reason,
         CegarStopReason::TimeLimit
     );
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[0]
-            .metadata
+            .metadata()
             .collection_member
             .map(|member| member.variant_id),
         Some(0)

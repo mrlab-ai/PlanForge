@@ -42,13 +42,7 @@ impl PotentialAbstractionOcpHeuristic {
         max_recorded_transitions: usize,
     ) -> Result<Self, String> {
         let transition_build = abstraction
-            .factory
-            .build_ocp_transition_system(
-                task,
-                &abstraction.abstract_operators,
-                max_recorded_transitions,
-                Deadline::NONE,
-            )
+            .ocp_transition_system(task, max_recorded_transitions, Deadline::NONE)
             .map_err(|error| format!("pot_da_ocp could not record transitions: {error:#}"))?;
         let (transition_system, recorded_transition_count) = match transition_build {
             OcpTransitionSystemBuild::Complete(system) => {
@@ -63,8 +57,8 @@ impl PotentialAbstractionOcpHeuristic {
                 (None, required_at_least)
             }
         };
-        let initial_abstract_state = abstraction.distance_table.initial_state;
-        let abstraction_initial_h = abstraction.distance_table.distances[initial_abstract_state];
+        let initial_abstract_state = abstraction.core().initial_state;
+        let abstraction_initial_h = abstraction.initial_h();
 
         let mut optimizer = NumericPotentialOptimizer::new(task, &potential_config)?;
         let potential_task = optimizer.task().clone();
@@ -126,7 +120,7 @@ impl PotentialAbstractionOcpHeuristic {
 
         let infinity = Model::infinity();
         let operator_count = potential_task.operators.len();
-        let state_count = abstraction.distance_table.distances.len();
+        let state_count = abstraction.num_states();
         let mut variables = Vec::new();
         for operator in &potential_task.operators {
             variables.push(if nonnegative {

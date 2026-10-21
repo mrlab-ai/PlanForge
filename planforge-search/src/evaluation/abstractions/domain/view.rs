@@ -8,23 +8,19 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
 };
 
-use super::abstract_operators::AbstractOperator;
 use super::config::DomainAbstractionConfig;
-use super::factory::DomainAbstractionFactory;
+use super::factory::{DomainAbstractionFactory, DomainTransitions};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::refine::Refinable;
 use crate::evaluation::abstractions::common::cegar::split::Split;
 use crate::evaluation::abstractions::common::cegar::view::{
     AbstractionView, RefinementLimits, TransitionKey,
 };
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::resource_limits::Deadline;
 
 pub(super) struct DomainView<'a> {
-    pub(super) task: &'a dyn AbstractNumericTask,
     pub(super) factory: &'a DomainAbstractionFactory,
-    pub(super) operators: &'a [AbstractOperator],
-    pub(super) table: &'a AbstractDistanceTable,
+    pub(super) built: &'a DomainBuild,
     pub(super) limits: RefinementLimits<'a>,
     /// Plan steps execute any label of their abstract operator, not just
     /// the first.
@@ -36,7 +32,7 @@ impl AbstractionView for DomainView<'_> {
     type Growth = u128;
 
     fn num_states(&self) -> usize {
-        self.table.distances.len()
+        self.built.distances.len()
     }
 
     fn abstract_state(
@@ -52,26 +48,23 @@ impl AbstractionView for DomainView<'_> {
     }
 
     fn goal_distance(&self, state: usize) -> f64 {
-        self.table.distances[state]
+        self.built.distances[state]
     }
 
-    /// Evaluated on demand: the flaw search only asks about the states along
-    /// the abstract plan.
     fn is_goal(&self, state: usize) -> Result<bool> {
-        self.factory
-            .is_goal_state(self.task, state, &self.table.goal_facts, &mut Vec::new())
+        Ok(self.built.transitions.is_goal(state))
     }
 
     fn optimal_transition(&self, state: usize) -> Result<TransitionKey> {
-        let op_id = self.table.generating_op_ids[state].with_context(|| {
+        let op_id = self.built.generating_op_ids[state].with_context(|| {
             format!(
                 "non-goal abstract state {state} with finite distance has no generating operator"
             )
         })?;
-        let op = &self.operators[op_id];
+        let op = &self.built.transitions.operators[op_id];
         let target = state
             .checked_add_signed(-op.regression_offset)
-            .filter(|&target| target < self.table.distances.len())
+            .filter(|&target| target < self.built.distances.len())
             .with_context(|| {
                 format!("abstract operator {op_id} leads from state {state} out of the abstraction")
             })?;
@@ -105,9 +98,11 @@ impl AbstractionView for DomainView<'_> {
         if !self.wildcard_plans {
             return vec![transition.concrete_op_id];
         }
-        let op_id = self.table.generating_op_ids[transition.source]
+        let op_id = self.built.generating_op_ids[transition.source]
             .expect("an optimal transition leaves through its generating operator");
-        let mut labels = self.operators[op_id].concrete_op_ids.clone();
+        let mut labels = self.built.transitions.operators[op_id]
+            .concrete_op_ids
+            .clone();
         labels.sort_unstable();
         labels.dedup();
         labels
@@ -123,9 +118,30 @@ pub(super) struct DomainRefinement<'a> {
     pub(super) limits: RefinementLimits<'a>,
     pub(super) combine_labels: bool,
     pub(super) wildcard_plans: bool,
-    /// The operators and goal distances of the current abstraction, built by
-    /// [`Refinable::view`].
-    built: Option<(Vec<AbstractOperator>, AbstractDistanceTable)>,
+    /// The transitions and goal distances of the current abstraction, built
+    /// by [`Refinable::view`].
+    built: Option<DomainBuild>,
+}
+
+/// The transitions of a domain abstraction and the goal distances under
+/// them, with the abstract operator each state's cheapest goal path starts
+/// with.
+#[derive(Debug)]
+pub(super) struct DomainBuild {
+    pub(super) transitions: DomainTransitions,
+    pub(super) distances: Vec<f64>,
+    pub(super) generating_op_ids: Vec<Option<usize>>,
+}
+
+impl DomainBuild {
+    pub(super) fn new(transitions: DomainTransitions, deadline: Deadline) -> Result<Self> {
+        let (distances, generating_op_ids) = transitions.goal_distances(deadline)?;
+        Ok(Self {
+            transitions,
+            distances,
+            generating_op_ids,
+        })
+    }
 }
 
 impl<'a> DomainRefinement<'a> {
@@ -145,14 +161,9 @@ impl<'a> DomainRefinement<'a> {
         }
     }
 
-    /// The abstraction, with the operators and goal distances its last view
-    /// built if no split followed.
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        DomainAbstractionFactory,
-        Option<(Vec<AbstractOperator>, AbstractDistanceTable)>,
-    ) {
+    /// The abstraction, with the transitions and goal distances its last
+    /// view built if no split followed.
+    pub(super) fn into_parts(self) -> (DomainAbstractionFactory, Option<DomainBuild>) {
         (self.factory, self.built)
     }
 }
@@ -164,18 +175,13 @@ impl Refinable for DomainRefinement<'_> {
         Self: 'b;
 
     fn view(&mut self, deadline: Deadline) -> Result<DomainView<'_>> {
-        let operators =
-            self.factory
-                .abstract_operators(self.task, self.combine_labels, deadline)?;
-        let table = self
+        let transitions = self
             .factory
-            .build_distance_table(self.task, &operators, deadline)?;
-        let (operators, table) = self.built.insert((operators, table));
+            .transitions(self.task, self.combine_labels, deadline)?;
+        let built = self.built.insert(DomainBuild::new(transitions, deadline)?);
         Ok(DomainView {
-            task: self.task,
             factory: &self.factory,
-            operators,
-            table,
+            built,
             limits: self.limits,
             wildcard_plans: self.wildcard_plans,
         })

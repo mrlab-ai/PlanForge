@@ -3,7 +3,6 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -14,31 +13,29 @@ use super::config::DomainAbstractionConfig;
 use super::factory::DomainAbstractionFactory;
 use super::initial_splits::trivial_domain_mapping_and_sizes;
 use super::partitions::NumericPartitions;
-use super::view::DomainRefinement;
+use super::view::{DomainBuild, DomainRefinement};
 use crate::evaluation::abstractions::common::abstraction::{
-    AbstractionMetadata, CegarAbstraction, finish_abstraction,
+    AbstractionCore, AbstractionMetadata, CegarAbstraction, finish_abstraction,
 };
 use crate::evaluation::abstractions::common::cegar::CegarDriver;
 use crate::evaluation::abstractions::common::cegar::initial_splits::initial_splits;
 use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::resource_limits::Deadline;
 
-use super::abstract_operators::AbstractOperator;
 use super::abstraction::DomainAbstraction;
 use super::collection::AbstractionKey;
 use super::debug_dump::log_final_abstraction;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 
-/// The domain abstraction CEGAR refined, with the operators and goal
+/// The domain abstraction CEGAR refined, with the transitions and goal
 /// distances of its last flaw search if no split followed it.
 #[derive(Debug)]
 pub(super) struct DomainRefinementOutcome {
     pub(super) factory: DomainAbstractionFactory,
     pub(super) outcome: CegarOutcome,
-    pub(super) built: Option<(Vec<AbstractOperator>, AbstractDistanceTable)>,
+    pub(super) built: Option<DomainBuild>,
 }
 
 /// Refines a domain abstraction of `task` by CEGAR from `refinement_root`,
@@ -145,37 +142,33 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             built,
         } = refine_domain_abstraction(&self.config, task, refinement_root)
             .context("CEGAR failed to build abstraction")?;
-        let combine_labels = self.config.cegar.combine_labels;
-        let (abstract_operators, distance_table) = match built {
+        let DomainBuild {
+            transitions,
+            distances,
+            ..
+        } = match built {
             Some(built) => built,
-            None => {
-                let operators = factory
-                    .abstract_operators(task, combine_labels, Deadline::NONE)
-                    .context("failed to build abstract operators")?;
-                let table = factory
-                    .build_distance_table(task, &operators, Deadline::NONE)
-                    .context("failed to build abstract distance table")?;
-                (operators, table)
-            }
+            None => DomainBuild::new(
+                factory
+                    .transitions(task, self.config.cegar.combine_labels, Deadline::NONE)
+                    .context("failed to build abstract operators")?,
+                Deadline::NONE,
+            )
+            .context("failed to build the goal distances")?,
         };
-        let relevant_operator_ids = factory.relevant_operator_ids(task, &abstract_operators);
-
-        let mut abstraction = DomainAbstraction {
-            factory,
-            distance_table,
-            combine_labels,
-            relevant_operator_ids,
-            abstract_operators,
-            transition_data_retained: true,
-            abstract_source_sets: Vec::new(),
-            interval_transition_system: RefCell::new(None),
+        let core = AbstractionCore {
+            distances,
+            initial_state: factory.initial_state(task)?,
+            relevant_operator_ids: transitions.relevant_operator_ids(),
+            num_abstract_operators: transitions.operators.len(),
             metadata: AbstractionMetadata::standalone(
                 outcome,
                 self.config.cegar.split_kind,
                 self.config.cegar.split_selection_rank,
             ),
         };
-        finish_abstraction(Self::NAME, &abstraction, start.elapsed())?;
+        let mut abstraction = DomainAbstraction::new(factory, core, transitions);
+        finish_abstraction(&abstraction, start.elapsed())?;
         if !self.config.cegar.keep_transition_system {
             abstraction.discard_transition_data();
         }

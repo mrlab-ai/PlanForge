@@ -1,27 +1,39 @@
 use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 
 #[test]
 fn interval_stolen_costs_accept_transition_free_components() {
     let task = independent_goals_task();
-    let mut cartesian = cartesian_abstraction(&task);
-    cartesian.transition_system.transitions.clear();
-    cartesian.transition_count = 0;
-    cartesian.abstract_source_sets.clear();
-    let domain_config = DomainAbstractionConfig {
+    let regions = RegionSemantics::new(&task).unwrap();
+    let mut cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
-            max_states: 16,
+            max_states: 1,
+            ..CartesianAbstractionConfig::default().cegar
+        },
+        ..Default::default()
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    cartesian
+        .prepare_regional_saturation(&regions, Deadline::NONE)
+        .unwrap();
+    assert_eq!(cartesian.num_abstract_operators(), 0);
+    let mut domain = DomainAbstractionGenerator::new(DomainAbstractionConfig {
+        cegar: CegarOptions {
+            max_states: 1,
             ..DomainAbstractionConfig::default().cegar
         },
         ..Default::default()
-    };
-    let mut domain = DomainAbstractionGenerator::new(domain_config)
-        .unwrap()
-        .generate(&task)
+    })
+    .unwrap()
+    .generate(&task)
+    .unwrap();
+    domain
+        .prepare_regional_saturation(&regions, Deadline::NONE)
         .unwrap();
-    domain.abstract_operators.clear();
-    domain.abstract_source_sets.clear();
 
     let components = vec![
         AbstractionComponent::from(domain),
@@ -45,8 +57,8 @@ fn interval_stolen_costs_accept_transition_free_components() {
 fn interval_stolen_costs_reject_missing_source_sets() {
     let task = independent_goals_task();
     let mut abstraction = cartesian_abstraction(&task);
-    assert!(!abstraction.transition_system.transitions.is_empty());
-    abstraction.abstract_source_sets.clear();
+    abstraction.discard_transition_data();
+    assert!(abstraction.abstract_source_sets().is_none());
 
     let components = vec![AbstractionComponent::from(abstraction)];
     let error = interval_stolen_costs(
@@ -55,5 +67,5 @@ fn interval_stolen_costs_reject_missing_source_sets() {
         &[2.0, 3.0],
     )
     .unwrap_err();
-    assert!(error.to_string().contains("has 0 operator regions for"));
+    assert!(error.to_string().contains("has no source sets"));
 }

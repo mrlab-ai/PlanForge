@@ -1,7 +1,7 @@
 use super::*;
 
 /// Everything a cost partitioning over this collection needs except the order
-/// it is built in: the task, its abstraction components, where one state lands
+/// it is built in: the abstraction components, where one state lands
 /// in every component and what each scores there standalone, and the original
 /// operator costs the partition divides up.
 ///
@@ -10,7 +10,6 @@ use super::*;
 /// abstraction_h, ..collection }`.
 #[derive(Clone, Copy)]
 pub(super) struct PartitionedCollection<'a, 'task> {
-    pub(super) task: &'a dyn AbstractNumericTask,
     pub(super) components: &'a [AbstractionComponent<'task>],
     pub(super) abstract_state_ids: &'a [Option<usize>],
     pub(super) abstraction_h: &'a [f64],
@@ -39,31 +38,25 @@ impl SaturatedCosts {
 }
 
 /// The goal distances of `component` under `remaining` and the costs it
-/// saturates, by `method`; see [`saturate_labels`] and [`saturate_regions`].
-/// A pattern database has no source sets and saturates labels either way.
+/// saturates, by `method`; see [`CegarAbstraction::saturate_labels`] and
+/// [`CegarAbstraction::saturate_regions`]. A pattern database has no source
+/// sets, so it saturates labels under either method; SCP logs that once when
+/// it is built.
 fn saturate_component(
     component: &AbstractionComponent<'_>,
-    task: &dyn AbstractNumericTask,
     remaining: &RemainingCosts,
     method: CostPartitioningMethod,
     perimeter_state: Option<usize>,
     deadline: Deadline,
 ) -> anyhow::Result<(Vec<f64>, SaturatedCosts)> {
-    let regional = |(distances, allocation)| (distances, SaturatedCosts::Region(allocation));
     match (method, component) {
-        (CostPartitioningMethod::Region, AbstractionComponent::Domain(abstraction)) => abstraction
-            .saturate_regions(task, remaining, perimeter_state, deadline)
-            .map(regional),
-        (CostPartitioningMethod::Region, AbstractionComponent::Cartesian(abstraction)) => {
-            abstraction
-                .saturate_regions(remaining, perimeter_state, deadline)
-                .map(regional)
-        }
+        (CostPartitioningMethod::Region, AbstractionComponent::Cegar(abstraction)) => abstraction
+            .saturate_regions(remaining, perimeter_state, deadline)
+            .map(|(distances, allocation)| (distances, SaturatedCosts::Region(allocation))),
         (CostPartitioningMethod::Label, _)
         | (CostPartitioningMethod::Region, AbstractionComponent::PatternDatabase(_)) => {
             saturate_component_labels(
                 component,
-                task,
                 &remaining.operator_costs_for_label_cp(),
                 perimeter_state,
                 deadline,
@@ -76,16 +69,12 @@ fn saturate_component(
 /// Label saturation of `component` under `operator_costs`.
 pub(super) fn saturate_component_labels(
     component: &AbstractionComponent<'_>,
-    task: &dyn AbstractNumericTask,
     operator_costs: &[f64],
     perimeter_state: Option<usize>,
     deadline: Deadline,
 ) -> anyhow::Result<(Vec<f64>, Vec<f64>)> {
     match component {
-        AbstractionComponent::Domain(abstraction) => {
-            abstraction.saturate_labels(task, operator_costs, perimeter_state, deadline)
-        }
-        AbstractionComponent::Cartesian(abstraction) => {
+        AbstractionComponent::Cegar(abstraction) => {
             abstraction.saturate_labels(operator_costs, perimeter_state, deadline)
         }
         AbstractionComponent::PatternDatabase(pdb) => match perimeter_state {
@@ -149,7 +138,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         deadline: Deadline,
     ) -> Result<bool, EvaluationError> {
         let PartitionedCollection {
-            task,
             components,
             abstract_state_ids,
             abstraction_h,
@@ -178,20 +166,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 // state and the pass saturates nothing.
                 (true, None) => continue,
             };
-            let (distances, saturated) = saturate_component(
-                component,
-                task,
-                remaining,
-                method,
-                perimeter_state,
-                deadline,
-            )
-            .map_err(|error| {
-                Self::construction_error(
-                    &format!("failed to saturate component {component_id}"),
-                    error,
-                )
-            })?;
+            let (distances, saturated) =
+                saturate_component(component, remaining, method, perimeter_state, deadline)
+                    .map_err(|error| {
+                        Self::construction_error(
+                            &format!("failed to saturate component {component_id}"),
+                            error,
+                        )
+                    })?;
             let step = format!("{method} {phase}");
             log_table_summary(
                 &step,

@@ -1,4 +1,5 @@
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -106,15 +107,15 @@ fn a_rooted_domain_abstraction_plans_from_the_root_and_reports_the_initial_state
         .generate_from_root(&task, Some(&root))
         .unwrap();
 
-    assert!(abstraction.metadata.solved_by_self());
+    assert!(abstraction.metadata().solved_by_self());
     assert_eq!(
-        abstraction.metadata.concrete_plan_operator_ids,
+        abstraction.metadata().concrete_plan_operator_ids,
         Some(vec![OperatorIndex::new(0); 2]),
         "the executed plan starts at the root x=2"
     );
     // h(s0) uses the base task's initial state and its pinned unit costs: the
     // abstraction never overestimates the four increments from x=0.
-    let initial_h = abstraction.distance_table.distances[abstraction.distance_table.initial_state];
+    let initial_h = abstraction.initial_h();
     assert!(initial_h <= 4.0, "h(s0)={initial_h} overestimates h*=4");
     assert!(initial_h.is_finite());
 }
@@ -128,6 +129,6 @@ fn a_dead_root_stops_refinement_as_a_dead_end() {
         .generate_from_root(&task, Some(&root))
         .unwrap();
 
-    assert_eq!(abstraction.metadata.stop_reason, CegarStopReason::DeadEnd);
-    assert!(!abstraction.metadata.solved_by_self());
+    assert_eq!(abstraction.metadata().stop_reason, CegarStopReason::DeadEnd);
+    assert!(!abstraction.metadata().solved_by_self());
 }

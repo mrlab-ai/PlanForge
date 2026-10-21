@@ -149,27 +149,26 @@ impl Icaps26CartesianGenerator {
         let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_prop_values, &initial_numeric)?;
-        let (transition_system, distance_table, relevant_operator_ids, source_sets) =
-            if self.config.retain_transition_system {
-                finalize_abstraction(
-                    &working,
-                    &semantics,
-                    initial_abstract_state,
-                    self.config.combine_labels,
-                    self.config.compute_source_sets,
-                )?
-            } else {
-                finalize_standalone_abstraction(
-                    &working,
-                    &semantics,
-                    &shortest_paths,
-                    initial_abstract_state,
-                )?
-            };
-        let transition_count = if self.config.retain_transition_system {
-            transition_system.transitions.len()
+        let (transitions, distance_table, relevant_operator_ids) = if self
+            .config
+            .retain_transition_system
+        {
+            let (transitions, distance_table, relevant_operator_ids) = finalize_abstraction(
+                &working,
+                &semantics,
+                initial_abstract_state,
+                self.config.combine_labels,
+                self.config.compute_source_sets,
+            )?;
+            (Some(transitions), distance_table, relevant_operator_ids)
         } else {
-            working_transition_count
+            let (distance_table, relevant_operator_ids) =
+                finalize_standalone_abstraction(&working, &shortest_paths, initial_abstract_state)?;
+            (None, distance_table, relevant_operator_ids)
+        };
+        let transition_count = match &transitions {
+            Some(transitions) => transitions.system.transitions.len(),
+            None => working_transition_count,
         };
         if let Some(plan) = &solved_plan {
             validate_concrete_plan(
@@ -203,24 +202,26 @@ impl Icaps26CartesianGenerator {
             distance_table.distances[distance_table.initial_state],
             start.elapsed().as_secs_f64()
         );
-        Ok(CartesianAbstraction {
-            hierarchy: working.hierarchy,
-            distance_table,
-            transition_system,
-            relevant_operator_ids,
-            abstract_source_sets: source_sets,
-            metadata: AbstractionMetadata {
-                abstraction_use: AbstractionUse::Standalone,
-                stop_reason,
-                concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
-                pending_flaw,
-                refinements,
-                split_kind: SplitKind::Wanted,
-                split_selection_rank: None,
-                collection: None,
-                collection_member: None,
+        Ok(CartesianAbstraction::new(
+            working.hierarchy,
+            AbstractionCore {
+                distances: distance_table.distances,
+                initial_state: distance_table.initial_state,
+                relevant_operator_ids,
+                num_abstract_operators: transition_count,
+                metadata: AbstractionMetadata {
+                    abstraction_use: AbstractionUse::Standalone,
+                    stop_reason,
+                    concrete_plan_operator_ids: solved_plan.map(ConcretePlan::into_operator_ids),
+                    pending_flaw,
+                    refinements,
+                    split_kind: SplitKind::Wanted,
+                    split_selection_rank: None,
+                    collection: None,
+                    collection_member: None,
+                },
             },
-            transition_count,
-        })
+            transitions,
+        ))
     }
 }

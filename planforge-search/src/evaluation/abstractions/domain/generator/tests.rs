@@ -474,16 +474,15 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
         .unwrap()
         .generate(&task)
         .unwrap();
-        assert!(abstraction.metadata.solved_by_self(), "x0={initial}");
-        let partition_count = abstraction.factory.numeric_domain_sizes()[0];
+        assert!(abstraction.metadata().solved_by_self(), "x0={initial}");
+        let partition_count = abstraction.factory().numeric_domain_sizes()[0];
         // Both sides of the old small/large lookup split are covered.
         assert_eq!(
             partition_count > 8,
             initial < 15.0,
             "x0={initial}: {partition_count} partitions"
         );
-        let stored_h =
-            abstraction.distance_table.distances[abstraction.distance_table.initial_state];
+        let stored_h = abstraction.initial_h();
         assert_eq!(stored_h, 20.0 - initial, "x0={initial}");
 
         let component = AbstractionComponent::from(abstraction);
@@ -541,11 +540,11 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                 .generate(&task)
                 .unwrap();
                 assert!(
-                    abstraction.metadata.solved_by_self(),
+                    abstraction.metadata().solved_by_self(),
                     "{name}, {flaw_scope}, {split_kind}"
                 );
                 assert_eq!(
-                    abstraction.distance_table.distances[abstraction.distance_table.initial_state],
+                    abstraction.initial_h(),
                     optimal_cost,
                     "{name}, {flaw_scope}, {split_kind}"
                 );

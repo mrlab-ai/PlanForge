@@ -74,45 +74,21 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             shortest_paths,
             ..
         } = refinement;
-        let working_transition_count = working.active_transition_ids().count();
         let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_state.propositional, &initial_state.numeric)?;
-        let (transition_system, distance_table, relevant_operator_ids) =
-            if self.config.cegar.keep_transition_system {
-                finalize_abstraction(
-                    &working,
-                    &semantics,
-                    initial_abstract_state,
-                    self.config.cegar.combine_labels,
-                )?
-            } else {
-                finalize_standalone_abstraction(
-                    &working,
-                    &semantics,
-                    &shortest_paths,
-                    initial_abstract_state,
-                )?
-            };
-        let transition_count = if self.config.cegar.keep_transition_system {
-            transition_system.transitions.len()
-        } else {
-            working_transition_count
-        };
-        let abstraction = CartesianAbstraction {
-            hierarchy: working.hierarchy,
-            distance_table,
-            transition_system,
-            relevant_operator_ids,
-            abstract_source_sets: Vec::new(),
-            metadata: AbstractionMetadata::standalone(
+        let abstraction = finalize_abstraction(
+            working,
+            &shortest_paths,
+            initial_abstract_state,
+            &self.config.cegar,
+            AbstractionMetadata::standalone(
                 outcome,
                 self.config.cegar.split_kind,
                 self.config.cegar.split_selection_rank,
             ),
-            transition_count,
-        };
-        finish_abstraction(Self::NAME, &abstraction, start.elapsed())?;
+        );
+        finish_abstraction(&abstraction, start.elapsed())?;
         Ok(abstraction)
     }
 }

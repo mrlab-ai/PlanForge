@@ -1,5 +1,6 @@
 use super::*;
-use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use crate::evaluation::abstractions::common::regions::{RegionSemantics, SOURCE_SETS};
+use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 
 /// `source_set` narrowed to `region`, the abstract state a transition of
 /// its abstract operator leaves from.
@@ -20,40 +21,33 @@ pub(crate) fn source_set_within(
 }
 
 impl DomainAbstractionFactory {
-    /// The source set of every label of every abstract operator: the states
+    /// The source sets of every label of every abstract operator: the states
     /// of the operator's source region from which the label may lead into its
     /// target region.
-    pub fn build_abstract_source_sets(
+    pub(crate) fn build_abstract_source_sets(
         &self,
-        task: &dyn AbstractNumericTask,
+        regions: &RegionSemantics<'_>,
         operators: &[AbstractOperator],
+        deadline: Deadline,
     ) -> Result<Vec<AbstractOperatorSourceSets>> {
-        let regions = RegionSemantics::new(task)?;
+        let task = regions.task();
         operators
             .iter()
             .enumerate()
             .map(|(abstract_op_id, operator)| {
+                if abstract_op_id.is_multiple_of(1024) {
+                    deadline.ensure(SOURCE_SETS)?;
+                }
                 let source = self.cartesian_set_from_facts(task, &operator.preconditions);
                 let target =
                     self.cartesian_set_from_facts(task, &operator.regression_preconditions);
-                let labels = operator
-                    .concrete_op_ids
-                    .iter()
-                    .map(|&concrete_op_id| {
-                        let source_set = regions
-                            .transition_source_set(&source, concrete_op_id, &target)?
-                            .with_context(|| {
-                                format!(
-                                    "abstract operator {abstract_op_id} has an empty source set for concrete operator {concrete_op_id}"
-                                )
-                            })?;
-                        Ok(LabelSourceSet {
-                            concrete_op_id,
-                            source: Arc::new(source_set),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok(AbstractOperatorSourceSets { labels })
+                regions
+                    .abstract_operator_source_sets(
+                        &Arc::new(source),
+                        &operator.concrete_op_ids,
+                        &target,
+                    )
+                    .with_context(|| format!("abstract operator {abstract_op_id}"))
             })
             .collect()
     }
