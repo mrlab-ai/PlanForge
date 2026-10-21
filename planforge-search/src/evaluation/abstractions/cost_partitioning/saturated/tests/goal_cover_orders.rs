@@ -59,7 +59,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let goal = |component_id: usize| {
         abstractions[component_id]
             .metadata
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id)
             .unwrap()
     };

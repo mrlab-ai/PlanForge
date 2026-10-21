@@ -35,7 +35,7 @@ use tracing::{debug, info};
 
 use super::member::{BuiltReport, CollectionMember};
 use super::strategy::CollectionStrategy;
-use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
+use crate::evaluation::abstractions::common::abstraction::CollectionMembership;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::seed::{DEFAULT_RANDOM_SEED, derive_variant_seed};
@@ -78,15 +78,6 @@ pub struct GoalVariant {
 pub struct MemberBudget {
     pub(crate) remaining_states: usize,
     pub(crate) remaining_time: Option<Duration>,
-}
-
-/// The collection-level facts recorded on every goal-focused member.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollectionMembership {
-    pub goal_id: usize,
-    pub variant_id: usize,
-    /// The member refined from an advanced (non-initial) progress state.
-    pub from_progress_state: bool,
 }
 
 /// One abstraction backend of a goal-focused collection.
@@ -410,16 +401,11 @@ fn build_member<B: GoalFocusedBackend>(
 
     let membership = (!variant.full_task).then_some(CollectionMembership {
         goal_id: member.goal_id,
-        variant_id: member.variant_id,
+        variant_id: (member.kind != MemberKind::InitialStateSpecialist)
+            .then_some(member.variant_id),
         from_progress_state: from_progress_state && !reset_progress_state,
     });
-    built.record(
-        CollectionRecord {
-            iteration: abstraction_id + 1,
-            full_task: variant.full_task,
-        },
-        membership,
-    );
+    built.record(abstraction_id + 1, membership);
 
     Ok(BuiltMember {
         report: built.report(),

@@ -99,9 +99,12 @@ fn collection_builds_one_abstraction_before_enforcing_its_time_limit() {
             .unwrap();
 
         assert_eq!(abstractions.len(), 1, "{collection_strategy}");
-        assert_eq!(
-            abstractions[0].metadata.abstraction_use,
-            AbstractionUse::CollectionMember
+        assert!(
+            matches!(
+                abstractions[0].metadata.abstraction_use,
+                AbstractionUse::CollectionMember { iteration: 1, .. }
+            ),
+            "{collection_strategy}"
         );
     }
 }
@@ -549,12 +552,12 @@ fn goal_focused_domain_collection_follows_the_cartesian_member_sequence() {
             ))
             .collect::<Vec<_>>(),
         vec![
-            (0, 0, SplitKind::Concrete, Some(0), 2.0),
-            (1, 0, SplitKind::Concrete, Some(0), 3.0),
-            (0, 1, SplitKind::Wanted, Some(0), 2.0),
-            (1, 1, SplitKind::Wanted, Some(0), 3.0),
-            (1, 2, SplitKind::Concrete, Some(1), 3.0),
-            (0, 2, SplitKind::Concrete, Some(1), 2.0),
+            (0, Some(0), SplitKind::Concrete, Some(0), 2.0),
+            (1, Some(0), SplitKind::Concrete, Some(0), 3.0),
+            (0, Some(1), SplitKind::Wanted, Some(0), 2.0),
+            (1, Some(1), SplitKind::Wanted, Some(0), 3.0),
+            (1, Some(2), SplitKind::Concrete, Some(1), 3.0),
+            (0, Some(2), SplitKind::Concrete, Some(1), 2.0),
         ]
     );
 }
@@ -706,12 +709,9 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
     assert_eq!(domain.len(), 4);
     assert_eq!(cartesian.len(), 4);
     for (index, (domain, cartesian)) in domain.iter().zip(&cartesian).enumerate() {
-        assert_eq!(
-            domain.metadata.collection.map(|record| record.full_task),
-            Some(true)
-        );
-        assert_eq!(domain.metadata.collection_member, None);
-        assert_eq!(cartesian.metadata.collection_member, None);
+        assert_eq!(domain.metadata.collection_iteration(), Some(index + 1));
+        assert_eq!(domain.metadata.collection_membership(), None);
+        assert_eq!(cartesian.metadata.collection_membership(), None);
         let expected_backward = index >= 2;
         assert_eq!(
             domain.metadata.split_kind,
@@ -841,11 +841,11 @@ fn both_representations_build_one_per_goal_member_per_goal() {
     .unwrap();
     let domain_goals: Vec<_> = domain
         .iter()
-        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .map(|member| member.metadata.collection_membership().unwrap().goal_id)
         .collect();
     let cartesian_goals: Vec<_> = cartesian
         .iter()
-        .map(|member| member.metadata.collection_member.unwrap().goal_id)
+        .map(|member| member.metadata.collection_membership().unwrap().goal_id)
         .collect();
     assert_eq!(domain_goals, [0, 1]);
     assert_eq!(cartesian_goals, [0, 1]);
@@ -904,7 +904,7 @@ fn standard_cartesian_restarts_are_distinct_full_task_abstractions() {
     assert!(
         members
             .iter()
-            .all(|member| member.metadata.collection_member.is_none())
+            .all(|member| member.metadata.collection_membership().is_none())
     );
 }
 

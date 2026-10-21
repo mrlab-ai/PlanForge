@@ -467,14 +467,7 @@ fn sailing_simple_ratchet_equilibrium() {
     let saved_p0_group_counts = abstractions
         .iter()
         .filter_map(|abstraction| {
-            if abstraction
-                .metadata
-                .collection
-                .map(|record| record.full_task)
-                != Some(false)
-            {
-                return None;
-            }
+            abstraction.metadata.collection_membership()?;
             let factory_task = &task;
             let near_x = numeric_var_id_by_name_parts(
                 factory_task,
@@ -562,9 +555,12 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
     for goal_id in 0..task.get_num_goals() {
         let variants = abstractions
             .iter()
-            .filter_map(|abstraction| abstraction.metadata.collection_member)
-            .filter(|member| member.goal_id == goal_id && member.variant_id < 2)
-            .map(|member| member.variant_id)
+            .filter_map(|abstraction| abstraction.metadata.collection_membership())
+            .filter_map(|member| {
+                member
+                    .variant_id
+                    .filter(|&variant_id| member.goal_id == goal_id && variant_id < 2)
+            })
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             variants,
@@ -573,11 +569,9 @@ fn sailing_simple_goal_focused_collection_keeps_single_goal_solved_abstractions(
         );
     }
     assert!(
-        abstractions.iter().all(|abstraction| abstraction
-            .metadata
-            .collection
-            .map(|record| record.full_task)
-            == Some(false)),
+        abstractions
+            .iter()
+            .all(|abstraction| abstraction.metadata.collection_membership().is_some()),
         "multi-goal goal-focused collection must not generate full-goal abstractions"
     );
 }

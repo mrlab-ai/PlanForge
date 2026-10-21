@@ -85,10 +85,9 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
             for member in &members {
                 let metadata = member.metadata();
                 info!(
-                    "{} collection member: {:?}, {:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
+                    "{} collection member: {:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
                     G::NAME,
-                    metadata.collection,
-                    metadata.collection_member,
+                    metadata.abstraction_use,
                     member.num_states(),
                     member.initial_h(),
                     metadata.stop_reason,

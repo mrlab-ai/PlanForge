@@ -212,7 +212,7 @@ pub(super) fn goal_cover_scp<'task>(
         .filter_map(|abstraction| {
             abstraction
                 .metadata
-                .collection_member
+                .collection_membership()
                 .map(|member| member.goal_id)
         })
         .collect::<HashSet<_>>();

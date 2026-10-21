@@ -217,8 +217,6 @@ impl Icaps26CartesianGenerator {
                 refinements,
                 split_kind: SplitKind::Wanted,
                 split_selection_rank: None,
-                collection: None,
-                collection_member: None,
             },
             transition_count,
         })

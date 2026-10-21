@@ -2,9 +2,8 @@
 
 use planforge_sas::numeric_task::OperatorIndex;
 
-use super::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::common::abstraction::{
-    AbstractionUse, CegarAbstraction, CollectionRecord,
+    AbstractionUse, CegarAbstraction, CollectionMembership,
 };
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 
@@ -13,9 +12,10 @@ use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 pub(crate) trait CollectionMember {
     fn report(&self) -> BuiltReport;
 
-    /// Marks the member as a collection's: at `record`, and with `membership`
-    /// for a member of a goal-focused collection built on its goal's task.
-    fn record(&mut self, record: CollectionRecord, membership: Option<CollectionMembership>);
+    /// Marks the member as built by the collection's build `iteration`, and
+    /// with `membership` for a member of a goal-focused collection built on
+    /// its goal's task.
+    fn record(&mut self, iteration: usize, membership: Option<CollectionMembership>);
 }
 
 /// What the collection needs to know about a built member.
@@ -58,10 +58,10 @@ impl<A: CegarAbstraction> CollectionMember for A {
         }
     }
 
-    fn record(&mut self, record: CollectionRecord, membership: Option<CollectionMembership>) {
-        let metadata = self.metadata_mut();
-        metadata.abstraction_use = AbstractionUse::CollectionMember;
-        metadata.collection = Some(record);
-        metadata.collection_member = membership;
+    fn record(&mut self, iteration: usize, membership: Option<CollectionMembership>) {
+        self.metadata_mut().abstraction_use = AbstractionUse::CollectionMember {
+            iteration,
+            membership,
+        };
     }
 }

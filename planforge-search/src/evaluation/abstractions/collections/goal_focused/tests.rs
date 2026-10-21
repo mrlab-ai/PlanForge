@@ -120,7 +120,7 @@ impl CollectionMember for Member {
         self.report.clone()
     }
 
-    fn record(&mut self, _record: CollectionRecord, membership: Option<CollectionMembership>) {
+    fn record(&mut self, _iteration: usize, membership: Option<CollectionMembership>) {
         self.membership = membership;
     }
 }
@@ -263,10 +263,14 @@ fn progress(members: &[Member]) -> Vec<(usize, usize, MemberKind, Option<f64>, b
         .map(|member| {
             let membership = member.membership.expect("goal tasks tag every member");
             assert_eq!(Some(membership.goal_id), member.call.goal_id);
-            assert_eq!(membership.variant_id, member.call.variant_id);
+            assert_eq!(
+                membership.variant_id,
+                (member.call.kind != MemberKind::InitialStateSpecialist)
+                    .then_some(member.call.variant_id)
+            );
             (
                 membership.goal_id,
-                membership.variant_id,
+                member.call.variant_id,
                 member.call.kind,
                 member.call.root_x,
                 membership.from_progress_state,

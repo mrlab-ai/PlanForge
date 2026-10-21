@@ -15,9 +15,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstraction, CartesianAbstractionCollectionConfig,
     CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
 };
-use crate::evaluation::abstractions::common::abstraction::{
-    AbstractionMetadata, AbstractionUse, CollectionRecord,
-};
+use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, AbstractionUse};
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
@@ -99,7 +97,7 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             .filter(|abstraction| {
                 abstraction
                     .metadata
-                    .collection_member
+                    .collection_membership()
                     .map(|member| member.goal_id)
                     == Some(goal_id)
             })
@@ -230,10 +228,10 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         let single_goal_task = SingleGoalTask::new(transformed_task, spec.goal);
         let mut abstraction = build_handcrafted_abstraction(&single_goal_task, spec)
             .unwrap_or_else(|error| panic!("failed to build {}: {error:#}", spec.name));
-        abstraction.metadata.collection = Some(CollectionRecord {
+        abstraction.metadata.abstraction_use = AbstractionUse::CollectionMember {
             iteration: index + 1,
-            full_task: false,
-        });
+            membership: abstraction.metadata.collection_membership(),
+        };
         let states = abstraction.distance_table.distances.len();
         assert!(
             states <= 10_000,
@@ -427,7 +425,10 @@ fn build_handcrafted_abstraction(
         abstract_source_sets,
         interval_transition_system: RefCell::new(None),
         metadata: AbstractionMetadata {
-            abstraction_use: AbstractionUse::CollectionMember,
+            abstraction_use: AbstractionUse::CollectionMember {
+                iteration: 1,
+                membership: None,
+            },
             ..AbstractionMetadata::standalone(
                 CegarOutcome {
                     stop_reason: CegarStopReason::SizeLimit,

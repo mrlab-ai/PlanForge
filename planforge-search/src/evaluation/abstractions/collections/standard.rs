@@ -23,7 +23,6 @@ use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
 use super::member::CollectionMember;
-use crate::evaluation::abstractions::common::abstraction::CollectionRecord;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::initial_splits::InitialSplitVar;
 use crate::resource_limits;
@@ -202,13 +201,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
                 B::NAME
             );
             remaining_collection_size -= consumed;
-            built.record(
-                CollectionRecord {
-                    iteration,
-                    full_task: true,
-                },
-                None,
-            );
+            built.record(iteration, None);
             members.push(built);
             debug!(
                 "{} collection: added restart {iteration}, states={consumed}, remaining_collection_size={remaining_collection_size}, blacklisting={blacklisting}",

@@ -4,8 +4,9 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 
 use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
-use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
-use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use crate::evaluation::abstractions::common::abstraction::{
+    CegarAbstraction, CollectionMembership,
+};
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
@@ -165,7 +166,7 @@ impl<'task> AbstractionComponent<'task> {
         let abstraction = self.cegar()?;
         let metadata = abstraction.metadata();
         metadata
-            .collection_member
+            .collection_membership()
             .map(|membership| GoalFocusedMember {
                 membership,
                 split_kind: metadata.split_kind,
