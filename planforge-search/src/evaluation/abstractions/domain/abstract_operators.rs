@@ -36,7 +36,6 @@ struct AbstractOperatorCandidate {
     prev_pairs: Vec<ExplicitFact>,
     pre_pairs: Vec<ExplicitFact>,
     eff_pairs: Vec<ExplicitFact>,
-    changed_numeric_vars: Vec<VariableIndex>,
     /// `(cost_bits, FNV+SplitMix64 hash of prev+pre+eff+cost)`.
     /// Precomputed once at candidate creation so the candidate can be matched
     /// against the grouping map in `push_candidate` without re-walking its fact
@@ -68,7 +67,6 @@ pub struct AbstractOperator {
     pub regression_offset: isize,
     pub regression_preconditions: Vec<ExplicitFact>,
     pub preconditions: Vec<ExplicitFact>,
-    pub changed_numeric_vars: Vec<VariableIndex>,
 }
 
 impl AbstractOperator {
@@ -79,7 +77,6 @@ impl AbstractOperator {
         cost: NumericValue,
         layout: &StateLayout,
         concrete_op_ids: Vec<OperatorIndex>,
-        changed_numeric_vars: Vec<VariableIndex>,
     ) -> Self {
         let mut preconditions: Vec<ExplicitFact> = pre_pairs.to_vec();
         preconditions.extend_from_slice(prev_pairs);
@@ -118,7 +115,6 @@ impl AbstractOperator {
             regression_offset,
             regression_preconditions,
             preconditions,
-            changed_numeric_vars,
         }
     }
 }
@@ -129,7 +125,6 @@ impl AbstractOperator {
 struct TransitionInfo {
     source_partition_facts: Vec<ExplicitFact>,
     target_partition_facts: Vec<ExplicitFact>,
-    changed_numeric_vars: Vec<VariableIndex>,
 }
 
 /// Stored signature per *operator* (post-grouping). Holding the original
@@ -249,11 +244,6 @@ impl<'a> AbstractOperatorFinalizer<'a> {
                     if stored.matches_candidate(candidate, cost_bits) {
                         let operator = &mut self.operators[idx as usize];
                         operator.concrete_op_ids.push(candidate.concrete_op_id);
-                        operator
-                            .changed_numeric_vars
-                            .extend(candidate.changed_numeric_vars.iter().copied());
-                        operator.changed_numeric_vars.sort_unstable();
-                        operator.changed_numeric_vars.dedup();
                         return;
                     }
                 }
@@ -267,7 +257,6 @@ impl<'a> AbstractOperatorFinalizer<'a> {
                 candidate.cost,
                 self.layout,
                 vec![candidate.concrete_op_id],
-                candidate.changed_numeric_vars.clone(),
             ));
             self.stored_signatures
                 .push(StoredOperatorSignature::from_candidate(
@@ -285,7 +274,6 @@ impl<'a> AbstractOperatorFinalizer<'a> {
             candidate.cost,
             self.layout,
             vec![candidate.concrete_op_id],
-            candidate.changed_numeric_vars.clone(),
         ));
     }
 
@@ -388,7 +376,6 @@ fn build_candidate_from_transition(
     candidate.prev_pairs.clear();
     candidate.pre_pairs.clear();
     candidate.eff_pairs.clear();
-    candidate.changed_numeric_vars.clear();
 
     let extended_pre_pairs = &mut candidate.pre_pairs;
     let extended_eff_pairs = &mut candidate.eff_pairs;
@@ -488,9 +475,6 @@ fn build_candidate_from_transition(
     );
     candidate.concrete_op_id = skeleton.concrete_op_id;
     candidate.cost = skeleton.cost;
-    candidate
-        .changed_numeric_vars
-        .extend_from_slice(&trans.changed_numeric_vars);
     candidate.cost_bits = cost_bits;
     candidate.signature_hash = signature_hash;
     true
@@ -841,26 +825,9 @@ fn compute_hash_effects_with_preconditions(
     // Enumerate every refined numeric coordinate needed by this operator.
     // Affected regular variables and exact additive views get source->target
     // transitions; needed unaffected coordinates get identity transitions.
-    let mut effects_by_var: Vec<Vec<&AssignmentEffect>> =
-        vec![Vec::new(); numeric_domain_sizes.len()];
-    let mut affected_numeric_vars: HashSet<VariableIndex> = HashSet::new();
+    let mut assigned = vec![false; numeric_domain_sizes.len()];
     for eff in ass_effects {
-        let v = eff.affected_var_id();
-        effects_by_var[v.index()].push(eff);
-        if numeric_domain_sizes[v.index()] > 1 {
-            affected_numeric_vars.insert(v);
-        }
-    }
-    for (numeric_var_id, view) in additive_numeric_views
-        .iter()
-        .enumerate()
-        .filter_map(|(numeric_var_id, view)| Some((numeric_var_id, view.as_ref()?)))
-    {
-        if numeric_domain_sizes[numeric_var_id] > 1
-            && view.operator_delta(concrete_op_id).value().abs() >= float_tolerance::ABS_EPSILON
-        {
-            affected_numeric_vars.insert(VariableIndex::from_usize(numeric_var_id));
-        }
+        assigned[eff.affected_var_id().index()] = true;
     }
 
     // A refined numeric variable that the operator neither affects nor
@@ -885,12 +852,8 @@ fn compute_hash_effects_with_preconditions(
         }
     }
 
-    let mut changed_numeric_vars: Vec<VariableIndex> =
-        affected_numeric_vars.iter().copied().collect();
-    changed_numeric_vars.sort_unstable();
-
     let mut per_var: Vec<(VariableIndex, Vec<(usize, usize)>)> = Vec::new();
-    for (v, effs) in effects_by_var.iter().enumerate() {
+    for (v, &assigned) in assigned.iter().enumerate() {
         let var_id = VariableIndex::from_usize(v);
         let num_parts = numeric_domain_sizes[v];
         if num_parts <= 1 {
@@ -910,7 +873,7 @@ fn compute_hash_effects_with_preconditions(
             }
             continue;
         }
-        if !effs.is_empty() {
+        if assigned {
             per_var.push((
                 var_id,
                 partition_transitions(task, generator, concrete_op_id, var_id),
@@ -927,7 +890,6 @@ fn compute_hash_effects_with_preconditions(
         return Ok(vec![TransitionInfo {
             source_partition_facts: Vec::new(),
             target_partition_facts: Vec::new(),
-            changed_numeric_vars,
         }]);
     }
 
@@ -937,7 +899,6 @@ fn compute_hash_effects_with_preconditions(
     let mut scratch = PartitionComboScratch {
         source_partition_facts: Vec::new(),
         target_partition_facts: Vec::new(),
-        changed_numeric_vars,
         combo: Vec::with_capacity(per_var.len()),
         source_intervals: Vec::new(),
         transitions: Vec::new(),
@@ -1000,14 +961,13 @@ struct PartitionComboEnumeration<'a> {
 }
 
 /// What one enumeration shares across recursive frames: the partition facts and
-/// combo triples pushed on the way down and popped on the way back up, the set
-/// of changed numeric vars and the interval buffer each leaf reads, and the
+/// combo triples pushed on the way down and popped on the way back up, the
+/// interval buffer each leaf reads, and the
 /// transitions collected so far. Following the C++ reference, sharing these is
 /// what keeps a combo from allocating.
 struct PartitionComboScratch {
     source_partition_facts: Vec<ExplicitFact>,
     target_partition_facts: Vec<ExplicitFact>,
-    changed_numeric_vars: Vec<VariableIndex>,
     combo: Vec<(VariableIndex, usize, usize)>,
     source_intervals: Vec<Interval>,
     transitions: Vec<TransitionInfo>,
@@ -1031,8 +991,8 @@ fn enumerate_partition_combos(
         deadline.ensure(OPERATOR_GENERATION)?;
     }
     if pos == per_var.len() {
-        // Leaf: emit a TransitionInfo for the current (source, target,
-        // changed_vars) state of the scratch. An operator with a comparison
+        // Leaf: emit a TransitionInfo for the source and target partition
+        // facts the scratch holds. An operator with a comparison
         // precondition only applies in the combinations whose source
         // intervals admit it.
         if op_has_comparison_preconditions {
@@ -1088,14 +1048,9 @@ impl PartitionComboScratch {
             self.target_partition_facts.windows(2).all(|w| w[0] <= w[1]),
             "target_partition_facts must be sorted by construction"
         );
-        debug_assert!(
-            self.changed_numeric_vars.windows(2).all(|w| w[0] < w[1]),
-            "changed_numeric_vars must be strictly ascending by construction"
-        );
         self.transitions.push(TransitionInfo {
             source_partition_facts: self.source_partition_facts.clone(),
             target_partition_facts: self.target_partition_facts.clone(),
-            changed_numeric_vars: self.changed_numeric_vars.clone(),
         });
     }
 }
