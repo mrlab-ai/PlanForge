@@ -3,41 +3,27 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, ensure};
-
+use anyhow::{Result, ensure};
+use planforge_sas::numeric_conditions::NumericConditions;
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
-    VariableIndex,
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex, VariableIndex,
 };
 
 use super::abstract_operators::{AbstractOperator, DomainMapping, build_abstract_operators};
 use super::abstraction_numeric_var;
-use super::comparison_inputs::fill_state_intervals;
 use super::layout::StateLayout;
 use super::partitions::NumericPartitions;
-use super::partitions::partition_for_value;
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::split::Split;
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericView;
+use crate::resource_limits::Deadline;
 
 mod distances;
 mod source_sets;
 mod state_encoding;
 
-use crate::evaluation::abstractions::common::cartesian_set::{
-    CartesianSet, cartesian_set_intersection,
-};
-use crate::evaluation::abstractions::common::transition_system::{
-    AbstractTransition, AbstractTransitionSystem, BackwardGraph, LabelSourceSet,
-    backward_goal_distances,
-};
-use crate::evaluation::abstractions::cost_partitioning::costs::{SaturationGraph, cheapest_label};
-use crate::resource_limits::Deadline;
 pub(crate) use distances::DomainTransitions;
-use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
-use planforge_sas::utils::interval::Interval;
 pub(crate) use source_sets::source_set_within;
-pub(crate) use state_encoding::MatchTree;
 
 /// The operations expired deadlines name.
 const DISTANCE_TABLE: &str = "abstract distance table";

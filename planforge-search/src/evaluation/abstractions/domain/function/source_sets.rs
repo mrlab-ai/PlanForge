@@ -1,6 +1,17 @@
-use super::*;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+
+use super::DomainAbstractionFunction;
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, cartesian_set_intersection,
+};
 use crate::evaluation::abstractions::common::regions::{RegionSemantics, SOURCE_SETS};
-use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractOperatorSourceSets, LabelSourceSet,
+};
+use crate::evaluation::abstractions::domain::abstract_operators::AbstractOperator;
+use crate::resource_limits::Deadline;
 
 /// `source_set` narrowed to `region`, the abstract state a transition of
 /// its abstract operator leaves from.
