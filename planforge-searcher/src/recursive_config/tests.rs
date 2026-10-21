@@ -90,7 +90,7 @@ fn parses_and_round_trips_collection_source_lists() {
 fn rejects_nested_collection_source_lists() {
     let error = parse_search_spec("astar(scp([[domain_collection()]]))").unwrap_err();
     assert!(
-        error.contains("nested lists are not supported"),
+        error.contains("expected AbstractionSource, got a list"),
         "got `{error}`"
     );
 }
@@ -260,7 +260,7 @@ fn check_admissible_round_trips_through_display() {
     let spec = parse_search_spec("astar(check_admissible(blind()))").unwrap();
     // `parse_value` normalizes a zero-argument call into a bare name, so the
     // round-trip is over the spec, not over the exact input text.
-    assert_eq!(spec.to_string(), "astar(check_admissible(blind))");
+    assert_eq!(spec.to_string(), "astar(check_admissible(blind()))");
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
 
     let with_options =

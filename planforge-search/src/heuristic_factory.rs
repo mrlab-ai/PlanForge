@@ -281,6 +281,8 @@ pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
 fn parse_feature<F: HeuristicFeature>(
     spec: &HeuristicSpec,
 ) -> Result<HeuristicConfig, ConfigError> {
+    let mut spec = spec.clone();
+    spec.name.make_ascii_lowercase();
     let config = configure(&spec.name, F::Config::default(), &spec.args)?;
     F::validate(&config).map_err(|error| error.at(&spec.name))?;
     Ok(HeuristicConfig(Arc::new(Configured::<F> {

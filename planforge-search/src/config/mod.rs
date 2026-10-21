@@ -79,7 +79,7 @@ macro_rules! option_enum {
             fn from_option_value(
                 value: &$crate::config::ConfigValue,
             ) -> ::std::result::Result<Self, crate::config::ConfigError> {
-                match value.as_atom()? {
+                match value.as_atom()?.to_ascii_lowercase().as_str() {
                     $($name $(| $alias)* => Ok(Self::$variant),)+
                     other => Err(format!(
                         "invalid {} `{other}`; expected one of {}",
@@ -151,6 +151,7 @@ impl ConfigValue {
     pub fn as_atom(&self) -> Result<&str, ConfigError> {
         match self {
             ConfigValue::Atom(value) => Ok(value),
+            ConfigValue::Call(call) if call.args.is_empty() => Ok(&call.name),
             ConfigValue::Call(call) => {
                 Err(format!("expected scalar value, got `{}`", call.name).into())
             }
@@ -169,11 +170,9 @@ impl ConfigValue {
     /// Whether this value is, or nests, a call to `name`.
     pub fn contains_call(&self, name: &str) -> bool {
         match self {
-            // A zero-argument call such as `blind()` is parsed as a bare atom,
-            // so an atom spelled `name` *is* a call to `name`.
-            ConfigValue::Atom(atom) => atom == name,
+            ConfigValue::Atom(_) => false,
             ConfigValue::Call(call) => {
-                call.name() == name
+                call.name().eq_ignore_ascii_case(name)
                     || call
                         .args()
                         .iter()
@@ -206,13 +205,21 @@ impl ConfigCall {
     }
 
     pub fn contains_call(&self, name: &str) -> bool {
-        self.name == name || self.args.iter().any(|arg| arg.value().contains_call(name))
+        self.name.eq_ignore_ascii_case(name)
+            || self.args.iter().any(|arg| arg.value().contains_call(name))
     }
 }
 impl std::fmt::Display for ConfigValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigValue::Atom(atom) => f.write_str(atom),
+            ConfigValue::Atom(atom) => {
+                // Quote scalar strings so identifiers remain distinct from calls.
+                if atom.parse::<f64>().is_ok() {
+                    f.write_str(atom)
+                } else {
+                    write!(f, "{atom:?}")
+                }
+            }
             ConfigValue::Call(call) => write!(f, "{call}"),
             ConfigValue::List(values) => {
                 f.write_str("[")?;
@@ -326,7 +333,7 @@ pub trait FromOptionValue: Sized {
 
 impl FromOptionValue for bool {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        match value.as_atom()? {
+        match value.as_atom()?.to_ascii_lowercase().as_str() {
             "true" => Ok(true),
             "false" => Ok(false),
             other => Err(format!("expected boolean, got `{other}`").into()),
@@ -366,7 +373,10 @@ impl FromOptionValue for f64 {
 
 impl<T: FromOptionValue> FromOptionValue for Option<T> {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        if matches!(value, ConfigValue::Atom(atom) if atom.eq_ignore_ascii_case("none")) {
+        if value
+            .as_atom()
+            .is_ok_and(|atom| atom.eq_ignore_ascii_case("none"))
+        {
             Ok(None)
         } else {
             T::from_option_value(value).map(Some)

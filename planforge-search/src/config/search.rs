@@ -82,7 +82,7 @@ pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
 // =============================================================================
 
 fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
-    if call.name == "search" {
+    if call.name.eq_ignore_ascii_case("search") {
         if call.args.len() != 1 {
             return Err("`search(...)` expects exactly one search engine".to_string());
         }
@@ -90,7 +90,7 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
         return build_search_spec(&nested);
     }
 
-    match call.name.as_str() {
+    match call.name.to_ascii_lowercase().as_str() {
         "astar" => extract_astar_options(call),
         "gbfs" => Ok(SearchConfig::Gbfs {
             heuristic: extract_heuristic_for_search(call)?,
