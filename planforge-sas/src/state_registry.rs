@@ -206,9 +206,7 @@ impl ExplicitFact {
 
 impl Effect {
     pub fn conditions_met(&self, state: ConcreteStateView<'_>) -> bool {
-        self.conditions()
-            .iter()
-            .all(|condition| condition.is_held(state))
+        state.holds_all(self.conditions())
     }
 }
 
@@ -219,6 +217,19 @@ impl<'a> ConcreteStateView<'a> {
 
     pub fn propositional(self) -> &'a [u64] {
         self.prop
+    }
+
+    /// Whether every one of `facts` holds.
+    pub fn holds_all(self, facts: &[ExplicitFact]) -> bool {
+        facts.iter().all(|fact| fact.is_held(self))
+    }
+
+    /// The `facts` that do not hold, in order.
+    pub fn unsatisfied<'f>(
+        self,
+        facts: &'f [ExplicitFact],
+    ) -> impl Iterator<Item = &'f ExplicitFact> + use<'a, 'f> {
+        facts.iter().filter(move |fact| !fact.is_held(self))
     }
 
     pub fn fill_propositional(self, output: &mut Vec<ExplicitValueIndex>) {

@@ -845,9 +845,9 @@ fn collect_goal_facts(
     task: &dyn AbstractNumericTask,
     universe: &FactUniverse,
 ) -> Result<Vec<FactId>, String> {
-    (0..task.get_num_goals())
-        .map(|i| {
-            let goal = task.get_goal_fact(i);
+    task.goals()
+        .iter()
+        .map(|goal| {
             universe.fact_id(goal).ok_or_else(|| {
                 format!(
                     "goal fact {goal:?} maps to no FactId — variable {} value {} not \

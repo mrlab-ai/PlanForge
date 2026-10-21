@@ -418,8 +418,7 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
     ) -> Vec<ExplicitFact> {
         let mut out: Vec<ExplicitFact> = Vec::new();
-        for goal_index in 0..task.get_num_goals() {
-            let fact = task.get_goal_fact(goal_index);
+        for fact in task.goals() {
             let var = fact.var_index();
             if self.numeric_conditions.is_condition_var(var) {
                 out.push(*fact);

@@ -234,11 +234,7 @@ impl<'task> GoalDistanceOracle<'task> {
     }
 
     fn is_goal(&self, state: &ConcreteState) -> bool {
-        (0..self.task.get_num_goals()).all(|index| {
-            self.task
-                .get_goal_fact(index)
-                .is_held(self.registry.view(state))
-        })
+        self.registry.view(state).holds_all(self.task.goals())
     }
 
     /// Blind estimate of the remaining cost: zero in a goal, the cheapest

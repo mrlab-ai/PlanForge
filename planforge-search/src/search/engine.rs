@@ -396,17 +396,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
     /// Check if the given state satisfies all goal conditions.
     fn is_goal_state(&self, state: &ConcreteState) -> bool {
-        for goal_fact in self.goals {
-            if !self.state_satisfies_fact(state, goal_fact) {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Check if a state satisfies a specific fact.
-    fn state_satisfies_fact(&self, state: &ConcreteState, fact: &ExplicitFact) -> bool {
-        fact.is_held(self.state_registry.view(state))
+        self.state_registry.view(state).holds_all(self.goals)
     }
 
     /// Evaluate a state for A* without materializing named evaluator results.

@@ -354,8 +354,7 @@ pub fn build_icaps26_restricted_task(
     for operator in task.get_operators() {
         used_comparison_vars.extend(operator.preconditions().iter().map(ExplicitFact::var_index));
     }
-    used_comparison_vars
-        .extend((0..task.get_num_goals()).map(|goal_id| task.get_goal_fact(goal_id).var_index()));
+    used_comparison_vars.extend(task.goals().iter().map(ExplicitFact::var_index));
     for axiom in task.axioms() {
         used_comparison_vars.extend(axiom.conditions().iter().map(ExplicitFact::var_index));
     }
@@ -528,9 +527,7 @@ pub fn build_icaps26_restricted_task(
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
-        goals: (0..task.get_num_goals())
-            .map(|goal_id| *task.get_goal_fact(goal_id))
-            .collect(),
+        goals: task.goals().to_vec(),
         mutexes: vec![],
         state: task.get_initial_propositional_state_values().to_vec(),
         numeric_state: numeric_initial,
@@ -678,9 +675,7 @@ fn build_task(
         metric: Metric::new(task.metric().is_min(), metric_var_id),
         variables,
         numeric_variables,
-        goals: (0..task.get_num_goals())
-            .map(|goal_id| *task.get_goal_fact(goal_id))
-            .collect(),
+        goals: task.goals().to_vec(),
         mutexes: vec![],
         state: task.get_initial_propositional_state_values().to_vec(),
         numeric_state: numeric_initial,

@@ -300,8 +300,7 @@ pub fn enumerate_state_space(
         }
         numeric_values.extend_from_slice(&numeric_scratch);
 
-        let is_goal = (0..task.get_num_goals())
-            .all(|goal_id| task.get_goal_fact(goal_id).is_held(registry.view(&state)));
+        let is_goal = view.holds_all(task.goals());
         goal_states.push(is_goal);
         if is_goal {
             goal_state_ids.push(state_id);

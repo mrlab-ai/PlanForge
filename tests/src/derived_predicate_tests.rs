@@ -242,8 +242,9 @@ fn shape_of(name: &str, task: &NumericRootTask) -> Shape {
             .filter(|&&var| supports_itself(var, &supports))
             .count(),
         comparisons: task.comparison_axioms().len(),
-        default_value_goals: (0..task.get_num_goals())
-            .map(|goal_id| task.get_goal_fact(goal_id))
+        default_value_goals: task
+            .goals()
+            .iter()
             .filter(|goal| defaults.get(&goal.var()) == Some(&goal.value()))
             .count(),
     }

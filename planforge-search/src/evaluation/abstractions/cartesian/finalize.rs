@@ -111,9 +111,7 @@ pub(super) fn finalize_abstraction(
         transitions,
         backward,
         forward,
-        goal_facts: (0..semantics.task().get_num_goals())
-            .map(|goal_id| *semantics.task().get_goal_fact(goal_id))
-            .collect(),
+        goal_facts: semantics.task().goals().to_vec(),
         goal_state_hashes,
         initial_state_hash,
         hash_multipliers: Vec::new(),
@@ -174,9 +172,7 @@ pub(super) fn finalize_standalone_abstraction(
         shortest_paths.distances().len() == working.states().len(),
         "Cartesian shortest-path/state count mismatch during standalone finalization"
     );
-    let goal_facts = (0..semantics.task().get_num_goals())
-        .map(|goal_id| *semantics.task().get_goal_fact(goal_id))
-        .collect::<Vec<_>>();
+    let goal_facts = semantics.task().goals().to_vec();
     let mut relevant_operator_ids = working
         .active_transition_ids()
         .map(|transition_id| working.transition(transition_id).concrete_op_id)

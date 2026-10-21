@@ -278,8 +278,8 @@ fn relevant_default_values(
         }
     };
 
-    for goal_index in 0..task.get_num_goals() {
-        require(task.get_goal_fact(goal_index), &mut needed, &mut queue);
+    for goal in task.goals() {
+        require(goal, &mut needed, &mut queue);
     }
     for operator in task.get_operators() {
         for precondition in operator.preconditions() {

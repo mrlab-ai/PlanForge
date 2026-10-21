@@ -81,9 +81,8 @@ pub(crate) fn replay_plan(
                     cost: concrete_cost,
                 }));
             }
-            let failed_goals = (0..semantics.task().get_num_goals())
-                .map(|goal_id| semantics.task().get_goal_fact(goal_id))
-                .filter(|goal| !state.holds(goal))
+            let failed_goals = state
+                .unsatisfied(semantics.task().goals())
                 .collect::<Vec<_>>();
             ensure!(
                 !failed_goals.is_empty(),
@@ -121,11 +120,7 @@ pub(crate) fn replay_plan(
         let mut executed = None;
         for op_id in view.step_operators(transition) {
             let op = &semantics.task().get_operators()[op_id.index()];
-            let failed_preconditions = op
-                .preconditions()
-                .iter()
-                .filter(|fact| !state.holds(fact))
-                .collect::<Vec<_>>();
+            let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if !failed_preconditions.is_empty() {
                 for failed in failed_preconditions {
                     precondition_splits.push(split_failed_fact(
@@ -257,20 +252,17 @@ fn replay_whole_plan(
                     select_refinement(view, semantics, candidates)
                 };
             }
-            for goal_id in 0..semantics.task().get_num_goals() {
-                let goal = semantics.task().get_goal_fact(goal_id);
-                if !state.holds(goal) {
-                    let split = split_failed_fact(
-                        view,
-                        semantics,
-                        abstract_state,
-                        goal,
-                        &state.propositional,
-                        &state.numeric,
-                        format!("goal {goal:?}"),
-                    )?;
-                    push_unique_split(&mut candidates, &mut candidate_identities, split);
-                }
+            for goal in state.unsatisfied(semantics.task().goals()) {
+                let split = split_failed_fact(
+                    view,
+                    semantics,
+                    abstract_state,
+                    goal,
+                    &state.propositional,
+                    &state.numeric,
+                    format!("goal {goal:?}"),
+                )?;
+                push_unique_split(&mut candidates, &mut candidate_identities, split);
             }
             ensure!(
                 !candidates.is_empty(),
@@ -298,11 +290,7 @@ fn replay_whole_plan(
         let mut applicable = None;
         for &op_id in &step_operators {
             let op = &semantics.task().get_operators()[op_id.index()];
-            let failed_preconditions = op
-                .preconditions()
-                .iter()
-                .filter(|fact| !state.holds(fact))
-                .collect::<Vec<_>>();
+            let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if failed_preconditions.is_empty() {
                 applicable = Some(op_id);
                 step_splits.clear();

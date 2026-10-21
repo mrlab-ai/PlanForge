@@ -168,8 +168,7 @@ const STRIPS: &[Row] = &[
 /// axioms is what [`FactNamespace`] exists to spare every caller.
 fn census(task: &NumericRootTask, what: &str) -> Census {
     let mut census = Census::default();
-    for index in 0..task.get_num_goals() {
-        let fact = task.get_goal_fact(index);
+    for fact in task.goals() {
         match fact.namespace() {
             FactNamespace::Condition => census.condition += 1,
             FactNamespace::Propositional => {

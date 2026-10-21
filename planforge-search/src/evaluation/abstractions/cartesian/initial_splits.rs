@@ -34,8 +34,8 @@ pub(super) fn apply_initial_split(
                 .unwrap_or(crate::evaluation::DEFAULT_RANDOM_SEED),
         );
         let initial_numeric = initial_numeric_values_with_additive_views(task);
-        for goal_id in 0..task.get_num_goals() {
-            if task.get_goal_fact(goal_id).var_index() != var {
+        for goal in task.goals() {
+            if goal.var_index() != var {
                 continue;
             }
             let condition = task

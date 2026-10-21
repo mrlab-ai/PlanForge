@@ -17,7 +17,7 @@ use std::hash::Hash;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, VariableIndex};
 use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
@@ -269,9 +269,8 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
 /// mentions, and every regular numeric variable, encoded after the
 /// propositional ones.
 pub(crate) fn initial_split_candidates(task: &dyn AbstractNumericTask) -> Vec<VariableIndex> {
-    let goal_var_ids: HashSet<VariableIndex> = (0..task.get_num_goals())
-        .map(|goal_id| task.get_goal_fact(goal_id).var_index())
-        .collect();
+    let goal_var_ids: HashSet<VariableIndex> =
+        task.goals().iter().map(ExplicitFact::var_index).collect();
     let axiom_var_ids: HashSet<VariableIndex> =
         task.axioms().iter().map(|axiom| axiom.var_id()).collect();
     let mut candidates: Vec<VariableIndex> = (0..task.variables().len())

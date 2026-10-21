@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::fmt;
 
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex};
+use planforge_sas::numeric_task::AbstractNumericTask;
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
@@ -113,13 +113,6 @@ impl<'task> LandmarkCutNumericHeuristic<'task> {
         })
     }
 
-    fn is_goal_state(&self, propositional_values: &[ExplicitValueIndex]) -> bool {
-        (0..self.task.get_num_goals()).all(|goal_index| {
-            let goal = self.task.get_goal_fact(goal_index);
-            propositional_values.get(goal.var()).copied() == Some(goal.value_index())
-        })
-    }
-
     pub fn config(&self) -> LmCutNumericConfig {
         self.config
     }
@@ -140,7 +133,7 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
         let mut state = self.state_scratch.borrow_mut();
         eval_state.fill_values(&mut state)?;
 
-        if self.is_goal_state(&state.propositional) {
+        if state.holds_all(self.task.goals()) {
             self.state_value_cache.borrow_mut().insert(state_id, 0.0);
             return Ok(0.0);
         }

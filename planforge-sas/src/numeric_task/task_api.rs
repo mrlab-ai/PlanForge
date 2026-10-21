@@ -610,8 +610,8 @@ pub fn assert_fact_namespaces(task: &dyn AbstractNumericTask) {
             check(condition, &origin);
         }
     }
-    for goal_index in 0..task.get_num_goals() {
-        check(task.get_goal_fact(goal_index), &"goal");
+    for goal in task.goals() {
+        check(goal, &"goal");
     }
 }
 

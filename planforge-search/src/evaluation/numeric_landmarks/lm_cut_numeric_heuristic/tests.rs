@@ -1,6 +1,7 @@
 use super::*;
 use planforge_sas::numeric_task::{
-    ExplicitFact, ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts,
+    ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
+    NumericRootTaskParts,
 };
 
 fn simple_var(name: &str, values: &[&str], axiom_layer: Option<usize>) -> ExplicitVariable {
