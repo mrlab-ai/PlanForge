@@ -523,7 +523,7 @@ where
     let mut config = configure(source.name(), member, source.args())?;
     let cegar = config.cegar_mut();
     cegar.max_time = min_time_limit(cegar.max_time, remaining);
-    info!("Building {} abstraction source...", G::NAME);
+    info!("Building {} source...", G::KIND);
     let abstraction = G::new(config)
         .and_then(|generator| generator.generate(task))
         .map_err(|error| {
@@ -551,7 +551,7 @@ where
     if let Some(remaining) = remaining {
         config.cap_construction_time(remaining);
     }
-    info!("Building {} abstraction collection source...", G::NAME);
+    info!("Building {} collection source...", G::KIND);
     let abstractions = CollectionGenerator::<G>::new(config)
         .and_then(|generator| generator.generate(task))
         .map_err(|error| {

@@ -109,7 +109,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
         };
         debug!(
             "{} collection: building restart {iteration}, max_time={max_time:?}, split_kind={}",
-            G::NAME,
+            G::KIND,
             construction.split_kind
         );
         let mut built = match G::new(member.for_member(&construction))
@@ -119,14 +119,14 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
             Err(error) if resource_limits::is_deadline_exceeded(&error) => {
                 info!(
                     "{} collection: generation deadline expired at restart {iteration}; keeping {} members",
-                    G::NAME,
+                    G::KIND,
                     members.len()
                 );
                 break CollectionStopReason::GenerationDeadline;
             }
             Err(error) => {
                 return Err(error).with_context(|| {
-                    format!("failed to build {} collection restart {iteration}", G::NAME)
+                    format!("failed to build {} collection restart {iteration}", G::KIND)
                 });
             }
         };
@@ -140,7 +140,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
             members.push(built);
             debug!(
                 "{} collection: added restart {iteration}, remaining_collection_size={}, blacklisting={blacklisting}",
-                G::NAME,
+                G::KIND,
                 budget.remaining_states()
             );
         }
@@ -165,7 +165,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
         if !resource_limits::poll_and_release_if_exceeded() {
             info!(
                 "{} collection: stopping at restart {iteration} because the memory padding was released (RSS limit reached)",
-                G::NAME
+                G::KIND
             );
             break CollectionStopReason::MemoryLimit;
         }
@@ -179,12 +179,12 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
     if members.is_empty() {
         bail!(
             "the {} collection failed to generate its mandatory first abstraction ({stop_reason})",
-            G::NAME
+            G::KIND
         )
     }
     info!(
         "{} collection finished: abstractions={}, states={}, elapsed={:.3}s, stop_reason={stop_reason}",
-        G::NAME,
+        G::KIND,
         members.len(),
         budget.used_states(),
         start.elapsed().as_secs_f64(),

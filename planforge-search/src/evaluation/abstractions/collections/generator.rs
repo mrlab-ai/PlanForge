@@ -14,6 +14,7 @@ use super::member::MemberConstruction;
 use super::standard::build_standard_collection;
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use crate::evaluation::abstractions::component::AbstractionKind;
 
 /// A CEGAR generator of single abstractions, which collections build their
 /// members with.
@@ -23,8 +24,8 @@ pub trait AbstractionGenerator: Sized {
     /// Equal exactly for abstractions that are the same abstraction.
     type Key: Eq + Hash;
 
-    /// The representation's name in log and error messages.
-    const NAME: &'static str;
+    /// The representation the generator builds.
+    const KIND: AbstractionKind;
 
     /// Rejects a configuration the generator cannot follow.
     fn new(config: Self::Config) -> Result<Self>;
@@ -87,7 +88,7 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
                 let metadata = member.metadata();
                 info!(
                     "{} collection member: {:?}, states={}, h(init)={}, stop={:?}, split_kind={}",
-                    G::NAME,
+                    G::KIND,
                     metadata.abstraction_use,
                     member.num_states(),
                     member.initial_h(),
@@ -103,7 +104,7 @@ impl<G: AbstractionGenerator> CollectionGenerator<G> {
 impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
     type Member = G::Abstraction;
 
-    const NAME: &'static str = G::NAME;
+    const NAME: &'static str = G::KIND.name();
 
     fn build(
         &self,

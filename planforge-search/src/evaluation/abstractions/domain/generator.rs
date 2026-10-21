@@ -27,6 +27,7 @@ use super::abstraction::DomainAbstraction;
 use super::collection::AbstractionKey;
 use super::debug_dump::log_final_abstraction;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::component::AbstractionKind;
 
 /// The domain abstraction CEGAR refined, with the transitions and goal
 /// distances of its last flaw search if no split followed it.
@@ -105,7 +106,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     type Abstraction = DomainAbstraction;
     type Key = AbstractionKey;
 
-    const NAME: &'static str = "domain";
+    const KIND: AbstractionKind = AbstractionKind::Domain;
 
     fn new(config: DomainAbstractionConfig) -> Result<Self> {
         config.cegar.validate()?;

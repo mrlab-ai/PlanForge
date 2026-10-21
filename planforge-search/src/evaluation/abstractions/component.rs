@@ -20,13 +20,20 @@ pub enum AbstractionKind {
     PatternDatabase,
 }
 
+impl AbstractionKind {
+    /// The representation's name in log and error messages.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Domain => "domain abstraction",
+            Self::Cartesian => "Cartesian abstraction",
+            Self::PatternDatabase => "pattern database",
+        }
+    }
+}
+
 impl std::fmt::Display for AbstractionKind {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Domain => formatter.write_str("domain abstraction"),
-            Self::Cartesian => formatter.write_str("Cartesian abstraction"),
-            Self::PatternDatabase => formatter.write_str("pattern database"),
-        }
+        formatter.write_str(self.name())
     }
 }
 

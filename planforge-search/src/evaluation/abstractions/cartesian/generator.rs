@@ -1,6 +1,7 @@
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::abstraction::finish_abstraction;
+use crate::evaluation::abstractions::component::AbstractionKind;
 
 pub struct CartesianAbstractionGenerator {
     pub(super) config: CartesianAbstractionConfig,
@@ -11,7 +12,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
     type Abstraction = CartesianAbstraction;
     type Key = Vec<HierarchyKey>;
 
-    const NAME: &'static str = "Cartesian";
+    const KIND: AbstractionKind = AbstractionKind::Cartesian;
 
     fn new(config: CartesianAbstractionConfig) -> Result<Self> {
         config.cegar.validate()?;

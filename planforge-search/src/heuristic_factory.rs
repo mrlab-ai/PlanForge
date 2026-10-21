@@ -448,13 +448,13 @@ where
     G::Config: Default,
     G::Abstraction: 'a,
 {
-    info!("Building {} abstraction (CEGAR)...", G::NAME);
+    info!("Building {} (CEGAR)...", G::KIND);
     let mut config = G::Config::default();
     config.cegar_mut().keep_transition_system = false;
     let config = configure(&spec.name, config, &spec.args)?;
     let abstraction = G::new(config)
         .and_then(|generator| generator.generate(task))
-        .map_err(|error| format!("failed to build {} abstraction: {error:#}", G::NAME))?;
+        .map_err(|error| format!("failed to build {}: {error:#}", G::KIND))?;
     Ok(Some(Box::new(AbstractionHeuristic::new(
         &spec.name,
         abstraction,
