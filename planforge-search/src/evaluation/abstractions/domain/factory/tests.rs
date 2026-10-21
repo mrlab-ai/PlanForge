@@ -446,7 +446,8 @@ fn first_plan_step(
             task.get_initial_numeric_state_values(),
         )
         .unwrap();
-    view.step_operators(view.optimal_transition(initial).unwrap())
+    view.step_operators(&view.optimal_transition(initial).unwrap())
+        .to_vec()
 }
 
 #[test]
@@ -942,7 +943,6 @@ fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let source_sets = factory
@@ -974,7 +974,6 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let source_sets = factory
@@ -1002,7 +1001,6 @@ fn source_set_active_preimage_allows_boundary_charge() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let source_sets = factory
@@ -1029,7 +1027,6 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let error = factory
@@ -1048,7 +1045,6 @@ fn abstract_source_set_allocates_unbounded_changed_tail() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let source_sets = factory
@@ -1113,7 +1109,6 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::propositional(0, 1)],
         preconditions: vec![ExplicitFact::propositional(0, 0)],
-        changed_numeric_vars: vec![],
     };
 
     let source_sets = factory
@@ -1215,7 +1210,6 @@ fn abstract_source_set_allows_one_finite_changed_source() {
             ExplicitFact::numeric_variable(x_abs_var, 0),
             ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
 
     let source_sets = factory
@@ -1342,7 +1336,6 @@ fn source_set_one_finite_dim_suffices() {
             ExplicitFact::numeric_variable(x_abs_var, 0),
             ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
     let source_sets = factory
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
@@ -1449,7 +1442,6 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
             ExplicitFact::numeric_variable(x_abs_var, 0),
             ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0), VariableIndex::from_usize(1)],
     };
 
     let source_sets = factory
@@ -1488,7 +1480,6 @@ fn source_set_width_does_not_change_valid_preimage() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let source_sets = factory
@@ -1516,7 +1507,6 @@ fn singleton_preimage_is_preserved_exactly() {
         regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
-        changed_numeric_vars: vec![VariableIndex::from_usize(0)],
     };
 
     let source_sets = factory
@@ -1530,14 +1520,10 @@ fn singleton_preimage_is_preserved_exactly() {
 }
 
 /// A refinement changes which propositional variables an abstract state can
-/// constrain, so the factory's cached list has to move with it.
-///
-/// Regression test: the list used to be derived once in the constructor, which
-/// runs before the CEGAR loop, while refinement mutated `domain_sizes` through
-/// it afterwards. State regions were then stamped with a list naming only the
-/// seed-split variables, so the sparse propositional overlap skipped a
-/// dimension that had genuinely been narrowed, reported two disjoint regions as
-/// overlapping, and let one operator's cost be claimed twice.
+/// constrain, so the factory's cached list has to move with it. A list that
+/// misses a narrowed dimension makes the sparse propositional overlap skip it,
+/// so two disjoint regions look overlapping and one operator's cost is claimed
+/// twice.
 #[test]
 fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
     let task = NumericRootTask::new(NumericRootTaskParts {

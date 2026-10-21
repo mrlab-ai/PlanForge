@@ -71,8 +71,8 @@ pub(crate) trait AbstractionView {
 
     /// The concrete operators a plan step along `transition` may execute,
     /// tried in this order; just the transition's own by default.
-    fn step_operators(&self, transition: TransitionKey) -> Vec<OperatorIndex> {
-        vec![transition.concrete_op_id]
+    fn step_operators<'a>(&'a self, transition: &'a TransitionKey) -> &'a [OperatorIndex] {
+        std::slice::from_ref(&transition.concrete_op_id)
     }
 
     fn limits(&self) -> RefinementLimits<'_>;

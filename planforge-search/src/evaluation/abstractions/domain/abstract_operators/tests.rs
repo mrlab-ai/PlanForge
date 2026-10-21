@@ -5,9 +5,9 @@ use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitVariable, INF_VALUE, Metric,
-    NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable, Operator,
-    OperatorCost, VariableIndex,
+    AssignmentEffect, AssignmentOperation, Effect, ExplicitFact, ExplicitVariable, INF_VALUE,
+    Metric, NEG_INF_VALUE, NumericRootTask, NumericRootTaskParts, NumericType, NumericVariable,
+    Operator, OperatorCost, VariableIndex,
 };
 
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
@@ -50,6 +50,14 @@ fn identity_operators(
 /// What identifies an abstract operator for a determinism comparison: its
 /// regression offset plus its progression and regression preconditions.
 type AbstractOperatorSignature = (isize, Vec<ExplicitFact>, Vec<ExplicitFact>);
+
+fn signature(operator: &AbstractOperator) -> AbstractOperatorSignature {
+    (
+        operator.regression_offset,
+        operator.preconditions.clone(),
+        operator.regression_preconditions.clone(),
+    )
+}
 
 fn global_constraint_variable() -> ExplicitVariable {
     ExplicitVariable::new(
@@ -279,17 +287,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
     let mut signatures: Vec<Vec<AbstractOperatorSignature>> = Vec::new();
     for _ in 0..12 {
         let ops = identity_operators(&task, partitions.clone(), false).unwrap();
-        signatures.push(
-            ops.iter()
-                .map(|op| {
-                    (
-                        op.regression_offset,
-                        op.preconditions.clone(),
-                        op.regression_preconditions.clone(),
-                    )
-                })
-                .collect(),
-        );
+        signatures.push(ops.iter().map(signature).collect());
     }
 
     for sig in signatures.iter().skip(1) {
@@ -298,7 +296,7 @@ fn repeated_numeric_operator_generation_is_deterministic() {
 }
 
 #[test]
-fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition() {
+fn affected_numeric_var_keeps_its_partition_in_an_identity_transition() {
     let variables = vec![global_constraint_variable()];
 
     let numeric_variables = vec![
@@ -344,27 +342,18 @@ fn affected_numeric_var_stays_marked_changed_with_identity_partition_transition(
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
 
-    let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
-        &task,
-        &generator,
-        OperatorIndex::new(0),
-        &[],
-        op.assignment_effects(),
-        Deadline::NONE,
-    )
-    .unwrap();
-
-    let identity_transition = transitions.iter().find(|trans| {
-        trans.source_partition_facts == vec![ExplicitFact::numeric_variable(1, 0)]
-            && trans.target_partition_facts == vec![ExplicitFact::numeric_variable(1, 0)]
-    });
-    assert!(identity_transition.is_some());
+    // x0 += 1 stays in either partition or crosses 10 from below. Staying
+    // still reads and writes x0's partition, so that operator applies only
+    // in it and is no wildcard on x0.
+    let x0 = |part| ExplicitFact::numeric_variable(1, part);
+    let operators = identity_operators(&task, partitions, false).unwrap();
     assert_eq!(
-        identity_transition.unwrap().changed_numeric_vars,
-        vec![VariableIndex::from_usize(0)]
+        operators.iter().map(signature).collect::<Vec<_>>(),
+        vec![
+            (0, vec![x0(0)], vec![x0(0)]),
+            (-1, vec![x0(0)], vec![x0(1)]),
+            (0, vec![x0(1)], vec![x0(1)]),
+        ]
     );
 }
 
@@ -447,11 +436,9 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
     ]);
 
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
+    let transitions = numeric_partition_transitions(
         &task,
-        &generator,
+        &factory,
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
@@ -484,12 +471,14 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
                 .target_partition_facts
                 .iter()
                 .any(|fact| fact.var() == 5)
-            && trans.changed_numeric_vars
-                == vec![
-                    VariableIndex::from_usize(0),
-                    VariableIndex::from_usize(3),
-                    VariableIndex::from_usize(4),
-                ]
+            && trans
+                .source_partition_facts
+                .iter()
+                .any(|fact| fact.var() == 1)
+            && trans
+                .target_partition_facts
+                .iter()
+                .any(|fact| fact.var() == 1)
     }));
 }
 
@@ -680,11 +669,9 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
     ]);
 
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
+    let transitions = numeric_partition_transitions(
         &task,
-        &generator,
+        &factory,
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
@@ -706,12 +693,9 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
     assert!(
         transitions.iter().all(|transition| {
             transition
-                .changed_numeric_vars
-                .contains(&VariableIndex::from_usize(2))
-                && transition
-                    .source_partition_facts
-                    .iter()
-                    .any(|fact| fact.var() == derived_abs_var)
+                .source_partition_facts
+                .iter()
+                .any(|fact| fact.var() == derived_abs_var)
                 && transition
                     .target_partition_facts
                     .iter()
@@ -782,11 +766,9 @@ fn additive_view_filters_false_equality_precondition() {
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
-    let transitions = compute_hash_effects_with_preconditions(
+    let transitions = numeric_partition_transitions(
         &task,
-        &generator,
+        &factory,
         OperatorIndex::new(0),
         &[ExplicitFact::propositional(0, 0)],
         &[],
@@ -846,13 +828,11 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
     ]);
 
     let factory = identity_factory(&task, partitions);
-    let generator = AbstractOperatorGenerator::new(&factory, &task);
-
     let mut intervals = Vec::new();
-    prepare_comparison_tree_inputs_for_combo_into(
+    fill_source_intervals(
         &task,
-        &generator,
-        &[(VariableIndex::from_usize(0), 0, 1)],
+        &factory,
+        &[(VariableIndex::from_usize(0), 0)],
         &mut intervals,
     );
 

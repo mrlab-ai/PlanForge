@@ -344,18 +344,15 @@ impl DomainAbstractionFactory {
         );
         let multipliers = self.layout.multipliers();
 
-        // A variable with one abstract value contributes nothing.
+        // A variable with one abstract value contributes nothing. A state of
+        // the task has a value of its domain in every variable and a finite
+        // value, which some partition contains, in every numeric variable.
         let mut state: usize = 0;
         for (var, &concrete_value) in propositions.iter().enumerate() {
             if domain_sizes[var] == 1 {
                 continue;
             }
-            let abstract_value = *self.domain_mapping[var]
-                .get(concrete_value.index())
-                .with_context(|| {
-                    format!("propositional var {var} has no value {concrete_value}")
-                })?;
-            state += multipliers[var] * abstract_value.index();
+            state += multipliers[var] * self.domain_mapping[var][concrete_value.index()].index();
         }
 
         for num_var_id in (0..numeric_domain_sizes.len()).map(VariableIndex::from_usize) {
@@ -364,14 +361,14 @@ impl DomainAbstractionFactory {
             }
             let abs_var = abstraction_numeric_var(domain_sizes.len(), num_var_id);
             let val = coordinate_value(&self.additive_numeric_views, numeric, num_var_id);
-            ensure!(
+            assert!(
                 val.is_finite(),
                 "numeric value for var {num_var_id} must be finite, got {val}"
             );
             let part = partition_for_value(self.partitions.partitions(num_var_id), val)
-                .with_context(|| {
-                    format!("numeric value {val} is in no partition of numeric var {num_var_id}")
-                })?;
+                .unwrap_or_else(|| {
+                    panic!("numeric value {val} is in no partition of numeric var {num_var_id}")
+                });
             state += multipliers[abs_var.index()] * part;
         }
 

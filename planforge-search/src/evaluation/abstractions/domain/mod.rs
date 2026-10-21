@@ -8,18 +8,18 @@
 
 use planforge_sas::numeric_task::VariableIndex;
 
-pub mod abstract_operators;
+mod abstract_operators;
 pub mod abstraction;
 pub mod collection;
-pub mod comparison_inputs;
+mod comparison_inputs;
 pub mod config;
-pub(crate) mod debug_dump;
-pub mod factory;
+mod debug_dump;
+pub(crate) mod factory;
 pub mod generator;
-pub mod layout;
-pub mod partitions;
+mod layout;
+pub(crate) mod partitions;
 #[cfg(test)]
-pub(crate) mod test_support;
+mod test_support;
 mod view;
 
 /// The id a domain abstraction gives numeric variable `numeric_var_id`.
