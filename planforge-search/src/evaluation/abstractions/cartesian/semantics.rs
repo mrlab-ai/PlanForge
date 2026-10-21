@@ -13,6 +13,8 @@ use crate::evaluation::abstractions::common::regions::RegionSemantics;
 
 mod transitions;
 
+pub(super) use transitions::SplitEnd;
+
 pub(super) struct CartesianSemantics<'task> {
     pub(super) cegar: CegarSemantics<'task>,
     pub(super) prop_split_dependent_operators: Vec<OperatorBitSet>,
