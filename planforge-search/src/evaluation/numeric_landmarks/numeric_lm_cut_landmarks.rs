@@ -5,7 +5,7 @@ use planforge_sas::axioms::PropositionalAxiom;
 use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_axioms};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, Effect, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
-    Operator, OperatorIndex, VariableIndex, ZERO_VALUE, metric_operator_cost_from_initial_values,
+    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::linear_effects::LinearExpression;
 use planforge_sas::utils::linear_effects::LinearNumericEffect;
@@ -1806,8 +1806,7 @@ impl<'task> LandmarkCutLandmarks<'task> {
             operator_id.index() < self.task.get_operators().len(),
             "base operator cost is only defined for concrete operators"
         );
-        let mut operator_cost =
-            metric_operator_cost_from_initial_values(self.task, operator).value();
+        let mut operator_cost = self.task.abstract_operator_cost(operator_id).value();
 
         if self.task.is_linear_cost_operator(operator_id) && self.use_bounds {
             let coefficients = self.task.operator_cost_coefficients(operator_id);

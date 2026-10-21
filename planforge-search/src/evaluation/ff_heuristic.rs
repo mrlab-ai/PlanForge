@@ -66,8 +66,8 @@ use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_a
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
-    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericType, NumericValue, Operator,
-    OperatorIndex, VariableIndex, ZERO_VALUE, metric_operator_cost_from_initial_values,
+    ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue,
+    Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 
 type FactId = usize;
@@ -549,9 +549,9 @@ fn add_task_operator(
     let parent_op_id = ops.push(RelaxedOperator {
         task_idx: Some(op_idx),
         parent: None,
-        cost: metric_operator_cost_from_initial_values(task, op)
-            .value()
-            .max(0.0),
+        cost: task
+            .abstract_operator_cost(OperatorIndex::from_usize(op_idx))
+            .value(),
         preconditions: parent_preconds.clone(),
         state_deps: parent_state_deps.clone(),
         effects: parent_effects,

@@ -9,8 +9,8 @@ use planforge_sas::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, Pr
 use planforge_sas::numeric_conditions::{NumericConditionError, NumericConditions};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
-    OperatorIndex, TaskRef, VariableIndex, metric_operator_cost_from_initial_values,
+    ExplicitVariable, Metric, NumericTaskExt, NumericType, NumericValue, NumericVariable, Operator,
+    OperatorCost, OperatorIndex, TaskRef, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
@@ -630,7 +630,8 @@ impl<'task> ProjectedTask<'task> {
         let mut operator_costs: Vec<NumericValue> = Vec::new();
         let mut base_operator_ids: Vec<OperatorIndex> = Vec::new();
         for (base_operator_id, operator) in base.get_operators().iter().enumerate() {
-            let operator_cost = metric_operator_cost_from_initial_values(base, operator);
+            let operator_cost =
+                base.abstract_operator_cost(OperatorIndex::from_usize(base_operator_id));
             if let Some(projected_operator) = project_restricted_operator(
                 operator,
                 &original_var_to_projected,

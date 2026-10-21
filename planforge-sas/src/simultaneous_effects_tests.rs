@@ -8,9 +8,9 @@
 
 use crate::explicit_state::ExplicitStateSpace;
 use crate::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex,
-    ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue,
-    NumericVariable, Operator, OperatorCost, TaskRef, VariableIndex,
+    AssignmentEffect, AssignmentOperation, ExplicitFact, ExplicitValueIndex, ExplicitVariable,
+    Metric, NumericRootTask, NumericRootTaskParts, NumericType, NumericValue, NumericVariable,
+    Operator, OperatorCost, TaskRef, VariableIndex,
 };
 use crate::state_registry::StateRegistry;
 use std::sync::Arc;
@@ -251,8 +251,7 @@ fn effect_conditions_are_read_from_the_parent_state() {
 
 #[test]
 fn metric_cost_reads_parent_values_across_effects() {
-    // `metric_operator_cost_from_initial_values` replays the same effects on a
-    // plain value vector; it must agree with the search path.
+    // The metric costs apply the operator as search does.
     let task = task_with_effects(
         vec![
             plus(VariableIndex::from_usize(Y), VariableIndex::from_usize(ONE)),
@@ -264,12 +263,10 @@ fn metric_cost_reads_parent_values_across_effects() {
         Some(VariableIndex::from_usize(COST)),
     );
 
-    let delta = crate::numeric_task::metric_operator_cost_from_initial_values(
-        &task,
-        &task.get_operators()[0],
+    assert_eq!(
+        crate::numeric_task::metric_operator_costs(&task),
+        [NumericValue::new(3.0)]
     );
-
-    assert_eq!(delta, NumericValue::new(3.0));
 }
 
 #[test]

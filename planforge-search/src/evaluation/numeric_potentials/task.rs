@@ -5,7 +5,6 @@ use planforge_sas::default_value_axioms::{DefaultValueAxiomMode, default_value_a
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
     NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
-    metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::ConcreteStateView;
 
@@ -337,7 +336,9 @@ impl PotentialTask {
                         })
                         .collect(),
                     numeric_precondition_bounds: sparse_bounds(numeric_precondition_bounds),
-                    cost: metric_operator_cost_from_initial_values(task, operator).value(),
+                    cost: task
+                        .abstract_operator_cost(OperatorIndex::from_usize(operator_id))
+                        .value(),
                     reachable: true,
                 })
             })

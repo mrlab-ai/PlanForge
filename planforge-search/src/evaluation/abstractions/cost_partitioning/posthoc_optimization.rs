@@ -38,9 +38,7 @@ use planforge_cplex::{
     assert_unrestricted_license,
 };
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, OperatorIndex, metric_operator_cost_from_initial_values,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::info;
 
@@ -77,10 +75,11 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             component.discard_transition_data();
         }
 
-        let original_costs: Vec<f64> = task
-            .get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
+        let original_costs: Vec<f64> = (0..task.get_operators().len())
+            .map(|op_id| {
+                task.abstract_operator_cost(OperatorIndex::from_usize(op_id))
+                    .value()
+            })
             .collect();
 
         let constraints = build_constraints(&relevant_operators, &original_costs);

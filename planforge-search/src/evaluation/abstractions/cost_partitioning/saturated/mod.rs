@@ -1,9 +1,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, TaskRef, metric_operator_cost_from_initial_values,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex, TaskRef};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
 use planforge_sas::utils::float_tolerance;
 use rand::seq::SliceRandom;
@@ -155,10 +153,11 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 }
             }
         }
-        let original_costs: Vec<f64> = task
-            .get_operators()
-            .iter()
-            .map(|op| metric_operator_cost_from_initial_values(task, op).value())
+        let original_costs: Vec<f64> = (0..task.get_operators().len())
+            .map(|op_id| {
+                task.abstract_operator_cost(OperatorIndex::from_usize(op_id))
+                    .value()
+            })
             .collect();
 
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());

@@ -77,8 +77,8 @@ use ordered_float::NotNan;
 use planforge_sas::axioms::{AxiomEvaluator, ComparisonOperator};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericType,
-    NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
-    metric_operator_cost_from_initial_values,
+    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE, evaluate_metric_from_values,
+    propagate_assignment_axiom_values,
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
@@ -105,4 +105,75 @@ fn fact_is_held(fact: &ExplicitFact, packer: &StatePacker, buffer: &[u64]) -> bo
     fact.is_held(
         planforge_sas::state_registry::ConcreteStateView::from_decoded(packer, buffer, &[]),
     )
+}
+
+/// The metric cost of `operator` as the ICAPS 2026 artifact computed it: its
+/// assignment effects applied to the initial values unconditionally, the
+/// last write to a variable winning. Kept verbatim so the frozen
+/// configurations reproduce their published results.
+fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
+    task: &T,
+    operator: &Operator,
+) -> NumericValue {
+    if !task.metric().use_metric() {
+        return NumericValue::new(operator.cost().value() as f64);
+    }
+
+    let initial_numeric_values = task.get_initial_numeric_state_values();
+    let mut numeric_values = initial_numeric_values.to_vec();
+    let old_metric = evaluate_metric_from_values(task, &numeric_values);
+
+    // Effects of one operator apply simultaneously, so every read must see the
+    // pre-application values. Collect first, publish second; see
+    // `StateRegistry::apply_numeric_effects_inner` for the same reasoning on
+    // the search path.
+    let mut results = Vec::with_capacity(operator.assignment_effects().len());
+    for effect in operator.assignment_effects() {
+        let assignment_var_id = effect.var_id();
+        let affected_var_id = effect.affected_var_id();
+        assert!(
+            (assignment_var_id.index()) < numeric_values.len(),
+            "assignment variable {} of operator {} is out of bounds for {} numeric variables",
+            assignment_var_id.index(),
+            operator.name(),
+            numeric_values.len(),
+        );
+        assert!(
+            (affected_var_id.index()) < numeric_values.len(),
+            "affected variable {} of operator {} is out of bounds for {} numeric variables",
+            affected_var_id.index(),
+            operator.name(),
+            numeric_values.len(),
+        );
+
+        let result = AssignmentOperation::apply(
+            numeric_values[affected_var_id.index()],
+            effect.operation(),
+            numeric_values[assignment_var_id.index()],
+        );
+        results.push((affected_var_id, result));
+    }
+    for (affected_var_id, result) in results {
+        numeric_values[affected_var_id.index()] = result;
+    }
+
+    propagate_assignment_axiom_values(task, &mut numeric_values).unwrap_or_else(|error| {
+        panic!(
+            "operator {} cannot evaluate assignment axioms while computing its metric cost: \
+             {error:?}",
+            operator.name()
+        )
+    });
+    let new_metric = evaluate_metric_from_values(task, &numeric_values);
+    let delta = if task.metric().is_min() {
+        new_metric - old_metric
+    } else {
+        old_metric - new_metric
+    };
+    assert!(
+        delta >= ZERO_VALUE,
+        "operator {} has negative metric cost {delta}, which search does not support",
+        operator.name()
+    );
+    delta
 }

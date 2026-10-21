@@ -342,12 +342,11 @@ pub fn solve_task(
             // user's `blind` choice as a placeholder by materializing a
             // real `BlindHeuristic` with the task's min-action-cost.
             let task_ref: &dyn AbstractNumericTask = &*task;
-            let min_cost = task
-                .get_operators()
-                .iter()
-                .map(|op| {
-                    planforge_sas::numeric_task::metric_operator_cost_from_initial_values(
-                        task_ref, op,
+            let min_cost = (0..task_ref.get_operators().len())
+                .map(|op_id| {
+                    planforge_sas::numeric_task::NumericTaskExt::abstract_operator_cost(
+                        task_ref,
+                        planforge_sas::numeric_task::OperatorIndex::from_usize(op_id),
                     )
                 })
                 .fold(INF_VALUE, NumericValue::min);

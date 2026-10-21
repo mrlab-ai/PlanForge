@@ -8,8 +8,7 @@ use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, Compa
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
     ExplicitVariable, Metric, NumericRootTask, NumericRootTaskParts, NumericTaskExt, NumericType,
-    NumericValue, NumericVariable, ONE_VALUE, Operator, VariableIndex, ZERO_VALUE,
-    metric_operator_cost_from_initial_values,
+    NumericValue, NumericVariable, ONE_VALUE, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
@@ -727,15 +726,10 @@ fn ensure_operator_costs_unchanged(
         source_task.get_operators().len() == transformed_task.get_operators().len(),
         "restricted task changed the operator count"
     );
-    for (operator_id, (source, transformed)) in source_task
-        .get_operators()
-        .iter()
-        .zip(transformed_task.get_operators())
-        .enumerate()
-    {
-        let source_cost = metric_operator_cost_from_initial_values(source_task, source);
-        let transformed_cost =
-            metric_operator_cost_from_initial_values(transformed_task, transformed);
+    for (operator_id, source) in source_task.get_operators().iter().enumerate() {
+        let operator_index = OperatorIndex::from_usize(operator_id);
+        let source_cost = source_task.abstract_operator_cost(operator_index);
+        let transformed_cost = transformed_task.abstract_operator_cost(operator_index);
         ensure!(
             approx_eq(source_cost, transformed_cost),
             "restricted task changed metric cost of operator {operator_id} ({}): {source_cost} -> {transformed_cost}",

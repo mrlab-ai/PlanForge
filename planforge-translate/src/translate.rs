@@ -744,7 +744,7 @@ fn translate_strips_operator_aux(
 /// initial state, mirroring how Fast Downward resolves static cost functions.
 /// A state-dependent cost is additionally recorded as an assignment effect on
 /// the metric fluent by the caller, which is what the search actually uses for
-/// tasks with a metric (`metric_operator_cost_from_initial_values`).
+/// tasks with a metric (`metric_operator_costs`).
 ///
 /// Anything else cannot be turned into a number here; returning a default
 /// would silently replace the action's real cost, so it is a hard error.

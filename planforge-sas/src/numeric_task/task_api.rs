@@ -260,71 +260,49 @@ pub fn propagate_assignment_axiom_values<T: AbstractNumericTask + ?Sized>(
     Ok(())
 }
 
-pub fn metric_operator_cost_from_initial_values<T: AbstractNumericTask + ?Sized>(
-    task: &T,
-    operator: &Operator,
-) -> NumericValue {
+/// The metric cost of every operator of `task` applied in its initial state,
+/// as search charges it there: the effects apply simultaneously, conditional
+/// ones where their conditions hold, and the successor is closed under the
+/// axioms. Without a metric, every operator's own cost.
+pub fn metric_operator_costs(task: &dyn AbstractNumericTask) -> Vec<NumericValue> {
     if !task.metric().use_metric() {
-        return NumericValue::new(operator.cost().value() as f64);
+        return task
+            .get_operators()
+            .iter()
+            .map(|operator| NumericValue::new(operator.cost().value() as f64))
+            .collect();
     }
-
-    let initial_numeric_values = task.get_initial_numeric_state_values();
-    let mut numeric_values = initial_numeric_values.to_vec();
-    let old_metric = evaluate_metric_from_values(task, &numeric_values);
-
-    // Effects of one operator apply simultaneously, so every read must see the
-    // pre-application values. Collect first, publish second; see
-    // `StateRegistry::apply_numeric_effects_inner` for the same reasoning on
-    // the search path.
-    let mut results = Vec::with_capacity(operator.assignment_effects().len());
-    for effect in operator.assignment_effects() {
-        let assignment_var_id = effect.var_id();
-        let affected_var_id = effect.affected_var_id();
-        assert!(
-            (assignment_var_id.index()) < numeric_values.len(),
-            "assignment variable {} of operator {} is out of bounds for {} numeric variables",
-            assignment_var_id.index(),
-            operator.name(),
-            numeric_values.len(),
-        );
-        assert!(
-            (affected_var_id.index()) < numeric_values.len(),
-            "affected variable {} of operator {} is out of bounds for {} numeric variables",
-            affected_var_id.index(),
-            operator.name(),
-            numeric_values.len(),
-        );
-
-        let result = AssignmentOperation::apply(
-            numeric_values[affected_var_id.index()],
-            effect.operation(),
-            numeric_values[assignment_var_id.index()],
-        );
-        results.push((affected_var_id, result));
-    }
-    for (affected_var_id, result) in results {
-        numeric_values[affected_var_id.index()] = result;
-    }
-
-    propagate_assignment_axiom_values(task, &mut numeric_values).unwrap_or_else(|error| {
-        panic!(
-            "operator {} cannot evaluate assignment axioms while computing its metric cost: \
-             {error:?}",
-            operator.name()
-        )
-    });
-    let new_metric = evaluate_metric_from_values(task, &numeric_values);
-    let delta = if task.metric().is_min() {
-        new_metric - old_metric
-    } else {
-        old_metric - new_metric
-    };
-    assert!(
-        delta >= ZERO_VALUE,
-        "operator {} has negative metric cost {delta}, which search does not support",
-        operator.name()
-    );
-    delta
+    let states = ExplicitStateSpace::new(task);
+    let initial_state = states
+        .initial_state()
+        .unwrap_or_else(|error| panic!("the initial state violates the axioms: {error}"));
+    let initial_metric = evaluate_metric_from_values(task, &initial_state.numeric);
+    let mut successor = ExplicitState::default();
+    task.get_operators()
+        .iter()
+        .map(|operator| {
+            states
+                .apply_effects_into(&initial_state, operator, &mut successor)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "operator {} leads the initial state into an axiom violation: {error}",
+                        operator.name()
+                    )
+                });
+            let metric = evaluate_metric_from_values(task, &successor.numeric);
+            let cost = if task.metric().is_min() {
+                metric - initial_metric
+            } else {
+                initial_metric - metric
+            };
+            assert!(
+                cost >= ZERO_VALUE,
+                "operator {} has negative metric cost {cost}, which search does not support",
+                operator.name()
+            );
+            cost
+        })
+        .collect()
 }
 
 fn linear_metric_operator_cost_expression<T: AbstractNumericTask + ?Sized>(
@@ -733,11 +711,7 @@ impl NumericRootTask {
                 }
             }
         }
-        task.operator_costs = task
-            .operators
-            .iter()
-            .map(|operator| metric_operator_cost_from_initial_values(&task, operator))
-            .collect();
+        task.operator_costs = metric_operator_costs(&task);
         debug_assert_fact_namespaces(&task);
         task
     }
