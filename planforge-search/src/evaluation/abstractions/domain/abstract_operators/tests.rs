@@ -16,12 +16,12 @@ use planforge_sas::utils::interval::Interval;
 
 /// The abstraction of `task` that keeps every propositional value apart and
 /// partitions numeric variables by `partitions`.
-fn identity_factory(
+fn identity_function(
     task: &NumericRootTask,
     partitions: NumericPartitions,
-) -> DomainAbstractionFactory {
+) -> DomainAbstractionFunction {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task);
-    DomainAbstractionFactory::new(
+    DomainAbstractionFunction::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -38,13 +38,13 @@ fn semantics_error(task: &NumericRootTask) -> anyhow::Error {
     }
 }
 
-/// The abstract operators of [`identity_factory`].
+/// The abstract operators of [`identity_function`].
 fn identity_operators(
     task: &NumericRootTask,
     partitions: NumericPartitions,
     combine_labels: bool,
 ) -> Result<Vec<AbstractOperator>> {
-    identity_factory(task, partitions).abstract_operators(task, combine_labels, Deadline::NONE)
+    identity_function(task, partitions).abstract_operators(task, combine_labels, Deadline::NONE)
 }
 
 /// What identifies an abstract operator for a determinism comparison: its
@@ -435,10 +435,10 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
         ],
     ]);
 
-    let factory = identity_factory(&task, partitions);
+    let function = identity_function(&task, partitions);
     let transitions = numeric_partition_transitions(
         &task,
-        &factory,
+        &function,
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
@@ -668,10 +668,10 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
 
-    let factory = identity_factory(&task, partitions);
+    let function = identity_function(&task, partitions);
     let transitions = numeric_partition_transitions(
         &task,
-        &factory,
+        &function,
         OperatorIndex::new(0),
         &[],
         op.assignment_effects(),
@@ -765,10 +765,10 @@ fn additive_view_filters_false_equality_precondition() {
         ],
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
-    let factory = identity_factory(&task, partitions);
+    let function = identity_function(&task, partitions);
     let transitions = numeric_partition_transitions(
         &task,
-        &factory,
+        &function,
         OperatorIndex::new(0),
         &[ExplicitFact::propositional(0, 0)],
         &[],
@@ -827,11 +827,11 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
         vec![Interval::unbounded()],
     ]);
 
-    let factory = identity_factory(&task, partitions);
+    let function = identity_function(&task, partitions);
     let mut intervals = Vec::new();
     fill_source_intervals(
         &task,
-        &factory,
+        &function,
         &[(VariableIndex::from_usize(0), 0)],
         &mut intervals,
     );

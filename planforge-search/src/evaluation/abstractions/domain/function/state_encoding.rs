@@ -104,7 +104,7 @@ impl MatchTree {
     }
 }
 
-impl DomainAbstractionFactory {
+impl DomainAbstractionFunction {
     /// Check the invariant the sparse propositional overlap depends on: a
     /// dimension the region does not list as constrained must admit its whole
     /// concrete domain. Violating it makes disjoint regions compare as

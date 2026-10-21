@@ -443,7 +443,7 @@ where
 {
     info!("Building {} (CEGAR)...", G::KIND);
     let mut config = G::Config::default();
-    config.cegar_mut().keep_transition_system = false;
+    config.cegar_mut().keep_transitions = false;
     let config = configure(&spec.name, config, &spec.args)?;
     let abstraction = G::new(config)
         .and_then(|generator| generator.generate(task))

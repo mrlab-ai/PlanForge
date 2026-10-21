@@ -24,7 +24,7 @@ use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
 use planforge_sas::explicit_state::ExplicitState;
@@ -403,17 +403,17 @@ fn build_handcrafted_abstraction(
                 .map_or(0, |value| value.index() + 1)
         })
         .collect::<Vec<_>>();
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(transformed_task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
         partitions,
     )?;
-    let transitions = factory.transitions(transformed_task, false, Deadline::NONE)?;
+    let transitions = function.transitions(transformed_task, false, Deadline::NONE)?;
     let (distances, _) = transitions.goal_distances(Deadline::NONE)?;
     let core = AbstractionCore {
         distances,
-        initial_state: factory.initial_state(transformed_task)?,
+        initial_state: function.initial_state(transformed_task)?,
         relevant_operator_ids: transitions.relevant_operator_ids(),
         num_abstract_operators: transitions.operators.len(),
         metadata: AbstractionMetadata {
@@ -433,7 +433,7 @@ fn build_handcrafted_abstraction(
             )
         },
     };
-    let mut abstraction = DomainAbstraction::new(factory, core, Some(transitions));
+    let mut abstraction = DomainAbstraction::new(function, core, Some(transitions));
     abstraction
         .prepare_regional_saturation(&RegionSemantics::new(transformed_task)?, Deadline::NONE)?;
     Ok(abstraction)
@@ -592,7 +592,7 @@ fn partition_report(
         .map(|&view_id| {
             let name = task.numeric_variables()[view_id].name();
             let num_parts = abstraction
-                .factory()
+                .function()
                 .partitions()
                 .partitions(VariableIndex::from_usize(view_id))
                 .len();

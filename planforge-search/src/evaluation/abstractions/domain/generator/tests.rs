@@ -219,7 +219,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
     .unwrap();
 
     assert_eq!(outcome.outcome.stop_reason, CegarStopReason::SizeLimit);
-    assert_eq!(outcome.factory.domain_sizes(), [1]);
+    assert_eq!(outcome.function.domain_sizes(), [1]);
 }
 #[test]
 fn blacklisted_propositional_vars_are_not_refined() {
@@ -258,7 +258,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
         outcome.outcome.stop_reason,
         CegarStopReason::NoRefinableFlaw
     );
-    assert_eq!(outcome.factory.domain_sizes(), [1]);
+    assert_eq!(outcome.function.domain_sizes(), [1]);
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn init_value_split_separates_the_initial_value() {
     .unwrap();
 
     assert_eq!(
-        outcome.factory.domain_mapping()[0],
+        outcome.function.domain_mapping()[0],
         vec![
             ExplicitValueIndex::new(0),
             ExplicitValueIndex::new(1),
@@ -333,7 +333,7 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
         .expect("normal one-dimensional CEGAR run should make progress");
 
     let x_partitions = outcome
-        .factory
+        .function
         .partitions()
         .partitions(VariableIndex::from_usize(0));
     assert!(
@@ -346,7 +346,7 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
 fn backward_splits_build_goal_side_partitions() {
     fn split_points(outcome: &DomainRefinementOutcome) -> Vec<NumericValue> {
         let mut points = outcome
-            .factory
+            .function
             .partitions()
             .partitions(VariableIndex::from_usize(0))
             .iter()
@@ -487,7 +487,7 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
         .generate(&task)
         .unwrap();
         assert!(abstraction.metadata().solved_by_self(), "x0={initial}");
-        let partition_count = abstraction.factory().numeric_domain_sizes()[0];
+        let partition_count = abstraction.function().numeric_domain_sizes()[0];
         // Both sides of the old small/large lookup split are covered.
         assert_eq!(
             partition_count > 8,

@@ -11,7 +11,7 @@ pub(crate) struct DomainTransitions {
     num_states: usize,
 }
 
-impl DomainAbstractionFactory {
+impl DomainAbstractionFunction {
     /// The abstract operators of the abstraction, with labels combined if
     /// `combine_labels`, and its goal states.
     pub(crate) fn transitions(

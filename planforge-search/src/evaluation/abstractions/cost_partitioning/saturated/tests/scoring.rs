@@ -56,7 +56,7 @@ fn region_stolen_costs_accept_transition_free_components() {
 fn region_stolen_costs_reject_missing_source_sets() {
     let task = independent_goals_task();
     let mut abstraction = cartesian_abstraction(&task);
-    abstraction.discard_transition_data();
+    abstraction.discard_transitions();
     assert!(abstraction.abstract_source_sets().is_none());
 
     let components = vec![AbstractionComponent::from(abstraction)];

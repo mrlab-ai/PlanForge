@@ -14,7 +14,7 @@ pub mod collection;
 mod comparison_inputs;
 pub mod config;
 mod debug_dump;
-pub(crate) mod factory;
+pub(crate) mod function;
 pub mod generator;
 mod layout;
 pub(crate) mod partitions;

@@ -17,7 +17,7 @@ use crate::evaluation::abstractions::common::transition_system::{
 /// `shortest_paths`. Its abstract operators are the transitions between
 /// distinct states, the labels of each source and target pair combined into
 /// one if `options.combine_labels`; they are kept if
-/// `options.keep_transition_system`.
+/// `options.keep_transitions`.
 pub(super) fn finalize_abstraction(
     working: WorkingAbstraction,
     semantics: &CartesianSemantics<'_>,
@@ -82,7 +82,7 @@ pub(super) fn finalize_abstraction(
         num_abstract_operators: operators.len(),
         metadata,
     };
-    let transitions = options.keep_transition_system.then(|| {
+    let transitions = options.keep_transitions.then(|| {
         let mut backward = vec![Vec::new(); num_states];
         let transitions = operators
             .into_iter()

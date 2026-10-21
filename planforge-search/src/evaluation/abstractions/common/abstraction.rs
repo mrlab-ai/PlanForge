@@ -153,7 +153,7 @@ pub trait CegarAbstraction: std::fmt::Debug {
 
     /// Drops the transitions, which only cost partitioning reads. Lookups
     /// stay intact; saturation fails afterwards.
-    fn discard_transition_data(&mut self);
+    fn discard_transitions(&mut self);
 
     /// The transitions were not discarded.
     fn retains_transitions(&self) -> bool;

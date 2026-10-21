@@ -146,11 +146,11 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let generate = |keep_transition_system| {
+    let generate = |keep_transitions| {
         CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             cegar: CegarOptions {
                 max_states: 2,
-                keep_transition_system,
+                keep_transitions,
                 ..CartesianAbstractionConfig::default().cegar
             },
         })

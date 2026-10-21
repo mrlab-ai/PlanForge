@@ -86,7 +86,7 @@ fn cartesian_collection_config(
     component_use: abstraction_config::ComponentUse,
 ) -> Result<CartesianAbstractionCollectionConfig, String> {
     let mut config = CartesianAbstractionCollectionConfig::default();
-    config.member.cegar.keep_transition_system = component_use.needs_transition_system();
+    config.member.cegar.keep_transitions = component_use.needs_transition_system();
     configure("cartesian_collection", config, args)
 }
 
@@ -97,7 +97,7 @@ fn cartesian_source_config(
     component_use: abstraction_config::ComponentUse,
 ) -> Result<CartesianAbstractionConfig, String> {
     let mut config = CartesianAbstractionConfig::default();
-    config.cegar.keep_transition_system = component_use.needs_transition_system();
+    config.cegar.keep_transitions = component_use.needs_transition_system();
     configure("cartesian", config, args)
 }
 
@@ -199,7 +199,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert!(config.single_goal_tasks);
     assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(config.member.cegar.flaw_scope, FlawScope::WholePlan);
-    assert!(config.member.cegar.keep_transition_system);
+    assert!(config.member.cegar.keep_transitions);
 }
 
 #[test]

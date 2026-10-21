@@ -64,9 +64,9 @@ impl<'task> AbstractionComponent<'task> {
         }
     }
 
-    pub fn discard_transition_data(&mut self) {
+    pub fn discard_transitions(&mut self) {
         match self {
-            Self::Cegar(abstraction) => abstraction.discard_transition_data(),
+            Self::Cegar(abstraction) => abstraction.discard_transitions(),
             Self::PatternDatabase(_) => {}
         }
     }

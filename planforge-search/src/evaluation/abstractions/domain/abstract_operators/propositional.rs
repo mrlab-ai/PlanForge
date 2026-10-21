@@ -6,7 +6,7 @@ use planforge_sas::numeric_task::{
 };
 
 use super::transition_vars_match;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::layout::StateLayout;
 
 /// The propositional part of an abstract operator: the prevail conditions,
@@ -23,7 +23,7 @@ pub(super) struct PropositionalSkeleton {
 /// Builds the propositional skeletons of concrete operators, with
 /// per-variable buffers reused across operators.
 pub(super) struct PropositionalSkeletons<'a> {
-    factory: &'a DomainAbstractionFactory,
+    function: &'a DomainAbstractionFunction,
     /// The abstract value the current operator's preconditions give each
     /// variable; all `None` between operators.
     precondition_on_var: Vec<Option<ExplicitValueIndex>>,
@@ -34,19 +34,19 @@ pub(super) struct PropositionalSkeletons<'a> {
 
 impl<'a> PropositionalSkeletons<'a> {
     pub(super) fn new(
-        factory: &'a DomainAbstractionFactory,
+        function: &'a DomainAbstractionFunction,
         task: &dyn AbstractNumericTask,
     ) -> Self {
         let num_variables = task.get_num_variables();
         Self {
-            factory,
+            function,
             precondition_on_var: vec![None; num_variables],
             changed_var: vec![false; num_variables],
         }
     }
 
     fn variable_is_trivial(&self, var_id: VariableIndex) -> bool {
-        self.factory.layout().domain_sizes()[var_id.index()] <= 1
+        self.function.layout().domain_sizes()[var_id.index()] <= 1
     }
 
     fn abstract_value(
@@ -54,7 +54,7 @@ impl<'a> PropositionalSkeletons<'a> {
         var_id: VariableIndex,
         concrete_value: ExplicitValueIndex,
     ) -> ExplicitValueIndex {
-        self.factory.domain_mapping()[var_id.index()][concrete_value.index()]
+        self.function.domain_mapping()[var_id.index()][concrete_value.index()]
     }
 
     /// The skeletons of `op`, in cross-product order. An operator that
@@ -128,7 +128,7 @@ impl<'a> PropositionalSkeletons<'a> {
         PropositionalCrossProduct {
             effects_without_pre: &effects_without_pre,
             has_assignment_effects: !op.assignment_effects().is_empty(),
-            layout: self.factory.layout(),
+            layout: self.function.layout(),
         }
         .multiply_out(0, &mut facts, &mut skeletons);
         skeletons

@@ -265,8 +265,8 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
         domain_abstraction.metadata().solved_by_self(),
         "unrestricted domain abstraction stopped without a real plan: metadata={:?}, prop_domains={:?}, numeric_domains={:?}",
         domain_abstraction.metadata(),
-        domain_abstraction.factory().domain_sizes(),
-        domain_abstraction.factory().numeric_domain_sizes()
+        domain_abstraction.function().domain_sizes(),
+        domain_abstraction.function().numeric_domain_sizes()
     );
     assert_exact_single_abstraction_search(
         &task,
@@ -481,12 +481,12 @@ fn sailing_simple_ratchet_equilibrium() {
                 &["difference", "x(?boat_0)", "(b1, p0)"],
             )?;
             let near_count = abstraction
-                .factory()
+                .function()
                 .partitions()
                 .partitions(VariableIndex::from_usize(near_x))
                 .len();
             let far_count = abstraction
-                .factory()
+                .function()
                 .partitions()
                 .partitions(VariableIndex::from_usize(far_x))
                 .len();

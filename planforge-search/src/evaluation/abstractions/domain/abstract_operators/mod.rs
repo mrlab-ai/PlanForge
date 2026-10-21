@@ -19,7 +19,7 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::factory::DomainAbstractionFactory;
+use super::function::DomainAbstractionFunction;
 use super::layout::StateLayout;
 use crate::resource_limits::Deadline;
 use labels::{LabelCombiner, signature_hash};
@@ -165,16 +165,16 @@ fn transition_vars_match(pre_pairs: &[ExplicitFact], eff_pairs: &[ExplicitFact])
             .all(|(pre, eff)| pre.var() == eff.var())
 }
 
-/// The abstract operators of the abstraction `factory` describes, with
+/// The abstract operators of the abstraction `function` describes, with
 /// labels combined if `combine_labels`.
 pub(super) fn build_abstract_operators(
-    factory: &DomainAbstractionFactory,
+    function: &DomainAbstractionFunction,
     task: &dyn AbstractNumericTask,
     combine_labels: bool,
     deadline: Deadline,
 ) -> Result<Vec<AbstractOperator>> {
-    let mut skeletons = PropositionalSkeletons::new(factory, task);
-    let mut combiner = LabelCombiner::new(combine_labels, factory.layout());
+    let mut skeletons = PropositionalSkeletons::new(function, task);
+    let mut combiner = LabelCombiner::new(combine_labels, function.layout());
     let mut candidate = AbstractOperatorCandidate::default();
     for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
         deadline.ensure(OPERATOR_GENERATION)?;
@@ -185,13 +185,13 @@ pub(super) fn build_abstract_operators(
         }
         let transitions = numeric_partition_transitions(
             task,
-            factory,
+            function,
             concrete_op_id,
             op.preconditions(),
             op.assignment_effects(),
             deadline,
         )?;
-        let cost = factory.operator_cost(concrete_op_id);
+        let cost = function.operator_cost(concrete_op_id);
         for skeleton in &op_skeletons {
             deadline.ensure(OPERATOR_GENERATION)?;
             for transition in &transitions {

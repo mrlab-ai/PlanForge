@@ -132,10 +132,10 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
     ))
 }
 
-fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFactory> {
+fn identity_cutpoint_function(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFunction> {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task);
     let partitions = cutpoint_partitions_for_task(task)?;
-    DomainAbstractionFactory::new(
+    DomainAbstractionFunction::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -220,9 +220,11 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, ConditionValue::False.as_usize()),
     });
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let implicit = factory.build_distance_table_for_test(&task, false).unwrap();
-    let transition_system = factory
+    let function = identity_cutpoint_function(&task).unwrap();
+    let implicit = function
+        .build_distance_table_for_test(&task, false)
+        .unwrap();
+    let transition_system = function
         .transitions(&task, false, Deadline::NONE)
         .unwrap()
         .explicit_system(Deadline::NONE)
@@ -275,8 +277,8 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 1),
     });
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let transitions = factory.transitions(&task, false, Deadline::NONE).unwrap();
+    let function = identity_cutpoint_function(&task).unwrap();
+    let transitions = function.transitions(&task, false, Deadline::NONE).unwrap();
     assert_eq!(transitions.operators.len(), 1);
     let transition_system = transitions.explicit_system(Deadline::NONE).unwrap();
     let source_sets = vec![AbstractOperatorSourceSets {
@@ -295,7 +297,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         &transition_system,
         &source_sets,
         |transition, source_set| {
-            source_set_within(&factory.state_region(transition.source_state), source_set)
+            source_set_within(&function.state_region(transition.source_state), source_set)
         },
         &residuals,
         None,
@@ -303,7 +305,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     )
     .unwrap();
 
-    assert_eq!(distances[factory.initial_state(&task).unwrap()], 1.0);
+    assert_eq!(distances[function.initial_state(&task).unwrap()], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
         allocation.entries()[0].source_set.source.propositions()[0],
@@ -325,7 +327,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
 }
 
 #[test]
-fn factory_splits_regular_var_at_constants_in_comparison_trees() {
+fn function_splits_regular_var_at_constants_in_comparison_trees() {
     let variables = vec![condition_variable("cmp")];
 
     let numeric_variables = vec![
@@ -364,10 +366,10 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    assert_eq!(factory.numeric_domain_sizes(), &[3, 1]);
+    let function = identity_cutpoint_function(&task).unwrap();
+    assert_eq!(function.numeric_domain_sizes(), &[3, 1]);
 
-    let x0_parts = factory
+    let x0_parts = function
         .partitions()
         .partitions(VariableIndex::from_usize(0));
     assert_eq!(x0_parts.len(), 3);
@@ -381,13 +383,13 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
         Interval::new(NumericValue::new(10.0), INF_VALUE, false, false)
     );
 
-    let c10_parts = factory
+    let c10_parts = function
         .partitions()
         .partitions(VariableIndex::from_usize(1));
     assert_eq!(c10_parts, &[Interval::singleton(NumericValue::new(10.0))]);
 }
 
-impl DomainAbstractionFactory {
+impl DomainAbstractionFunction {
     /// Goal distances of every abstract state under the task's own operator
     /// costs.
     fn build_distance_table_for_test(
@@ -437,8 +439,8 @@ fn first_plan_step(
         blacklisted_prop_var_ids: &no_variables,
         blacklisted_numeric_var_ids: &no_variables,
     };
-    let factory = factory_identity_cutpoints(task).unwrap();
-    let mut refinement = DomainRefinement::new(task, factory, limits, &config);
+    let function = identity_cutpoint_function(task).unwrap();
+    let mut refinement = DomainRefinement::new(task, function, limits, &config);
     let view = refinement.view(Deadline::NONE).unwrap();
     let initial = view
         .abstract_state(
@@ -650,11 +652,11 @@ fn initial_state_hash_is_unique() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let factory = factory_identity_cutpoints(&task).unwrap();
-    let table = factory.build_distance_table_for_test(&task, true).unwrap();
+    let function = identity_cutpoint_function(&task).unwrap();
+    let table = function.build_distance_table_for_test(&task, true).unwrap();
 
     assert_eq!(
-        factory.domain_sizes(),
+        function.domain_sizes(),
         [1],
         "condition variables keep their single abstract value"
     );
@@ -710,16 +712,16 @@ fn abstract_goals_drop_collapsed_variables() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let factory = factory_identity_cutpoints(&task).unwrap();
+    let function = identity_cutpoint_function(&task).unwrap();
     assert_eq!(
-        factory.compute_abstract_goals(&task),
+        function.compute_abstract_goals(&task),
         vec![ExplicitFact::propositional(1, 1)],
         "the goal on the one-valued variable is the one that has to go"
     );
 }
 
 #[test]
-fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
+fn function_numeric_context_keeps_consistent_additive_derived_partition() {
     let variables = vec![condition_variable("cmp")];
 
     let numeric_variables = vec![
@@ -777,14 +779,14 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
         ],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
         partitions,
     )
     .unwrap();
-    let hash_multipliers = factory.layout().multipliers();
+    let hash_multipliers = function.layout().multipliers();
 
     let x_partition = 0;
     let c2_partition = 0;
@@ -796,8 +798,8 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
     let mut numeric_intervals = Vec::new();
     fill_state_intervals(
         &task,
-        factory.partitions(),
-        factory.layout(),
+        function.partitions(),
+        function.layout(),
         state_hash,
         &mut numeric_intervals,
     );
@@ -816,7 +818,7 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
     );
 }
 
-fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFactory) {
+fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFunction) {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -864,7 +866,7 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFact
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -872,12 +874,12 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFact
     )
     .unwrap();
 
-    (task, factory)
+    (task, function)
 }
 
 fn additive_numeric_source_set_task_with_partitions(
     x_partitions: Vec<Interval>,
-) -> (NumericRootTask, DomainAbstractionFactory) {
+) -> (NumericRootTask, DomainAbstractionFunction) {
     let variables = vec![ExplicitVariable::new(
         1,
         "p".into(),
@@ -922,7 +924,7 @@ fn additive_numeric_source_set_task_with_partitions(
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -930,12 +932,12 @@ fn additive_numeric_source_set_task_with_partitions(
     )
     .unwrap();
 
-    (task, factory)
+    (task, function)
 }
 
 #[test]
 fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
-    let (task, factory) = additive_numeric_source_set_task();
+    let (task, function) = additive_numeric_source_set_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
@@ -945,7 +947,7 @@ fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -963,7 +965,7 @@ fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
 
 #[test]
 fn abstract_source_set_tightens_source_by_inverse_target_image() {
-    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+    let (task, function) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
     ]);
@@ -976,7 +978,7 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -990,7 +992,7 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
 
 #[test]
 fn source_set_active_preimage_allows_boundary_charge() {
-    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+    let (task, function) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(6.0), false, true),
     ]);
@@ -1003,7 +1005,7 @@ fn source_set_active_preimage_allows_boundary_charge() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1016,7 +1018,7 @@ fn source_set_active_preimage_allows_boundary_charge() {
 
 #[test]
 fn abstract_source_set_rejects_empty_inverse_target_image() {
-    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+    let (task, function) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(7.0), NumericValue::new(10.0), false, true),
     ]);
@@ -1029,7 +1031,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
     };
 
-    let error = factory
+    let error = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap_err();
     assert!(format!("{error:#}").contains("empty source set"));
@@ -1037,7 +1039,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
 
 #[test]
 fn abstract_source_set_allocates_unbounded_changed_tail() {
-    let (task, factory) = additive_numeric_source_set_task();
+    let (task, function) = additive_numeric_source_set_task();
     let x_abs_var = task.variables().len();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
@@ -1047,7 +1049,7 @@ fn abstract_source_set_allocates_unbounded_changed_tail() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1096,7 +1098,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -1111,7 +1113,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         preconditions: vec![ExplicitFact::propositional(0, 0)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1189,7 +1191,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -1212,7 +1214,7 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         ],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1314,7 +1316,7 @@ fn source_set_one_finite_dim_suffices() {
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -1337,7 +1339,7 @@ fn source_set_one_finite_dim_suffices() {
             ExplicitFact::numeric_variable(y_abs_var, 0),
         ],
     };
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1347,7 +1349,9 @@ fn source_set_one_finite_dim_suffices() {
     );
     assert_eq!(concrete.source.numeric[1], Interval::unbounded());
 
-    let table = factory.build_distance_table_for_test(&task, false).unwrap();
+    let table = function
+        .build_distance_table_for_test(&task, false)
+        .unwrap();
     assert_eq!(table.distances[table.initial_state], 2.0);
 }
 
@@ -1421,7 +1425,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
@@ -1444,7 +1448,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         ],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1469,7 +1473,7 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
 fn source_set_width_does_not_change_valid_preimage() {
     // Same fixture as `abstract_source_set_tightens_source_by_inverse_target_image`:
     // the preimage source for the operator is `(4.0, 5.0]`, width 1.0.
-    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+    let (task, function) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::new(NEG_INF_VALUE, NumericValue::new(5.0), false, true),
         Interval::new(NumericValue::new(5.0), NumericValue::new(10.0), false, true),
     ]);
@@ -1482,7 +1486,7 @@ fn source_set_width_does_not_change_valid_preimage() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     assert_eq!(
@@ -1496,7 +1500,7 @@ fn singleton_preimage_is_preserved_exactly() {
     // Partition `x` so that the operator `x += 1` maps singleton `{4.0}` to
     // singleton `{5.0}`. The preimage `{4.0} ∩ shift({5.0}, -1) = {4.0}` is a
     // singleton of width 0.
-    let (task, factory) = additive_numeric_source_set_task_with_partitions(vec![
+    let (task, function) = additive_numeric_source_set_task_with_partitions(vec![
         Interval::singleton(NumericValue::new(4.0)),
         Interval::singleton(NumericValue::new(5.0)),
     ]);
@@ -1509,7 +1513,7 @@ fn singleton_preimage_is_preserved_exactly() {
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
     };
 
-    let source_sets = factory
+    let source_sets = function
         .build_abstract_source_sets(&RegionSemantics::new(&task).unwrap(), &[op], Deadline::NONE)
         .unwrap();
     let concrete = &source_sets[0].labels[0];
@@ -1520,7 +1524,7 @@ fn singleton_preimage_is_preserved_exactly() {
 }
 
 /// A refinement changes which propositional variables an abstract state can
-/// constrain, so the factory's cached list has to move with it. A list that
+/// constrain, so the function's cached list has to move with it. A list that
 /// misses a narrowed dimension makes the sparse propositional overlap skip it,
 /// so two disjoint regions look overlapping and one operator's cost is claimed
 /// twice.
@@ -1561,7 +1565,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
 
     // Start coarse: both concrete values share one abstract class, so the single
     // class covers the variable's whole domain and constrains nothing.
-    let mut factory = DomainAbstractionFactory::new(
+    let mut function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)]],
         vec![1],
@@ -1569,7 +1573,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
     )
     .unwrap();
 
-    let coarse = factory.state_region(0);
+    let coarse = function.state_region(0);
     assert!(
         coarse.constrained_props().is_empty(),
         "a one-class variable constrains nothing, got {:?}",
@@ -1581,7 +1585,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
     );
 
     // Refine: split value 1 into its own class, as CEGAR does.
-    factory
+    function
         .apply_split(
             &task,
             &Split::Propositional {
@@ -1597,7 +1601,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
         (0usize, vec![ExplicitValueIndex::new(0u32)]),
         (1usize, vec![ExplicitValueIndex::new(1u32)]),
     ] {
-        let refined = factory.state_region(state_hash);
+        let refined = function.state_region(state_hash);
         assert_eq!(
             refined.propositions()[0],
             expected_values,
@@ -1612,7 +1616,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
 
     // The two classes are disjoint, so the regions must not overlap. This is the
     // comparison the stale list got wrong.
-    let zero = factory.state_region(0);
-    let one = factory.state_region(1);
+    let zero = function.state_region(0);
+    let one = function.state_region(1);
     assert!(!zero.overlaps(&one));
 }

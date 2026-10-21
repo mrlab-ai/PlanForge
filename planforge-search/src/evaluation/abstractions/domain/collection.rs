@@ -19,9 +19,9 @@ pub type AbstractionKey = (DomainMapping, NumericPartitions);
 
 /// The key standard collections drop duplicate members by.
 pub(super) fn abstraction_key(abstraction: &DomainAbstraction) -> AbstractionKey {
-    let factory = abstraction.factory();
+    let function = abstraction.function();
     (
-        factory.domain_mapping().clone(),
-        factory.partitions().clone(),
+        function.domain_mapping().clone(),
+        function.partitions().clone(),
     )
 }

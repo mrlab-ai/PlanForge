@@ -1,11 +1,11 @@
-//! A built domain abstraction: the factory that maps concrete states to
+//! A built domain abstraction: the function that maps concrete states to
 //! abstract ones, its goal distances, and, until discarded, its transitions.
 
 use anyhow::{Context, Result};
 
 use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
 
-use super::factory::{DomainAbstractionFactory, DomainTransitions, source_set_within};
+use super::function::{DomainAbstractionFunction, DomainTransitions, source_set_within};
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
@@ -20,7 +20,7 @@ use crate::resource_limits::Deadline;
 
 #[derive(Debug, Clone)]
 pub struct DomainAbstraction {
-    factory: DomainAbstractionFactory,
+    function: DomainAbstractionFunction,
     core: AbstractionCore,
     transitions: Option<DomainTransitionData>,
 }
@@ -36,12 +36,12 @@ struct DomainTransitionData {
 
 impl DomainAbstraction {
     pub(crate) fn new(
-        factory: DomainAbstractionFactory,
+        function: DomainAbstractionFunction,
         core: AbstractionCore,
         transitions: Option<DomainTransitions>,
     ) -> Self {
         Self {
-            factory,
+            function,
             core,
             transitions: transitions.map(|transitions| DomainTransitionData {
                 transitions,
@@ -52,8 +52,8 @@ impl DomainAbstraction {
 
     /// The abstraction function: which abstract value every concrete value
     /// maps to.
-    pub fn factory(&self) -> &DomainAbstractionFactory {
-        &self.factory
+    pub fn function(&self) -> &DomainAbstractionFunction {
+        &self.function
     }
 
     /// The abstract operators and goal states; fails once discarded.
@@ -83,10 +83,10 @@ impl CegarAbstraction for DomainAbstraction {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Result<usize> {
-        self.factory.abstract_state(propositional, numeric)
+        self.function.abstract_state(propositional, numeric)
     }
 
-    fn discard_transition_data(&mut self) {
+    fn discard_transitions(&mut self) {
         self.transitions = None;
     }
 
@@ -110,7 +110,7 @@ impl CegarAbstraction for DomainAbstraction {
             .transitions
             .explicit_system(deadline)
             .context("failed to build the explicit transition system")?;
-        let source_sets = self.factory.build_abstract_source_sets(
+        let source_sets = self.function.build_abstract_source_sets(
             regions,
             &data.transitions.operators,
             deadline,
@@ -159,7 +159,7 @@ impl CegarAbstraction for DomainAbstraction {
             source_sets,
             |transition, source_set| {
                 let region = regions[transition.source_state]
-                    .get_or_insert_with(|| self.factory.state_region(transition.source_state));
+                    .get_or_insert_with(|| self.function.state_region(transition.source_state));
                 source_set_within(region, source_set)
             },
             remaining,

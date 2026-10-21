@@ -20,7 +20,7 @@ pub(crate) fn source_set_within(
     })
 }
 
-impl DomainAbstractionFactory {
+impl DomainAbstractionFunction {
     /// The source sets of every label of every abstract operator: the states
     /// of the operator's source region from which the label may lead into its
     /// target region.

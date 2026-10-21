@@ -15,7 +15,7 @@ use crate::evaluation::abstractions::common::coordinates::{
 };
 use crate::evaluation::abstractions::domain::abstraction_numeric_var;
 use crate::evaluation::abstractions::domain::comparison_inputs::fill_condition_intervals;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::resource_limits::Deadline;
 
 /// One numeric combination a concrete operator may induce: the source and
@@ -39,16 +39,16 @@ pub(super) struct NumericTransition {
 /// wildcard of the abstract operator.
 pub(super) fn numeric_partition_transitions(
     task: &dyn AbstractNumericTask,
-    factory: &DomainAbstractionFactory,
+    function: &DomainAbstractionFunction,
     concrete_op_id: OperatorIndex,
     preconditions: &[ExplicitFact],
     assignment_effects: &[AssignmentEffect],
     deadline: Deadline,
 ) -> Result<Vec<NumericTransition>> {
     deadline.ensure(OPERATOR_GENERATION)?;
-    let layout = factory.layout();
+    let layout = function.layout();
     let numeric_domain_sizes = layout.numeric_domain_sizes();
-    let additive_numeric_views = factory.additive_numeric_views();
+    let additive_numeric_views = function.additive_numeric_views();
 
     let mut assigned = vec![false; numeric_domain_sizes.len()];
     for effect in assignment_effects {
@@ -84,7 +84,7 @@ pub(super) fn numeric_partition_transitions(
         if changed {
             per_var.push((
                 var_id,
-                variable_partition_transitions(task, factory, concrete_op_id, var_id),
+                variable_partition_transitions(task, function, concrete_op_id, var_id),
             ));
         } else if read_by_comparison[v] {
             per_var.push((var_id, (0..num_parts).map(|part| (part, part)).collect()));
@@ -108,7 +108,7 @@ pub(super) fn numeric_partition_transitions(
     enumerate_partition_combos(
         &PartitionComboEnumeration {
             task,
-            factory,
+            function,
             preconditions,
             per_var: &per_var,
             num_props: layout.domain_sizes().len(),
@@ -126,12 +126,12 @@ pub(super) fn numeric_partition_transitions(
 /// a source partition intersects.
 fn variable_partition_transitions(
     task: &dyn AbstractNumericTask,
-    factory: &DomainAbstractionFactory,
+    function: &DomainAbstractionFunction,
     concrete_op_id: OperatorIndex,
     var_id: VariableIndex,
 ) -> Vec<(usize, usize)> {
-    let partitions = factory.partitions();
-    let views = factory.additive_numeric_views();
+    let partitions = function.partitions();
+    let views = function.additive_numeric_views();
     partitions
         .partitions(var_id)
         .iter()
@@ -151,7 +151,7 @@ fn variable_partition_transitions(
 /// must be checked against comparison preconditions at all.
 struct PartitionComboEnumeration<'a> {
     task: &'a dyn AbstractNumericTask,
-    factory: &'a DomainAbstractionFactory,
+    function: &'a DomainAbstractionFunction,
     preconditions: &'a [ExplicitFact],
     per_var: &'a [(VariableIndex, Vec<(usize, usize)>)],
     num_props: usize,
@@ -177,7 +177,7 @@ fn enumerate_partition_combos(
 ) -> Result<()> {
     let PartitionComboEnumeration {
         task,
-        factory,
+        function,
         preconditions,
         per_var,
         num_props,
@@ -191,7 +191,7 @@ fn enumerate_partition_combos(
         if has_comparison_preconditions {
             fill_source_intervals(
                 task,
-                factory,
+                function,
                 &scratch.source_partitions,
                 &mut scratch.source_intervals,
             );
@@ -238,11 +238,11 @@ fn enumerate_partition_combos(
 /// [`fill_condition_intervals`].
 pub(super) fn fill_source_intervals(
     task: &dyn AbstractNumericTask,
-    factory: &DomainAbstractionFactory,
+    function: &DomainAbstractionFunction,
     source_partitions: &[(VariableIndex, usize)],
     out: &mut Vec<Interval>,
 ) {
-    let partitions = factory.partitions();
+    let partitions = function.partitions();
     fill_condition_intervals(
         task,
         |var_id| {

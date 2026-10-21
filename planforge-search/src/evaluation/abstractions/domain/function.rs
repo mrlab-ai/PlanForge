@@ -44,14 +44,14 @@ const DISTANCE_TABLE: &str = "abstract distance table";
 const TRANSITION_SYSTEM: &str = "abstract transition system";
 
 #[derive(Debug, Clone)]
-pub struct DomainAbstractionFactory {
+pub struct DomainAbstractionFunction {
     domain_mapping: DomainMapping,
     partitions: NumericPartitions,
     /// Derived from the abstract domain sizes of `domain_mapping` and the
     /// partitions; shared with the match trees built over it.
     layout: Arc<StateLayout>,
-    /// Shared with the task the factory was built from: the conditions are
-    /// task data, not abstraction data, but the factory outlives the borrow.
+    /// Shared with the task the function was built from: the conditions are
+    /// task data, not abstraction data, but the function outlives the borrow.
     numeric_conditions: Arc<NumericConditions>,
     /// The additive view of every derived coordinate.
     additive_numeric_views: Arc<[Option<AdditiveNumericView>]>,
@@ -73,7 +73,7 @@ pub struct DomainAbstractionFactory {
     state_constrained_props: Arc<[u32]>,
 }
 
-impl DomainAbstractionFactory {
+impl DomainAbstractionFunction {
     /// The trivial domain abstraction of the task of `semantics`: one
     /// abstract state, with every constant at its value.
     pub(crate) fn trivial(semantics: &CegarSemantics<'_>) -> Result<Self> {

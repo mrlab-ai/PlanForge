@@ -4,22 +4,22 @@ use planforge_sas::numeric_task::AbstractNumericTask;
 use planforge_sas::numeric_task::VariableIndex;
 use tracing::info;
 
-use super::factory::DomainAbstractionFactory;
+use super::function::DomainAbstractionFunction;
 
 /// The partitions a finished CEGAR run left, at `info` level.
 pub(crate) fn log_final_abstraction(
     task: &dyn AbstractNumericTask,
-    factory: &DomainAbstractionFactory,
+    function: &DomainAbstractionFunction,
 ) {
     info!("domain abstraction final domains:");
-    for (numeric_var_id, &size) in factory
+    for (numeric_var_id, &size) in function
         .numeric_domain_sizes()
         .iter()
         .enumerate()
         .filter(|(_, size)| **size > 1)
     {
         let name = task.numeric_variables()[numeric_var_id].name();
-        let parts = factory
+        let parts = function
             .partitions()
             .partitions(VariableIndex::from_usize(numeric_var_id));
         let intervals = parts
@@ -30,7 +30,7 @@ pub(crate) fn log_final_abstraction(
             .join(" ");
         info!("  n{numeric_var_id}={name}, size={size}, {intervals}");
     }
-    for (var_id, &size) in factory
+    for (var_id, &size) in function
         .domain_sizes()
         .iter()
         .enumerate()

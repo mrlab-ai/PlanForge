@@ -299,7 +299,7 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
             self.build_cost_partitionings(components, selection, abstract_state_ids)?;
         let lookup_mask = compute_lookup_mask(&cp_heuristics, components.len());
         for component in components.iter_mut() {
-            component.discard_transition_data();
+            component.discard_transitions();
         }
         info!("scp: retained {} cost partitionings", cp_heuristics.len());
         let h = compute_max_h(&cp_heuristics, abstract_state_ids);

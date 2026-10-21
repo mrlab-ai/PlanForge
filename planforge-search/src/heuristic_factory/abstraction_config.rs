@@ -495,7 +495,7 @@ where
     G::Abstraction: Into<AbstractionComponent<'task>>,
 {
     let mut member = G::Config::default();
-    member.cegar_mut().keep_transition_system = component_use.needs_transition_system();
+    member.cegar_mut().keep_transitions = component_use.needs_transition_system();
     let mut config = configure(source.name(), member, source.args())?;
     let cegar = config.cegar_mut();
     cegar.max_time = min_time_limit(cegar.max_time, remaining);
@@ -522,7 +522,7 @@ where
     G::Abstraction: Into<AbstractionComponent<'task>>,
 {
     let mut config = CollectionConfig::<G::Config>::default();
-    config.member.cegar_mut().keep_transition_system = component_use.needs_transition_system();
+    config.member.cegar_mut().keep_transitions = component_use.needs_transition_system();
     let mut config = configure(source.name(), config, source.args())?;
     if let Some(remaining) = remaining {
         config.cap_construction_time(remaining);

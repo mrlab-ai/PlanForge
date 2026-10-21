@@ -24,7 +24,7 @@ use super::*;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::function::DomainAbstractionFunction;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::resource_limits::Deadline;
 
@@ -85,7 +85,7 @@ fn simple_task() -> NumericRootTask {
 }
 
 fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstraction {
-    let factory = DomainAbstractionFactory::new(
+    let function = DomainAbstractionFunction::new(
         &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         vec![
             vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
@@ -96,7 +96,7 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
     )
     .unwrap();
 
-    let transitions = factory.transitions(task, false, Deadline::NONE).unwrap();
+    let transitions = function.transitions(task, false, Deadline::NONE).unwrap();
     let core = AbstractionCore {
         distances,
         initial_state: 0,
@@ -113,8 +113,8 @@ fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstra
             None,
         ),
     };
-    let mut abstraction = DomainAbstraction::new(factory, core, Some(transitions));
-    abstraction.discard_transition_data();
+    let mut abstraction = DomainAbstraction::new(function, core, Some(transitions));
+    abstraction.discard_transitions();
     abstraction
 }
 

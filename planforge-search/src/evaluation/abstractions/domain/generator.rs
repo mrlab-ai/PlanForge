@@ -10,7 +10,7 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
 
 use super::config::DomainAbstractionConfig;
-use super::factory::DomainAbstractionFactory;
+use super::function::DomainAbstractionFunction;
 use super::view::{DomainBuild, DomainRefinement};
 use crate::evaluation::abstractions::common::abstraction::{
     AbstractionCore, AbstractionMetadata, finish_abstraction,
@@ -33,7 +33,7 @@ use crate::evaluation::abstractions::component::AbstractionKind;
 /// distances of its last flaw search if no split followed it.
 #[derive(Debug)]
 pub(super) struct DomainRefinementOutcome {
-    pub(super) factory: DomainAbstractionFactory,
+    pub(super) function: DomainAbstractionFunction,
     pub(super) outcome: CegarOutcome,
     pub(super) built: Option<DomainBuild>,
 }
@@ -51,23 +51,23 @@ pub(super) fn refine_domain_abstraction(
     let start = Instant::now();
     let semantics = CegarSemantics::for_options(task, &config.cegar)?;
 
-    let mut factory = DomainAbstractionFactory::trivial(&semantics)
+    let mut function = DomainAbstractionFunction::trivial(&semantics)
         .context("failed to construct the trivial domain abstraction")?;
     // Every initial split divides a different variable of the trivial
     // abstraction, so it divides every abstract state if it divides one. As
     // for Cartesian abstractions, a split that would exceed `max_states` is
     // left out.
     for initial_split in initial_splits(&semantics, scope, config.cegar.random_seed) {
-        if let Some(split) = initial_split.in_state(0, &factory.state_region(0))
-            && factory.states_after_split(&split) <= config.cegar.max_states as u128
+        if let Some(split) = initial_split.in_state(0, &function.state_region(0))
+            && function.states_after_split(&split) <= config.cegar.max_states as u128
         {
-            factory.apply_split(task, &split)?;
+            function.apply_split(task, &split)?;
         }
     }
 
     let mut refinement = DomainRefinement::new(
         task,
-        factory,
+        function,
         RefinementLimits::new(&config.cegar, scope),
         config,
     );
@@ -78,12 +78,12 @@ pub(super) fn refine_domain_abstraction(
         refinement_root,
         start,
     )?;
-    let (factory, built) = refinement.into_parts();
+    let (function, built) = refinement.into_parts();
     if config.cegar.debug {
-        log_final_abstraction(task, &factory);
+        log_final_abstraction(task, &function);
     }
     Ok(DomainRefinementOutcome {
-        factory,
+        function,
         outcome,
         built,
     })
@@ -122,7 +122,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     ) -> Result<DomainAbstraction> {
         let start = Instant::now();
         let DomainRefinementOutcome {
-            factory,
+            function,
             outcome,
             built,
         } = refine_domain_abstraction(&self.config, task, refinement_root, scope)
@@ -134,7 +134,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         } = match built {
             Some(built) => built,
             None => DomainBuild::new(
-                factory
+                function
                     .transitions(task, self.config.cegar.combine_labels, Deadline::NONE)
                     .context("failed to build abstract operators")?,
                 Deadline::NONE,
@@ -143,7 +143,7 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         };
         let core = AbstractionCore {
             distances,
-            initial_state: factory.initial_state(task)?,
+            initial_state: function.initial_state(task)?,
             relevant_operator_ids: transitions.relevant_operator_ids(),
             num_abstract_operators: transitions.operators.len(),
             metadata: AbstractionMetadata::standalone(
@@ -153,12 +153,9 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             ),
         };
         let abstraction = DomainAbstraction::new(
-            factory,
+            function,
             core,
-            self.config
-                .cegar
-                .keep_transition_system
-                .then_some(transitions),
+            self.config.cegar.keep_transitions.then_some(transitions),
         );
         finish_abstraction(&abstraction, start.elapsed())?;
         Ok(abstraction)

@@ -85,7 +85,7 @@ impl CegarAbstraction for CartesianAbstraction {
         })
     }
 
-    fn discard_transition_data(&mut self) {
+    fn discard_transitions(&mut self) {
         self.transitions = None;
     }
 

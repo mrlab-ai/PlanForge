@@ -36,7 +36,7 @@ pub struct CegarOptions {
     /// Keep the transition system after refinement, which cost partitioning
     /// reads; the distances alone answer lookups.
     #[option(skip)]
-    pub keep_transition_system: bool,
+    pub keep_transitions: bool,
 }
 
 impl Default for CegarOptions {
@@ -53,7 +53,7 @@ impl Default for CegarOptions {
             split_selection: SplitSelection::Random,
             split_selection_rank: None,
             debug: false,
-            keep_transition_system: true,
+            keep_transitions: true,
         }
     }
 }
