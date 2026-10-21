@@ -1,3 +1,5 @@
+use std::ops::ControlFlow;
+
 use super::*;
 
 /// Everything a cost partitioning over this collection needs except the order
@@ -85,6 +87,16 @@ pub(super) fn saturate_component_labels(
     }
 }
 
+/// Whether the construction budget let a cost partitioning saturate every
+/// component of its order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Completion {
+    Complete,
+    /// The budget ended first; the cost partitioning has the tables of the
+    /// components saturated before.
+    Truncated,
+}
+
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// The cost partitioning of `order`: every component in turn saturates
     /// what the ones before it left, until the order or `deadline` ends.
@@ -93,42 +105,36 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         collection: PartitionedCollection<'_, '_>,
         order: &[usize],
         deadline: Deadline,
-    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+    ) -> Result<(CostPartitioningHeuristic, Completion), EvaluationError> {
         let mut cp = CostPartitioningHeuristic::default();
         let mut remaining = RemainingCosts::from_operator_costs(collection.original_costs);
-        for &component_id in order {
-            if deadline.passed() {
-                break;
-            }
-            match self.add_saturation_steps(
-                &mut cp,
-                &mut remaining,
-                collection,
-                component_id,
-                deadline,
-            ) {
-                Ok(true) => {}
-                Ok(false) => {
-                    info!(
-                        "scp: component {component_id} stopped while reducing remaining costs (deadline)"
-                    );
-                    break;
-                }
-                Err(error) if Self::is_deadline_exceeded(&error) => {
-                    info!(
-                        "scp: component {component_id} stopped while computing its table (deadline)"
-                    );
-                    break;
-                }
-                Err(error) => return Err(error),
+        for (position, &component_id) in order.iter().enumerate() {
+            let step = if deadline.passed() {
+                ControlFlow::Break(())
+            } else {
+                self.add_saturation_steps(
+                    &mut cp,
+                    &mut remaining,
+                    collection,
+                    component_id,
+                    deadline,
+                )?
+            };
+            if step.is_break() {
+                info!(
+                    "scp: the construction budget ended after {position} of the {} components of an order; its cost partitioning keeps their tables",
+                    order.len()
+                );
+                return Ok((cp, Completion::Truncated));
             }
         }
-        Ok(cp)
+        Ok((cp, Completion::Complete))
     }
 
     /// Saturates component `component_id` in the passes of the configured
     /// saturator, subtracts what it saturates from `remaining`, and adds its
-    /// tables to `cp`. `false` if the deadline passed while reducing.
+    /// tables to `cp`. Breaks when `deadline` passes during a pass, which
+    /// then adds nothing.
     fn add_saturation_steps(
         &self,
         cp: &mut CostPartitioningHeuristic,
@@ -136,7 +142,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         collection: PartitionedCollection<'_, '_>,
         component_id: usize,
         deadline: Deadline,
-    ) -> Result<bool, EvaluationError> {
+    ) -> Result<ControlFlow<()>, EvaluationError> {
         let PartitionedCollection {
             components,
             abstract_state_ids,
@@ -167,13 +173,17 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 (true, None) => continue,
             };
             let (distances, saturated) =
-                saturate_component(component, remaining, method, perimeter_state, deadline)
-                    .map_err(|error| {
-                        Self::construction_error(
-                            &format!("failed to saturate component {component_id}"),
-                            error,
-                        )
-                    })?;
+                match saturate_component(component, remaining, method, perimeter_state, deadline) {
+                    Ok(saturation) => saturation,
+                    Err(error) if crate::resource_limits::is_deadline_exceeded(&error) => {
+                        return Ok(ControlFlow::Break(()));
+                    }
+                    Err(error) => {
+                        return Err(EvaluationError::ComputationFailed(format!(
+                            "failed to saturate component {component_id}: {error:#}"
+                        )));
+                    }
+                };
             let step = format!("{method} {phase}");
             log_table_summary(
                 &step,
@@ -189,7 +199,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 &distances,
                 abstract_state_ids,
             ) {
-                return Ok(true);
+                return Ok(ControlFlow::Continue(()));
             }
             let reduced = match &saturated {
                 SaturatedCosts::Label(costs) => remaining.reduce_operator_costs_uniform(costs),
@@ -200,7 +210,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             match reduced {
                 Ok(()) => {}
                 Err(error) if crate::resource_limits::is_deadline_exceeded(&error) => {
-                    return Ok(false);
+                    return Ok(ControlFlow::Break(()));
                 }
                 Err(error) => {
                     return Err(EvaluationError::ComputationFailed(format!(
@@ -213,19 +223,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             }
             cp.add_h_values(component_id, distances);
         }
-        Ok(true)
-    }
-
-    pub(super) fn is_deadline_exceeded(error: &EvaluationError) -> bool {
-        matches!(error, EvaluationError::ConstructionDeadlineExceeded)
-    }
-
-    pub(super) fn construction_error(context: &str, error: anyhow::Error) -> EvaluationError {
-        if crate::resource_limits::is_deadline_exceeded(&error) {
-            EvaluationError::ConstructionDeadlineExceeded
-        } else {
-            EvaluationError::ComputationFailed(format!("{context}: {error:#}"))
-        }
+        Ok(ControlFlow::Continue(()))
     }
 }
 

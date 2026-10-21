@@ -1,18 +1,19 @@
 use super::*;
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    /// The abstract states in every component of the initial state and of
+    /// the ends of random walks from it (Seipp et al. 2020), until there are
+    /// `samples` or `deadline` passes. Takes the sampling task, which only
+    /// diversification needs.
     pub(super) fn sample_states(
         &self,
-        state: &mut ScpState,
+        components: &[AbstractionComponent<'_>],
+        state: &mut OrderSelection<'task>,
         initial_h: f64,
         deadline: Deadline,
-    ) -> Result<(), EvaluationError> {
-        if !state.sample_abstract_state_ids.is_empty() {
-            return Ok(());
-        }
-        let sampling_task = self
+    ) -> Result<Vec<Vec<Option<usize>>>, EvaluationError> {
+        let sampling_task = state
             .sampling_task
-            .borrow_mut()
             .take()
             .expect("offline diversification was validated to have an owned sampling task");
         let mut registry = StateRegistry::for_task(sampling_task.clone());
@@ -25,15 +26,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 / self.original_operator_costs.len() as f64
         };
         let mut ids = Vec::new();
+        let mut samples = Vec::new();
 
-        self.abstract_state_ids_of_sample(&initial_state, &registry, self.task, &mut ids)?;
-        state.sample_abstract_state_ids.push(ids.clone());
+        self.abstract_state_ids_of_sample(components, &initial_state, &registry, &mut ids)?;
+        samples.push(ids.clone());
 
-        while state.sample_abstract_state_ids.len() < self.config.samples {
+        while samples.len() < self.config.samples {
             if deadline.passed() {
                 info!(
                     "scp: offline sampling deadline reached after {} samples",
-                    state.sample_abstract_state_ids.len()
+                    samples.len()
                 );
                 break;
             }
@@ -67,26 +69,25 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                         })?;
                 current = successor;
             }
-            self.abstract_state_ids_of_sample(&current, &registry, self.task, &mut ids)?;
-            state.sample_abstract_state_ids.push(ids.clone());
+            self.abstract_state_ids_of_sample(components, &current, &registry, &mut ids)?;
+            samples.push(ids.clone());
         }
         info!(
             "scp: generated {} offline random-walk samples",
-            state.sample_abstract_state_ids.len()
+            samples.len()
         );
-        Ok(())
+        Ok(samples)
     }
 
-    pub(super) fn abstract_state_ids_of_sample(
+    fn abstract_state_ids_of_sample(
         &self,
+        components: &[AbstractionComponent<'_>],
         concrete_state: &ConcreteState,
         registry: &StateRegistry<'task>,
-        task: &'task dyn AbstractNumericTask,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let eval_state = EvaluationState::new(concrete_state, task, registry);
-        self.compute_abstract_state_ids_into(&eval_state, None, ids)?;
-        Ok(())
+        let eval_state = EvaluationState::new(concrete_state, self.task, registry);
+        self.compute_abstract_state_ids_into(components, &eval_state, None, ids)
     }
 }
 
@@ -105,10 +106,12 @@ pub(super) fn random_walk_length(
             "offline SCP sampling requires a finite non-negative average operator cost, got {average_operator_cost}"
         )));
     }
-    let trials_f64 = if initial_h <= f64::EPSILON || average_operator_cost <= f64::EPSILON {
-        10.0
+    let trials_f64 = if initial_h <= float_tolerance::SEARCH_EPSILON
+        || average_operator_cost <= float_tolerance::SEARCH_EPSILON
+    {
+        UNSCALED_WALK_TRIALS
     } else {
-        4.0 * (initial_h / average_operator_cost).round()
+        TRIALS_PER_ESTIMATED_STEP * (initial_h / average_operator_cost).round()
     };
     if trials_f64 > usize::MAX as f64 {
         return Err(EvaluationError::ComputationFailed(format!(
@@ -116,5 +119,20 @@ pub(super) fn random_walk_length(
         )));
     }
     let trials = trials_f64 as usize;
-    Ok((0..trials).filter(|_| rng.gen_bool(0.5)).count())
+    Ok((0..trials)
+        .filter(|_| rng.gen_bool(STEP_PROBABILITY))
+        .count())
 }
+
+/// The walk length is binomial, `trials` trials with success probability
+/// [`STEP_PROBABILITY`], as in the random-walk sampling of Haslum et al.
+/// (2007) that Seipp et al. (2020) diversify over.
+const STEP_PROBABILITY: f64 = 0.5;
+
+/// Trials per estimated step to the goal, `h / average operator cost`: the
+/// expected walk length is twice the estimated goal distance.
+const TRIALS_PER_ESTIMATED_STEP: f64 = 4.0;
+
+/// Trials when the initial state's estimate or the average operator cost is
+/// zero and gives no estimated goal distance.
+const UNSCALED_WALK_TRIALS: f64 = 10.0;

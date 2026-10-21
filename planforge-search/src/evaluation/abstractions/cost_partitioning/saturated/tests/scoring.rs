@@ -4,7 +4,7 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
 
 #[test]
-fn interval_stolen_costs_accept_transition_free_components() {
+fn region_stolen_costs_accept_transition_free_components() {
     let task = independent_goals_task();
     let regions = RegionSemantics::new(&task).unwrap();
     let mut cartesian = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
@@ -39,7 +39,7 @@ fn interval_stolen_costs_accept_transition_free_components() {
         AbstractionComponent::from(cartesian),
     ];
     assert_eq!(
-        interval_stolen_costs(
+        region_stolen_costs(
             &components,
             &[
                 vec![f64::NEG_INFINITY; task.get_num_operators()],
@@ -53,14 +53,14 @@ fn interval_stolen_costs_accept_transition_free_components() {
 }
 
 #[test]
-fn interval_stolen_costs_reject_missing_source_sets() {
+fn region_stolen_costs_reject_missing_source_sets() {
     let task = independent_goals_task();
     let mut abstraction = cartesian_abstraction(&task);
     abstraction.discard_transition_data();
     assert!(abstraction.abstract_source_sets().is_none());
 
     let components = vec![AbstractionComponent::from(abstraction)];
-    let error = interval_stolen_costs(
+    let error = region_stolen_costs(
         &components,
         &[vec![f64::NEG_INFINITY; task.get_num_operators()]],
         &[2.0, 3.0],

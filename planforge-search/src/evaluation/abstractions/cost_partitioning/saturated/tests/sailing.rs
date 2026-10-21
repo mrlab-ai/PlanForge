@@ -31,7 +31,7 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::utils::interval::Interval;
 
 #[test]
-fn interval_stolen_costs_keep_disjoint_infinite_tails() {
+fn region_stolen_costs_keep_disjoint_infinite_tails() {
     let region = |lower, upper, lower_closed, upper_closed| {
         CartesianSet::with_all_props_constrained(
             Vec::new(),
@@ -43,18 +43,18 @@ fn interval_stolen_costs_keep_disjoint_infinite_tails() {
     let overlapping_tail = region(NumericValue::new(-1.0), INF_VALUE, true, false);
 
     assert_eq!(
-        pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
+        pairwise_region_stolen_cost(&[&left_tail], 1.0, &[&right_tail], 1.0, 1.0),
         0.0
     );
     assert_eq!(
-        pairwise_interval_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
+        pairwise_region_stolen_cost(&[&left_tail], 1.0, &[&overlapping_tail], 1.0, 1.0),
         1.0
     );
 }
 
 #[test]
 #[ignore = "oracle collection report over translated sailing benchmark"]
-fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp() {
+fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_region_scp() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
@@ -180,7 +180,7 @@ fn initial_cartesian_scp_value(
         })
         .collect::<Vec<_>>();
     let config = ScpConfig {
-        table_construction_max_time: 30.0,
+        table_construction_max_time: Some(Duration::from_secs(30)),
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: if partitioning {
@@ -192,16 +192,16 @@ fn initial_cartesian_scp_value(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(vec![], abstractions, vec![]),
+        abstractions
+            .into_iter()
+            .map(AbstractionComponent::from)
+            .collect(),
         config,
         task,
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
-    let mut state = heuristic.state.borrow_mut();
-    let mut partitions = heuristic
-        .build_cost_partitionings(&mut state, &abstract_state_ids)
-        .expect("oracle SCP construction failed");
+    let mut partitions = build_cost_partitionings(&heuristic, &abstract_state_ids);
     assert_eq!(partitions.len(), 1);
     partitions
         .pop()
@@ -211,7 +211,7 @@ fn initial_cartesian_scp_value(
 
 #[test]
 #[ignore = "diagnostic full-task handcrafted sailing regional SCP report"]
-fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
+fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     let task = translated_sailing_2_2_task();
     let restricted_task = build_restricted_task(&task)
         .expect("sailing task should support restricted task")
@@ -240,13 +240,13 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     }
 
     let config = ScpConfig {
-        max_time: 300.0,
-        table_construction_max_time: 30.0,
+        max_time: Some(Duration::from_secs(300)),
+        table_construction_max_time: Some(Duration::from_secs(30)),
         diversify: false,
         samples: 1_000,
         max_orders: usize::MAX,
         order_generator: OrderGenerator::Greedy,
-        initial_order_generation_max_time: 0.0,
+        initial_order_generation_max_time: Some(Duration::ZERO),
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: CostPartitioningMethod::Region,
@@ -260,29 +260,26 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         .collect::<Vec<_>>();
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        abstractions
+            .into_iter()
+            .map(AbstractionComponent::from)
+            .collect(),
         config,
         transformed_task,
         Default::default(),
     )
     .expect("failed to construct SCP heuristic");
     let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
-    {
-        let mut state = heuristic.state.borrow_mut();
-        let mut partitions = heuristic
-            .build_cost_partitionings(&mut state, &abstract_state_ids)
-            .expect("initial SCP construction failed");
-        assert_eq!(partitions.len(), 1);
-        SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partitions.pop().unwrap());
-    }
+    let cp_heuristics = build_cost_partitionings(&heuristic, &abstract_state_ids);
+    assert_eq!(cp_heuristics.len(), 1);
 
+    let initial_h = compute_max_h(&cp_heuristics, &abstract_state_ids);
     let state = heuristic.state.borrow();
-    let initial_h = SaturatedCostPartitioningHeuristic::compute_max_h(&state, &abstract_state_ids);
-    let components = heuristic.components.borrow();
+    let components = &state.components;
 
     println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
     let mut contributions = vec![0.0; specs.len()];
-    for cp in &state.cp_heuristics {
+    for cp in &cp_heuristics {
         for table in &cp.lookup_tables {
             let contribution = current_h_for_distances(
                 table.abstraction_id,
@@ -451,8 +448,9 @@ fn initial_abstract_state_ids(
         numeric: task.get_initial_numeric_state_values().to_vec(),
     };
     heuristic
-        .components
+        .state
         .borrow()
+        .components
         .iter()
         .map(|component| {
             component

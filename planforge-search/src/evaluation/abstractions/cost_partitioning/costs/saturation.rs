@@ -8,7 +8,7 @@ use anyhow::{Result, ensure};
 use planforge_sas::numeric_task::OperatorIndex;
 use planforge_sas::utils::float_tolerance;
 
-use super::{RemainingCosts, SCP_TABLE_CONSTRUCTION};
+use super::{RemainingCosts, SATURATION_POLL_STRIDE, SCP_TABLE_CONSTRUCTION};
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem, BackwardGraph,
     LabelSourceSet, backward_goal_distances,
@@ -164,24 +164,35 @@ pub(crate) fn saturate_regions(
     deadline: Deadline,
 ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
     let mut graph = ExplicitSaturationGraph::new(system);
+    // The source set of every label of every transition, narrowed to the
+    // transition, with what remains of the label's cost on it.
+    let mut label_costs = Vec::with_capacity(system.transitions.len());
     for (transition_id, transition) in system.transitions.iter().enumerate() {
-        if transition_id.is_multiple_of(1024) {
+        if transition_id.is_multiple_of(SATURATION_POLL_STRIDE) {
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
-        let mut cost = f64::INFINITY;
-        for source_set in label_source_sets(source_sets, transition) {
-            let source_set = transition_source_set(transition, source_set)?;
-            cost = cost.min(remaining.cost_for_source_set(&source_set));
-        }
-        graph.transition_costs[transition_id] = cost;
+        let costs = label_source_sets(source_sets, transition)
+            .map(|source_set| {
+                let source_set = transition_source_set(transition, source_set)?;
+                let available = remaining.cost_for_source_set(&source_set);
+                Ok((source_set, available))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        graph.transition_costs[transition_id] = costs
+            .iter()
+            .map(|&(_, available)| available)
+            .fold(f64::INFINITY, f64::min);
+        label_costs.push(costs);
     }
     let distances = goal_distances(&mut graph, deadline)?;
     let saturation_distances = perimeter(&distances, perimeter_state);
 
     let mut saturated = vec![0.0; system.transitions.len()];
     let mut entries = Vec::new();
-    for (transition_id, transition) in system.transitions.iter().enumerate() {
-        if transition_id.is_multiple_of(1024) {
+    for ((transition_id, transition), costs) in
+        system.transitions.iter().enumerate().zip(label_costs)
+    {
+        if transition_id.is_multiple_of(SATURATION_POLL_STRIDE) {
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         let Some(need) = saturation_need(
@@ -197,12 +208,10 @@ pub(crate) fn saturate_regions(
         if need <= float_tolerance::SEARCH_EPSILON {
             continue;
         }
-        for source_set in label_source_sets(source_sets, transition) {
+        for (source_set, available) in costs {
             if remaining.base_cost(source_set.concrete_op_id) <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
-            let source_set = transition_source_set(transition, source_set)?;
-            let available = remaining.cost_for_source_set(&source_set);
             ensure!(
                 need <= available + float_tolerance::AGREEMENT_EPSILON,
                 "transition {transition_id} needs {need} of operator {}, which has only {available} left on its source set",
@@ -222,20 +231,28 @@ pub(crate) fn saturate_regions(
     Ok((goal_distances(&mut graph, deadline)?, allocation))
 }
 
-/// The source sets of `transition`'s labels.
+/// The source sets of `transition`'s labels. Its abstract operator has one
+/// for each label, in the order of the transition's labels.
 fn label_source_sets<'a>(
     source_sets: &'a [AbstractOperatorSourceSets],
     transition: &'a AbstractTransition,
 ) -> impl Iterator<Item = &'a LabelSourceSet> {
     let operator_source_sets = &source_sets[transition.abstract_op_id].labels;
-    transition
-        .concrete_op_ids
+    assert_eq!(
+        operator_source_sets.len(),
+        transition.concrete_op_ids.len(),
+        "abstract operator {} has a source set for each label",
+        transition.abstract_op_id
+    );
+    operator_source_sets
         .iter()
-        .map(move |&concrete_op_id| {
-            operator_source_sets
-                .iter()
-                .find(|source_set| source_set.concrete_op_id == concrete_op_id)
-                .expect("an abstract operator has a source set for each of its labels")
+        .zip(&transition.concrete_op_ids)
+        .map(|(source_set, &concrete_op_id)| {
+            assert_eq!(
+                source_set.concrete_op_id, concrete_op_id,
+                "the source sets of an abstract operator follow its labels"
+            );
+            source_set
         })
 }
 
@@ -279,7 +296,7 @@ fn saturated_operator_costs<G: SaturationGraph>(
     let mut saturated = vec![0.0_f64; num_operators];
     let mut incoming = Vec::new();
     for (target, &target_distance) in distances.iter().enumerate() {
-        if target.is_multiple_of(1024) {
+        if target.is_multiple_of(SATURATION_POLL_STRIDE) {
             deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
         }
         if !target_distance.is_finite() {

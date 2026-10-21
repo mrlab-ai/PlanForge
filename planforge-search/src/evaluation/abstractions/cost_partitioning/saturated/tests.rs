@@ -8,6 +8,7 @@ use super::sampling::*;
 
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use std::time::Duration;
 
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 
@@ -19,9 +20,11 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator,
+    CartesianAbstraction, CartesianAbstractionCollectionConfig,
+    CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
+    CartesianAbstractionGenerator,
 };
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 
@@ -110,8 +113,8 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
 
 pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpConfig {
     ScpConfig {
-        max_time: 10.0,
-        table_construction_max_time: 10.0,
+        max_time: Some(Duration::from_secs(10)),
+        table_construction_max_time: Some(Duration::from_secs(10)),
         saturator,
         random_seed: Some(1),
         partitioning: if abstract_operator {
@@ -121,45 +124,6 @@ pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpCo
         },
         ..ScpConfig::default()
     }
-}
-
-#[test]
-fn scp_rejects_negative_and_nan_time_limits() {
-    let valid = scp_config(Saturator::All, false);
-    valid.validate(true).unwrap();
-    for seconds in [-1.0, f64::NAN, f64::NEG_INFINITY] {
-        let configs = [
-            ScpConfig {
-                max_time: seconds,
-                ..valid.clone()
-            },
-            ScpConfig {
-                table_construction_max_time: seconds,
-                ..valid.clone()
-            },
-            ScpConfig {
-                initial_order_generation_max_time: seconds,
-                ..valid.clone()
-            },
-        ];
-        for config in configs {
-            let error = config.validate(true).unwrap_err();
-            assert!(error.contains("non-negative number of seconds"), "{error}");
-        }
-    }
-}
-
-#[test]
-fn capping_scp_construction_time_keeps_invalid_limits() {
-    let mut config = ScpConfig {
-        table_construction_max_time: f64::NAN,
-        initial_order_generation_max_time: f64::INFINITY,
-        ..scp_config(Saturator::All, false)
-    };
-    config.cap_construction_time(5.0);
-    assert!(config.table_construction_max_time.is_nan());
-    assert_eq!(config.initial_order_generation_max_time, 5.0);
-    assert!(config.validate(true).is_err());
 }
 
 pub(super) fn evaluate_initial(
@@ -225,7 +189,7 @@ pub(super) fn goal_cover_scp<'task>(
     config.diversify = true;
     config.samples = 16;
     config.max_orders = max_orders(expected_goals.len());
-    config.initial_order_generation_max_time = 10.0;
+    config.initial_order_generation_max_time = Some(Duration::from_secs(10));
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
         components,
@@ -233,20 +197,44 @@ pub(super) fn goal_cover_scp<'task>(
         &**task,
         ScpBuildOptions {
             sampling_task: Some(task.clone()),
+            ..Default::default()
         },
     )
     .unwrap();
     (heuristic, expected_goals)
 }
 
+/// The cost partitionings `heuristic` retained at its first evaluation.
+pub(super) fn retained_cost_partitionings<'a>(
+    heuristic: &'a SaturatedCostPartitioningHeuristic<'_>,
+) -> std::cell::Ref<'a, [CostPartitioningHeuristic]> {
+    std::cell::Ref::map(heuristic.state.borrow(), |state| match &state.phase {
+        ScpPhase::Built(retained) => retained.cp_heuristics.as_slice(),
+        ScpPhase::Unbuilt(_) => panic!("the heuristic has not evaluated a state"),
+    })
+}
+
+/// The cost partitionings `heuristic` builds at the first evaluated state,
+/// whose abstract states are `abstract_state_ids`.
+pub(super) fn build_cost_partitionings(
+    heuristic: &SaturatedCostPartitioningHeuristic<'_>,
+    abstract_state_ids: &[Option<usize>],
+) -> Vec<CostPartitioningHeuristic> {
+    let mut state = heuristic.state.borrow_mut();
+    let ScpState { components, phase } = &mut *state;
+    let ScpPhase::Unbuilt(selection) = phase else {
+        panic!("the heuristic built its cost partitionings already");
+    };
+    heuristic
+        .build_cost_partitionings(components, selection, abstract_state_ids)
+        .expect("SCP construction failed")
+}
+
 pub(super) fn retained_goal_cover_orders_per_goal(
     heuristic: &SaturatedCostPartitioningHeuristic<'_>,
 ) -> HashMap<usize, usize> {
     let mut retained_per_goal = HashMap::<usize, usize>::new();
-    for goal_id in heuristic
-        .state
-        .borrow()
-        .cp_heuristics
+    for goal_id in retained_cost_partitionings(heuristic)
         .iter()
         .filter_map(|cp| cp.goal_cover_goal_id)
     {
@@ -260,5 +248,4 @@ mod goal_cover_orders;
 mod heuristic;
 mod sailing;
 mod sampling;
-mod saturation;
 mod scoring;

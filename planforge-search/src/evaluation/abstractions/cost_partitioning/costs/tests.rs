@@ -2,10 +2,30 @@ use planforge_sas::numeric_task::{
     ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue, ONE_VALUE, ZERO_VALUE,
 };
 
+use std::sync::Arc;
+
+use planforge_sas::utils::interval::Interval;
+
+use std::cell::RefCell;
+
+use anyhow::Result;
+use planforge_sas::numeric_task::OperatorIndex;
+
+use super::usage::{SourceSetUsage, UsageCell, UsageIndex, cells_are_disjoint};
 use super::*;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::transition_system::LabelSourceSet;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem,
 };
+use crate::resource_limits::Deadline;
+
+impl SourceSetUsage {
+    fn add(&mut self, region: &CartesianSet, amount: f64) {
+        self.add_with_deadline(region, amount, Deadline::NONE)
+            .expect("an unbounded regional-usage update cannot exceed a deadline");
+    }
+}
 
 #[test]
 fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
@@ -21,16 +41,16 @@ fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
     );
     let mut usage = SourceSetUsage {
         cells: vec![
-            SourceSetUsageCell {
+            UsageCell {
                 region: first.clone(),
                 amount: 1.0,
             },
-            SourceSetUsageCell {
+            UsageCell {
                 region: second.clone(),
                 amount: 2.0,
             },
         ],
-        index: RefCell::new(CellIndex::Stale),
+        index: RefCell::new(UsageIndex::Stale),
     };
 
     usage.add(
@@ -50,7 +70,7 @@ fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {
         )),
         3.0
     );
-    assert!(source_set_usage_cells_are_disjoint(&usage.cells));
+    assert!(cells_are_disjoint(&usage.cells));
 }
 
 #[test]
@@ -73,8 +93,8 @@ fn full_cost_source_sets_use_overlap_cover_without_geometric_overlay() {
     reduce_by_operator_source_sets(&mut residuals, &source_sets, &[1.0, 1.0]).unwrap();
 
     let residual = &residuals.operator_residuals[0];
-    assert_eq!(residual.full_source_set_usage.cells.len(), 2);
-    assert!(residual.source_set_usage.cells.is_empty());
+    assert_eq!(residual.full_usage.cells.len(), 2);
+    assert!(residual.fractional_usage.cells.is_empty());
     let overlapping = LabelSourceSet {
         concrete_op_id: OperatorIndex::new(0),
         source: Arc::new(region(NumericValue::new(1.5), NumericValue::new(1.5))),
@@ -586,4 +606,32 @@ fn reduce_by_operator_source_sets(
         &SourceSetCostAllocation::new(entries),
         Deadline::NONE,
     )
+}
+
+#[test]
+fn uniform_reduction_rejects_significant_underflow() {
+    let mut remaining = RemainingCosts::from_operator_costs(&[1.0]);
+
+    let error = remaining.reduce_operator_costs_uniform(&[1.5]).unwrap_err();
+    assert!(format!("{error:#}").contains("underflow"));
+}
+
+#[test]
+fn uniform_reduction_rejects_non_finite_saturated_costs() {
+    let mut remaining = RemainingCosts::from_operator_costs(&[1.0]);
+
+    let error = remaining
+        .reduce_operator_costs_uniform(&[f64::NEG_INFINITY])
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid saturated cost"));
+}
+
+#[test]
+fn uniform_reduction_clamps_tiny_negative_roundoff() {
+    let mut remaining = RemainingCosts::from_operator_costs(&[1.0]);
+
+    remaining
+        .reduce_operator_costs_uniform(&[1.0 + 1e-12])
+        .unwrap();
+    assert_eq!(remaining.operator_costs_for_label_cp(), vec![0.0]);
 }

@@ -4,31 +4,6 @@ use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
-fn scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
-    let partition = |distances| CostPartitioningHeuristic {
-        lookup_tables: vec![LookupTable {
-            abstraction_id: 0,
-            distances,
-        }],
-        goal_cover_goal_id: None,
-    };
-    let mut state = ScpState::new(Some(1));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![5.0, 1.0]));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![4.0, 4.0]));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![4.0, 4.0]));
-
-    assert_eq!(state.cp_heuristics.len(), 2, "duplicates are discarded");
-    assert_eq!(
-        SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(0)]),
-        5.0
-    );
-    assert_eq!(
-        SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(1)]),
-        4.0
-    );
-}
-
-#[test]
 fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
     let task = independent_goals_task();
     for saturator in [Saturator::All, Saturator::Perim, Saturator::Perimstar] {
@@ -62,24 +37,24 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     .unwrap();
 
     assert!(
-        heuristic.components.borrow()[0]
+        heuristic.state.borrow().components[0]
             .cegar()
             .unwrap()
             .retains_transitions()
     );
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
     assert!(
-        !heuristic.components.borrow()[0]
+        !heuristic.state.borrow().components[0]
             .cegar()
             .unwrap()
             .retains_transitions()
     );
-    assert!(heuristic.state.borrow().built);
+    assert!(matches!(heuristic.state.borrow().phase, ScpPhase::Built(_)));
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
 }
 
 #[test]
-fn interval_scp_combines_all_representations() {
+fn region_scp_combines_all_representations() {
     let task = independent_goals_task();
     let domain_config = DomainAbstractionConfig {
         cegar: CegarOptions {

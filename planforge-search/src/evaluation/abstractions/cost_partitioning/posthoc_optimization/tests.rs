@@ -13,7 +13,7 @@ fn test_heuristic(
         constraints,
         state_value_cache: RefCell::new(StateValueCache::default()),
         values: RefCell::default(),
-        diagnostics_logged: RefCell::new(false),
+        diagnostics_logged: Cell::new(false),
     }
 }
 
@@ -25,9 +25,8 @@ fn operators(ids: &[usize]) -> BTreeSet<OperatorIndex> {
 
 #[test]
 fn no_active_abstractions_returns_zero() {
-    let heuristic = test_heuristic(0, Vec::new());
-    // empty h vector
-    assert_eq!(heuristic.solve_dual(&[]).unwrap(), 0.0);
+    let heuristic = test_heuristic(2, vec![vec![0, 1]]);
+    assert_eq!(heuristic.solve_dual(&[0.0, 0.0]).unwrap(), 0.0);
 }
 
 #[test]

@@ -389,20 +389,19 @@ fn build_canonical_from_sources<'task>(
     Ok(Some(Box::new(heuristic)))
 }
 
-/// Builds `name(...)` from its sources and the combinator options that
-/// [`abstraction_config::scp_sources_options_and_deadline`] validated.
+/// Builds `name(...)` from its sources and the configuration that
+/// [`abstraction_config::scp_sources_config_and_deadline`] parsed.
 fn build_scp_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sampling_task: TaskRef<'task>,
-    source_config: &ScpSourceConfig,
+    source_config: ScpSourceConfig,
     name: &str,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
     let ScpSourceConfig {
         sources,
-        options,
+        config,
         construction_deadline,
     } = source_config;
-    let construction_deadline = *construction_deadline;
     if sources.is_empty() {
         return Err(format!(
             "`{name}` requires at least one abstraction source: {}",
@@ -410,20 +409,13 @@ fn build_scp_from_sources<'task>(
         )
         .into());
     }
-    let mut config = configure(
-        name,
-        crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig::default(),
-        options,
-    )?;
     let component_use = if config.partitioning.uses_regions() {
         ComponentUse::RegionalCostPartitioning
     } else {
         ComponentUse::LabelCostPartitioning
     };
-    let components = build_components(task, sources, component_use, construction_deadline)?;
-    if let Some(remaining) = remaining_construction_time(construction_deadline)? {
-        config.cap_construction_time(remaining.as_secs_f64());
-    }
+    let components = build_components(task, &sources, component_use, construction_deadline)?;
+    remaining_construction_time(construction_deadline)?;
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         Some(name.to_string()),
         components,
@@ -431,6 +423,7 @@ fn build_scp_from_sources<'task>(
         task,
         ScpBuildOptions {
             sampling_task: Some(sampling_task),
+            construction_deadline,
         },
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
@@ -537,8 +530,9 @@ heuristic_registry! {
         requirements: component_task_requirements,
         nested: no_nested_heuristics,
         build: {
-            let source_config = abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
-            build_scp_from_sources(task, sampling_task, &source_config, spec.name.as_str())
+            let source_config =
+                abstraction_config::scp_sources_config_and_deadline(&spec.name, &spec.args)?;
+            build_scp_from_sources(task, sampling_task, source_config, spec.name.as_str())
         }
     }
 

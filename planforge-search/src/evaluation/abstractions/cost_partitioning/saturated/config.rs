@@ -1,8 +1,9 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
-use crate::resource_limits::time_limit_from_secs;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -50,7 +51,12 @@ impl Saturator {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CostPartitioningMethod {
+    /// One cost per operator.
     Label,
+    /// One cost per source set of every abstract transition, for the
+    /// abstractions CEGAR builds. A pattern database has no source sets and
+    /// takes one cost per operator of what remains, as in label cost
+    /// partitioning.
     Region,
 }
 
@@ -68,13 +74,23 @@ option_enum!("partitioning", CostPartitioningMethod {
 /// Configuration of SCP over a collection of abstractions. All cost
 /// partitionings are built at the first evaluated state, before search, and
 /// construction-only abstraction data is released afterwards.
+///
+/// Building them has one budget, [`Self::table_construction_max_time`]
+/// together with the heuristic's construction deadline; the phases
+/// limited by [`Self::initial_order_generation_max_time`] and
+/// [`Self::max_time`] end at the budget's end at the latest. A cost
+/// partitioning the budget cuts short keeps the components saturated so far.
+/// Time limits are in seconds, `infinity` for none.
 #[derive(
     Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
 pub struct ScpConfig {
-    /// Time for choosing diverse orders over the samples.
-    pub max_time: f64,
-    pub table_construction_max_time: f64,
+    /// Time for diversification, from its start: sampling and the orders
+    /// built for the samples (Seipp et al. 2020).
+    pub max_time: Option<Duration>,
+    /// Time for building every cost partitioning, from the first evaluated
+    /// state on.
+    pub table_construction_max_time: Option<Duration>,
     /// Choose orders over random-walk samples (Seipp et al. 2020).
     pub diversify: bool,
     /// Number of sampled states that judge whether an order adds value.
@@ -83,8 +99,9 @@ pub struct ScpConfig {
     pub max_orders: usize,
     #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
-    /// Time for the candidate orders built for every sample.
-    pub initial_order_generation_max_time: f64,
+    /// Time for the candidate orders of the evaluated state, from their
+    /// start.
+    pub initial_order_generation_max_time: Option<Duration>,
     /// Goal-cover orders per goal that every diversified collection keeps
     /// (AAMAS 2027), in addition to the best order.
     pub goal_cover_orders_per_goal: usize,
@@ -103,13 +120,13 @@ impl Default for ScpConfig {
             .cegar
             .random_seed;
         Self {
-            max_time: 200.0,
-            table_construction_max_time: 30.0,
+            max_time: Some(Duration::from_secs(200)),
+            table_construction_max_time: None,
             diversify: false,
             samples: 1_000,
             max_orders: usize::MAX,
             order_generator: OrderGenerator::Greedy,
-            initial_order_generation_max_time: 10.0,
+            initial_order_generation_max_time: Some(Duration::from_secs(10)),
             goal_cover_orders_per_goal: 4,
             random_orders: 3,
             saturator: Saturator::All,
@@ -134,35 +151,9 @@ impl ScpConfig {
         if self.diversify && self.max_orders == 0 {
             return fail("SCP diversification requires max_orders > 0");
         }
-        for (option, seconds) in [
-            ("max_time", self.max_time),
-            (
-                "table_construction_max_time",
-                self.table_construction_max_time,
-            ),
-            (
-                "initial_order_generation_max_time",
-                self.initial_order_generation_max_time,
-            ),
-        ] {
-            time_limit_from_secs(seconds).map_err(|error| format!("SCP {option}: {error}"))?;
-        }
         if self.diversify && !has_sampling_task {
             return fail("SCP diversification requires an owned task reference for sampling");
         }
         Ok(())
-    }
-
-    /// Bound every phase of SCP construction by the caller's remaining time.
-    /// An invalid limit stays as it is, for [`Self::validate`] to reject.
-    pub(crate) fn cap_construction_time(&mut self, max_seconds: f64) {
-        for limit in [
-            &mut self.table_construction_max_time,
-            &mut self.initial_order_generation_max_time,
-        ] {
-            if *limit > max_seconds {
-                *limit = max_seconds;
-            }
-        }
     }
 }

@@ -1,8 +1,12 @@
+use std::time::{Duration, Instant};
+
 use super::*;
 
-/// The deadline `seconds` from now, for the time limit `option` that
-/// [`ScpConfig::validate`] accepted.
-pub(super) fn deadline_from_now(option: &str, seconds: f64) -> Result<Deadline, EvaluationError> {
-    Deadline::from_now_secs(seconds)
+/// The deadline `limit` from now, for the time limit `option`.
+pub(super) fn deadline_from_now(
+    option: &str,
+    limit: Option<Duration>,
+) -> Result<Deadline, EvaluationError> {
+    Deadline::after(Instant::now(), limit)
         .map_err(|error| EvaluationError::ComputationFailed(format!("scp: {option}: {error}")))
 }
