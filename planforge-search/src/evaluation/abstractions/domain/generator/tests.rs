@@ -312,8 +312,7 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
     let x_partitions = outcome
         .factory
         .partitions()
-        .partitions(VariableIndex::from_usize(0))
-        .expect("x partitions should exist");
+        .partitions(VariableIndex::from_usize(0));
     assert!(
         x_partitions.len() > 1,
         "CEGAR should refine x on the one-dimensional task"
@@ -327,7 +326,6 @@ fn backward_splits_build_goal_side_partitions() {
             .factory
             .partitions()
             .partitions(VariableIndex::from_usize(0))
-            .expect("x partitions should exist")
             .iter()
             .flat_map(|interval| [interval.lower, interval.upper])
             .filter(|value| value.is_finite())

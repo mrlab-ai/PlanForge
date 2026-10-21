@@ -10,7 +10,6 @@ use crate::evaluation::abstractions::common::transition_system::{
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     RemainingCosts, build_explicit_label_cost_partitioning_table,
 };
-use crate::evaluation::abstractions::domain::comparison_inputs::prepare_comparison_tree_inputs_from_abstract_state;
 use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::{ConditionNode, ConditionValue, NumericCondition};
@@ -78,9 +77,7 @@ fn partitions_from_cutpoints(cutpoints: &[NumericValue]) -> Vec<Interval> {
     out
 }
 
-fn cutpoint_partitions_for_task(
-    task: &dyn AbstractNumericTask,
-) -> Result<(NumericPartitions, Vec<usize>)> {
+fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<NumericPartitions> {
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let num_numeric_vars = task.numeric_variables().len();
 
@@ -107,7 +104,6 @@ fn cutpoint_partitions_for_task(
     }
 
     let mut partitions_by_numeric_var: Vec<Vec<Interval>> = Vec::with_capacity(num_numeric_vars);
-    let mut numeric_domain_sizes: Vec<usize> = Vec::with_capacity(num_numeric_vars);
     for (var_id, var) in task.numeric_variables().iter().enumerate() {
         let parts = match var.get_type() {
             NumericType::Constant => vec![Interval::singleton(initial_numeric_values[var_id])],
@@ -124,26 +120,18 @@ fn cutpoint_partitions_for_task(
             }
             NumericType::Derived | NumericType::Cost => vec![Interval::unbounded()],
         };
-        numeric_domain_sizes.push(parts.len());
         partitions_by_numeric_var.push(parts);
     }
 
-    Ok((
-        NumericPartitions::with_partitions(partitions_by_numeric_var),
-        numeric_domain_sizes,
+    Ok(NumericPartitions::with_partitions(
+        partitions_by_numeric_var,
     ))
 }
 
 fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFactory> {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task)?;
-    let (partitions, numeric_domain_sizes) = cutpoint_partitions_for_task(task)?;
-    DomainAbstractionFactory::new(
-        task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
+    let partitions = cutpoint_partitions_for_task(task)?;
+    DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions)
 }
 
 #[test]
@@ -225,12 +213,10 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory.build_distance_table_for_test(&task, false).unwrap();
-    let mut generator = factory.make_operator_generator(&task, false).unwrap();
-    let abstract_operators = generator.build_abstract_operators(&task).unwrap();
+    let abstract_operators = factory.abstract_operators(&task, false, None).unwrap();
     let transition_system = factory
         .build_abstract_transition_system_from_operators(
             &task,
-            false,
             &abstract_operators,
             DistanceTableOptions::default().without_cartesian_sets(),
         )
@@ -280,13 +266,11 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         global_constraint: ExplicitFact::propositional(0, 1),
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let mut operator_generator = factory.make_operator_generator(&task, false).unwrap();
-    let abstract_operators = operator_generator.build_abstract_operators(&task).unwrap();
+    let abstract_operators = factory.abstract_operators(&task, false, None).unwrap();
     assert_eq!(abstract_operators.len(), 1);
     let transition_system = factory
         .build_abstract_transition_system_from_operators(
             &task,
-            false,
             &abstract_operators,
             DistanceTableOptions::default().without_cartesian_sets(),
         )
@@ -379,8 +363,7 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
 
     let x0_parts = factory
         .partitions()
-        .partitions(VariableIndex::from_usize(0))
-        .unwrap();
+        .partitions(VariableIndex::from_usize(0));
     assert_eq!(x0_parts.len(), 3);
     assert_eq!(
         x0_parts[0],
@@ -394,12 +377,8 @@ fn factory_splits_regular_var_at_constants_in_comparison_trees() {
 
     let c10_parts = factory
         .partitions()
-        .partitions(VariableIndex::from_usize(1))
-        .unwrap();
+        .partitions(VariableIndex::from_usize(1));
     assert_eq!(c10_parts, &[Interval::singleton(NumericValue::new(10.0))]);
-
-    // Smoke-test that generator can be created.
-    let _gen = factory.make_operator_generator(&task, false).unwrap();
 }
 
 impl DomainAbstractionFactory {
@@ -410,14 +389,8 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
         combine_labels: bool,
     ) -> Result<AbstractDistanceTable> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
-        self.build_distance_table(
-            task,
-            &generator,
-            &operators,
-            DistanceTableOptions::default(),
-        )
+        let operators = self.abstract_operators(task, combine_labels, None)?;
+        self.build_distance_table(task, &operators, DistanceTableOptions::default())
     }
 }
 
@@ -664,9 +637,8 @@ fn initial_state_hash_is_unique() {
     let factory = factory_identity_cutpoints(&task).unwrap();
     let table = factory.build_distance_table_for_test(&task, true).unwrap();
 
-    let generator = factory.make_operator_generator(&task, true).unwrap();
     assert_eq!(
-        generator.domain_sizes(),
+        factory.domain_sizes(),
         [1],
         "condition variables keep their single abstract value"
     );
@@ -788,18 +760,10 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
             Interval::singleton(NumericValue::new(100.0)),
         ],
     ]);
-    let numeric_domain_sizes = vec![2, 1, 2];
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
-    let generator = factory.make_operator_generator(&task, true).unwrap();
-    let hash_multipliers = generator.hash_multipliers().to_vec();
+    let factory =
+        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let hash_multipliers = factory.layout().multipliers();
 
     let x_partition = 0;
     let c2_partition = 0;
@@ -808,16 +772,14 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
         + c2_partition * hash_multipliers[2]
         + derived_partition * hash_multipliers[3];
 
-    let numeric_intervals = prepare_comparison_tree_inputs_from_abstract_state(
+    let mut numeric_intervals = Vec::new();
+    fill_state_intervals(
         &task,
         factory.numeric_conditions().all(),
         factory.partitions(),
-        AbstractStateHash {
-            hash: state_hash,
-            num_props: factory.domain_sizes().len(),
-            numeric_domain_sizes: generator.numeric_domain_sizes(),
-            hash_multipliers: &hash_multipliers,
-        },
+        factory.layout(),
+        state_hash,
+        &mut numeric_intervals,
     )
     .unwrap();
 
@@ -882,16 +844,9 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFact
         ],
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
-    let numeric_domain_sizes = vec![2, 1];
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
+    let factory =
+        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
 
     (task, factory)
 }
@@ -938,20 +893,13 @@ fn additive_numeric_source_set_task_with_partitions(
         assignment_axioms: vec![],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
-    let numeric_domain_sizes = vec![x_partitions.len(), 1];
     let partitions = NumericPartitions::with_partitions(vec![
         x_partitions,
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
+    let factory =
+        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
 
     (task, factory)
 }
@@ -963,7 +911,7 @@ fn abstract_source_set_keeps_finite_source_when_target_reaches_tail() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -993,7 +941,7 @@ fn abstract_source_set_tightens_source_by_inverse_target_image() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -1019,7 +967,7 @@ fn source_set_active_preimage_allows_boundary_charge() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -1044,7 +992,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -1067,7 +1015,7 @@ fn abstract_source_set_allocates_unbounded_changed_tail() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -1125,13 +1073,12 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
         domain_mapping,
         domain_sizes,
         NumericPartitions::with_partitions(vec![]),
-        vec![],
     )
     .unwrap();
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::propositional(0, 1)],
         preconditions: vec![ExplicitFact::propositional(0, 0)],
         changed_numeric_vars: vec![],
@@ -1212,22 +1159,15 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         ],
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
-    let numeric_domain_sizes = vec![2, 2, 1];
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
+    let factory =
+        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![
             ExplicitFact::numeric_variable(x_abs_var, 1),
             ExplicitFact::numeric_variable(y_abs_var, 0),
@@ -1338,23 +1278,16 @@ fn source_set_one_finite_dim_suffices() {
         vec![Interval::singleton(NumericValue::new(0.5))],
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
-    let numeric_domain_sizes = vec![2, 1, 1, 1];
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
+    let factory =
+        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
 
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![
             ExplicitFact::numeric_variable(x_abs_var, 1),
             ExplicitFact::numeric_variable(y_abs_var, 0),
@@ -1446,22 +1379,15 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         vec![Interval::singleton(NumericValue::new(1.0))],
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
-    let numeric_domain_sizes = vec![2, 2, 1, 1];
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory = DomainAbstractionFactory::new(
-        &task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .unwrap();
+    let factory =
+        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![
             ExplicitFact::numeric_variable(x_abs_var, 1),
             ExplicitFact::numeric_variable(y_abs_var, 0),
@@ -1504,7 +1430,7 @@ fn source_set_width_does_not_change_valid_preimage() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -1530,7 +1456,7 @@ fn singleton_preimage_is_preserved_exactly() {
     let op = super::super::abstract_operators::AbstractOperator {
         concrete_op_ids: vec![OperatorIndex::new(0)],
         cost: NumericValue::new(1.0),
-        hash_effect: 0,
+        regression_offset: 0,
         regression_preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 1)],
         preconditions: vec![ExplicitFact::numeric_variable(x_abs_var, 0)],
         changed_numeric_vars: vec![VariableIndex::from_usize(0)],
@@ -1595,11 +1521,10 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
         vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)]],
         vec![1],
         NumericPartitions::with_partitions(vec![]),
-        vec![],
     )
     .unwrap();
 
-    let coarse = factory.cartesian_set_from_hash(0, &[], &[1]).unwrap();
+    let coarse = factory.state_region(0);
     assert!(
         coarse.constrained_props().is_empty(),
         "a one-class variable constrains nothing, got {:?}",
@@ -1610,19 +1535,25 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
         vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)]
     );
 
-    // Refine: split value 1 into its own class, exactly as fix_flaws does.
-    factory.refine(|domain_mapping, domain_sizes, _, _| {
-        domain_mapping[0][1] = ExplicitValueIndex::new(1);
-        domain_sizes[0] = 2;
-    });
+    // Refine: split value 1 into its own class, as CEGAR does.
+    factory
+        .apply_split(
+            &task,
+            &Split::Propositional {
+                state_id: 0,
+                var_id: VariableIndex::new(0),
+                wanted: vec![ExplicitValueIndex::new(1)],
+                witness_value: ExplicitValueIndex::new(1),
+                description: String::new(),
+            },
+        )
+        .unwrap();
 
     for (state_hash, expected_values) in [
         (0usize, vec![ExplicitValueIndex::new(0u32)]),
         (1usize, vec![ExplicitValueIndex::new(1u32)]),
     ] {
-        let refined = factory
-            .cartesian_set_from_hash(state_hash, &[], &[1])
-            .unwrap();
+        let refined = factory.state_region(state_hash);
         assert_eq!(
             refined.propositions()[0],
             expected_values,
@@ -1637,7 +1568,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
 
     // The two classes are disjoint, so the regions must not overlap. This is the
     // comparison the stale list got wrong.
-    let zero = factory.cartesian_set_from_hash(0, &[], &[1]).unwrap();
-    let one = factory.cartesian_set_from_hash(1, &[], &[1]).unwrap();
+    let zero = factory.state_region(0);
+    let one = factory.state_region(1);
     assert!(!zero.overlaps(&one));
 }

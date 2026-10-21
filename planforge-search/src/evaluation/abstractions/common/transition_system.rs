@@ -34,13 +34,12 @@ pub struct LabelSourceSet {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractTransitionSystem {
     pub transitions: Vec<AbstractTransition>,
+    /// The transitions into each state.
     pub backward: Vec<Vec<usize>>,
-    pub forward: Vec<Vec<usize>>,
     pub goal_facts: Vec<ExplicitFact>,
     pub goal_state_hashes: Vec<usize>,
     pub initial_state_hash: usize,
-    pub hash_multipliers: Vec<usize>,
-    pub numeric_domain_sizes: Vec<usize>,
+    /// The region of every state, or empty if the system was built without.
     pub cartesian_sets: Vec<Arc<CartesianSet>>,
 }
 
@@ -51,8 +50,6 @@ pub struct AbstractDistanceTable {
     pub generating_op_ids: Vec<Option<usize>>,
     pub initial_state_hash: usize,
     pub goal_facts: Vec<ExplicitFact>,
-    pub hash_multipliers: Vec<usize>,
-    pub numeric_domain_sizes: Vec<usize>,
 }
 
 /// A graph whose goal distances [`backward_goal_distances`] computes.

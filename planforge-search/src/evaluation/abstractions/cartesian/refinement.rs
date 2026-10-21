@@ -74,7 +74,12 @@ impl WorkingAbstraction {
                     boundary,
                     lower_includes_boundary,
                     integer_lattice,
-                )?;
+                )
+                .with_context(|| {
+                    format!(
+                        "non-strict numeric split on var {var_id} at {boundary}: parent={parent:?}"
+                    )
+                })?;
                 let witness_is_lower = lower.contains(witness_value);
                 ensure!(
                     witness_is_lower ^ upper.contains(witness_value),

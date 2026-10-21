@@ -258,7 +258,7 @@ impl DomainAbstractionFactory {
                 format!("abstract operator references missing concrete operator {concrete_op_id}")
             })?;
         let abstract_source_region =
-            self.cartesian_set_from_facts(task, &abstract_operator.preconditions)?;
+            self.cartesian_set_from_facts(task, &abstract_operator.preconditions);
         // `cartesian_set_from_facts` already initializes numeric intervals to
         // `Interval::unbounded()` for variables that have no partition fact in
         // the operator's preconditions, and to the partition's interval for
@@ -276,11 +276,11 @@ impl DomainAbstractionFactory {
         // hides per-region cost claims.
         let mut source_region = abstract_source_region.clone();
         let target_region =
-            self.cartesian_set_from_facts(task, &abstract_operator.regression_preconditions)?;
+            self.cartesian_set_from_facts(task, &abstract_operator.regression_preconditions);
         let mut affected_numeric_dimensions =
             deterministic_affected_regular_numeric_vars(task, concrete_operator);
         for (numeric_var_id, view) in self.additive_numeric_views.iter() {
-            if self.numeric_domain_sizes[numeric_var_id] > 1
+            if self.layout.numeric_domain_sizes()[numeric_var_id] > 1
                 && view.operator_delta(concrete_op_id)?.value().abs()
                     >= float_tolerance::DIJKSTRA_EPSILON
             {

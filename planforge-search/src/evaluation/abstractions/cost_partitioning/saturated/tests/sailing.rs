@@ -411,37 +411,18 @@ fn build_handcrafted_abstraction(
                 .map_or(0, |value| value.index() + 1)
         })
         .collect::<Vec<_>>();
-    let numeric_domain_sizes = (0..transformed_task.numeric_variables().len())
-        .map(|numeric_var_id| {
-            partitions
-                .partitions(VariableIndex::from_usize(numeric_var_id))
-                .expect("trivial partitions contain every numeric variable")
-                .len()
-        })
-        .collect::<Vec<_>>();
-    let factory = DomainAbstractionFactory::new(
-        transformed_task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )?;
-    let mut operator_generator = factory.make_operator_generator(transformed_task, false)?;
-    let abstract_operators = operator_generator.build_abstract_operators(transformed_task)?;
+    let factory =
+        DomainAbstractionFactory::new(transformed_task, domain_mapping, domain_sizes, partitions)?;
+    let abstract_operators = factory.abstract_operators(transformed_task, false, None)?;
     let abstract_source_sets =
         factory.build_abstract_source_sets(transformed_task, &abstract_operators)?;
     let distance_table = factory.build_distance_table(
         transformed_task,
-        &operator_generator,
         &abstract_operators,
         DistanceTableOptions::default(),
     )?;
-    let relevant_operator_ids = factory.relevant_operator_ids_from_operators(
-        transformed_task,
-        false,
-        &abstract_operators,
-        DistanceTableOptions::default(),
-    )?;
+    let relevant_operator_ids =
+        factory.relevant_operator_ids(transformed_task, &abstract_operators);
     Ok(DomainAbstraction {
         factory,
         distance_table,
@@ -622,7 +603,6 @@ fn partition_report(
                 .factory
                 .partitions()
                 .partitions(VariableIndex::from_usize(view_id))
-                .expect("missing partition for handcrafted view")
                 .len();
             format!("n{view_id}:{name} parts={num_parts}")
         })

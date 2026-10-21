@@ -42,7 +42,6 @@ pub(super) fn finalize_abstraction(
     }
     raw.sort();
     let mut transitions = Vec::with_capacity(raw.len());
-    let mut forward = vec![Vec::new(); working.states().len()];
     let mut backward = vec![Vec::new(); working.states().len()];
     let mut source_sets = if compute_source_sets {
         Vec::with_capacity(raw.len())
@@ -98,7 +97,6 @@ pub(super) fn finalize_abstraction(
             source_hash: source,
             target_hash: target,
         });
-        forward[source].push(transition_id);
         backward[target].push(transition_id);
     }
     let mut goal_state_hashes = Vec::new();
@@ -110,14 +108,11 @@ pub(super) fn finalize_abstraction(
     let transition_system = AbstractTransitionSystem {
         transitions,
         backward,
-        forward,
         goal_facts: (0..semantics.task().get_num_goals())
             .map(|goal_id| *semantics.task().get_goal_fact(goal_id))
             .collect(),
         goal_state_hashes,
         initial_state_hash,
-        hash_multipliers: Vec::new(),
-        numeric_domain_sizes: Vec::new(),
         cartesian_sets: shared_cartesian_sets,
     };
     let transition_costs = transition_system
@@ -146,8 +141,6 @@ pub(super) fn finalize_abstraction(
         generating_op_ids,
         initial_state_hash,
         goal_facts: transition_system.goal_facts.clone(),
-        hash_multipliers: Vec::new(),
-        numeric_domain_sizes: Vec::new(),
     };
     let mut relevant_operator_ids: Vec<_> = relevant.into_iter().collect();
     relevant_operator_ids.sort_unstable();
@@ -189,18 +182,13 @@ pub(super) fn finalize_standalone_abstraction(
         generating_op_ids: vec![None; working.states().len()],
         initial_state_hash,
         goal_facts: goal_facts.clone(),
-        hash_multipliers: Vec::new(),
-        numeric_domain_sizes: Vec::new(),
     };
     let transition_system = AbstractTransitionSystem {
         transitions: Vec::new(),
         backward: Vec::new(),
-        forward: Vec::new(),
         goal_facts,
         goal_state_hashes: Vec::new(),
         initial_state_hash,
-        hash_multipliers: Vec::new(),
-        numeric_domain_sizes: Vec::new(),
         cartesian_sets: Vec::new(),
     };
     Ok((

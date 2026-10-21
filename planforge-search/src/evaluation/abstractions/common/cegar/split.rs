@@ -187,7 +187,12 @@ pub(crate) fn split_child_regions(
                 *boundary,
                 *lower_includes_boundary,
                 *integer_lattice,
-            )?;
+            )
+            .with_context(|| {
+                format!(
+                    "non-strict numeric split on var {var_id} at {boundary}: parent={current:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
+                )
+            })?;
             let witness_is_lower = lower.contains(*witness_value);
             ensure!(
                 witness_is_lower ^ upper.contains(*witness_value),
@@ -206,19 +211,21 @@ pub(crate) fn split_child_regions(
     }
 }
 
-/// The lower and upper child of `parent` when it is split at `boundary`. On an
-/// integer lattice the children are closed at the neighbouring integers.
+/// The lower and upper child of `parent` when it is split at `boundary`, or
+/// `None` if `boundary` does not split `parent` into two nonempty children.
+/// On an integer lattice the children are closed at the neighbouring
+/// integers, and a non-integer boundary splits nothing.
 pub(crate) fn numeric_split_intervals(
     parent: Interval,
     boundary: NumericValue,
     lower_includes_boundary: bool,
     integer_lattice: bool,
-) -> Result<(Interval, Interval)> {
+) -> Option<(Interval, Interval)> {
     let (lower_bound, upper_bound, lower_closed, upper_closed) = if integer_lattice {
-        ensure!(
-            boundary.is_finite() && approximately_equal(boundary.value(), boundary.value().round()),
-            "integer split has non-integer boundary {boundary}"
-        );
+        if !boundary.is_finite() || !approximately_equal(boundary.value(), boundary.value().round())
+        {
+            return None;
+        }
         if lower_includes_boundary {
             (boundary, boundary + ONE_VALUE, true, true)
         } else {
@@ -239,9 +246,5 @@ pub(crate) fn numeric_split_intervals(
         lower_closed,
     ));
     let upper = parent.intersection(&Interval::new(upper_bound, INF_VALUE, upper_closed, false));
-    ensure!(
-        !lower.is_empty() && !upper.is_empty(),
-        "non-strict numeric split at {boundary}: parent={parent:?}, include_lower={lower_includes_boundary}, integer_lattice={integer_lattice}"
-    );
-    Ok((lower, upper))
+    (!lower.is_empty() && !upper.is_empty()).then_some((lower, upper))
 }

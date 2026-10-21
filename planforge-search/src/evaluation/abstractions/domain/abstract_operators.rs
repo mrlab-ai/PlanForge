@@ -2,27 +2,23 @@
 mod tests;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Context, Result};
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex,
-    NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    AbstractNumericTask, AssignmentEffect, Effect, ExplicitFact, ExplicitValueIndex, NumericType,
+    NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::float_tolerance;
 
 use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
 
-use super::abstraction::hash_multipliers;
 use super::abstraction_numeric_var;
 use super::comparison_inputs::fill_derived_numeric_intervals_from_comparison_trees;
-use super::partitions::NumericPartitions;
-use crate::evaluation::abstractions::common::coordinates::{
-    AdditiveNumericViews, active_comparison_dimensions,
-};
-use planforge_sas::numeric_conditions::ConditionValue;
+use super::factory::DomainAbstractionFactory;
+use super::layout::StateLayout;
+use crate::evaluation::abstractions::common::coordinates::active_comparison_dimensions;
 use planforge_sas::utils::interval::Interval;
 
 const EPSILON: f64 = 1e-12;
@@ -64,11 +60,16 @@ struct AbstractOperatorSkeleton {
     op_preconditions: Vec<ExplicitFact>,
 }
 
+/// An operator of a domain abstraction: it leads from every abstract state
+/// that satisfies `preconditions` to the state that differs from it by
+/// `regression_offset`, which satisfies `regression_preconditions`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbstractOperator {
     pub concrete_op_ids: Vec<OperatorIndex>,
     pub cost: NumericValue,
-    pub hash_effect: i32,
+    /// The source state id minus the target state id of every transition
+    /// the operator induces.
+    pub regression_offset: isize,
     pub regression_preconditions: Vec<ExplicitFact>,
     pub preconditions: Vec<ExplicitFact>,
     pub changed_numeric_vars: Vec<VariableIndex>,
@@ -80,7 +81,7 @@ impl AbstractOperator {
         pre_pairs: &[ExplicitFact],
         eff_pairs: &[ExplicitFact],
         cost: NumericValue,
-        hash_multipliers: &[usize],
+        layout: &StateLayout,
         concrete_op_ids: Vec<OperatorIndex>,
         changed_numeric_vars: Vec<VariableIndex>,
     ) -> Self {
@@ -104,25 +105,21 @@ impl AbstractOperator {
             "abstract operator pre/eff pair mismatch: pre_pairs={pre_pairs:?} eff_pairs={eff_pairs:?}"
         );
 
-        let mut hash_effect: i32 = 0;
+        let mut regression_offset: isize = 0;
         for (pre, eff) in pre_pairs.iter().zip(eff_pairs.iter()) {
             debug_assert_eq!(
                 pre.var(),
                 eff.var(),
                 "abstract operator transition var mismatch: pre={pre:?} eff={eff:?}"
             );
-
-            let var = pre.var();
-            let multiplier = hash_multipliers[var];
-            let new_val = pre.value() as i32;
-            let old_val = eff.value() as i32;
-            hash_effect += (new_val - old_val) * multiplier as i32;
+            let multiplier = layout.multipliers()[pre.var()] as isize;
+            regression_offset += (pre.value() as isize - eff.value() as isize) * multiplier;
         }
 
         Self {
             concrete_op_ids,
             cost,
-            hash_effect,
+            regression_offset,
             regression_preconditions,
             preconditions,
             changed_numeric_vars,
@@ -130,12 +127,13 @@ impl AbstractOperator {
     }
 }
 
+/// One numeric combination a concrete operator may induce: the source and
+/// target partitions of the refined numeric variables it reads or changes.
 #[derive(Clone, Debug)]
-pub struct TransitionInfo {
-    pub source_partition_facts: Vec<ExplicitFact>,
-    pub target_partition_facts: Vec<ExplicitFact>,
-    pub prevail_facts: Vec<ExplicitFact>,
-    pub changed_numeric_vars: Vec<VariableIndex>,
+struct TransitionInfo {
+    source_partition_facts: Vec<ExplicitFact>,
+    target_partition_facts: Vec<ExplicitFact>,
+    changed_numeric_vars: Vec<VariableIndex>,
 }
 
 /// Stored signature per *operator* (post-grouping). Holding the original
@@ -221,9 +219,9 @@ type SignatureMap = HashMap<
     std::hash::BuildHasherDefault<planforge_sas::utils::hashing::IdentityU64Hasher>,
 >;
 
-struct AbstractOperatorFinalizer {
+struct AbstractOperatorFinalizer<'a> {
     combine_labels: bool,
-    hash_multipliers: Vec<usize>,
+    layout: &'a StateLayout,
     operators: Vec<AbstractOperator>,
     /// Per-operator stored signatures, indexed parallel to `operators`.
     stored_signatures: Vec<StoredOperatorSignature>,
@@ -233,11 +231,11 @@ struct AbstractOperatorFinalizer {
     grouping: SignatureMap,
 }
 
-impl AbstractOperatorFinalizer {
-    fn new(combine_labels: bool, hash_multipliers: &[usize]) -> Self {
+impl<'a> AbstractOperatorFinalizer<'a> {
+    fn new(combine_labels: bool, layout: &'a StateLayout) -> Self {
         Self {
             combine_labels,
-            hash_multipliers: hash_multipliers.to_vec(),
+            layout,
             operators: Vec::new(),
             stored_signatures: Vec::new(),
             grouping: SignatureMap::default(),
@@ -271,7 +269,7 @@ impl AbstractOperatorFinalizer {
                 &candidate.pre_pairs,
                 &candidate.eff_pairs,
                 candidate.cost,
-                &self.hash_multipliers,
+                self.layout,
                 vec![candidate.concrete_op_id],
                 candidate.changed_numeric_vars.clone(),
             ));
@@ -289,7 +287,7 @@ impl AbstractOperatorFinalizer {
             &candidate.pre_pairs,
             &candidate.eff_pairs,
             candidate.cost,
-            &self.hash_multipliers,
+            self.layout,
             vec![candidate.concrete_op_id],
             candidate.changed_numeric_vars.clone(),
         ));
@@ -349,9 +347,8 @@ fn build_candidate_from_transition(
     // * `skeleton.{prev,pre,eff}_pairs` are sorted-by-var and unique-by-var
     //   (see `multiply_out_propositional` and `fact_value_for_var`'s
     //   binary_search precondition).
-    // * `trans.source_partition_facts`, `trans.target_partition_facts`,
-    //   `trans.prevail_facts` are sorted+deduped (see
-    //   `enumerate_partition_combos`).
+    // * `trans.source_partition_facts` and `trans.target_partition_facts`
+    //   are sorted and deduplicated (see `enumerate_partition_combos`).
     //
     // We can therefore merge instead of sort+dedup: the merged outputs are
     // built in-order with O(n+m) work and no `Vec::sort()` cost.
@@ -389,13 +386,6 @@ fn build_candidate_from_transition(
             .windows(2)
             .all(|w| w[0].var() <= w[1].var()),
         "TransitionInfo.target_partition_facts must be sorted by var"
-    );
-    debug_assert!(
-        trans
-            .prevail_facts
-            .windows(2)
-            .all(|w| w[0].var() <= w[1].var()),
-        "TransitionInfo.prevail_facts must be sorted by var"
     );
 
     // Reuse the candidate's vecs as the merge output buffers.
@@ -455,13 +445,9 @@ fn build_candidate_from_transition(
             (Some(a), Some(b)) => match a.var().cmp(&b.var()) {
                 std::cmp::Ordering::Less => true,
                 std::cmp::Ordering::Greater => false,
-                std::cmp::Ordering::Equal => {
-                    // Skeleton already pins this var's effect — the legacy
-                    // code dropped the trans target via its `is_none()`
-                    // guard. We do the same: take the skeleton entry, skip
-                    // both sides for this var.
-                    true
-                }
+                // The skeleton already pins this variable's effect: take its
+                // entry and skip both sides for this variable.
+                std::cmp::Ordering::Equal => true,
             },
             (Some(_), None) => true,
             (None, Some(_)) => false,
@@ -488,52 +474,9 @@ fn build_candidate_from_transition(
         }
     }
 
-    // Merge skeleton.prev_pairs and trans.prevail_facts (both sorted+
-    // deduped; may overlap). Legacy `sort + dedup` collapsed exact-equal
-    // facts; same-var-different-value would have been caught by the
-    // subsequent `has_in_list_conflict` check — replicate that here.
-    let mut sk_prev = skeleton.prev_pairs.as_slice();
-    let mut trv = trans.prevail_facts.as_slice();
-    let mut prev_conflict = false;
-    while !sk_prev.is_empty() || !trv.is_empty() {
-        match (sk_prev.first(), trv.first()) {
-            (Some(a), Some(b)) => match a.var().cmp(&b.var()) {
-                std::cmp::Ordering::Less => {
-                    extended_prev_pairs.push(*a);
-                    sk_prev = &sk_prev[1..];
-                }
-                std::cmp::Ordering::Greater => {
-                    extended_prev_pairs.push(*b);
-                    trv = &trv[1..];
-                }
-                std::cmp::Ordering::Equal => {
-                    if a.value() != b.value() {
-                        prev_conflict = true;
-                    }
-                    extended_prev_pairs.push(*a);
-                    let v = a.var();
-                    sk_prev = &sk_prev[1..];
-                    while trv.first().is_some_and(|f| f.var() == v) {
-                        trv = &trv[1..];
-                    }
-                }
-            },
-            (Some(_), None) => {
-                let a = sk_prev.first().unwrap();
-                extended_prev_pairs.push(*a);
-                sk_prev = &sk_prev[1..];
-            }
-            (None, Some(_)) => {
-                let b = trv.first().unwrap();
-                extended_prev_pairs.push(*b);
-                trv = &trv[1..];
-            }
-            (None, None) => break,
-        }
-    }
+    extended_prev_pairs.extend_from_slice(&skeleton.prev_pairs);
 
-    if prev_conflict
-        || has_cross_list_conflict(extended_pre_pairs, extended_prev_pairs)
+    if has_cross_list_conflict(extended_pre_pairs, extended_prev_pairs)
         || has_cross_list_conflict(extended_prev_pairs, extended_eff_pairs)
         || !transition_vars_match(extended_pre_pairs, extended_eff_pairs)
     {
@@ -559,9 +502,9 @@ fn build_candidate_from_transition(
 
 fn materialize_skeletons_into(
     task: &dyn AbstractNumericTask,
-    generator: &mut AbstractOperatorGenerator,
+    generator: &AbstractOperatorGenerator<'_>,
     skeletons: &[AbstractOperatorSkeleton],
-    finalizer: &mut AbstractOperatorFinalizer,
+    finalizer: &mut AbstractOperatorFinalizer<'_>,
     candidate_scratch: &mut AbstractOperatorCandidate,
     deadline: Option<Instant>,
 ) -> Result<()> {
@@ -591,16 +534,39 @@ fn materialize_skeletons_into(
     Ok(())
 }
 
-#[derive(Clone)]
-pub struct AbstractOperatorGenerator {
-    domain_mapping: DomainMapping,
-    domain_sizes: Vec<usize>,
-    numeric_domain_sizes: Vec<usize>,
-    hash_multipliers: Vec<usize>,
-    partitions: NumericPartitions,
-    additive_numeric_views: AdditiveNumericViews,
-    comparisons_by_numeric_dep: Vec<Vec<usize>>,
+/// The abstract operators of the abstraction `factory` describes, with
+/// labels combined if `combine_labels`.
+pub(super) fn build_abstract_operators(
+    factory: &DomainAbstractionFactory,
+    task: &dyn AbstractNumericTask,
     combine_labels: bool,
+    deadline: Option<Instant>,
+) -> Result<Vec<AbstractOperator>> {
+    let mut generator = AbstractOperatorGenerator::new(factory, task);
+    let mut finalizer = AbstractOperatorFinalizer::new(combine_labels, factory.layout());
+    let mut candidate_scratch = AbstractOperatorCandidate::default();
+    for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
+        ensure_generation_deadline(deadline)?;
+        let skeletons = generator.build_for_concrete_operator(
+            task,
+            op,
+            OperatorIndex::from_usize(concrete_op_id),
+        )?;
+        materialize_skeletons_into(
+            task,
+            &generator,
+            &skeletons,
+            &mut finalizer,
+            &mut candidate_scratch,
+            deadline,
+        )?;
+    }
+    Ok(finalizer.into_operators())
+}
+
+/// What building the abstract operators of one abstraction reads and reuses.
+struct AbstractOperatorGenerator<'a> {
+    factory: &'a DomainAbstractionFactory,
     /// Per-operator scratch buffers reused across `build_branch_for_operator`
     /// calls. Each entry is sized to `num_variables` and the buffer is
     /// cleared by overwriting at use sites — `vec![None; n]` on every
@@ -608,205 +574,20 @@ pub struct AbstractOperatorGenerator {
     /// at ~9% of total CPU was dominated by `from_elem<Option<usize>>`).
     precondition_on_var_scratch: Vec<Option<ExplicitValueIndex>>,
     effect_on_var_scratch: Vec<Option<ExplicitValueIndex>>,
-    /// Cached operator costs, indexed by concrete operator id. The metric
-    /// expression is evaluated once over the initial numeric state per
-    /// operator (in `DomainAbstractionFactory::new`) and shared via `Arc`
-    /// across every per-iteration generator. Recomputing per call cost ~8%
-    /// of total CPU on minecraft before this cache.
-    cached_operator_costs: Arc<[NumericValue]>,
 }
 
-impl AbstractOperatorGenerator {
-    pub fn new(
-        task: &dyn AbstractNumericTask,
-        domain_mapping: DomainMapping,
-        domain_sizes: Vec<usize>,
-        partitions: NumericPartitions,
-        numeric_domain_sizes: Vec<usize>,
-        combine_labels: bool,
-    ) -> Result<Self> {
-        ensure!(
-            domain_mapping.len() == domain_sizes.len(),
-            "domain_mapping/domain_sizes length mismatch"
-        );
-        for (var, &abs_size) in domain_sizes.iter().enumerate() {
-            ensure!(
-                abs_size > 0,
-                "non-positive abstract domain size for var {var}: {abs_size}"
-            );
-
-            let concrete_size = task
-                .get_variable_domain_size(VariableIndex::from_usize(var))
-                .map_err(|e| anyhow!(e.to_string()))
-                .with_context(|| format!("get_variable_domain_size({var}) failed"))?;
-            ensure!(
-                concrete_size > 0,
-                "non-positive concrete domain size for var {var}: {concrete_size}"
-            );
-            ensure!(
-                abs_size <= concrete_size,
-                "abstract domain size for var {var} exceeds concrete size ({abs_size} > {concrete_size})"
-            );
-
-            ensure!(
-                domain_mapping[var].len() == concrete_size,
-                "domain_mapping[{var}] has len {}, expected concrete size {concrete_size}",
-                domain_mapping[var].len()
-            );
-            for (val, &mapped) in domain_mapping[var].iter().enumerate() {
-                ensure!(
-                    mapped.index() < abs_size,
-                    "domain_mapping[{var}][{val}]={mapped} out of range for abstract size {abs_size}"
-                );
-            }
-        }
-        for (n, &parts) in numeric_domain_sizes.iter().enumerate() {
-            ensure!(parts > 0, "numeric_domain_sizes[{n}] must be > 0");
-        }
-
-        let hash_multipliers = hash_multipliers(&domain_sizes, &numeric_domain_sizes)?;
-
-        let additive_numeric_views =
-            AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
-        let mut comparisons_by_numeric_dep: Vec<Vec<usize>> =
-            vec![Vec::new(); task.numeric_variables().len()];
-        for (tree_idx, tree) in task.numeric_conditions().iter().enumerate() {
-            for dep in
-                active_comparison_dimensions(tree, &numeric_domain_sizes, &additive_numeric_views)
-            {
-                ensure!(
-                    dep.index() < comparisons_by_numeric_dep.len(),
-                    "comparison tree depends on numeric var {dep}, but only {} numeric vars exist",
-                    comparisons_by_numeric_dep.len()
-                );
-                comparisons_by_numeric_dep[dep.index()].push(tree_idx);
-            }
-        }
-
+impl<'a> AbstractOperatorGenerator<'a> {
+    fn new(factory: &'a DomainAbstractionFactory, task: &dyn AbstractNumericTask) -> Self {
         let num_variables = task.get_num_variables();
-        let cached_operator_costs: Arc<[NumericValue]> = (0..task.get_operators().len())
-            .map(|operator_id| task.abstract_operator_cost(OperatorIndex::from_usize(operator_id)))
-            .collect();
-        Ok(Self {
-            domain_mapping,
-            domain_sizes,
-            numeric_domain_sizes,
-            hash_multipliers,
-            partitions,
-            additive_numeric_views,
-            comparisons_by_numeric_dep,
-            combine_labels,
+        Self {
+            factory,
             precondition_on_var_scratch: vec![None; num_variables],
             effect_on_var_scratch: vec![None; num_variables],
-            cached_operator_costs,
-        })
-    }
-
-    /// Same as `new`, but with a pre-built operator-cost cache supplied by the
-    /// caller. `DomainAbstractionFactory` uses this so the per-task cost scan
-    /// happens once at factory construction and is shared (via `Arc`) across
-    /// every per-CEGAR-iteration generator.
-    pub fn new_with_cached_costs(
-        task: &dyn AbstractNumericTask,
-        domain_mapping: DomainMapping,
-        domain_sizes: Vec<usize>,
-        partitions: NumericPartitions,
-        numeric_domain_sizes: Vec<usize>,
-        combine_labels: bool,
-        cached_operator_costs: Arc<[NumericValue]>,
-    ) -> Result<Self> {
-        let mut generator = Self::new(
-            task,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            combine_labels,
-        )?;
-        generator.cached_operator_costs = cached_operator_costs;
-        Ok(generator)
-    }
-
-    /// Convenience constructor for the default setup when no CEGAR mapping
-    /// exists yet: every variable keeps its own domain, condition variables
-    /// included.
-    pub fn new_with_identity_mapping(
-        task: &dyn AbstractNumericTask,
-        partitions: NumericPartitions,
-        numeric_domain_sizes: Vec<usize>,
-        combine_labels: bool,
-    ) -> Result<Self> {
-        let num_vars = task.get_num_variables();
-        let mut domain_mapping: DomainMapping = Vec::with_capacity(num_vars);
-        let mut domain_sizes: Vec<usize> = Vec::with_capacity(num_vars);
-        for var_id in 0..num_vars {
-            let size = task
-                .get_variable_domain_size(VariableIndex::from_usize(var_id))
-                .map_err(|e| anyhow!(e.to_string()))
-                .with_context(|| format!("failed to get domain size for variable {var_id}"))?;
-            domain_mapping.push((0..size).map(ExplicitValueIndex::from_usize).collect());
-            domain_sizes.push(size);
         }
-
-        Self::new(
-            task,
-            domain_mapping,
-            domain_sizes,
-            partitions,
-            numeric_domain_sizes,
-            combine_labels,
-        )
     }
 
-    pub fn hash_multipliers(&self) -> &[usize] {
-        &self.hash_multipliers
-    }
-
-    pub fn domain_sizes(&self) -> &[usize] {
-        &self.domain_sizes
-    }
-
-    pub fn domain_mapping(&self) -> &DomainMapping {
-        &self.domain_mapping
-    }
-
-    pub fn numeric_domain_sizes(&self) -> &[usize] {
-        &self.numeric_domain_sizes
-    }
-
-    pub fn build_abstract_operators(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-    ) -> Result<Vec<AbstractOperator>> {
-        self.build_abstract_operators_with_deadline(task, None)
-    }
-
-    pub fn build_abstract_operators_with_deadline(
-        &mut self,
-        task: &dyn AbstractNumericTask,
-        deadline: Option<Instant>,
-    ) -> Result<Vec<AbstractOperator>> {
-        let mut finalizer =
-            AbstractOperatorFinalizer::new(self.combine_labels, &self.hash_multipliers);
-        let mut candidate_scratch = AbstractOperatorCandidate::default();
-        for (concrete_op_id, op) in task.get_operators().iter().enumerate() {
-            ensure_generation_deadline(deadline)?;
-            let skeletons = self.build_for_concrete_operator(
-                task,
-                op,
-                OperatorIndex::from_usize(concrete_op_id),
-            )?;
-            materialize_skeletons_into(
-                task,
-                self,
-                &skeletons,
-                &mut finalizer,
-                &mut candidate_scratch,
-                deadline,
-            )?;
-        }
-
-        Ok(finalizer.into_operators())
+    fn layout(&self) -> &StateLayout {
+        self.factory.layout()
     }
 
     fn build_for_concrete_operator(
@@ -816,44 +597,27 @@ impl AbstractOperatorGenerator {
         concrete_op_id: OperatorIndex,
     ) -> Result<Vec<AbstractOperatorSkeleton>> {
         validate_abstraction_operator(task, op, concrete_op_id)?;
-
-        // Build a thin `&[&Effect]` view without collecting.
-        let unconditional_effects: Vec<&Effect> = op.effects().iter().collect();
-        let ass_effects = op.assignment_effects().clone();
+        let effects: Vec<&Effect> = op.effects().iter().collect();
         build_branch_for_operator(
             task,
-            &unconditional_effects,
-            &ass_effects,
+            &effects,
+            op.assignment_effects(),
             op.preconditions(),
             concrete_op_id,
             self,
         )
     }
 
-    #[inline]
     fn variable_is_trivial(&self, var_id: VariableIndex) -> bool {
-        self.domain_sizes
-            .get(var_id.index())
-            .copied()
-            .unwrap_or_else(|| panic!("variable_is_trivial: var_id {var_id} out of bounds"))
-            <= 1
+        self.layout().domain_sizes()[var_id.index()] <= 1
     }
 
-    #[inline]
     fn abstract_value(
         &self,
         var_id: VariableIndex,
         concrete_value: ExplicitValueIndex,
     ) -> ExplicitValueIndex {
-        let mapping = self
-            .domain_mapping
-            .get(var_id.index())
-            .unwrap_or_else(|| panic!("abstract_value: var_id {var_id} out of bounds"));
-        *mapping.get(concrete_value.index()).unwrap_or_else(|| {
-            panic!(
-                "abstract_value: concrete value {concrete_value} out of bounds for variable {var_id}"
-            )
-        })
+        self.factory.domain_mapping()[var_id.index()][concrete_value.index()]
     }
 }
 
@@ -863,62 +627,38 @@ fn build_branch_for_operator(
     ass_effects: &[AssignmentEffect],
     merged_preconditions: &[ExplicitFact],
     concrete_op_id: OperatorIndex,
-    generator: &mut AbstractOperatorGenerator,
+    generator: &mut AbstractOperatorGenerator<'_>,
 ) -> Result<Vec<AbstractOperatorSkeleton>> {
-    let abstract_cost = *generator
-        .cached_operator_costs
-        .get(concrete_op_id.index())
-        .expect("the operator-cost cache covers every concrete operator");
-    let num_variables = task.get_num_variables();
+    let abstract_cost = generator.factory.operator_cost(concrete_op_id);
+    let domain_mapping = generator.factory.domain_mapping();
     // Reuse per-operator scratch buffers stored on the generator instead of
     // `vec![None; num_variables]` per call. We have to reset the slots
     // touched on the previous call; the bookkeeping below tracks them.
-    let pre_scratch = &mut generator.precondition_on_var_scratch;
-    if pre_scratch.len() < num_variables {
-        pre_scratch.resize(num_variables, None);
-    }
     let mut touched_pre: Vec<usize> = Vec::with_capacity(merged_preconditions.len());
     for pre in merged_preconditions {
         let var_id = pre.var();
-        if var_id >= pre_scratch.len() {
-            continue;
-        }
-        if generator.domain_sizes.get(var_id).copied().unwrap_or(0) <= 1 {
-            pre_scratch[var_id] = Some(ExplicitValueIndex::new(0));
-            touched_pre.push(var_id);
-            continue;
-        }
-        let mapping = &generator.domain_mapping[var_id];
-        let abs_val = mapping[pre.value()];
-        pre_scratch[var_id] = Some(abs_val);
+        generator.precondition_on_var_scratch[var_id] =
+            Some(if generator.variable_is_trivial(pre.var_index()) {
+                ExplicitValueIndex::new(0)
+            } else {
+                domain_mapping[var_id][pre.value()]
+            });
         touched_pre.push(var_id);
     }
 
-    let eff_scratch = &mut generator.effect_on_var_scratch;
-    if eff_scratch.len() < num_variables {
-        eff_scratch.resize(num_variables, None);
-    }
     let mut touched_eff: Vec<VariableIndex> = Vec::with_capacity(effects.len());
     let mut facts = PropositionalFactScratch::default();
     let mut effects_without_pre: Vec<ExplicitFact> = Vec::new();
 
     for eff in effects {
         let var_id = eff.var_id();
-        if generator
-            .domain_sizes
-            .get(var_id.index())
-            .copied()
-            .unwrap_or(0)
-            <= 1
-        {
+        if generator.variable_is_trivial(var_id) {
             continue;
         }
-
         debug_assert!(!task.numeric_conditions().is_condition_var(eff.var_id()));
 
-        let abs_val = generator.domain_mapping[var_id.index()][eff.value().index()];
-        let pre = generator.precondition_on_var_scratch[var_id.index()];
-        if let Some(pre_val) = pre {
+        let abs_val = domain_mapping[var_id.index()][eff.value().index()];
+        if let Some(pre_val) = generator.precondition_on_var_scratch[var_id.index()] {
             if pre_val != abs_val {
                 generator.effect_on_var_scratch[var_id.index()] = Some(abs_val);
                 touched_eff.push(var_id);
@@ -931,6 +671,9 @@ fn build_branch_for_operator(
         }
     }
 
+    // Condition variables are never refined, so they are trivial here: a
+    // comparison precondition only filters the numeric partition combinations
+    // the operator applies in (`comparison_preconditions_admit_combo`).
     for pre in merged_preconditions {
         let var_id = pre.var_index();
         if generator.variable_is_trivial(var_id) {
@@ -943,38 +686,11 @@ fn build_branch_for_operator(
                 var_id.index(),
                 abs_val.index(),
             ));
-        } else if !task.numeric_conditions().is_condition_var(var_id) {
+        } else {
             facts
                 .prev_pairs
                 .push(ExplicitFact::propositional(var_id.index(), abs_val.index()));
         }
-    }
-
-    // Comparison-axiom preconditions are not regular prevail conditions. They
-    // constrain the source of the abstract operator, while the target side is
-    // cleared to the class of `False` — "not established" — so regression
-    // re-evaluates the comparison from the target numeric partition instead of
-    // carrying the source's verdict across. `DomainAbstractionFactory` clears
-    // the same digit to the same class before it queries the match tree, and
-    // that agreement is what makes the two sides meet.
-    for pre in merged_preconditions {
-        let var_id = pre.var_index();
-        if generator.variable_is_trivial(var_id)
-            || !task.numeric_conditions().is_condition_var(var_id)
-        {
-            continue;
-        }
-        let source_abs = generator.abstract_value(var_id, pre.value_index());
-        let target_abs = generator.abstract_value(
-            var_id,
-            ExplicitValueIndex::from_usize(ConditionValue::False.as_usize()),
-        );
-        facts
-            .pre_pairs
-            .push(ExplicitFact::condition(var_id.index(), source_abs.index()));
-        facts
-            .eff_pairs
-            .push(ExplicitFact::condition(var_id.index(), target_abs.index()));
     }
 
     // Clear only the slots we touched, so subsequent calls start clean
@@ -996,7 +712,7 @@ fn build_branch_for_operator(
         },
         0,
         &mut facts,
-        generator,
+        generator.layout(),
     )
 }
 
@@ -1025,7 +741,7 @@ fn multiply_out_propositional(
     operator: &PropositionalCrossProduct<'_>,
     pos: usize,
     facts: &mut PropositionalFactScratch,
-    generator: &mut AbstractOperatorGenerator,
+    layout: &StateLayout,
 ) -> Result<Vec<AbstractOperatorSkeleton>> {
     let PropositionalCrossProduct {
         effects_without_pre,
@@ -1038,27 +754,6 @@ fn multiply_out_propositional(
         facts
             .windows(2)
             .any(|w| w[0].var() == w[1].var() && w[0].value() != w[1].value())
-    }
-
-    fn has_cross_list_conflict(a: &[ExplicitFact], b: &[ExplicitFact]) -> bool {
-        let mut i = 0;
-        let mut j = 0;
-        while i < a.len() && j < b.len() {
-            let va = a[i].var();
-            let vb = b[j].var();
-            if va < vb {
-                i += 1;
-            } else if vb < va {
-                j += 1;
-            } else {
-                if a[i].value() != b[j].value() {
-                    return true;
-                }
-                i += 1;
-                j += 1;
-            }
-        }
-        false
     }
 
     if pos == effects_without_pre.len() {
@@ -1100,7 +795,7 @@ fn multiply_out_propositional(
     let namespace = effects_without_pre[pos].namespace();
     let var_id = effects_without_pre[pos].var();
     let eff = effects_without_pre[pos].value();
-    let domain_size = generator.domain_sizes[var_id];
+    let domain_size = layout.radix(var_id);
     let mut out: Vec<AbstractOperatorSkeleton> = Vec::new();
     for i in 0..domain_size {
         if i != eff {
@@ -1120,7 +815,7 @@ fn multiply_out_propositional(
             operator,
             pos + 1,
             facts,
-            generator,
+            layout,
         )?);
 
         if i != eff {
@@ -1136,139 +831,75 @@ fn multiply_out_propositional(
 
 fn compute_hash_effects_with_preconditions(
     task: &dyn AbstractNumericTask,
-    generator: &mut AbstractOperatorGenerator,
+    generator: &AbstractOperatorGenerator<'_>,
     concrete_op_id: OperatorIndex,
     op_preconditions: &[ExplicitFact],
-    ass_effects: &[planforge_sas::numeric_task::AssignmentEffect],
+    ass_effects: &[AssignmentEffect],
     deadline: Option<Instant>,
 ) -> Result<Vec<TransitionInfo>> {
     ensure_generation_deadline(deadline)?;
-    if generator.numeric_domain_sizes.is_empty() {
-        return Ok(vec![TransitionInfo {
-            source_partition_facts: Vec::new(),
-            target_partition_facts: Vec::new(),
-            prevail_facts: Vec::new(),
-            changed_numeric_vars: Vec::new(),
-        }]);
-    }
-
-    let num_props = generator.domain_sizes.len();
+    let layout = generator.layout();
+    let numeric_domain_sizes = layout.numeric_domain_sizes();
+    let partitions = generator.factory.partitions();
+    let additive_numeric_views = generator.factory.additive_numeric_views();
+    let num_props = layout.domain_sizes().len();
 
     // Enumerate every refined numeric coordinate needed by this operator.
     // Affected regular variables and exact additive views get source->target
     // transitions; needed unaffected coordinates get identity transitions.
-    let num_numeric_vars = generator.numeric_domain_sizes.len();
-    let mut effects_by_var: Vec<Vec<&planforge_sas::numeric_task::AssignmentEffect>> =
-        vec![Vec::new(); num_numeric_vars];
+    let mut effects_by_var: Vec<Vec<&AssignmentEffect>> =
+        vec![Vec::new(); numeric_domain_sizes.len()];
     let mut affected_numeric_vars: HashSet<VariableIndex> = HashSet::new();
     for eff in ass_effects {
         let v = eff.affected_var_id();
-        debug_assert!(
-            v.index() < effects_by_var.len(),
-            "assignment effect affected_var_id out of bounds: {v} >= {}",
-            effects_by_var.len()
-        );
-        if v.index() >= effects_by_var.len() {
-            continue;
-        }
         effects_by_var[v.index()].push(eff);
-        if generator
-            .numeric_domain_sizes
-            .get(v.index())
-            .copied()
-            .unwrap_or(1)
-            > 1
-        {
+        if numeric_domain_sizes[v.index()] > 1 {
             affected_numeric_vars.insert(v);
         }
     }
-    for (numeric_var_id, view) in generator.additive_numeric_views.iter() {
-        if generator.numeric_domain_sizes[numeric_var_id] > 1
+    for (numeric_var_id, view) in additive_numeric_views.iter() {
+        if numeric_domain_sizes[numeric_var_id] > 1
             && view.operator_delta(concrete_op_id)?.value().abs() >= EPSILON
         {
             affected_numeric_vars.insert(VariableIndex::from_usize(numeric_var_id));
         }
     }
 
-    // Compute the set of numeric vars that this operator's preconditions
-    // *transitively* depend on through comparison-axiom-derived propositional
-    // variables. A refined numeric var that is neither affected by the
-    // operator nor referenced by any of its comparison preconditions has no
-    // observable role: the operator's effect on its abstract-state hash is
-    // 0 along that dimension, and the match tree never queries the var. We
-    // can therefore omit it from the cartesian product entirely (treating it
-    // as a wildcard at the abstract-operator level), which can shrink the
-    // transition count by orders of magnitude in domains like minecraft
-    // where most concrete operators do not query most refined numerics.
+    // A refined numeric variable that the operator neither affects nor
+    // reads through a comparison precondition has no observable role: the
+    // operator's regression offset is 0 along it, and the match tree never
+    // queries it. It is therefore left out of the cross product (a wildcard
+    // at the abstract-operator level), which can shrink the transition count
+    // by orders of magnitude in domains like minecraft where most concrete
+    // operators do not read most refined numeric variables. The coordinates
+    // of comparison preconditions are needed to filter combinations whose
+    // source intervals contradict the precondition.
     let mut needed_numeric_vars: HashSet<VariableIndex> = HashSet::new();
-    if !task.numeric_conditions().is_empty() {
-        // Deps of comparison-axiom preconditions are needed so we can filter
-        // dead combos via optimistic eval on source intervals.
-        for pre in op_preconditions {
-            if let Some(tree) = task.numeric_conditions().for_var(pre.var_index()) {
-                for dep in active_comparison_dimensions(
-                    tree,
-                    &generator.numeric_domain_sizes,
-                    &generator.additive_numeric_views,
-                ) {
-                    needed_numeric_vars.insert(dep);
-                }
-            }
-        }
-        // For every comparison axiom that is *in* the abstraction's hash
-        // (domain_size > 1) AND has at least one dep in `affected_numeric_vars`,
-        // we need to know **all** of its deps' partitions in this combo so we
-        // can emit a deterministic source→target bit transition. Otherwise the
-        // operator wildcards the comparison var (no fact in pre/eff/prev), and
-        // because `op.hash_effect` has no delta on that var, the source and
-        // target end up with the same bit even though the bit *should* flip
-        // when the affected dep crosses a value-relevant partition boundary —
-        // disconnecting "comparison = TRUE" states from the initial state and
-        // producing standalone_h = ∞ on deeply-refined abstractions.
-        for tree in task.numeric_conditions().iter() {
-            let var_id = tree.prop_var_id();
-            if generator
-                .domain_sizes
-                .get(var_id.index())
-                .copied()
-                .unwrap_or(1)
-                <= 1
-            {
-                continue;
-            }
-            let deps = active_comparison_dimensions(
+    let mut op_has_comparison_preconditions = false;
+    for pre in op_preconditions {
+        if let Some(tree) = task.numeric_conditions().for_var(pre.var_index()) {
+            op_has_comparison_preconditions = true;
+            needed_numeric_vars.extend(active_comparison_dimensions(
                 tree,
-                &generator.numeric_domain_sizes,
-                &generator.additive_numeric_views,
-            );
-            if deps.iter().any(|d| affected_numeric_vars.contains(d)) {
-                for dep in &deps {
-                    needed_numeric_vars.insert(*dep);
-                }
-            }
+                numeric_domain_sizes,
+                additive_numeric_views,
+            ));
         }
     }
 
-    let mut changed_numeric_vars_for_semantics: Vec<VariableIndex> =
+    let mut changed_numeric_vars: Vec<VariableIndex> =
         affected_numeric_vars.iter().copied().collect();
-    changed_numeric_vars_for_semantics.sort_unstable();
-    changed_numeric_vars_for_semantics.dedup();
+    changed_numeric_vars.sort_unstable();
 
     let mut per_var: Vec<(VariableIndex, Vec<(usize, usize)>)> = Vec::new();
     for (v, effs) in effects_by_var.iter().enumerate() {
-        ensure!(
-            v < task.numeric_variables().len(),
-            "abstract operator numeric domain size/task variable mismatch: numeric_domain_sizes has {}, task has {} numeric variables",
-            generator.numeric_domain_sizes.len(),
-            task.numeric_variables().len()
-        );
         let var_id = VariableIndex::from_usize(v);
-        let num_parts = generator.numeric_domain_sizes[v];
+        let num_parts = numeric_domain_sizes[v];
         if num_parts <= 1 {
             continue;
         }
         if task.numeric_variables()[v].get_type() == &NumericType::Derived {
-            let view = generator.additive_numeric_views.get(v).with_context(|| {
+            let view = additive_numeric_views.get(v).with_context(|| {
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
             let delta = view.operator_delta(concrete_op_id)?;
@@ -1276,7 +907,7 @@ fn compute_hash_effects_with_preconditions(
                 let delta_interval = Interval::singleton(delta);
                 let mut pairs = HashSet::new();
                 for src in 0..num_parts {
-                    for tgt in generator.partitions.reachable_partitions(
+                    for tgt in partitions.reachable_partitions(
                         var_id,
                         src,
                         &planforge_sas::numeric_task::AssignmentOperation::Plus,
@@ -1295,43 +926,24 @@ fn compute_hash_effects_with_preconditions(
         }
         if let Some(eff) = effs.first() {
             let rhs = eff.var_id();
-            let rhs_parts = generator
-                .partitions
-                .partitions(rhs)
-                .map(|partitions| partitions.len())
-                .ok_or_else(|| anyhow!("missing partitions for rhs numeric var {rhs}"))?;
-
             let mut pairs: HashSet<(usize, usize)> = HashSet::new();
             for src in 0..num_parts {
-                for rhs_part in 0..rhs_parts {
-                    let rhs_iv = generator
-                        .partitions
-                        .partition_interval(rhs, rhs_part)
-                        .with_context(|| {
-                            format!("missing partition interval for rhs var {rhs} part {rhs_part}")
-                        })?;
-                    let targets = generator.partitions.reachable_partitions(
-                        var_id,
-                        src,
-                        eff.operation(),
-                        rhs_iv,
+                for &rhs_interval in partitions.partitions(rhs) {
+                    pairs.extend(
+                        partitions
+                            .reachable_partitions(var_id, src, eff.operation(), rhs_interval)
+                            .map(|tgt| (src, tgt)),
                     );
-                    for tgt in targets {
-                        pairs.insert((src, tgt));
-                    }
                 }
             }
             let mut transitions: Vec<(usize, usize)> = pairs.into_iter().collect();
             transitions.sort_unstable();
             per_var.push((var_id, transitions));
         } else if needed_numeric_vars.contains(&var_id) {
-            // Unaffected refined regular numeric variable that is still needed
-            // to evaluate a comparison precondition or a comparison bit whose
-            // other dependencies can change. Frame it with identity partition
-            // transitions so the comparison evaluation sees the precise source
-            // and target partition.
-            let transitions: Vec<(usize, usize)> = (0..num_parts).map(|p| (p, p)).collect();
-            per_var.push((var_id, transitions));
+            // An unaffected refined regular numeric variable that a comparison
+            // precondition reads: frame it with identity partition transitions
+            // so the comparison evaluation sees the precise source partition.
+            per_var.push((var_id, (0..num_parts).map(|p| (p, p)).collect()));
         }
     }
 
@@ -1339,40 +951,17 @@ fn compute_hash_effects_with_preconditions(
         return Ok(vec![TransitionInfo {
             source_partition_facts: Vec::new(),
             target_partition_facts: Vec::new(),
-            prevail_facts: Vec::new(),
-            changed_numeric_vars: changed_numeric_vars_for_semantics,
+            changed_numeric_vars,
         }]);
     }
 
-    // Determine whether any of the operator's preconditions reference a
-    // comparison-axiom-derived propositional variable. Combined with whether
-    // the operator changes any numeric variable that feeds a comparison tree,
-    // this lets us short-circuit the interval/cascade work on every combo.
-    let op_has_comparison_preconditions = op_preconditions
-        .iter()
-        .any(|pre| task.numeric_conditions().is_condition_var(pre.var_index()));
-
-    // Pre-decide the "this combo can possibly change a comparison's truth
-    // value" flag at the level of the operator: any affected (changed)
-    // numeric var that participates in a comparison tree is a trigger. We
-    // re-check per combo (a combo may have src==tgt and thus no actual
-    // change), but use this as the upper bound.
-    let any_changed_var_affects_comparison = changed_numeric_vars_for_semantics.iter().any(|&v| {
-        generator
-            .comparisons_by_numeric_dep
-            .get(v.index())
-            .is_some_and(|trees| !trees.is_empty())
-    });
-
     // Backtracking enumeration. Following the C++ reference, we share the
     // partition-fact scratch buffers across recursive frames (push/pop) and
-    // only clone into a `TransitionInfo` at the leaf. This avoids the
-    // per-combo `Vec<(usize,usize,usize)>` materialization that the older
-    // cartesian-product expansion did.
+    // only clone into a `TransitionInfo` at the leaf.
     let mut scratch = PartitionComboScratch {
         source_partition_facts: Vec::new(),
         target_partition_facts: Vec::new(),
-        changed_numeric_vars: changed_numeric_vars_for_semantics,
+        changed_numeric_vars,
         combo: Vec::with_capacity(per_var.len()),
         source_intervals: Vec::new(),
         transitions: Vec::new(),
@@ -1386,7 +975,6 @@ fn compute_hash_effects_with_preconditions(
             per_var: &per_var,
             num_props,
             op_has_comparison_preconditions,
-            any_changed_var_affects_comparison,
             deadline,
         },
         0,
@@ -1399,16 +987,15 @@ fn compute_hash_effects_with_preconditions(
 /// One concrete operator's numeric cross-product, fixed for the whole
 /// enumeration: the task and generator that turn partitions into intervals, the
 /// operator's preconditions, the per-variable source-to-target transitions the
-/// recursion walks, where numeric dimensions start in the hash layout, and the
-/// two flags that decide whether a leaf needs comparison filtering at all.
+/// recursion walks, where numeric dimensions start in the state layout, and
+/// whether a leaf needs comparison filtering at all.
 struct PartitionComboEnumeration<'a> {
     task: &'a dyn AbstractNumericTask,
-    generator: &'a AbstractOperatorGenerator,
+    generator: &'a AbstractOperatorGenerator<'a>,
     op_preconditions: &'a [ExplicitFact],
     per_var: &'a [(VariableIndex, Vec<(usize, usize)>)],
     num_props: usize,
     op_has_comparison_preconditions: bool,
-    any_changed_var_affects_comparison: bool,
     deadline: Option<Instant>,
 }
 
@@ -1438,7 +1025,6 @@ fn enumerate_partition_combos(
         per_var,
         num_props,
         op_has_comparison_preconditions,
-        any_changed_var_affects_comparison,
         deadline,
     } = *enumeration;
     if pos.is_multiple_of(4) {
@@ -1446,43 +1032,27 @@ fn enumerate_partition_combos(
     }
     if pos == per_var.len() {
         // Leaf: emit a TransitionInfo for the current (source, target,
-        // changed_vars) state of the scratch.
-
-        // Fast path: when this operator has no comparison preconditions and
-        // its changes can't affect any comparison axiom, no interval or
-        // cascade work is needed — emit directly. Mirrors the C++ early-exit
-        // before the optimistic filtering pass.
-        //
-        // `source_partition_facts`/`target_partition_facts`/`changed_numeric_vars`
-        // are pushed in ascending `var_id` order along the recursion (driven by
-        // `per_var`, which is `0..num_numeric_vars`), and each numeric var
-        // appears at most once. The classic `sort + dedup` after clone was a
-        // safety net for already-sorted unique data — pure overhead.
-        if !op_has_comparison_preconditions && !any_changed_var_affects_comparison {
-            scratch.push_transition();
-            return Ok(());
+        // changed_vars) state of the scratch. An operator with a comparison
+        // precondition only applies in the combinations whose source
+        // intervals admit it.
+        if op_has_comparison_preconditions {
+            prepare_comparison_tree_inputs_for_combo_into(
+                task,
+                generator,
+                &scratch.combo,
+                &mut scratch.source_intervals,
+            );
+            if !comparison_preconditions_admit_combo(
+                task,
+                op_preconditions,
+                &scratch.source_intervals,
+            ) {
+                return Ok(());
+            }
         }
-
-        // Slow path: the operator has a comparison-axiom precondition, so the
-        // combo has to be filtered on its source side before it can be
-        // emitted.
-        prepare_comparison_tree_inputs_for_combo_into(
-            task,
-            generator,
-            &scratch.combo,
-            false,
-            &mut scratch.source_intervals,
-        )?;
-
-        if !comparison_preconditions_admit_combo(task, op_preconditions, &scratch.source_intervals)
-        {
-            return Ok(());
-        }
-
         scratch.push_transition();
         return Ok(());
     }
-
     let (var_id, transitions) = &per_var[pos];
     let var_id = *var_id;
     let abs_var_id = abstraction_numeric_var(num_props, var_id);
@@ -1494,11 +1064,6 @@ fn enumerate_partition_combos(
             .target_partition_facts
             .push(ExplicitFact::numeric_variable(abs_var_id.index(), tgt));
         scratch.combo.push((var_id, src, tgt));
-        // `changed_numeric_vars` is seeded with the full set of affected
-        // numeric vars at the top of the operator (see
-        // `changed_numeric_vars_for_semantics`); re-pushing here would only
-        // create duplicates that the legacy code then had to sort+dedup at
-        // the leaf. The set is the same for every combo of this operator.
 
         enumerate_partition_combos(enumeration, pos + 1, scratch)?;
 
@@ -1530,40 +1095,23 @@ impl PartitionComboScratch {
         self.transitions.push(TransitionInfo {
             source_partition_facts: self.source_partition_facts.clone(),
             target_partition_facts: self.target_partition_facts.clone(),
-            prevail_facts: Vec::new(),
             changed_numeric_vars: self.changed_numeric_vars.clone(),
         });
     }
 }
 
-#[cfg(test)]
-fn prepare_comparison_tree_inputs_for_combo(
-    task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
-    combo: &[(VariableIndex, usize, usize)],
-    use_target_partitions: bool,
-) -> Result<Vec<Interval>> {
-    let mut buf: Vec<Interval> = Vec::new();
-    prepare_comparison_tree_inputs_for_combo_into(
-        task,
-        generator,
-        combo,
-        use_target_partitions,
-        &mut buf,
-    )?;
-    Ok(buf)
-}
-
-/// Resize-and-overwrite variant: lets callers reuse a scratch buffer across
-/// combos. Avoids per-combo `Vec<Interval>` allocations during the cartesian
-/// product in `compute_hash_effects_with_preconditions`.
+/// Fills `out` with the interval of every numeric variable over the source
+/// partitions of `combo`: constants at their values, the
+/// variables of `combo` at their partitions, derived variables through the
+/// comparison trees, the rest unbounded. `out` is reused across combos, which
+/// keeps the cross product in `compute_hash_effects_with_preconditions` from
+/// allocating.
 fn prepare_comparison_tree_inputs_for_combo_into(
     task: &dyn AbstractNumericTask,
-    generator: &AbstractOperatorGenerator,
+    generator: &AbstractOperatorGenerator<'_>,
     combo: &[(VariableIndex, usize, usize)],
-    use_target_partitions: bool,
     out: &mut Vec<Interval>,
-) -> Result<()> {
+) {
     let initial_numeric_values = task.get_initial_numeric_state_values();
     let num_numeric = task.numeric_variables().len();
     out.clear();
@@ -1582,15 +1130,11 @@ fn prepare_comparison_tree_inputs_for_combo_into(
         }
     }
 
-    for (var_id, src, tgt) in combo {
-        let partition_id = if use_target_partitions { *tgt } else { *src };
-        let iv = generator
-            .partitions
-            .partition_interval(*var_id, partition_id)
-            .with_context(|| {
-                format!("missing partition interval for var {var_id} part {partition_id}")
-            })?;
-        out[var_id.index()] = iv;
+    for &(var_id, source_partition, _) in combo {
+        out[var_id.index()] = generator
+            .factory
+            .partitions()
+            .partition_interval(var_id, source_partition);
     }
 
     fill_derived_numeric_intervals_from_comparison_trees(task.numeric_conditions().all(), out);
@@ -1600,42 +1144,23 @@ fn prepare_comparison_tree_inputs_for_combo_into(
             *interval = Interval::unbounded();
         }
     }
-
-    Ok(())
 }
 
 /// Whether a partition combo survives this operator's comparison-axiom
 /// preconditions, evaluated optimistically over the combo's source intervals.
 ///
-/// The abstract operator carries no comparison-bit source/target facts of its
-/// own: an operator that only feeds a comparison axiom through a numeric
-/// dependency is picked up by the cascade-relevance rule in
-/// `DomainAbstractionFactory` instead. This function is therefore purely a
-/// filter.
+/// The abstract operator carries no condition facts of its own, since
+/// condition variables are never refined; this function is purely a filter.
 fn comparison_preconditions_admit_combo(
     task: &dyn AbstractNumericTask,
     op_preconditions: &[ExplicitFact],
     source_inputs: &[Interval],
 ) -> bool {
+    // Filter on the concrete TRUE/FALSE precondition value: a condition
+    // variable has one abstract value, which says nothing.
     let conditions = task.numeric_conditions();
-    if conditions.is_empty() {
-        return true;
-    }
-
-    // Filter on the concrete TRUE/FALSE precondition value, not the abstract
-    // mapping. With abstract values, refinement size 1 collapses
-    // `true_abs == false_abs` and the filter is unsound; the previous
-    // `domain_sizes <= 1` skip masked this by bypassing the check for
-    // unrefined comparison vars, letting operator combos that violate
-    // comparison-axiom preconditions through and inflating operator counts
-    // relative to numeric-FD.
-    let precondition_required: HashMap<usize, &ExplicitFact> = op_preconditions
+    !op_preconditions
         .iter()
-        .filter(|p| conditions.is_condition_var(p.var_index()))
-        .map(|p| (p.var(), p))
-        .collect();
-
-    !precondition_required
-        .values()
+        .filter(|precondition| conditions.is_condition_var(precondition.var_index()))
         .any(|precondition| conditions.precondition_is_contradicted(precondition, source_inputs))
 }

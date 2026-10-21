@@ -880,7 +880,10 @@ fn flaw_split(
                 boundary,
                 lower_includes_boundary,
                 integer_lattice,
-            )?;
+            )
+            .with_context(|| {
+                format!("regression flaw boundary {boundary} does not split numeric var {var}")
+            })?;
             Split::Numeric {
                 state_id,
                 var_id: var,

@@ -45,7 +45,6 @@ impl PotentialAbstractionOcpHeuristic {
             .factory
             .build_ocp_transition_system_from_operators(
                 task,
-                abstraction.combine_labels,
                 &abstraction.abstract_operators,
                 DistanceTableOptions::default().with_concrete_label_cap(max_recorded_transitions),
             )

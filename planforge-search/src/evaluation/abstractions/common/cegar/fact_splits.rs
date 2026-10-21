@@ -326,7 +326,7 @@ fn comparison_refinement(
         let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         for boundary in boundaries {
             for lower_includes_boundary in [true, false] {
-                let Ok((lower, upper)) = numeric_split_intervals(
+                let Some((lower, upper)) = numeric_split_intervals(
                     parent,
                     boundary,
                     lower_includes_boundary,
@@ -556,7 +556,7 @@ pub(crate) fn split_deviation_candidates(
         }
         let integer_lattice = semantics.numeric_integer_lattice()[var_id.index()];
         if numeric_split_intervals(parent, boundary, lower_includes_boundary, integer_lattice)
-            .is_err()
+            .is_none()
         {
             rejected_numeric_splits.push(format!(
                 "var {var_id}: source={source}, successor={successor}, target={target_interval:?}, preimage={preimage:?}, parent={parent:?}, boundary={boundary}, lower_includes_boundary={lower_includes_boundary} is not strict"

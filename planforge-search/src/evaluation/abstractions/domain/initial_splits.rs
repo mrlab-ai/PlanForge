@@ -11,7 +11,6 @@ use rand::Rng;
 use rand::rngs::SmallRng;
 
 use super::abstract_operators::DomainMapping;
-use super::abstraction::abstract_state_count;
 use super::config::DomainAbstractionConfig;
 use super::partitions::NumericPartitions;
 
@@ -74,16 +73,13 @@ pub(super) fn apply_initial_goal_splits(
     config: &DomainAbstractionConfig,
     numeric_integer_lattice: &[bool],
     rng: &mut SmallRng,
-    state: RefinementState<'_>,
+    domain_mapping: &mut DomainMapping,
+    domain_sizes: &mut [usize],
+    partitions: &mut NumericPartitions,
 ) -> Result<()> {
-    let RefinementState {
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-        blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids,
-    } = state;
+    let blacklisted_prop_var_ids = &config.blacklisted_prop_var_ids;
+    let blacklisted_numeric_var_ids = &config.blacklisted_numeric_var_ids;
+    let mut numeric_domain_sizes = partitions.numeric_domain_sizes();
     let goals = sorted_goal_facts(task);
     let goal_var_ids: HashSet<VariableIndex> = goals.iter().map(|goal| goal.var_index()).collect();
     let num_prop_vars = task.variables().len();
@@ -115,7 +111,7 @@ pub(super) fn apply_initial_goal_splits(
         let mapping = initial_split_mapping(task, var_id)?;
         if !can_refine_propositional_variable(
             domain_sizes,
-            numeric_domain_sizes,
+            &numeric_domain_sizes,
             var_id,
             2,
             initial_max_states,
@@ -146,7 +142,7 @@ pub(super) fn apply_initial_goal_splits(
                 || !is_refinable_numeric_dimension(task, numeric_var_id)
                 || !can_refine_numeric_variable(
                     domain_sizes,
-                    numeric_domain_sizes,
+                    &numeric_domain_sizes,
                     numeric_var_id,
                     initial_max_states,
                 )
@@ -160,10 +156,8 @@ pub(super) fn apply_initial_goal_splits(
                 include_in_lower,
                 numeric_integer_lattice[numeric_var_id.index()],
             ) {
-                numeric_domain_sizes[numeric_var_id.index()] = partitions
-                    .partitions(numeric_var_id)
-                    .expect("a split numeric variable has partitions")
-                    .len();
+                numeric_domain_sizes[numeric_var_id.index()] =
+                    partitions.partitions(numeric_var_id).len();
             }
         }
     }
@@ -217,23 +211,6 @@ pub(crate) fn identity_domain_mapping_and_sizes(
     Ok((domain_mapping, domain_sizes))
 }
 
-/// What a refinement writes to: the abstraction's propositional domain mapping
-/// with its per-variable domain sizes, its numeric partitions with theirs, and
-/// the variables refinement has given up on.
-///
-/// Every landed split adds one value to one of the two halves and bumps the
-/// matching size, which is how the CEGAR loop detects progress. The initial-split
-/// functions only read the two blacklists; `fix_flaws` lets flaw selection extend
-/// them.
-pub struct RefinementState<'a> {
-    pub domain_mapping: &'a mut DomainMapping,
-    pub domain_sizes: &'a mut [usize],
-    pub partitions: &'a mut NumericPartitions,
-    pub numeric_domain_sizes: &'a mut [usize],
-    pub blacklisted_prop_var_ids: &'a mut HashSet<VariableIndex>,
-    pub blacklisted_numeric_var_ids: &'a mut HashSet<VariableIndex>,
-}
-
 /// Whether growing one variable's abstract domain from `old_size` to
 /// `new_size` keeps the abstraction within `max_states`.
 ///
@@ -251,7 +228,11 @@ fn refined_size_fits(
         old_size > 0 && new_size > 0,
         "abstract domain sizes are positive, got {old_size} -> {new_size}"
     );
-    let Some(total_size) = abstract_state_count(domain_sizes, numeric_domain_sizes) else {
+    let Some(total_size) = domain_sizes
+        .iter()
+        .chain(numeric_domain_sizes)
+        .try_fold(1_u128, |states, &size| states.checked_mul(size as u128))
+    else {
         // The current abstraction is already larger than u128 and thus than
         // any limit.
         return false;

@@ -41,40 +41,45 @@ impl NumericPartitions {
         }
     }
 
+    #[cfg(test)]
     pub fn with_partitions(partitions_by_numeric_var: Vec<Vec<Interval>>) -> Self {
         Self {
             partitions_by_numeric_var,
         }
     }
 
-    pub fn partitions(&self, numeric_var_id: VariableIndex) -> Option<&[Interval]> {
+    /// The partitions of `numeric_var_id`: disjoint, ascending, and covering
+    /// every value the variable can take.
+    pub fn partitions(&self, numeric_var_id: VariableIndex) -> &[Interval] {
+        &self.partitions_by_numeric_var[numeric_var_id.index()]
+    }
+
+    /// The number of partitions of every numeric variable.
+    pub fn numeric_domain_sizes(&self) -> Vec<usize> {
         self.partitions_by_numeric_var
-            .get(numeric_var_id.index())
-            .map(|v| v.as_slice())
+            .iter()
+            .map(Vec::len)
+            .collect()
     }
 
     pub fn partition_interval(
         &self,
         numeric_var_id: VariableIndex,
         partition_id: usize,
-    ) -> Option<Interval> {
-        self.partitions_by_numeric_var
-            .get(numeric_var_id.index())
-            .and_then(|parts| parts.get(partition_id).copied())
+    ) -> Interval {
+        self.partitions(numeric_var_id)[partition_id]
     }
 
+    /// The partitions of `numeric_var_id` that applying `operation` with an
+    /// operand in `rhs` may lead to from partition `source_partition`.
     pub fn reachable_partitions(
         &self,
         numeric_var_id: VariableIndex,
         source_partition: usize,
         operation: &AssignmentOperation,
         rhs: Interval,
-    ) -> Vec<usize> {
-        let Some(source_interval) = self.partition_interval(numeric_var_id, source_partition)
-        else {
-            return vec![];
-        };
-
+    ) -> impl Iterator<Item = usize> + '_ {
+        let source_interval = self.partition_interval(numeric_var_id, source_partition);
         // Concrete numeric states are canonicalized after every assignment.
         // Keep abstract transition images on the same lattice so a rounding
         // artifact cannot manufacture overlap with an adjacent partition.
@@ -86,23 +91,13 @@ impl NumericPartitions {
             AssignmentOperation::Divide => ArithOp::Div.apply_interval(source_interval, rhs),
         }
         .canonicalized();
-
-        let Some(targets) = self.partitions(numeric_var_id) else {
-            return vec![];
-        };
-
-        let mut out: Vec<usize> = Vec::new();
-        for (target_id, &target_interval) in targets.iter().enumerate() {
-            if result_interval.intersects(&target_interval) {
-                out.push(target_id);
-            }
-        }
-        out
+        self.partitions(numeric_var_id)
+            .iter()
+            .enumerate()
+            .filter(move |(_, target)| result_interval.intersects(target))
+            .map(|(target_id, _)| target_id)
     }
 
-    /// Splits the partition that contains `value` into two partitions.
-    ///
-    /// Returns `true` if a split was applied.
     /// Split the partition of `numeric_var_id` that contains `value` at
     /// `value`, which belongs to the lower part iff `include_in_lower`. On an
     /// integer lattice the parts are closed at the neighbouring integers.
@@ -126,7 +121,7 @@ impl NumericPartitions {
         if !iv.can_split_at(value, include_in_lower) {
             return false;
         }
-        let Ok((lower, upper)) =
+        let Some((lower, upper)) =
             numeric_split_intervals(iv, value, include_in_lower, integer_lattice)
         else {
             return false;

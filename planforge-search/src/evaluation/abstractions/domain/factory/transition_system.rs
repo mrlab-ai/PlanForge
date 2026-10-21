@@ -36,33 +36,18 @@ impl DomainAbstractionFactory {
         combine_labels: bool,
         options: DistanceTableOptions<'_>,
     ) -> Result<AbstractTransitionSystem> {
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let operators = generator.build_abstract_operators(task)?;
-        self.build_transition_system_with_operators(
-            task,
-            &generator,
-            &operators,
-            TransitionSystemContents {
-                materialize_cartesian_sets: options.materialize_cartesian_sets,
-                include_self_loops: options.include_self_loops,
-                max_concrete_label_transitions: options.max_concrete_label_transitions,
-            },
-            options.deadline,
-        )?
-        .into_complete()
+        let operators = self.abstract_operators(task, combine_labels, options.deadline)?;
+        self.build_abstract_transition_system_from_operators(task, &operators, options)
     }
 
     pub fn build_abstract_transition_system_from_operators(
         &self,
         task: &dyn AbstractNumericTask,
-        combine_labels: bool,
         operators: &[AbstractOperator],
         options: DistanceTableOptions<'_>,
     ) -> Result<AbstractTransitionSystem> {
-        let generator = self.make_operator_generator(task, combine_labels)?;
         self.build_transition_system_with_operators(
             task,
-            &generator,
             operators,
             TransitionSystemContents {
                 materialize_cartesian_sets: options.materialize_cartesian_sets,
@@ -81,14 +66,11 @@ impl DomainAbstractionFactory {
     pub fn build_ocp_transition_system_from_operators(
         &self,
         task: &dyn AbstractNumericTask,
-        combine_labels: bool,
         operators: &[AbstractOperator],
         options: DistanceTableOptions<'_>,
     ) -> Result<OcpTransitionSystemBuild> {
-        let generator = self.make_operator_generator(task, combine_labels)?;
         self.build_transition_system_with_operators(
             task,
-            &generator,
             operators,
             TransitionSystemContents {
                 materialize_cartesian_sets: false,
@@ -99,21 +81,9 @@ impl DomainAbstractionFactory {
         )
     }
 
-    pub fn relevant_operator_ids_from_operators(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        operators: &[AbstractOperator],
-        options: DistanceTableOptions<'_>,
-    ) -> Result<Vec<OperatorIndex>> {
-        let generator = self.make_operator_generator(task, combine_labels)?;
-        self.relevant_operator_ids_with_operators(task, &generator, operators, options.deadline)
-    }
-
     pub(super) fn build_transition_system_with_operators(
         &self,
         task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
         contents: TransitionSystemContents,
         deadline: Option<Instant>,
@@ -124,32 +94,20 @@ impl DomainAbstractionFactory {
             max_concrete_label_transitions,
         } = contents;
         ensure_online_scp_deadline(deadline)?;
-        let hash_multipliers = generator.hash_multipliers();
-        let numeric_domain_sizes = generator.numeric_domain_sizes();
         let goal_facts = self.compute_abstract_goals(task);
-        let init_hash = self.compute_initial_state_hash_determined(
-            task,
-            numeric_domain_sizes,
-            hash_multipliers,
-        )?;
-        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        let match_tree = MatchTree::new(generator, operators);
+        let num_states = self.layout.num_states();
+        let match_tree = MatchTree::new(&self.layout, operators);
 
         let mut transitions: Vec<AbstractTransition> = Vec::with_capacity(num_states);
         let mut concrete_label_transition_count = 0usize;
         let mut backward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
-        let mut forward: Vec<Vec<usize>> = vec![Vec::new(); num_states];
-        let mut cartesian_sets = Vec::new();
-        if materialize_cartesian_sets {
-            cartesian_sets.reserve(num_states);
-            for state_hash in 0..num_states {
-                cartesian_sets.push(self.cartesian_set_from_hash(
-                    state_hash,
-                    numeric_domain_sizes,
-                    hash_multipliers,
-                )?);
-            }
-        }
+        let cartesian_sets: Vec<Arc<CartesianSet>> = if materialize_cartesian_sets {
+            (0..num_states)
+                .map(|state| Arc::new(self.state_region(state)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         // Debug-only triple-uniqueness witness: every pushed AbstractTransition
         // must have a unique `(abstract_op_id, source_hash, target_hash)`.
         #[cfg(debug_assertions)]
@@ -172,8 +130,7 @@ impl DomainAbstractionFactory {
                     continue;
                 }
                 let op = &operators[abstract_op_id];
-                let required =
-                    concrete_label_transition_count.saturating_add(op.concrete_op_ids.len());
+                let required = concrete_label_transition_count + op.concrete_op_ids.len();
                 if max_concrete_label_transitions.is_some_and(|cap| required > cap) {
                     return Ok(OcpTransitionSystemBuild::ConcreteLabelCapExceeded {
                         required_at_least: required,
@@ -197,13 +154,12 @@ impl DomainAbstractionFactory {
                     target_hash,
                 });
                 target_backward.push(transition_id);
-                forward[source_hash].push(transition_id);
             }
         }
 
         // Tight invariant: within one abstraction, every transition sharing an
         // `abstract_op_id` must have identical numeric source and target regions.
-        // The partition-fact enumeration in `abstract_operator_generator.rs`
+        // The partition-fact enumeration in `abstract_operators.rs`
         // (build_abstract_operators → enumerate_partition_combos) bakes the
         // numeric (source_partition, target_partition) pair into the abstract
         // operator's identity, so two transitions sharing the abstract op can
@@ -241,106 +197,59 @@ impl DomainAbstractionFactory {
             }
         }
 
-        // Goal states are those whose hash matches the goal facts.
-        let mut goal_state_hashes = Vec::new();
-        for state_hash in 0..num_states {
-            if self.is_goal_state(
-                task,
-                state_hash,
-                &goal_facts,
-                numeric_domain_sizes,
-                hash_multipliers,
-            )? {
-                goal_state_hashes.push(state_hash);
-            }
-        }
-
+        let goal_state_hashes = self.goal_states(task, &goal_facts, deadline)?;
         Ok(OcpTransitionSystemBuild::Complete(
             AbstractTransitionSystem {
                 transitions,
                 backward,
-                forward,
                 goal_facts,
                 goal_state_hashes,
-                initial_state_hash: init_hash,
-                hash_multipliers: hash_multipliers.to_vec(),
-                numeric_domain_sizes: numeric_domain_sizes.to_vec(),
-                cartesian_sets: cartesian_sets.into_iter().map(Arc::new).collect(),
+                initial_state_hash: self.initial_state(task)?,
+                cartesian_sets,
             },
         ))
     }
 
-    pub(super) fn relevant_operator_ids_with_operators(
+    /// The concrete operators that label a transition between two distinct
+    /// abstract states.
+    pub fn relevant_operator_ids(
         &self,
         task: &dyn AbstractNumericTask,
-        generator: &AbstractOperatorGenerator,
         operators: &[AbstractOperator],
-        deadline: Option<Instant>,
-    ) -> Result<Vec<OperatorIndex>> {
-        ensure_online_scp_deadline(deadline)?;
-        let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let num_states = compute_num_states(&self.domain_sizes, numeric_domain_sizes)?;
-        let match_tree = MatchTree::new(generator, operators);
-        let mut seen_operator_ids = vec![false; task.get_operators().len()];
-        let mut num_seen = 0usize;
-        let mut applicable_operator_ids: Vec<usize> = Vec::new();
-
-        for target_hash in 0..num_states {
-            if target_hash % 64 == 0 {
-                ensure_online_scp_deadline(deadline)?;
-            }
-            if num_seen == seen_operator_ids.len() {
+    ) -> Vec<OperatorIndex> {
+        let match_tree = MatchTree::new(&self.layout, operators);
+        let mut graph = MatchTreeGraph {
+            operators,
+            match_tree: &match_tree,
+            num_states: self.layout.num_states(),
+            applicable: Vec::new(),
+        };
+        let mut relevant = vec![false; task.get_operators().len()];
+        let mut num_relevant = 0usize;
+        let mut incoming = Vec::new();
+        for target in 0..self.layout.num_states() {
+            if num_relevant == relevant.len() {
                 break;
             }
-            match_tree.get_applicable_operator_ids(target_hash, &mut applicable_operator_ids);
-            for &abstract_op_id in &applicable_operator_ids {
-                let op = &operators[abstract_op_id];
-                if op.concrete_op_ids.iter().all(|&op_id| {
-                    seen_operator_ids
-                        .get(op_id.index())
-                        .copied()
-                        .unwrap_or(false)
-                }) {
+            graph
+                .incoming(target, &mut incoming)
+                .expect("abstract operators regress within the abstraction");
+            for &(source, abstract_op_id, _) in &incoming {
+                if source == target {
                     continue;
                 }
-                let predecessor_i64 = target_hash as i64 + op.hash_effect as i64;
-                if predecessor_i64 < 0 || predecessor_i64 >= num_states as i64 {
-                    continue;
-                }
-                let source_hash = predecessor_i64 as usize;
-                if source_hash == target_hash {
-                    continue;
-                }
-                for &op_id in &op.concrete_op_ids {
-                    ensure!(
-                        op_id.index() < seen_operator_ids.len(),
-                        "concrete operator id out of range: {op_id} >= {}",
-                        seen_operator_ids.len()
-                    );
-                    if !seen_operator_ids[op_id.index()] {
-                        seen_operator_ids[op_id.index()] = true;
-                        num_seen += 1;
+                for &op_id in &operators[abstract_op_id].concrete_op_ids {
+                    if !relevant[op_id.index()] {
+                        relevant[op_id.index()] = true;
+                        num_relevant += 1;
                     }
                 }
             }
         }
-
-        // Cascade-relevance: an operator is also relevant to this abstraction
-        // if it modifies a numeric variable that feeds a comparison-axiom prop
-        // var refined in this abstraction. The hash_effect-based check above
-        // misses these because `compute_comparison_transition_facts` does not
-        // bake cascade source/target facts into operator pre/eff. Mirrors
-        // numeric-FD's `TaskInfo::operator_is_active`
-        // (cost_saturation/projection.cc:421-425). Without this, canonical's
-        // additive-subset check claims two abstractions disjoint when they
-        // share a cascade-only operator, and summing their heuristics
-        // double-counts that operator's cost — producing an inadmissible
-        // canonical heuristic (sailing/plant-watering reproducers).
-
-        Ok(seen_operator_ids
+        relevant
             .into_iter()
             .enumerate()
-            .filter_map(|(op_id, seen)| seen.then_some(OperatorIndex::from_usize(op_id)))
-            .collect())
+            .filter_map(|(op_id, relevant)| relevant.then_some(OperatorIndex::from_usize(op_id)))
+            .collect()
     }
 }

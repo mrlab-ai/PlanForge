@@ -37,7 +37,6 @@ impl CegarAbstraction for CartesianAbstraction {
     fn discard_transition_data(&mut self) {
         self.transition_system.transitions = Vec::new();
         self.transition_system.backward = Vec::new();
-        self.transition_system.forward = Vec::new();
         self.transition_system.cartesian_sets = Vec::new();
         self.abstract_source_sets = Vec::new();
     }

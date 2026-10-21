@@ -13,9 +13,7 @@ use rand::{SeedableRng, rngs::SmallRng};
 
 use super::config::DomainAbstractionConfig;
 use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
-use super::initial_splits::{
-    RefinementState, apply_initial_goal_splits, trivial_domain_mapping_and_sizes,
-};
+use super::initial_splits::{apply_initial_goal_splits, trivial_domain_mapping_and_sizes};
 use super::partitions::NumericPartitions;
 use super::view::DomainRefinement;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
@@ -70,37 +68,23 @@ pub(super) fn refine_domain_abstraction(
     let (mut domain_mapping, mut domain_sizes) =
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
     let mut partitions = NumericPartitions::trivial(task);
-    let mut numeric_domain_sizes: Vec<usize> = vec![1; task.numeric_variables().len()];
-    let mut blacklisted_prop_var_ids = config.blacklisted_prop_var_ids.clone();
-    let mut blacklisted_numeric_var_ids = config.blacklisted_numeric_var_ids.clone();
     apply_initial_goal_splits(
         task,
         config,
         semantics.numeric_integer_lattice(),
         &mut rng,
-        RefinementState {
-            domain_mapping: &mut domain_mapping,
-            domain_sizes: &mut domain_sizes,
-            partitions: &mut partitions,
-            numeric_domain_sizes: &mut numeric_domain_sizes,
-            blacklisted_prop_var_ids: &mut blacklisted_prop_var_ids,
-            blacklisted_numeric_var_ids: &mut blacklisted_numeric_var_ids,
-        },
+        &mut domain_mapping,
+        &mut domain_sizes,
+        &mut partitions,
     )?;
-    let factory = DomainAbstractionFactory::new(
-        task,
-        domain_mapping,
-        domain_sizes,
-        partitions,
-        numeric_domain_sizes,
-    )
-    .context("failed to construct the initial domain abstraction")?;
+    let factory = DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions)
+        .context("failed to construct the initial domain abstraction")?;
 
     let root = semantics.states().initial_state()?;
     let limits = RefinementLimits {
         max_states: config.cegar.max_states,
-        blacklisted_prop_var_ids: &blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids: &blacklisted_numeric_var_ids,
+        blacklisted_prop_var_ids: &config.blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids: &config.blacklisted_numeric_var_ids,
     };
     let mut refinement = DomainRefinement::new(task, factory, limits, config);
     let outcome = refine(
@@ -160,10 +144,9 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         }
         .context("CEGAR failed to build abstraction")?;
         let stop_reason = outcome.stop_reason;
-        let mut operator_generator =
-            factory.make_operator_generator(task, self.config.cegar.combine_labels)?;
-        let abstract_operators = operator_generator
-            .build_abstract_operators_with_deadline(task, None)
+        let combine_labels = self.config.cegar.combine_labels;
+        let abstract_operators = factory
+            .abstract_operators(task, combine_labels, None)
             .context("failed to build abstract operators")?;
         let abstract_source_sets = if self.config.compute_source_sets {
             factory
@@ -177,24 +160,9 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             Vec::new()
         };
         let distance_table = factory
-            .build_distance_table(
-                task,
-                &operator_generator,
-                &abstract_operators,
-                DistanceTableOptions::default(),
-            )
+            .build_distance_table(task, &abstract_operators, DistanceTableOptions::default())
             .context("failed to build abstract distance table")?;
-        let initial_h = distance_table
-            .distances
-            .get(distance_table.initial_state_hash)
-            .copied()
-            .with_context(|| {
-                format!(
-                    "abstract initial state hash {} out of bounds for distance table of length {}",
-                    distance_table.initial_state_hash,
-                    distance_table.distances.len()
-                )
-            })?;
+        let initial_h = distance_table.distances[distance_table.initial_state_hash];
         // The refinement root is reachable from the initial state, so a dead
         // initial state means a dead root, which is where CEGAR stops.
         ensure!(
@@ -206,19 +174,12 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             factory.domain_sizes(),
             factory.numeric_domain_sizes()
         );
-        let relevant_operator_ids = factory
-            .relevant_operator_ids_from_operators(
-                task,
-                self.config.cegar.combine_labels,
-                &abstract_operators,
-                DistanceTableOptions::default(),
-            )
-            .context("failed to compute relevant operator ids")?;
+        let relevant_operator_ids = factory.relevant_operator_ids(task, &abstract_operators);
 
         Ok(DomainAbstraction {
             factory,
             distance_table,
-            combine_labels: self.config.cegar.combine_labels,
+            combine_labels,
             relevant_operator_ids,
             abstract_operators,
             transition_data_retained: true,

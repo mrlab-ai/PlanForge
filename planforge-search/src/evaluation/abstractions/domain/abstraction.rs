@@ -42,12 +42,7 @@ impl CegarAbstraction for DomainAbstraction {
         propositional: &[ExplicitValueIndex],
         numeric: &[NumericValue],
     ) -> Result<usize> {
-        self.factory.abstract_state_hash(
-            propositional,
-            numeric,
-            &self.distance_table.numeric_domain_sizes,
-            &self.distance_table.hash_multipliers,
-        )
+        self.factory.abstract_state(propositional, numeric)
     }
 
     fn distance_table(&self) -> &AbstractDistanceTable {
@@ -104,17 +99,15 @@ impl DomainAbstraction {
         deadline: Option<Instant>,
     ) -> Result<Ref<'a, AbstractTransitionSystem>> {
         if self.interval_transition_system.borrow().is_none() {
-            let mut transition_system = self
+            let transition_system = self
                 .factory
                 .build_abstract_transition_system_from_operators(
                     task,
-                    self.combine_labels,
                     &self.abstract_operators,
                     DistanceTableOptions::default()
                         .without_cartesian_sets()
                         .with_deadline(deadline),
                 )?;
-            transition_system.forward.clear();
             *self.interval_transition_system.borrow_mut() = Some(transition_system);
         }
         Ok(Ref::map(
@@ -126,37 +119,4 @@ impl DomainAbstraction {
             },
         ))
     }
-}
-
-/// The mixed-radix multipliers of abstract state hashes: one digit per
-/// variable, propositional variables first, the first digit least
-/// significant.
-pub(crate) fn hash_multipliers(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-) -> Result<Vec<usize>> {
-    let mut multipliers = Vec::with_capacity(domain_sizes.len() + numeric_domain_sizes.len());
-    let mut states: usize = 1;
-    for &size in domain_sizes.iter().chain(numeric_domain_sizes) {
-        multipliers.push(states);
-        states = states
-            .checked_mul(size)
-            .context("the abstract state space does not fit usize")?;
-    }
-    Ok(multipliers)
-}
-
-/// The number of abstract states of an abstraction with these domain sizes,
-/// or `None` if it does not fit `u128`.
-pub(crate) fn abstract_state_count(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-) -> Option<u128> {
-    domain_sizes
-        .iter()
-        .chain(numeric_domain_sizes)
-        .try_fold(1_u128, |states, &size| {
-            assert!(size > 0, "abstract domain sizes are positive");
-            states.checked_mul(size as u128)
-        })
 }

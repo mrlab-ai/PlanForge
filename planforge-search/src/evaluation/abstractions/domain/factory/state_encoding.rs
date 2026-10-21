@@ -9,28 +9,14 @@ struct MatchTreeNode {
     ops: Vec<usize>,
 }
 
+/// The abstract operators of an abstraction indexed by the abstract states
+/// they regress from: a decision tree over the variables their regression
+/// preconditions mention, most frequent first.
 #[derive(Debug, Clone)]
 pub(super) struct MatchTree {
+    layout: Arc<StateLayout>,
     var_order: Vec<usize>,
-    domain_sizes: Vec<usize>,
-    numeric_domain_sizes: Vec<usize>,
-    hash_multipliers: Vec<usize>,
     root: MatchTreeNode,
-}
-
-fn domain_size_for_var(
-    domain_sizes: &[usize],
-    numeric_domain_sizes: &[usize],
-    var: usize,
-) -> usize {
-    if var < domain_sizes.len() {
-        domain_sizes.get(var).copied().unwrap_or(0)
-    } else {
-        numeric_domain_sizes
-            .get(var - domain_sizes.len())
-            .copied()
-            .unwrap_or(0)
-    }
 }
 
 fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
@@ -41,25 +27,14 @@ fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
 }
 
 impl MatchTree {
-    /// Indexes `operators`, built by `generator`, by the abstract states they
-    /// regress from.
-    pub(super) fn new(
-        generator: &AbstractOperatorGenerator,
-        operators: &[AbstractOperator],
-    ) -> Self {
-        let domain_sizes = generator.domain_sizes();
-        let numeric_domain_sizes = generator.numeric_domain_sizes();
-        let hash_multipliers = generator.hash_multipliers();
-        let total_vars = domain_sizes.len() + numeric_domain_sizes.len();
-        let mut var_counts = vec![0usize; total_vars];
+    /// Indexes `operators` of the abstraction with `layout` by the abstract
+    /// states they regress from.
+    pub(super) fn new(layout: &Arc<StateLayout>, operators: &[AbstractOperator]) -> Self {
+        let mut var_counts = vec![0usize; layout.multipliers().len()];
         for op in operators {
-            for f in op.regression_preconditions.iter() {
-                if f.var() >= total_vars {
-                    continue;
-                }
-                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, f.var());
-                if domain_size > 1 {
-                    var_counts[f.var()] += 1;
+            for fact in &op.regression_preconditions {
+                if layout.radix(fact.var()) > 1 {
+                    var_counts[fact.var()] += 1;
                 }
             }
         }
@@ -75,142 +50,56 @@ impl MatchTree {
         });
 
         let mut tree = Self {
+            layout: Arc::clone(layout),
             var_order,
-            domain_sizes: domain_sizes.to_vec(),
-            numeric_domain_sizes: numeric_domain_sizes.to_vec(),
-            hash_multipliers: hash_multipliers.to_vec(),
             root: MatchTreeNode::default(),
         };
-
         for (op_id, op) in operators.iter().enumerate() {
             tree.insert(op_id, &op.regression_preconditions);
         }
-
         tree
     }
 
     fn insert(&mut self, op_id: usize, conds: &[ExplicitFact]) {
-        fn insert_rec(
-            node: &mut MatchTreeNode,
-            depth: usize,
-            var_order: &[usize],
-            conds: &[ExplicitFact],
-            domain_sizes: &[usize],
-            numeric_domain_sizes: &[usize],
-            op_id: usize,
-        ) {
-            if depth == var_order.len() {
-                node.ops.push(op_id);
-                return;
-            }
-            let var = var_order[depth];
-            if let Some(val) = fact_value_for_var(conds, var) {
-                let domain_size = domain_size_for_var(domain_sizes, numeric_domain_sizes, var);
-                if node.value_children.len() < domain_size {
-                    node.value_children.resize_with(domain_size, || None);
+        let mut node = &mut self.root;
+        for &var in &self.var_order {
+            node = match fact_value_for_var(conds, var) {
+                Some(value) => {
+                    let radix = self.layout.radix(var);
+                    if node.value_children.len() < radix {
+                        node.value_children.resize_with(radix, || None);
+                    }
+                    node.value_children[value].get_or_insert_with(Box::default)
                 }
-                let child = node.value_children[val]
-                    .get_or_insert_with(|| Box::new(MatchTreeNode::default()));
-                insert_rec(
-                    child.as_mut(),
-                    depth + 1,
-                    var_order,
-                    conds,
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    op_id,
-                );
-            } else {
-                let child = node
-                    .wildcard_child
-                    .get_or_insert_with(|| Box::new(MatchTreeNode::default()));
-                insert_rec(
-                    child.as_mut(),
-                    depth + 1,
-                    var_order,
-                    conds,
-                    domain_sizes,
-                    numeric_domain_sizes,
-                    op_id,
-                );
-            }
+                None => node.wildcard_child.get_or_insert_with(Box::default),
+            };
         }
-
-        insert_rec(
-            &mut self.root,
-            0,
-            &self.var_order,
-            conds,
-            &self.domain_sizes,
-            &self.numeric_domain_sizes,
-            op_id,
-        );
+        node.ops.push(op_id);
     }
 
-    pub(super) fn get_applicable_operator_ids(&self, state_hash: usize, out: &mut Vec<usize>) {
+    pub(super) fn get_applicable_operator_ids(&self, state: usize, out: &mut Vec<usize>) {
         out.clear();
-        self.collect_applicable(&self.root, 0, state_hash, out);
+        self.collect_applicable(&self.root, 0, state, out);
     }
 
     fn collect_applicable(
         &self,
         node: &MatchTreeNode,
         depth: usize,
-        state_hash: usize,
+        state: usize,
         out: &mut Vec<usize>,
     ) {
         if depth == self.var_order.len() {
             out.extend_from_slice(&node.ops);
             return;
         }
-        let var = self.var_order[depth];
-        let actual = self.get_var_value(state_hash, var);
-        if let Some(child) = node.value_children.get(actual).and_then(Option::as_deref) {
-            self.collect_applicable(child, depth + 1, state_hash, out);
+        let value = self.layout.value(state, self.var_order[depth]);
+        if let Some(child) = node.value_children.get(value).and_then(Option::as_deref) {
+            self.collect_applicable(child, depth + 1, state, out);
         }
         if let Some(child) = node.wildcard_child.as_deref() {
-            self.collect_applicable(child, depth + 1, state_hash, out);
+            self.collect_applicable(child, depth + 1, state, out);
         }
-    }
-    fn get_var_value(&self, state_hash: usize, var: usize) -> usize {
-        let num_props = self.domain_sizes.len();
-        debug_assert!(
-            var < self.hash_multipliers.len(),
-            "match tree var out of bounds for hash multipliers: {} >= {}",
-            var,
-            self.hash_multipliers.len()
-        );
-        let Some(mult) = self.hash_multipliers.get(var).copied() else {
-            return 0;
-        };
-        let state = state_hash;
-        let dom_size = if var < num_props {
-            debug_assert!(
-                var < self.domain_sizes.len(),
-                "match tree propositional var out of bounds: {} >= {}",
-                var,
-                self.domain_sizes.len()
-            );
-            self.domain_sizes.get(var).copied().unwrap_or(0)
-        } else {
-            let n = var - num_props;
-            debug_assert!(
-                n < self.numeric_domain_sizes.len(),
-                "match tree numeric var out of bounds: {} >= {}",
-                n,
-                self.numeric_domain_sizes.len()
-            );
-            self.numeric_domain_sizes.get(n).copied().unwrap_or(0)
-        };
-        debug_assert!(
-            dom_size > 0,
-            "match tree domain size must be positive for var {var}"
-        );
-        if dom_size == 0 {
-            return 0;
-        }
-
-        (state / mult) % dom_size
     }
 }
 
@@ -238,29 +127,43 @@ impl DomainAbstractionFactory {
         }
     }
 
-    pub(crate) fn cartesian_set_from_hash(
-        &self,
-        state_hash: usize,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-    ) -> Result<CartesianSet> {
+    /// The region of the concrete states in abstract state `state`.
+    pub(crate) fn state_region(&self, state: usize) -> CartesianSet {
+        let propositions = (0..self.layout.domain_sizes().len())
+            .map(|var_id| {
+                self.concrete_values_for_abstract_value(
+                    VariableIndex::from_usize(var_id),
+                    ExplicitValueIndex::from_usize(self.layout.value(state, var_id)),
+                )
+            })
+            .collect();
+        let numeric = (0..self.layout.numeric_domain_sizes().len())
+            .map(VariableIndex::from_usize)
+            .map(|numeric_var_id| {
+                self.partitions.partition_interval(
+                    numeric_var_id,
+                    self.layout.partition(state, numeric_var_id),
+                )
+            })
+            .collect();
         let region = CartesianSet::with_constrained_props(
-            self.propositional_region_from_hash(state_hash, hash_multipliers)?,
-            self.numeric_region_from_hash(state_hash, numeric_domain_sizes, hash_multipliers)?,
+            propositions,
+            numeric,
             Arc::clone(&self.state_constrained_props),
         );
         #[cfg(debug_assertions)]
         self.debug_assert_constrained_props_cover_narrowings(&region);
-        Ok(region)
+        region
     }
 
+    /// The region of the concrete states that satisfy the abstract `facts`.
     pub(super) fn cartesian_set_from_facts(
         &self,
         task: &dyn AbstractNumericTask,
         facts: &[ExplicitFact],
-    ) -> Result<CartesianSet> {
-        let num_props = self.domain_sizes.len();
-        let mut propositions = self.full_propositional_region()?;
+    ) -> CartesianSet {
+        let num_props = self.layout.domain_sizes().len();
+        let mut propositions = self.full_propositional_region();
         let mut numeric = vec![Interval::unbounded(); task.numeric_variables().len()];
         // Only the dimensions named by a fact are narrowed below; the rest keep
         // their whole domain. Recording them here is exact rather than
@@ -271,25 +174,14 @@ impl DomainAbstractionFactory {
         for fact in facts {
             if fact.var() < num_props {
                 propositions[fact.var()] =
-                    self.concrete_values_for_abstract_value(fact.var_index(), fact.value_index())?;
+                    self.concrete_values_for_abstract_value(fact.var_index(), fact.value_index());
                 constrained_props
                     .push(u32::try_from(fact.var()).expect("propositional var id exceeds u32"));
             } else {
-                let numeric_var_id = fact.var() - num_props;
-                ensure!(
-                    numeric_var_id < numeric.len(),
-                    "abstract-operator region fact references numeric var {numeric_var_id}, but task has {} numeric vars",
-                    numeric.len()
-                );
-                numeric[numeric_var_id] = self
+                let numeric_var_id = VariableIndex::from_usize(fact.var() - num_props);
+                numeric[numeric_var_id.index()] = self
                     .partitions
-                    .partition_interval(VariableIndex::from_usize(numeric_var_id), fact.value())
-                    .with_context(|| {
-                        format!(
-                            "missing interval for numeric var {numeric_var_id} partition {}",
-                            fact.value()
-                        )
-                    })?;
+                    .partition_interval(numeric_var_id, fact.value());
             }
         }
 
@@ -299,44 +191,34 @@ impl DomainAbstractionFactory {
             CartesianSet::with_constrained_props(propositions, numeric, constrained_props.into());
         #[cfg(debug_assertions)]
         self.debug_assert_constrained_props_cover_narrowings(&region);
-        Ok(region)
+        region
     }
 
-    pub(super) fn full_propositional_region(&self) -> Result<Vec<Vec<ExplicitValueIndex>>> {
-        let mut region = Vec::with_capacity(self.domain_sizes.len());
-        for var_id in 0..self.domain_sizes.len() {
-            let mapping = self
-                .domain_mapping
-                .get(var_id)
-                .with_context(|| format!("missing domain mapping for var {var_id}"))?;
-            ensure!(
-                !mapping.is_empty(),
-                "empty concrete value set for propositional var {var_id}"
-            );
-            region.push(
+    pub(super) fn full_propositional_region(&self) -> Vec<Vec<ExplicitValueIndex>> {
+        self.domain_mapping
+            .iter()
+            .map(|mapping| {
                 (0..mapping.len())
                     .map(ExplicitValueIndex::from_usize)
-                    .collect(),
-            );
-        }
-        Ok(region)
+                    .collect()
+            })
+            .collect()
     }
 
+    /// The concrete values `abstract_value` of `var_id` stands for; never
+    /// empty, since the domain mapping is onto its abstract values.
     pub(super) fn concrete_values_for_abstract_value(
         &self,
         var_id: VariableIndex,
         abstract_value: ExplicitValueIndex,
-    ) -> Result<Vec<ExplicitValueIndex>> {
+    ) -> Vec<ExplicitValueIndex> {
         // `filter_map().collect()` preallocates capacity matching the inner iterator's
         // upper-bound size_hint (here the full domain mapping length), so a var that
         // only has a handful of concrete values mapped to this abstract slot leaves
         // most of that capacity unused. Shrinking before returning saves typically
         // 50-90% of the per-inner-`Vec` heap allocation, which on SCP runs over many
         // state regions dominates the propositional representation.
-        let mut values = self
-            .domain_mapping
-            .get(var_id.index())
-            .with_context(|| format!("missing domain mapping for var {var_id}"))?
+        let mut values = self.domain_mapping[var_id.index()]
             .iter()
             .enumerate()
             .filter_map(|(concrete_value, &mapped_value)| {
@@ -344,64 +226,12 @@ impl DomainAbstractionFactory {
                     .then_some(ExplicitValueIndex::from_usize(concrete_value))
             })
             .collect::<Vec<ExplicitValueIndex>>();
-        ensure!(
+        debug_assert!(
             !values.is_empty(),
-            "empty concrete value set for var {var_id} abstract value {abstract_value}"
+            "abstract value {abstract_value} of variable {var_id} has no concrete value"
         );
         values.shrink_to_fit();
-        Ok(values)
-    }
-
-    pub(super) fn propositional_region_from_hash(
-        &self,
-        state_hash: usize,
-        hash_multipliers: &[usize],
-    ) -> Result<Vec<Vec<ExplicitValueIndex>>> {
-        let mut region = Vec::with_capacity(self.domain_sizes.len());
-        for (var_id, &domain_size) in self.domain_sizes.iter().enumerate() {
-            ensure!(domain_size > 0, "domain size must be > 0 for var {var_id}");
-            let multiplier = *hash_multipliers
-                .get(var_id)
-                .with_context(|| format!("missing hash multiplier for var {var_id}"))?;
-            let abstract_value = (state_hash / multiplier) % domain_size;
-            region.push(self.concrete_values_for_abstract_value(
-                VariableIndex::from_usize(var_id),
-                ExplicitValueIndex::from_usize(abstract_value),
-            )?);
-        }
-        Ok(region)
-    }
-
-    pub(super) fn numeric_region_from_hash(
-        &self,
-        state_hash: usize,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-    ) -> Result<Vec<Interval>> {
-        let num_props = self.domain_sizes.len();
-        let mut region = Vec::with_capacity(numeric_domain_sizes.len());
-        for (numeric_var_id, &domain_size) in numeric_domain_sizes.iter().enumerate() {
-            let numeric_var_id = VariableIndex::from_usize(numeric_var_id);
-            ensure!(
-                domain_size > 0,
-                "numeric domain size must be > 0 for var {numeric_var_id}"
-            );
-            let abs_var_id = abstraction_numeric_var(num_props, numeric_var_id);
-            let multiplier = *hash_multipliers.get(abs_var_id.index()).with_context(|| {
-                format!("missing hash multiplier for numeric var {numeric_var_id}")
-            })?;
-            let partition_id = (state_hash / multiplier) % domain_size;
-            let interval = self
-                .partitions
-                .partition_interval(numeric_var_id, partition_id)
-                .with_context(|| {
-                    format!(
-                        "missing interval for numeric var {numeric_var_id} partition {partition_id}"
-                    )
-                })?;
-            region.push(interval);
-        }
-        Ok(region)
+        values
     }
 
     /// The task's goals in abstract values. Goals on condition variables keep
@@ -418,14 +248,13 @@ impl DomainAbstractionFactory {
         task: &dyn AbstractNumericTask,
     ) -> Vec<ExplicitFact> {
         let mut out: Vec<ExplicitFact> = Vec::new();
-        for goal_index in 0..task.get_num_goals() {
-            let fact = task.get_goal_fact(goal_index);
+        for fact in task.goals() {
             let var = fact.var_index();
             if self.numeric_conditions.is_condition_var(var) {
                 out.push(*fact);
                 continue;
             }
-            if self.domain_sizes[var.index()] <= 1 {
+            if self.layout.domain_sizes()[var.index()] <= 1 {
                 continue;
             }
             let mapped = self.domain_mapping[var.index()][fact.value()];
@@ -435,85 +264,83 @@ impl DomainAbstractionFactory {
         out
     }
 
-    /// Whether abstract state `state_hash` satisfies the abstract `goals`:
-    /// its propositional values match, and its numeric partitions admit every
-    /// goal condition.
+    /// Whether abstract state `state` satisfies the abstract `goals`: its
+    /// propositional values match, and its numeric partitions admit every
+    /// goal condition. `intervals` is scratch space.
     pub fn is_goal_state(
         &self,
         task: &dyn AbstractNumericTask,
-        state_hash: usize,
+        state: usize,
         goals: &[ExplicitFact],
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
+        intervals: &mut Vec<Interval>,
     ) -> Result<bool> {
-        let num_props = self.domain_sizes.len();
-        let mut numeric_inputs: Option<Vec<Interval>> = None;
+        let mut intervals_filled = false;
         for goal in goals {
-            let var = goal.var();
             if let Some(condition) = self.numeric_conditions.for_var(goal.var_index()) {
-                let inputs = match &numeric_inputs {
-                    Some(inputs) => inputs,
-                    None => {
-                        numeric_inputs.insert(prepare_comparison_tree_inputs_from_abstract_state(
-                            task,
-                            self.numeric_conditions.all(),
-                            &self.partitions,
-                            AbstractStateHash {
-                                hash: state_hash,
-                                num_props,
-                                numeric_domain_sizes,
-                                hash_multipliers,
-                            },
-                        )?)
-                    }
-                };
+                if !intervals_filled {
+                    fill_state_intervals(
+                        task,
+                        self.numeric_conditions.all(),
+                        &self.partitions,
+                        &self.layout,
+                        state,
+                        intervals,
+                    )?;
+                    intervals_filled = true;
+                }
                 let contradicting = Some(goal.value() != ConditionValue::True.as_usize());
-                if condition.evaluate_interval(inputs) == contradicting {
+                if condition.evaluate_interval(intervals) == contradicting {
                     return Ok(false);
                 }
-                continue;
-            }
-            let dom_size = if var < num_props {
-                self.domain_sizes[var]
-            } else {
-                numeric_domain_sizes[var - num_props]
-            };
-            if (state_hash / hash_multipliers[var]) % dom_size != goal.value() {
+            } else if self.layout.value(state, goal.var()) != goal.value() {
                 return Ok(false);
             }
         }
         Ok(true)
     }
 
-    pub(super) fn compute_initial_state_hash_determined(
+    /// The abstract states that satisfy the abstract `goals`, ascending.
+    pub(super) fn goal_states(
         &self,
         task: &dyn AbstractNumericTask,
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
-    ) -> Result<usize> {
-        self.abstract_state_hash(
+        goals: &[ExplicitFact],
+        deadline: Option<Instant>,
+    ) -> Result<Vec<usize>> {
+        let mut intervals = Vec::new();
+        let mut goal_states = Vec::new();
+        for state in 0..self.layout.num_states() {
+            if state.is_multiple_of(1024) {
+                ensure_online_scp_deadline(deadline)?;
+            }
+            if self.is_goal_state(task, state, goals, &mut intervals)? {
+                goal_states.push(state);
+            }
+        }
+        Ok(goal_states)
+    }
+
+    /// The abstract state of the task's initial state.
+    pub(super) fn initial_state(&self, task: &dyn AbstractNumericTask) -> Result<usize> {
+        self.abstract_state(
             task.get_initial_propositional_state_values(),
             task.get_initial_numeric_state_values(),
-            numeric_domain_sizes,
-            hash_multipliers,
         )
     }
 
-    /// The hash of the abstract state containing the concrete state with
-    /// these values. Coordinates with an additive view are evaluated through
-    /// it.
-    pub(crate) fn abstract_state_hash(
+    /// The abstract state containing the concrete state with these values.
+    /// Coordinates with an additive view are evaluated through it.
+    pub(crate) fn abstract_state(
         &self,
         propositions: &[ExplicitValueIndex],
         numeric: &[NumericValue],
-        numeric_domain_sizes: &[usize],
-        hash_multipliers: &[usize],
     ) -> Result<usize> {
-        let num_props = self.domain_sizes.len();
+        let domain_sizes = self.layout.domain_sizes();
+        let numeric_domain_sizes = self.layout.numeric_domain_sizes();
         ensure!(
-            propositions.len() == num_props,
-            "concrete state has {} propositional values, the abstraction {num_props}",
-            propositions.len()
+            propositions.len() == domain_sizes.len(),
+            "concrete state has {} propositional values, the abstraction {}",
+            propositions.len(),
+            domain_sizes.len()
         );
         ensure!(
             numeric.len() == numeric_domain_sizes.len(),
@@ -521,48 +348,43 @@ impl DomainAbstractionFactory {
             numeric.len(),
             numeric_domain_sizes.len()
         );
+        let multipliers = self.layout.multipliers();
 
         // A variable with one abstract value contributes nothing.
-        let mut index: usize = 0;
+        let mut state: usize = 0;
         for (var, &concrete_value) in propositions.iter().enumerate() {
-            if self.domain_sizes[var] == 1 {
+            if domain_sizes[var] == 1 {
                 continue;
             }
             let abstract_value = *self.domain_mapping[var]
                 .get(concrete_value.index())
                 .with_context(|| {
-                    format!(
-                        "missing mapping for propositional var {var} value index {concrete_value}"
-                    )
+                    format!("propositional var {var} has no value {concrete_value}")
                 })?;
-            index += hash_multipliers[var] * abstract_value.index();
+            state += multipliers[var] * abstract_value.index();
         }
 
         for num_var_id in (0..numeric_domain_sizes.len()).map(VariableIndex::from_usize) {
             if numeric_domain_sizes[num_var_id.index()] == 1 {
                 continue;
             }
-            let abs_var = abstraction_numeric_var(num_props, num_var_id);
-            let concrete_value = self
-                .additive_numeric_views
-                .get(num_var_id.index())
-                .map(|view| view.evaluate(numeric))
-                .unwrap_or(numeric[num_var_id.index()]);
+            let abs_var = abstraction_numeric_var(domain_sizes.len(), num_var_id);
+            let concrete_value = match self.additive_numeric_views.get(num_var_id.index()) {
+                Some(view) => view.evaluate(numeric),
+                None => numeric[num_var_id.index()],
+            };
             let val = float_tolerance::canonicalize(concrete_value);
             ensure!(
                 val.is_finite(),
                 "numeric value for var {num_var_id} must be finite, got {val}"
             );
-            let parts = self
-                .partitions
-                .partitions(num_var_id)
-                .with_context(|| format!("missing partitions for numeric var {num_var_id}"))?;
-            let part = partition_for_value(parts, val).with_context(|| {
-                format!("numeric value {val} is in no partition of numeric var {num_var_id}")
-            })?;
-            index += hash_multipliers[abs_var.index()] * part;
+            let part = partition_for_value(self.partitions.partitions(num_var_id), val)
+                .with_context(|| {
+                    format!("numeric value {val} is in no partition of numeric var {num_var_id}")
+                })?;
+            state += multipliers[abs_var.index()] * part;
         }
 
-        Ok(index)
+        Ok(state)
     }
 }

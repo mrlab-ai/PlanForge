@@ -76,18 +76,12 @@ impl DomainAbstractionFactory {
     ) -> Result<(AbstractDistanceTable, Vec<f64>)> {
         let deadline = options.deadline;
         ensure_online_scp_deadline(deadline)?;
-        let mut generator = self.make_operator_generator(task, combine_labels)?;
-        let mut operators = generator.build_abstract_operators(task)?;
+        let mut operators = self.abstract_operators(task, combine_labels, deadline)?;
         ensure_online_scp_deadline(deadline)?;
         apply_operator_costs(&mut operators, operator_costs)?;
-        let match_tree = MatchTree::new(&generator, &operators);
-        let table = self.build_distance_table_with_match_tree(
-            task,
-            &generator,
-            &operators,
-            &match_tree,
-            options,
-        )?;
+        let match_tree = MatchTree::new(&self.layout, &operators);
+        let table =
+            self.build_distance_table_with_match_tree(task, &operators, &match_tree, options)?;
         ensure_online_scp_deadline(deadline)?;
         let saturated_costs = saturated_operator_costs(task, &operators, &match_tree, &table)?;
         Ok((table, saturated_costs))
@@ -99,12 +93,10 @@ impl DomainAbstractionFactory {
     pub fn saturated_costs_for_table(
         &self,
         task: &dyn AbstractNumericTask,
-        combine_labels: bool,
         operators: &[AbstractOperator],
         table: &AbstractDistanceTable,
     ) -> Result<Vec<f64>> {
-        let generator = self.make_operator_generator(task, combine_labels)?;
-        let match_tree = MatchTree::new(&generator, operators);
+        let match_tree = MatchTree::new(&self.layout, operators);
         saturated_operator_costs(task, operators, &match_tree, table)
     }
 
@@ -113,19 +105,8 @@ impl DomainAbstractionFactory {
         &self,
         cache: &'cache mut [Option<CartesianSet>],
         state_hash: usize,
-        transition_system: &AbstractTransitionSystem,
-    ) -> Result<&'cache CartesianSet> {
-        let slot = cache
-            .get_mut(state_hash)
-            .with_context(|| format!("state hash {state_hash} out of range for region cache"))?;
-        if slot.is_none() {
-            *slot = Some(self.cartesian_set_from_hash(
-                state_hash,
-                &transition_system.numeric_domain_sizes,
-                &transition_system.hash_multipliers,
-            )?);
-        }
-        Ok(slot.as_ref().expect("region was just materialized"))
+    ) -> &'cache CartesianSet {
+        cache[state_hash].get_or_insert_with(|| self.state_region(state_hash))
     }
 
     pub fn build_interval_cost_partitioned_distance_table(
@@ -153,24 +134,16 @@ impl DomainAbstractionFactory {
         // one value set per propositional variable many times over for the same
         // answer. Keep the regions for the duration of the build; a region is four
         // `Arc`s, so reuse is a clone.
-        let num_states = transition_system
-            .transitions
-            .iter()
-            .map(|transition| transition.source_hash)
-            .max()
-            .map_or(0, |max_hash| max_hash + 1);
-        let mut source_regions: Vec<Option<CartesianSet>> = vec![None; num_states];
+        let mut source_regions: Vec<Option<CartesianSet>> =
+            vec![None; transition_system.backward.len()];
 
         let mut transition_costs = Vec::with_capacity(transition_system.transitions.len());
         for (transition_id, transition) in transition_system.transitions.iter().enumerate() {
             if transition_id.is_multiple_of(1024) {
                 ensure_online_scp_deadline(deadline)?;
             }
-            let source_region = self.cached_cartesian_set(
-                &mut source_regions,
-                transition.source_hash,
-                transition_system,
-            )?;
+            let source_region =
+                self.cached_cartesian_set(&mut source_regions, transition.source_hash);
             operator_pairs += transition.concrete_op_ids.len();
             let mut cost = f64::INFINITY;
             for &concrete_op_id in &transition.concrete_op_ids {
@@ -191,12 +164,8 @@ impl DomainAbstractionFactory {
         timings.transition_costs = phase_start.elapsed();
 
         let phase_start = std::time::Instant::now();
-        let table = self.build_distance_table_with_transition_costs(
-            transition_system,
-            &transition_costs,
-            &transition_system.hash_multipliers,
-            &transition_system.numeric_domain_sizes,
-        )?;
+        let table =
+            self.build_distance_table_with_transition_costs(transition_system, &transition_costs)?;
         timings.distance_table = phase_start.elapsed();
 
         let capped_table = if let Some(state_id) = cap_state_id {
@@ -232,8 +201,6 @@ impl DomainAbstractionFactory {
             self.build_distance_table_with_transition_costs(
                 transition_system,
                 &tcf.transition_costs,
-                &transition_system.hash_multipliers,
-                &transition_system.numeric_domain_sizes,
             )?
         } else {
             table
@@ -250,11 +217,8 @@ impl DomainAbstractionFactory {
             if !saturated.is_finite() || saturated <= 1e-9 {
                 continue;
             }
-            let source_region = self.cached_cartesian_set(
-                &mut source_regions,
-                transition.source_hash,
-                transition_system,
-            )?;
+            let source_region =
+                self.cached_cartesian_set(&mut source_regions, transition.source_hash);
             for &concrete_op_id in &transition.concrete_op_ids {
                 let source_set = precise_source_set_for_transition(
                     transition,
