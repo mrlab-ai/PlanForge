@@ -17,7 +17,9 @@ use std::collections::HashSet;
 pub use parser::{parse_call, parse_heuristic_spec};
 pub use planforge_config_derive::{ApplyOptions, FromOptionValue};
 
+mod error;
 mod parser;
+pub use error::ConfigError;
 mod search;
 pub(crate) mod time_limit;
 pub use search::{SearchConfig, parse_search_spec};
@@ -75,14 +77,14 @@ macro_rules! option_enum {
         impl $crate::config::FromOptionValue for $type {
             fn from_option_value(
                 value: &$crate::config::ConfigValue,
-            ) -> ::std::result::Result<Self, String> {
+            ) -> ::std::result::Result<Self, crate::config::ConfigError> {
                 match value.as_atom()? {
                     $($name $(| $alias)* => Ok(Self::$variant),)+
                     other => Err(format!(
                         "invalid {} `{other}`; expected one of {}",
                         $option,
                         [$($name),+].join(", ")
-                    )),
+                    ).into()),
                 }
             }
         }
@@ -145,19 +147,21 @@ pub enum ConfigValue {
 }
 
 impl ConfigValue {
-    pub fn as_atom(&self) -> Result<&str, String> {
+    pub fn as_atom(&self) -> Result<&str, ConfigError> {
         match self {
             ConfigValue::Atom(value) => Ok(value),
-            ConfigValue::Call(call) => Err(format!("expected scalar value, got `{}`", call.name)),
-            ConfigValue::List(_) => Err("expected scalar value, got a list".to_string()),
+            ConfigValue::Call(call) => {
+                Err(format!("expected scalar value, got `{}`", call.name).into())
+            }
+            ConfigValue::List(_) => Err("expected scalar value, got a list".to_string().into()),
         }
     }
 
-    pub fn as_call(&self) -> Result<&ConfigCall, String> {
+    pub fn as_call(&self) -> Result<&ConfigCall, ConfigError> {
         match self {
             ConfigValue::Call(call) => Ok(call),
-            ConfigValue::Atom(name) => Err(format!("expected call, got atom `{name}`")),
-            ConfigValue::List(_) => Err("expected call, got a list".to_string()),
+            ConfigValue::Atom(name) => Err(format!("expected call, got atom `{name}`").into()),
+            ConfigValue::List(_) => Err("expected call, got a list".to_string().into()),
         }
     }
 
@@ -280,7 +284,7 @@ impl std::fmt::Display for ConfigCall {
     }
 }
 
-pub fn atom(value: &ConfigValue) -> Result<&str, String> {
+pub fn atom(value: &ConfigValue) -> Result<&str, ConfigError> {
     value.as_atom()
 }
 
@@ -291,9 +295,9 @@ pub fn atom(value: &ConfigValue) -> Result<&str, String> {
 pub fn for_each_option(
     args: &[ConfigArg],
     positional_order: &[&str],
-    mut apply: impl FnMut(&str, &ConfigValue) -> Result<(), String>,
-) -> Result<(), String> {
-    let mut seen: HashSet<String> = HashSet::new();
+    mut apply: impl FnMut(&str, &ConfigValue) -> Result<(), ConfigError>,
+) -> Result<(), ConfigError> {
+    let mut seen: HashSet<&str> = HashSet::new();
     let mut next_positional = 0usize;
     for arg in args {
         let key: &str = match arg.key() {
@@ -316,10 +320,10 @@ pub fn for_each_option(
                 k
             }
         };
-        if !seen.insert(key.to_string()) {
-            return Err(format!("duplicate option `{key}`"));
+        if !seen.insert(key) {
+            return Err(format!("duplicate option `{key}`").into());
         }
-        apply(key, arg.value())?;
+        apply(key, arg.value()).map_err(|error| error.at_option(key))?;
     }
     Ok(())
 }
@@ -338,7 +342,7 @@ pub fn for_each_option(
 /// configs whose CLI surface differs structurally from the struct layout
 /// (e.g. coupled writes, curated subsets).
 pub trait ApplyOptions {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>;
+    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), ConfigError>;
 }
 
 /// `config` with the options `args` of `name(...)` applied; errors name it.
@@ -346,17 +350,15 @@ pub fn configure<C: ApplyOptions>(
     name: &str,
     mut config: C,
     args: &[ConfigArg],
-) -> Result<C, String> {
-    config
-        .apply_options(args)
-        .map_err(|error| format!("{name}(...): {error}"))?;
+) -> Result<C, ConfigError> {
+    config.apply_options(args).map_err(|error| error.at(name))?;
     Ok(config)
 }
 
 /// Implemented by every type that can appear as the value of an option.
 /// The derive picks `from_option_value` for each field automatically.
 pub trait FromOptionValue: Sized {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String>;
+    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError>;
 }
 
 // =============================================================================
@@ -364,51 +366,51 @@ pub trait FromOptionValue: Sized {
 // =============================================================================
 
 impl FromOptionValue for bool {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         match atom(value)? {
             "true" => Ok(true),
             "false" => Ok(false),
-            other => Err(format!("expected boolean, got `{other}`")),
+            other => Err(format!("expected boolean, got `{other}`").into()),
         }
     }
 }
 
 impl FromOptionValue for usize {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        atom(value)?.parse::<usize>().map_err(|_| {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+        Ok(atom(value)?.parse::<usize>().map_err(|_| {
             format!(
                 "expected non-negative integer, got `{}`",
                 atom(value).unwrap()
             )
-        })
+        })?)
     }
 }
 
 impl FromOptionValue for u64 {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        atom(value)?.parse::<u64>().map_err(|_| {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+        Ok(atom(value)?.parse::<u64>().map_err(|_| {
             format!(
                 "expected non-negative integer, got `{}`",
                 atom(value).unwrap()
             )
-        })
+        })?)
     }
 }
 
 impl FromOptionValue for f64 {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         let s = atom(value)?;
         if s.eq_ignore_ascii_case("infinity") {
             Ok(f64::INFINITY)
         } else {
-            s.parse::<f64>()
-                .map_err(|_| format!("expected float or infinity, got `{s}`"))
+            Ok(s.parse::<f64>()
+                .map_err(|_| format!("expected float or infinity, got `{s}`"))?)
         }
     }
 }
 
 impl<T: FromOptionValue> FromOptionValue for Option<T> {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         if matches!(value, ConfigValue::Atom(atom) if atom.eq_ignore_ascii_case("none")) {
             Ok(None)
         } else {
@@ -418,16 +420,22 @@ impl<T: FromOptionValue> FromOptionValue for Option<T> {
 }
 
 impl<T: FromOptionValue> FromOptionValue for Vec<T> {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         match value {
-            ConfigValue::List(values) => values.iter().map(T::from_option_value).collect(),
+            ConfigValue::List(values) => values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    T::from_option_value(value).map_err(|error| error.at(format!("[{index}]")))
+                })
+                .collect(),
             value => T::from_option_value(value).map(|value| vec![value]),
         }
     }
 }
 
 impl FromOptionValue for String {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         Ok(atom(value)?.to_string())
     }
 }
@@ -455,7 +463,9 @@ mod tests {
     }
 
     fn decode(raw: &str) -> Result<Example, String> {
-        Example::from_option_value(&ConfigValue::Call(parse_call(raw)?))
+        Ok(Example::from_option_value(&ConfigValue::Call(parse_call(
+            raw,
+        )?))?)
     }
 
     #[test]

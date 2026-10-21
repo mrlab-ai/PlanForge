@@ -341,6 +341,7 @@ use abstraction_config::{ScpHeuristicConfig, build_components, remaining_constru
 
 #[derive(Debug)]
 pub enum HeuristicBuildError {
+    Config(crate::config::ConfigError),
     ConstructionTimeout,
     /// The task uses a feature the heuristic does not support.
     Unsupported(String),
@@ -371,6 +372,7 @@ impl HeuristicBuildError {
                 std::io::Error::new(std::io::ErrorKind::Unsupported, message)
             }
             Self::Failure(message) => std::io::Error::other(message),
+            Self::Config(error) => std::io::Error::new(std::io::ErrorKind::InvalidInput, error),
         }
     }
 }
@@ -382,6 +384,7 @@ impl std::fmt::Display for HeuristicBuildError {
                 formatter.write_str("shared abstraction construction deadline exceeded")
             }
             Self::Unsupported(message) | Self::Failure(message) => formatter.write_str(message),
+            Self::Config(error) => std::fmt::Display::fmt(error, formatter),
         }
     }
 }
@@ -716,4 +719,10 @@ fn single_wrapped_heuristic_spec(
         ));
     }
     HeuristicSpec::from_value(arg.value())
+}
+
+impl From<crate::config::ConfigError> for HeuristicBuildError {
+    fn from(error: crate::config::ConfigError) -> Self {
+        Self::Config(error)
+    }
 }

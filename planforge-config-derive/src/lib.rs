@@ -121,7 +121,7 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         }
     } else {
         quote! {
-            other => return Err(format!("unknown option `{other}`")),
+            other => return Err(format!("unknown option `{other}`").into()),
         }
     };
 
@@ -137,7 +137,7 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
             fn apply_options(
                 &mut self,
                 args: &[::planforge_search::config::ConfigArg],
-            ) -> ::std::result::Result<(), ::std::string::String> {
+            ) -> ::std::result::Result<(), ::planforge_search::config::ConfigError> {
                 const ORDER: &[&str] = &[ #(#order_lits),* ];
                 ::planforge_search::config::for_each_option(args, ORDER, |key, value| {
                     match key {
@@ -271,7 +271,7 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
             }
             Fields::Unit => quote! {
                 if args.is_empty() { Ok(Self::#ident) }
-                else { Err(format!("`{name}` does not accept arguments")) }
+                else { Err(format!("`{name}` does not accept arguments").into()) }
             },
             _ => {
                 return Err(Error::new_spanned(
@@ -285,15 +285,15 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         impl #impl_generics ::planforge_search::config::FromOptionValue for #ty #type_generics #where_clause {
-            fn from_option_value(value: &::planforge_search::config::ConfigValue) -> Result<Self, String> {
+            fn from_option_value(value: &::planforge_search::config::ConfigValue) -> Result<Self, ::planforge_search::config::ConfigError> {
                 let (name, args) = match value {
                     ::planforge_search::config::ConfigValue::Atom(name) => (name.as_str(), &[][..]),
                     ::planforge_search::config::ConfigValue::Call(call) => (call.name(), call.args()),
-                    ::planforge_search::config::ConfigValue::List(_) => return Err(format!("expected {}, got a list", stringify!(#ty))),
+                    ::planforge_search::config::ConfigValue::List(_) => return Err(format!("expected {}, got a list", stringify!(#ty)).into()),
                 };
                 match name.to_ascii_lowercase().as_str() {
                     #(#arms,)*
-                    _ => Err(format!("unknown {} `{name}`; expected one of {}", stringify!(#ty), [#(#names),*].join(", "))),
+                    _ => Err(format!("unknown {} `{name}`; expected one of {}", stringify!(#ty), [#(#names),*].join(", ")).into()),
                 }
             }
         }

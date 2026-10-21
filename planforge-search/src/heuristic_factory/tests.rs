@@ -35,7 +35,7 @@ fn astar_heuristic(input: &str) -> HeuristicSpec {
 
 fn source_config(input: &str) -> Result<SourcesConfig, String> {
     let spec = astar_heuristic(input);
-    configure(&spec.name, SourcesConfig::default(), &spec.args)
+    Ok(configure(&spec.name, SourcesConfig::default(), &spec.args)?)
 }
 
 fn domain_collection_source(input: &str) -> DomainAbstractionCollectionConfig {
@@ -57,7 +57,7 @@ fn cartesian_source_config(
 ) -> Result<CartesianAbstractionConfig, String> {
     let mut config = CartesianAbstractionConfig::default();
     config.cegar.keep_transitions = purpose.needs_transition_system();
-    configure("cartesian", config, args)
+    Ok(configure("cartesian", config, args)?)
 }
 
 #[test]
@@ -101,7 +101,10 @@ fn hierarchical_scp_rejects_legacy_pdb_switches() {
         &h.args,
     )
     .unwrap_err();
-    assert_eq!(error, "scp(...): unknown option `use_numeric_pdbs`");
+    assert_eq!(
+        error,
+        "scp.use_numeric_pdbs: unknown option `use_numeric_pdbs`"
+    );
 }
 
 #[test]
@@ -141,7 +144,7 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
         &h.args,
     )
     .unwrap_err();
-    assert_eq!(error, "scp(...): expected scalar value, got a list");
+    assert_eq!(error, "scp.max_time: expected scalar value, got a list");
 
     let wrapper = astar_heuristic("astar(check_admissible([domain_collection()]))");
     let error =
@@ -154,7 +157,10 @@ fn cartesian_abstraction_rejects_domain_abstraction_options() {
     let h = astar_heuristic("astar(cartesian_abstraction(use_wildcard_plans=true))");
     let error =
         cartesian_source_config(&h.args, super::AbstractionPurpose::Standalone).unwrap_err();
-    assert_eq!(error, "cartesian(...): unknown option `use_wildcard_plans`");
+    assert_eq!(
+        error,
+        "cartesian.use_wildcard_plans: unknown option `use_wildcard_plans`"
+    );
 }
 
 #[test]
@@ -183,10 +189,7 @@ fn configs_with_shared_options_take_named_options_only() {
     let h = astar_heuristic("astar(cartesian_abstraction(10))");
     let error =
         cartesian_source_config(&h.args, super::AbstractionPurpose::Standalone).unwrap_err();
-    assert_eq!(
-        error,
-        "cartesian(...): options must be named, as in `key=value`"
-    );
+    assert_eq!(error, "cartesian: options must be named, as in `key=value`");
 }
 
 #[test]
@@ -549,4 +552,24 @@ fn numeric_pdb_sugars_preserve_explicit_pattern_strategies() {
     }
     // Positive values below Duration precision were already accepted.
     source_config("astar(canonical(domain(),construction_max_time=1e-100))").unwrap();
+}
+
+#[test]
+fn config_errors_keep_the_nested_option_path() {
+    let spec = parse_heuristic_spec("scp([domain(max_states=bogus)])").unwrap();
+    let error = configure(
+        "scp",
+        abstraction_config::ScpHeuristicConfig::default(),
+        &spec.args,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.path(),
+        ["scp", "sources", "[0]", "domain", "max_states"]
+    );
+    assert!(error.message().contains("non-negative integer"));
+    assert!(matches!(
+        super::HeuristicBuildError::from(error),
+        super::HeuristicBuildError::Config(_)
+    ));
 }

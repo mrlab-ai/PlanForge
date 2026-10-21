@@ -35,7 +35,10 @@ impl Default for Icaps26CartesianConfig {
 }
 
 impl crate::config::ApplyOptions for Icaps26CartesianConfig {
-    fn apply_options(&mut self, args: &[crate::config::ConfigArg]) -> Result<(), String> {
+    fn apply_options(
+        &mut self,
+        args: &[crate::config::ConfigArg],
+    ) -> Result<(), crate::config::ConfigError> {
         use crate::config::FromOptionValue;
 
         let mut seen = HashSet::new();
@@ -44,7 +47,7 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                 .key()
                 .ok_or_else(|| "all options for `icaps26_cartesian` must be named".to_string())?;
             if !seen.insert(key) {
-                return Err(format!("duplicate option `{key}` for `icaps26_cartesian`"));
+                return Err(format!("duplicate option `{key}` for `icaps26_cartesian`").into());
             }
             match key {
                 "pick" => {
@@ -56,7 +59,7 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                         _ => {
                             return Err(format!(
                                 "invalid ICAPS 2026 split selector `{value}`; expected random, min_unwanted, or max_unwanted"
-                            ));
+                            ).into());
                         }
                     };
                 }
@@ -80,7 +83,7 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                 "combine_labels" => self.combine_labels = bool::from_option_value(arg.value())?,
                 "debug" => self.debug = bool::from_option_value(arg.value())?,
                 other => {
-                    return Err(format!("unknown option `{other}`"));
+                    return Err(format!("unknown option `{other}`").into());
                 }
             }
         }

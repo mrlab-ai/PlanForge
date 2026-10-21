@@ -51,8 +51,8 @@ impl From<Duration> for TimeLimit {
     }
 }
 impl FromOptionValue for TimeLimit {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, String> {
-        Self::from_seconds(f64::from_option_value(value)?)
+    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
+        Ok(Self::from_seconds(f64::from_option_value(value)?)?)
     }
 }
 

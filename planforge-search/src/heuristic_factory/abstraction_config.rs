@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::resource_limits::{Deadline, min_time_limit};
 
 use crate::config::{
-    ApplyOptions, ConfigArg, ConfigValue, FromOptionValue, TimeLimit, configure, for_each_option,
+    ApplyOptions, ConfigArg, ConfigError, ConfigValue, FromOptionValue, TimeLimit, for_each_option,
 };
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
 use crate::evaluation::abstractions::collections::config::{CollectionConfig, MemberConfig};
@@ -178,13 +178,15 @@ struct ExplicitPdbSourceConfig {
 }
 
 impl ApplyOptions for PdbSourceConfig {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String> {
+    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
         // The old flat PDB form is a typed alias for systematic patterns.
         if !args.iter().any(|arg| arg.key() == Some("patterns")) {
-            let config = configure("pdb", CanonicalNumericPdbConfig::default(), args)?;
+            let mut config = CanonicalNumericPdbConfig::default();
+            config.apply_options(args)?;
             *self = Self::systematic(config);
         } else {
-            let config = configure("pdb", ExplicitPdbSourceConfig::default(), args)?;
+            let mut config = ExplicitPdbSourceConfig::default();
+            config.apply_options(args)?;
             self.patterns = config.patterns;
             self.systematic_heuristic = PdbHeuristicConfig {
                 exploration_heuristic: config.exploration_heuristic,
@@ -246,8 +248,10 @@ pub struct SourcesConfig {
 
 struct NoOptions {}
 impl ApplyOptions for NoOptions {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String> {
-        for_each_option(args, &[], |key, _| Err(format!("unknown option `{key}`")))
+    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
+        for_each_option(args, &[], |key, _| {
+            Err(format!("unknown option `{key}`").into())
+        })
     }
 }
 
@@ -256,7 +260,7 @@ impl SourcesConfig {
         &mut self,
         args: &[ConfigArg],
         options: &mut impl ApplyOptions,
-    ) -> Result<(), String> {
+    ) -> Result<(), ConfigError> {
         let mut named = Vec::new();
         let mut listed = false;
         for (index, arg) in args.iter().enumerate() {
@@ -273,7 +277,8 @@ impl SourcesConfig {
                         return Err("the abstraction source list must be the first argument".into());
                     }
                     listed = true;
-                    self.sources = Vec::from_option_value(arg.value())?;
+                    self.sources = Vec::from_option_value(arg.value())
+                        .map_err(|error| error.at_option("sources"))?;
                 }
                 value => {
                     if listed {
@@ -308,7 +313,7 @@ impl SourcesConfig {
 }
 
 impl ApplyOptions for SourcesConfig {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String> {
+    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
         self.apply_with(args, &mut NoOptions {})
     }
 }
@@ -319,7 +324,7 @@ pub(crate) struct ScpHeuristicConfig {
     pub scp: ScpConfig,
 }
 impl ApplyOptions for ScpHeuristicConfig {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String> {
+    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
         self.sources.apply_with(args, &mut self.scp)
     }
 }
