@@ -11,11 +11,17 @@ use planforge_sas::numeric_task::{
 };
 
 use super::abstract_operators::AbstractOperator;
-use super::factory::{DistanceTableOptions, DomainAbstractionFactory};
+use super::factory::{
+    DistanceTableOptions, DomainAbstractionFactory, MatchTree, MatchTreeGraph, source_set_within,
+};
 use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransitionSystem,
+};
+use crate::evaluation::abstractions::cost_partitioning::costs::{
+    RemainingCosts, SourceSetCostAllocation, saturate_labels, saturate_regions,
 };
 use crate::resource_limits::Deadline;
 
@@ -118,5 +124,59 @@ impl DomainAbstraction {
                     .expect("regional transition system was initialized")
             },
         ))
+    }
+
+    /// Label saturation of the abstraction under `operator_costs`; see
+    /// [`saturate_labels`].
+    pub(crate) fn saturate_labels(
+        &self,
+        task: &dyn AbstractNumericTask,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>)> {
+        ensure!(
+            self.transition_data_retained,
+            "cannot saturate a domain abstraction whose abstract operators were discarded"
+        );
+        let goal_states =
+            self.factory
+                .goal_states(task, &self.distance_table.goal_facts, deadline)?;
+        let match_tree = MatchTree::new(self.factory.shared_layout(), &self.abstract_operators);
+        let mut graph = MatchTreeGraph::new(
+            &self.abstract_operators,
+            &match_tree,
+            self.factory.layout().num_states(),
+            &goal_states,
+        );
+        saturate_labels(&mut graph, operator_costs, perimeter_state, deadline)
+    }
+
+    /// Regional saturation of the abstraction under `remaining`; see
+    /// [`saturate_regions`]. A transition's labels cost what remains on the
+    /// part of their source sets inside its source state.
+    pub(crate) fn saturate_regions(
+        &self,
+        task: &dyn AbstractNumericTask,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
+        let system = self.interval_transition_system(task, deadline)?;
+        // Several transitions leave the same state, and both passes of the
+        // saturation ask for its region, so each is materialized once.
+        let mut regions: Vec<Option<CartesianSet>> = vec![None; system.backward.len()];
+        saturate_regions(
+            &system,
+            &self.abstract_source_sets,
+            |transition, source_set| {
+                let region = regions[transition.source_hash]
+                    .get_or_insert_with(|| self.factory.state_region(transition.source_hash));
+                source_set_within(region, source_set)
+            },
+            remaining,
+            perimeter_state,
+            deadline,
+        )
     }
 }

@@ -13,7 +13,7 @@ struct MatchTreeNode {
 /// they regress from: a decision tree over the variables their regression
 /// preconditions mention, most frequent first.
 #[derive(Debug, Clone)]
-pub(super) struct MatchTree {
+pub(crate) struct MatchTree {
     layout: Arc<StateLayout>,
     var_order: Vec<usize>,
     root: MatchTreeNode,
@@ -29,7 +29,7 @@ fn fact_value_for_var(facts: &[ExplicitFact], var: usize) -> Option<usize> {
 impl MatchTree {
     /// Indexes `operators` of the abstraction with `layout` by the abstract
     /// states they regress from.
-    pub(super) fn new(layout: &Arc<StateLayout>, operators: &[AbstractOperator]) -> Self {
+    pub(crate) fn new(layout: &Arc<StateLayout>, operators: &[AbstractOperator]) -> Self {
         let mut var_counts = vec![0usize; layout.multipliers().len()];
         for op in operators {
             for fact in &op.regression_preconditions {
@@ -300,7 +300,7 @@ impl DomainAbstractionFactory {
     }
 
     /// The abstract states that satisfy the abstract `goals`, ascending.
-    pub(super) fn goal_states(
+    pub(crate) fn goal_states(
         &self,
         task: &dyn AbstractNumericTask,
         goals: &[ExplicitFact],

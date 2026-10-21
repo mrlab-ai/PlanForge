@@ -48,7 +48,6 @@ const SCP_COMBINATOR_OPTIONS: &[&str] = &[
     "diversify",
     "samples",
     "max_orders",
-    "combine_labels",
     "orders",
     "initial_order_generation_max_time",
     "saturator",

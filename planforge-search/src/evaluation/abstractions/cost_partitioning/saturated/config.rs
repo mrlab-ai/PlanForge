@@ -81,7 +81,6 @@ pub struct ScpConfig {
     pub samples: usize,
     /// Maximum number of diverse orders retained.
     pub max_orders: usize,
-    pub combine_labels: bool,
     #[option(rename = "orders")]
     pub order_generator: OrderGenerator,
     /// Time for the candidate orders built for every sample.
@@ -106,7 +105,6 @@ impl Default for ScpConfig {
             diversify: false,
             samples: 1_000,
             max_orders: usize::MAX,
-            combine_labels: false,
             order_generator: OrderGenerator::Greedy,
             initial_order_generation_max_time: 10.0,
             goal_cover_orders_per_goal: 4,

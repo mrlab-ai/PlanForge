@@ -1,40 +1,6 @@
 use super::*;
 use tracing::{Level, enabled};
 
-pub(super) fn log_label_table_summary(
-    step: &str,
-    abstraction_id: usize,
-    distances: &[f64],
-    saturated_costs: &[f64],
-    abstract_state_ids: &[Option<usize>],
-) {
-    if !enabled!(Level::DEBUG) {
-        return;
-    }
-    let (positive_count, total_positive) = positive_cost_stats(saturated_costs);
-    let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    debug!(
-        "scp: label {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_labels={positive_count}, total_positive_saturated={total_positive:.6}"
-    );
-}
-
-pub(super) fn log_transition_table_summary(
-    step: &str,
-    abstraction_id: usize,
-    distances: &[f64],
-    operator_costs: &[f64],
-    abstract_state_ids: &[Option<usize>],
-) {
-    if !enabled!(Level::DEBUG) {
-        return;
-    }
-    let (positive_count, total_positive) = positive_cost_stats(operator_costs);
-    let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    debug!(
-        "scp: interval {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_abstract_ops={positive_count}, total_positive_saturated={total_positive:.6}"
-    );
-}
-
 pub(super) fn log_abstract_source_set_summary(
     abstraction_id: usize,
     source_sets: &[AbstractOperatorSourceSets],

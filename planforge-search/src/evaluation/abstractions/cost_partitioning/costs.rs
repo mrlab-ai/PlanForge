@@ -32,16 +32,14 @@ use planforge_sas::utils::float_tolerance;
 #[cfg(test)]
 use planforge_sas::utils::interval::Interval;
 
-mod explicit;
+mod saturation;
 
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, cartesian_set_intersection, cartesian_set_is_nonempty, subtract_cartesian_set,
 };
-use crate::evaluation::abstractions::common::transition_system::{
-    AbstractOperatorSourceSets, LabelSourceSet,
-};
+use crate::evaluation::abstractions::common::transition_system::LabelSourceSet;
 
-pub use explicit::*;
+pub use saturation::*;
 
 /// The operation an expired SCP table deadline names.
 const SCP_TABLE_CONSTRUCTION: &str = "SCP table construction";
@@ -510,12 +508,9 @@ impl RemainingCosts {
             .collect()
     }
 
-    pub fn cost_for_source_set(
-        &self,
-        _current_abstraction_id: usize,
-        _abstract_op_id: usize,
-        source_set: &LabelSourceSet,
-    ) -> f64 {
+    /// What remains of the cost of `source_set`'s operator everywhere on
+    /// its source set.
+    pub fn cost_for_source_set(&self, source_set: &LabelSourceSet) -> f64 {
         let residual = self.residual(source_set.concrete_op_id);
         if !residual.base_cost.is_finite() {
             return f64::INFINITY;
@@ -526,98 +521,6 @@ impl RemainingCosts {
             residual.source_set_usage.max_over(&source_set.source)
         };
         (residual.base_cost - regional).max(0.0)
-    }
-
-    /// The allocation that subtracts `operator_costs[o]` on every source set
-    /// of abstract operator `o`, skipping concrete operators without cost.
-    pub fn source_set_allocation(
-        &self,
-        producing_abstraction_id: usize,
-        source_sets: &[AbstractOperatorSourceSets],
-        operator_costs: &[f64],
-        deadline: Deadline,
-    ) -> Result<SourceSetCostAllocation> {
-        ensure!(
-            source_sets.len() >= operator_costs.len(),
-            "abstract-operator region/cost function size mismatch: source_sets={} costs={}",
-            source_sets.len(),
-            operator_costs.len()
-        );
-
-        let mut entries = Vec::new();
-        for (abstract_op_id, &saturated) in operator_costs.iter().enumerate() {
-            if abstract_op_id.is_multiple_of(64) {
-                deadline.ensure(SCP_TABLE_CONSTRUCTION)?;
-            }
-            ensure!(
-                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
-                "negative abstract-operator saturated costs are not supported: abstract op {} has {}",
-                abstract_op_id,
-                saturated
-            );
-            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
-                continue;
-            }
-
-            for source_set in &source_sets[abstract_op_id].labels {
-                let concrete_op_id = source_set.concrete_op_id;
-                let residual = self
-                    .operator_residuals
-                    .get(concrete_op_id.index())
-                    .with_context(|| {
-                        format!(
-                            "abstract-operator region reduction references missing concrete operator {concrete_op_id}: operator residual count is {}",
-                            self.operator_residuals.len()
-                        )
-                    })?;
-                let current_residual =
-                    self.cost_for_source_set(producing_abstraction_id, abstract_op_id, source_set);
-                ensure!(
-                    current_residual.is_finite(),
-                    "residual cost for abstract op {abstract_op_id}, concrete op {concrete_op_id} must be finite"
-                );
-                ensure!(
-                    saturated <= current_residual + float_tolerance::SEARCH_EPSILON,
-                    "abstract-operator region reduction {saturated} exceeds current residual cost {current_residual} for concrete operator {concrete_op_id}"
-                );
-                if residual.base_cost <= float_tolerance::SEARCH_EPSILON {
-                    continue;
-                }
-                ensure!(
-                    residual.base_cost.is_finite(),
-                    "no base residual cost for operator {concrete_op_id}"
-                );
-                ensure!(
-                    saturated <= residual.base_cost + float_tolerance::SEARCH_EPSILON,
-                    "residual cost underflow: abstract-operator region reduction {saturated} exceeds base cost {} for operator {concrete_op_id}",
-                    residual.base_cost
-                );
-                entries.push(SourceSetCost {
-                    source_set: source_set.clone(),
-                    amount: saturated,
-                });
-            }
-        }
-
-        Ok(SourceSetCostAllocation::new(entries))
-    }
-
-    /// Subtracts `operator_costs[o]` on every source set of abstract
-    /// operator `o`.
-    #[cfg(test)]
-    pub fn reduce_by_abstract_source_sets(
-        &mut self,
-        producing_abstraction_id: usize,
-        source_sets: &[AbstractOperatorSourceSets],
-        operator_costs: &[f64],
-    ) -> Result<()> {
-        let allocation = self.source_set_allocation(
-            producing_abstraction_id,
-            source_sets,
-            operator_costs,
-            Deadline::NONE,
-        )?;
-        self.reduce_by_source_set_allocation_with_deadline(&allocation, Deadline::NONE)
     }
 
     pub fn reduce_by_source_set_allocation_with_deadline(
@@ -730,10 +633,10 @@ impl RemainingCosts {
         );
         for (op_id, saturated) in saturated_costs.iter().copied().enumerate() {
             ensure!(
-                !saturated.is_finite() || saturated >= -float_tolerance::SEARCH_EPSILON,
-                "negative uniform saturated costs are not supported: operator {op_id} has {saturated}"
+                saturated.is_finite() && saturated >= -float_tolerance::SEARCH_EPSILON,
+                "operator {op_id} has the invalid saturated cost {saturated}"
             );
-            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
+            if saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             self.operator_residuals[op_id].base_cost =

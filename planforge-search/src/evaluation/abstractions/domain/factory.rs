@@ -23,7 +23,6 @@ use crate::evaluation::abstractions::common::cegar::split::Split;
 use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 
 mod distances;
-mod saturation;
 mod source_sets;
 mod state_encoding;
 mod transition_system;
@@ -33,20 +32,15 @@ use crate::evaluation::abstractions::common::cartesian_set::{
 };
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractDistanceTable, AbstractOperatorSourceSets, AbstractTransition,
-    AbstractTransitionSystem, BackwardGraph, CostedTransitionSystem, LabelSourceSet,
-    backward_goal_distances,
+    AbstractTransitionSystem, BackwardGraph, LabelSourceSet, backward_goal_distances,
 };
-use crate::evaluation::abstractions::cost_partitioning::costs::{
-    AbstractTransitionCostFunction, RemainingCosts, SourceSetCost, SourceSetCostAllocation,
-    saturation_need,
-};
+use crate::evaluation::abstractions::cost_partitioning::costs::{SaturationGraph, cheapest_label};
 use crate::resource_limits::Deadline;
 pub use distances::*;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
-use saturation::*;
-use source_sets::*;
-use state_encoding::*;
+pub(crate) use source_sets::source_set_within;
+pub(crate) use state_encoding::MatchTree;
 pub use transition_system::*;
 
 /// The operation an expired online SCP deadline names.
@@ -168,6 +162,11 @@ impl DomainAbstractionFactory {
     }
 
     pub fn layout(&self) -> &StateLayout {
+        &self.layout
+    }
+
+    /// The layout as the match trees built over it share it.
+    pub(crate) fn shared_layout(&self) -> &Arc<StateLayout> {
         &self.layout
     }
 

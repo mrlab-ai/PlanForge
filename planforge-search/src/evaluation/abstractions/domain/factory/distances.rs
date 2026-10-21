@@ -60,34 +60,6 @@ impl<'a> DistanceTableOptions<'a> {
 }
 
 impl DomainAbstractionFactory {
-    /// Goal distances of every abstract state under `operator_costs`, without
-    /// saturated costs. Used by the order generator during diversification.
-    pub fn build_goal_distances(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        operator_costs: &[f64],
-    ) -> Result<AbstractDistanceTable> {
-        let goal_facts = self.compute_abstract_goals(task);
-        self.build_goal_distances_for_goals(task, combine_labels, operator_costs, &goal_facts)
-    }
-
-    pub fn build_goal_distances_for_goals(
-        &self,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        operator_costs: &[f64],
-        goal_facts: &[ExplicitFact],
-    ) -> Result<AbstractDistanceTable> {
-        let mut operators = self.abstract_operators(task, combine_labels, Deadline::NONE)?;
-        apply_operator_costs(&mut operators, operator_costs)?;
-        self.build_distance_table(
-            task,
-            &operators,
-            DistanceTableOptions::default().with_goal_facts(goal_facts),
-        )
-    }
-
     /// Goal distances of every abstract state under `operators`, to the goals
     /// of `options` or else the task's abstract goals.
     pub(crate) fn build_distance_table(
@@ -122,12 +94,7 @@ impl DomainAbstractionFactory {
         let num_states = self.layout.num_states();
         let mut generating_op_ids = vec![None; num_states];
         let distances = backward_goal_distances(
-            &mut MatchTreeGraph {
-                operators,
-                match_tree,
-                num_states,
-                applicable: Vec::new(),
-            },
+            &mut MatchTreeGraph::new(operators, match_tree, num_states, &goal_states),
             &goal_states,
             || deadline.ensure(ONLINE_SCP),
             Some(&mut generating_op_ids),
@@ -139,47 +106,39 @@ impl DomainAbstractionFactory {
             goal_facts: goal_facts.to_vec(),
         })
     }
-
-    pub(super) fn build_distance_table_with_transition_costs(
-        &self,
-        transition_system: &AbstractTransitionSystem,
-        transition_costs: &[f64],
-    ) -> Result<AbstractDistanceTable> {
-        ensure!(
-            transition_system.transitions.len() == transition_costs.len(),
-            "transition system/cost vector size mismatch: {} vs {}",
-            transition_system.transitions.len(),
-            transition_costs.len()
-        );
-
-        let mut generating_op_ids = vec![None; transition_system.backward.len()];
-        let distances = backward_goal_distances(
-            &mut CostedTransitionSystem {
-                system: transition_system,
-                transition_costs,
-            },
-            &transition_system.goal_state_hashes,
-            || Ok(()),
-            Some(&mut generating_op_ids),
-        )?;
-
-        Ok(AbstractDistanceTable {
-            distances,
-            generating_op_ids,
-            initial_state_hash: transition_system.initial_state_hash,
-            goal_facts: transition_system.goal_facts.clone(),
-        })
-    }
 }
 
 /// The implicit transition graph of a domain abstraction: every abstract
 /// operator the match tree finds applicable in a state, indexed by its
-/// effects, leads into it from the state its hash effect names.
-pub(super) struct MatchTreeGraph<'a> {
-    pub(super) operators: &'a [AbstractOperator],
-    pub(super) match_tree: &'a MatchTree,
-    pub(super) num_states: usize,
-    pub(super) applicable: Vec<usize>,
+/// effects, leads into it from the state its regression offset names.
+pub(crate) struct MatchTreeGraph<'a> {
+    operators: &'a [AbstractOperator],
+    match_tree: &'a MatchTree,
+    num_states: usize,
+    goal_states: &'a [usize],
+    /// The cost of every abstract operator.
+    costs: Vec<f64>,
+    applicable: Vec<usize>,
+}
+
+impl<'a> MatchTreeGraph<'a> {
+    /// The graph of `operators`, indexed by `match_tree`, over `num_states`
+    /// states with goal states `goal_states`, under the operators' own costs.
+    pub(crate) fn new(
+        operators: &'a [AbstractOperator],
+        match_tree: &'a MatchTree,
+        num_states: usize,
+        goal_states: &'a [usize],
+    ) -> Self {
+        Self {
+            operators,
+            match_tree,
+            num_states,
+            goal_states,
+            costs: operators.iter().map(|op| op.cost.value()).collect(),
+            applicable: Vec::new(),
+        }
+    }
 }
 
 impl BackwardGraph for MatchTreeGraph<'_> {
@@ -204,8 +163,24 @@ impl BackwardGraph for MatchTreeGraph<'_> {
                         op.regression_offset, self.num_states
                     )
                 })?;
-            incoming.push((source, op_id, op.cost.value()));
+            incoming.push((source, op_id, self.costs[op_id]));
         }
         Ok(())
+    }
+}
+
+impl SaturationGraph for MatchTreeGraph<'_> {
+    fn goal_states(&self) -> &[usize] {
+        self.goal_states
+    }
+
+    fn set_operator_costs(&mut self, operator_costs: &[f64]) {
+        for (cost, op) in self.costs.iter_mut().zip(self.operators) {
+            *cost = cheapest_label(&op.concrete_op_ids, operator_costs);
+        }
+    }
+
+    fn label_operators(&self, op_id: usize) -> &[OperatorIndex] {
+        &self.operators[op_id].concrete_op_ids
     }
 }

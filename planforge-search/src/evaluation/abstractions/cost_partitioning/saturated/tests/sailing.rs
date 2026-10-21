@@ -22,7 +22,9 @@ use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
-use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
+use crate::evaluation::abstractions::domain::factory::{
+    DistanceTableOptions, DomainAbstractionFactory,
+};
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
 use crate::task_restriction::build_restricted_task;
 use planforge_sas::explicit_state::ExplicitState;
@@ -64,7 +66,6 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
                 cegar: CegarOptions {
                     max_states: 1_000,
                     max_time: Some(Duration::from_secs(5)),
-                    combine_labels: false,
                     random_seed: Some(1),
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
@@ -187,7 +188,6 @@ fn initial_cartesian_scp_value(
         .collect::<Vec<_>>();
     let config = ScpConfig {
         table_construction_max_time: 30.0,
-        combine_labels: false,
         saturator: Saturator::All,
         random_seed: Some(1),
         partitioning: if partitioning {
@@ -252,7 +252,6 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
         diversify: false,
         samples: 1_000,
         max_orders: usize::MAX,
-        combine_labels: false,
         order_generator: OrderGenerator::Greedy,
         initial_order_generation_max_time: 0.0,
         saturator: Saturator::All,

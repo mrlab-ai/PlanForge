@@ -17,216 +17,188 @@ pub(super) struct PartitionedCollection<'a, 'task> {
     pub(super) original_costs: &'a [f64],
 }
 
-/// The costs one abstraction saturates, in the granularity of the remaining
-/// cost function they are subtracted from.
+/// The costs one component saturates.
 pub(super) enum SaturatedCosts {
-    /// One cost per operator (label SCP).
+    /// One cost per operator (label SCP, and every pattern database).
     Label(Vec<f64>),
-    /// One cost per source set of an abstract transition (interval SCP).
-    Interval(SourceSetCostAllocation),
+    /// One cost per source set of a transition (regional SCP).
+    Region(SourceSetCostAllocation),
 }
 
-/// Where remaining costs live while an order is saturated.
-#[derive(Clone, Copy)]
-pub(super) enum SaturationCostSpace {
-    /// One remaining cost per operator.
-    Label,
-    /// Remaining costs per Cartesian set of states (interval SCP).
-    Interval,
-}
-
-pub(super) struct ComponentSaturation<'a, 'task> {
-    pub(super) component: &'a AbstractionComponent<'task>,
-    pub(super) task: &'a dyn AbstractNumericTask,
-    pub(super) combine_labels: bool,
-    pub(super) cost_space: SaturationCostSpace,
-}
-
-pub(super) struct SaturationStepContext<'a> {
-    pub(super) component_id: usize,
-    pub(super) current_state_id: Option<usize>,
-    pub(super) abstract_state_ids: &'a [Option<usize>],
-    pub(super) saturator: Saturator,
-    pub(super) step_prefix: &'a str,
-}
-
-pub(super) struct ComponentStepContext<'a, 'task> {
-    pub(super) component_id: usize,
-    pub(super) component: &'a AbstractionComponent<'task>,
-    pub(super) task: &'a dyn AbstractNumericTask,
-    pub(super) abstract_state_ids: &'a [Option<usize>],
-    pub(super) deadline: Deadline,
-    pub(super) cost_space: SaturationCostSpace,
-    pub(super) saturator: Saturator,
-    pub(super) step_prefix: &'a str,
-}
-
-impl ComponentSaturation<'_, '_> {
-    pub(super) fn saturate(
-        &self,
-        residual: &RemainingCosts,
-        component_id: usize,
-        cap_state_id: Option<usize>,
-        deadline: Deadline,
-    ) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError> {
-        match (self.component, self.cost_space) {
-            (AbstractionComponent::Domain(abstraction), SaturationCostSpace::Label) => {
-                let operator_costs = residual.operator_costs_for_label_cp();
-                let (distances, saturated) = if let Some(state_id) = cap_state_id {
-                    let table = abstraction
-                        .factory
-                        .build_goal_distances_for_goals(
-                            self.task,
-                            self.combine_labels,
-                            &operator_costs,
-                            &abstraction.distance_table.goal_facts,
-                        )
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to compute domain PERIM cap table: {error:#}"
-                            ))
-                        })?;
-                    let h_cap = table.distances.get(state_id).copied().ok_or_else(|| {
-                        EvaluationError::InvalidState(format!(
-                            "domain component {component_id} state id {state_id} out of bounds for {} states",
-                            table.distances.len()
-                        ))
-                    })?;
-                    SaturatedCostPartitioningHeuristic::saturate_domain_perim(
-                        abstraction,
-                        self.task,
-                        self.combine_labels,
-                        &operator_costs,
-                        h_cap,
-                    )?
-                } else {
-                    SaturatedCostPartitioningHeuristic::saturate_domain(
-                        abstraction,
-                        self.task,
-                        self.combine_labels,
-                        &operator_costs,
-                        deadline,
-                    )?
-                };
-                Ok((distances, SaturatedCosts::Label(saturated)))
-            }
-            (AbstractionComponent::Domain(abstraction), SaturationCostSpace::Interval) => {
-                let transition_system = abstraction
-                    .interval_transition_system(self.task, deadline)
-                    .map_err(|error| {
-                        SaturatedCostPartitioningHeuristic::construction_error(
-                            "failed to build domain regional transition system",
-                            error,
-                        )
-                    })?;
-                let (table, saturated) = abstraction
-                    .factory
-                    .build_interval_cost_partitioned_distance_table(
-                        &transition_system,
-                        &abstraction.abstract_source_sets,
-                        residual,
-                        component_id,
-                        DistanceTableOptions::default()
-                            .with_cap_state(cap_state_id)
-                            .with_deadline(deadline),
-                    )
-                    .map_err(|error| {
-                        SaturatedCostPartitioningHeuristic::construction_error(
-                            "failed to compute domain regional saturation",
-                            error,
-                        )
-                    })?;
-                Ok((table.distances, SaturatedCosts::Interval(saturated)))
-            }
-            (AbstractionComponent::Cartesian(abstraction), SaturationCostSpace::Label) => {
-                let (distances, saturated) = build_explicit_label_cost_partitioning_table(
-                    &abstraction.transition_system,
-                    &residual.operator_costs_for_label_cp(),
-                    cap_state_id,
-                    deadline,
-                )
-                .map_err(|error| {
-                    SaturatedCostPartitioningHeuristic::construction_error(
-                        &format!(
-                            "failed to compute Cartesian label saturation for component {component_id}"
-                        ),
-                        error,
-                    )
-                })?;
-                Ok((distances, SaturatedCosts::Label(saturated)))
-            }
-            (AbstractionComponent::Cartesian(abstraction), SaturationCostSpace::Interval) => {
-                let (distances, saturated) = build_explicit_regional_cost_partitioning_table(
-                    &abstraction.transition_system,
-                    &abstraction.abstract_source_sets,
-                    residual,
-                    component_id,
-                    cap_state_id,
-                    deadline,
-                )
-                .map_err(|error| {
-                    SaturatedCostPartitioningHeuristic::construction_error(
-                        &format!(
-                            "failed to compute Cartesian regional saturation for component {component_id}"
-                        ),
-                        error,
-                    )
-                })?;
-                Ok((distances, SaturatedCosts::Interval(saturated)))
-            }
-            (AbstractionComponent::PatternDatabase(pdb), _) => {
-                // Phase 5 will add regional PDB support; until then every PDB
-                // saturation deliberately degrades to label granularity.
-                let operator_costs = residual.operator_costs_for_label_cp();
-                let (distances, saturated) = if let Some(state_id) = cap_state_id {
-                    pdb.build_cost_partitioned_distance_table_capped(&operator_costs, state_id)
-                } else {
-                    pdb.build_cost_partitioned_distance_table(&operator_costs)
-                }
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to compute PDB saturation {component_id}: {error}"
-                    ))
-                })?;
-                Ok((distances, SaturatedCosts::Label(saturated)))
-            }
+impl SaturatedCosts {
+    fn amounts(&self) -> Vec<f64> {
+        match self {
+            Self::Label(costs) => costs.clone(),
+            Self::Region(allocation) => allocation
+                .entries()
+                .iter()
+                .map(|entry| entry.amount)
+                .collect(),
         }
     }
 }
 
+/// The goal distances of `component` under `remaining` and the costs it
+/// saturates, by `method`; see [`saturate_labels`] and [`saturate_regions`].
+/// A pattern database has no source sets and saturates labels either way.
+fn saturate_component(
+    component: &AbstractionComponent<'_>,
+    task: &dyn AbstractNumericTask,
+    remaining: &RemainingCosts,
+    method: CostPartitioningMethod,
+    perimeter_state: Option<usize>,
+    deadline: Deadline,
+) -> anyhow::Result<(Vec<f64>, SaturatedCosts)> {
+    let regional = |(distances, allocation)| (distances, SaturatedCosts::Region(allocation));
+    match (method, component) {
+        (CostPartitioningMethod::Region, AbstractionComponent::Domain(abstraction)) => abstraction
+            .saturate_regions(task, remaining, perimeter_state, deadline)
+            .map(regional),
+        (CostPartitioningMethod::Region, AbstractionComponent::Cartesian(abstraction)) => {
+            abstraction
+                .saturate_regions(remaining, perimeter_state, deadline)
+                .map(regional)
+        }
+        (CostPartitioningMethod::Label, _)
+        | (CostPartitioningMethod::Region, AbstractionComponent::PatternDatabase(_)) => {
+            saturate_component_labels(
+                component,
+                task,
+                &remaining.operator_costs_for_label_cp(),
+                perimeter_state,
+                deadline,
+            )
+            .map(|(distances, saturated)| (distances, SaturatedCosts::Label(saturated)))
+        }
+    }
+}
+
+/// Label saturation of `component` under `operator_costs`.
+pub(super) fn saturate_component_labels(
+    component: &AbstractionComponent<'_>,
+    task: &dyn AbstractNumericTask,
+    operator_costs: &[f64],
+    perimeter_state: Option<usize>,
+    deadline: Deadline,
+) -> anyhow::Result<(Vec<f64>, Vec<f64>)> {
+    match component {
+        AbstractionComponent::Domain(abstraction) => {
+            abstraction.saturate_labels(task, operator_costs, perimeter_state, deadline)
+        }
+        AbstractionComponent::Cartesian(abstraction) => {
+            abstraction.saturate_labels(operator_costs, perimeter_state, deadline)
+        }
+        AbstractionComponent::PatternDatabase(pdb) => match perimeter_state {
+            Some(state) => pdb.build_cost_partitioned_distance_table_capped(operator_costs, state),
+            None => pdb.build_cost_partitioned_distance_table(operator_costs),
+        }
+        .map_err(anyhow::Error::msg),
+    }
+}
+
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
-    pub(super) fn add_saturation_steps<R, Build, Reduce, Log>(
+    /// The cost partitioning of `order`: every component in turn saturates
+    /// what the ones before it left, until the order or `deadline` ends.
+    pub(super) fn build_cp(
+        &self,
+        collection: PartitionedCollection<'_, '_>,
+        order: &[usize],
+        deadline: Deadline,
+    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
+        let mut cp = CostPartitioningHeuristic::default();
+        let mut remaining = RemainingCosts::from_operator_costs(collection.original_costs);
+        for &component_id in order {
+            if deadline.passed() {
+                break;
+            }
+            match self.add_saturation_steps(
+                &mut cp,
+                &mut remaining,
+                collection,
+                component_id,
+                deadline,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    info!(
+                        "scp: component {component_id} stopped while reducing remaining costs (deadline)"
+                    );
+                    break;
+                }
+                Err(error) if Self::is_deadline_exceeded(&error) => {
+                    info!(
+                        "scp: component {component_id} stopped while computing its table (deadline)"
+                    );
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(cp)
+    }
+
+    /// Saturates component `component_id` in the passes of the configured
+    /// saturator, subtracts what it saturates from `remaining`, and adds its
+    /// tables to `cp`. `false` if the deadline passed while reducing.
+    fn add_saturation_steps(
         &self,
         cp: &mut CostPartitioningHeuristic,
-        residual: &mut R,
-        context: SaturationStepContext<'_>,
-        mut build: Build,
-        mut reduce: Reduce,
-        mut log: Log,
-    ) -> Result<bool, EvaluationError>
-    where
-        R: ?Sized,
-        Build: FnMut(&R, Option<usize>) -> Result<(Vec<f64>, SaturatedCosts), EvaluationError>,
-        Reduce: FnMut(&mut R, &SaturatedCosts) -> Result<bool, EvaluationError>,
-        Log: FnMut(&str, &[f64], &SaturatedCosts),
-    {
-        let SaturationStepContext {
-            component_id,
-            current_state_id,
+        remaining: &mut RemainingCosts,
+        collection: PartitionedCollection<'_, '_>,
+        component_id: usize,
+        deadline: Deadline,
+    ) -> Result<bool, EvaluationError> {
+        let PartitionedCollection {
+            task,
+            components,
             abstract_state_ids,
-            saturator,
-            step_prefix,
-        } = context;
-        if saturator != Saturator::All && current_state_id.is_none() {
+            abstraction_h,
+            ..
+        } = collection;
+        let component = &components[component_id];
+        let method = self.config.partitioning;
+        debug!(
+            "scp: {method} step component {component_id} ({}), states={}, h={}",
+            component.kind(),
+            component.num_states(),
+            abstraction_h[component_id],
+        );
+        if method.uses_regions()
+            && let Some(source_sets) = component.abstract_source_sets()
+        {
+            log_abstract_source_set_summary(component_id, source_sets);
+        }
+        let state_id = abstract_state_ids[component_id];
+        let saturator = self.config.saturator;
+        if saturator != Saturator::All && state_id.is_none() {
             return Err(EvaluationError::InvalidState(format!(
                 "missing abstract state id for PERIM component {component_id}"
             )));
         }
-        for &(phase, capped) in saturator.passes() {
-            let cap_state_id = if capped { current_state_id } else { None };
-            let step = format!("{step_prefix} {phase}");
-            let (distances, saturated) = build(residual, cap_state_id)?;
-            log(&step, &distances, &saturated);
+        for &(phase, limited) in saturator.passes() {
+            let perimeter_state = if limited { state_id } else { None };
+            let (distances, saturated) = saturate_component(
+                component,
+                task,
+                remaining,
+                method,
+                perimeter_state,
+                deadline,
+            )
+            .map_err(|error| {
+                Self::construction_error(
+                    &format!("failed to saturate component {component_id}"),
+                    error,
+                )
+            })?;
+            let step = format!("{method} {phase}");
+            log_table_summary(
+                &step,
+                component_id,
+                &distances,
+                &saturated,
+                abstract_state_ids,
+            );
             if should_skip_zero_current_table(
                 self.config.diversify,
                 &step,
@@ -236,145 +208,29 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             ) {
                 return Ok(true);
             }
-            if !reduce(residual, &saturated)? {
-                return Ok(false);
+            let reduced = match &saturated {
+                SaturatedCosts::Label(costs) => remaining.reduce_operator_costs_uniform(costs),
+                SaturatedCosts::Region(allocation) => {
+                    remaining.reduce_by_source_set_allocation_with_deadline(allocation, deadline)
+                }
+            };
+            match reduced {
+                Ok(()) => {}
+                Err(error) if crate::resource_limits::is_deadline_exceeded(&error) => {
+                    return Ok(false);
+                }
+                Err(error) => {
+                    return Err(EvaluationError::ComputationFailed(format!(
+                        "failed to reduce the remaining costs by component {component_id}: {error:#}"
+                    )));
+                }
+            }
+            if method.uses_regions() {
+                log_transition_residual_summary(remaining);
             }
             cp.add_h_values(component_id, distances);
         }
         Ok(true)
-    }
-
-    pub(super) fn add_label_saturation_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut [f64],
-        context: ComponentStepContext<'_, '_>,
-    ) -> Result<bool, EvaluationError> {
-        let ComponentStepContext {
-            component_id,
-            component,
-            task,
-            abstract_state_ids,
-            deadline,
-            step_prefix,
-            ..
-        } = context;
-        let current_state_id = abstract_state_ids.get(component_id).copied().flatten();
-        let protocol = ComponentSaturation {
-            component,
-            task,
-            combine_labels: self.config.combine_labels,
-            cost_space: SaturationCostSpace::Label,
-        };
-        self.add_saturation_steps(
-            cp,
-            remaining_costs,
-            SaturationStepContext {
-                component_id,
-                current_state_id,
-                abstract_state_ids,
-                saturator: self.config.saturator,
-                step_prefix,
-            },
-            |costs, cap_state_id| {
-                let residual = RemainingCosts::from_operator_costs(costs);
-                protocol.saturate(&residual, component_id, cap_state_id, deadline)
-            },
-            |costs, saturated| {
-                let SaturatedCosts::Label(saturated) = saturated else {
-                    unreachable!("label saturation must return uniform operator costs")
-                };
-                reduce_costs(costs, saturated)?;
-                Ok(true)
-            },
-            |step, distances, saturated| {
-                let SaturatedCosts::Label(saturated) = saturated else {
-                    unreachable!("label saturation must return uniform operator costs")
-                };
-                log_label_table_summary(
-                    step,
-                    component_id,
-                    distances,
-                    saturated,
-                    abstract_state_ids,
-                );
-            },
-        )
-    }
-
-    pub(super) fn add_saturation_step(
-        &self,
-        cp: &mut CostPartitioningHeuristic,
-        remaining_costs: &mut RemainingCosts,
-        context: ComponentStepContext<'_, '_>,
-    ) -> Result<bool, EvaluationError> {
-        let ComponentStepContext {
-            component_id,
-            component,
-            task,
-            abstract_state_ids,
-            deadline,
-            cost_space,
-            saturator,
-            step_prefix,
-        } = context;
-        let current_state_id = abstract_state_ids.get(component_id).copied().flatten();
-        let protocol = ComponentSaturation {
-            component,
-            task,
-            combine_labels: self.config.combine_labels,
-            cost_space,
-        };
-        self.add_saturation_steps(
-            cp,
-            remaining_costs,
-            SaturationStepContext {
-                component_id,
-                current_state_id,
-                abstract_state_ids,
-                saturator,
-                step_prefix,
-            },
-            |residual, cap_state_id| {
-                protocol.saturate(residual, component_id, cap_state_id, deadline)
-            },
-            |residual, saturated| match saturated {
-                SaturatedCosts::Label(costs) => {
-                    residual
-                        .reduce_operator_costs_uniform(costs)
-                        .map_err(|error| {
-                            EvaluationError::ComputationFailed(format!(
-                                "failed to reduce uniform residual costs for component {component_id}: {error:#}"
-                            ))
-                        })?;
-                    Ok(true)
-                }
-                SaturatedCosts::Interval(allocation) => Self::reduce_source_set_allocation(
-                    residual,
-                    allocation,
-                    deadline,
-                    &format!(
-                        "failed to reduce regional residual costs for component {component_id}"
-                    ),
-                ),
-            },
-            |step, distances, saturated| match saturated {
-                SaturatedCosts::Label(costs) => log_transition_table_summary(
-                    step,
-                    component_id,
-                    distances,
-                    costs,
-                    abstract_state_ids,
-                ),
-                SaturatedCosts::Interval(allocation) => log_transition_table_summary(
-                    step,
-                    component_id,
-                    distances,
-                    &allocation_amounts(allocation),
-                    abstract_state_ids,
-                ),
-            },
-        )
     }
 
     pub(super) fn is_deadline_exceeded(error: &EvaluationError) -> bool {
@@ -387,264 +243,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         } else {
             EvaluationError::ComputationFailed(format!("{context}: {error:#}"))
         }
-    }
-
-    pub(super) fn reduce_source_set_allocation(
-        remaining_costs: &mut RemainingCosts,
-        allocation: &SourceSetCostAllocation,
-        deadline: Deadline,
-        context: &str,
-    ) -> Result<bool, EvaluationError> {
-        match remaining_costs.reduce_by_source_set_allocation_with_deadline(allocation, deadline) {
-            Ok(()) => Ok(true),
-            Err(error) if crate::resource_limits::is_deadline_exceeded(&error) => Ok(false),
-            Err(error) => Err(EvaluationError::ComputationFailed(format!(
-                "{context}: {error:#}"
-            ))),
-        }
-    }
-
-    /// The cost partitioning of `order`, label SCP or interval SCP as
-    /// configured.
-    pub(super) fn build_cp(
-        &self,
-        collection: PartitionedCollection<'_, '_>,
-        order: &[usize],
-        deadline: Deadline,
-    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
-        match self.config.partitioning {
-            CostPartitioningMethod::Label => self.build_label_cp(collection, order, deadline),
-            CostPartitioningMethod::Region => {
-                self.build_interval_cp(collection, order, deadline, self.config.saturator)
-            }
-        }
-    }
-
-    pub(super) fn build_interval_cp(
-        &self,
-        collection: PartitionedCollection<'_, '_>,
-        order: &[usize],
-        deadline: Deadline,
-        saturator: Saturator,
-    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
-        let PartitionedCollection {
-            task,
-            components,
-            abstract_state_ids,
-            abstraction_h,
-            original_costs,
-        } = collection;
-        let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs = RemainingCosts::from_operator_costs(original_costs);
-
-        for &component_id in order {
-            if deadline.passed() {
-                break;
-            }
-            let component = components.get(component_id).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "regional SCP order references missing component {component_id}"
-                ))
-            })?;
-            debug!(
-                "scp: interval CP step component {component_id} ({}), states={}, h={}",
-                component.kind(),
-                component.num_states(),
-                abstraction_h[component_id],
-            );
-            if let Some(source_sets) = component.abstract_source_sets() {
-                log_abstract_source_set_summary(component_id, source_sets);
-            }
-
-            let result = self.add_saturation_step(
-                &mut cp,
-                &mut remaining_costs,
-                ComponentStepContext {
-                    component_id,
-                    component,
-                    task,
-                    abstract_state_ids,
-                    deadline,
-                    cost_space: SaturationCostSpace::Interval,
-                    saturator,
-                    step_prefix: "interval",
-                },
-            );
-            match result {
-                Ok(true) => log_transition_residual_summary(&remaining_costs),
-                Ok(false) => {
-                    info!(
-                        "scp: interval component {component_id} stopped while reducing residual costs (deadline)"
-                    );
-                    break;
-                }
-                Err(error) if Self::is_deadline_exceeded(&error) => {
-                    info!(
-                        "scp: interval component {component_id} stopped while computing table (deadline)"
-                    );
-                    break;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        Ok(cp)
-    }
-
-    pub(super) fn build_label_cp(
-        &self,
-        collection: PartitionedCollection<'_, '_>,
-        order: &[usize],
-        deadline: Deadline,
-    ) -> Result<CostPartitioningHeuristic, EvaluationError> {
-        let PartitionedCollection {
-            task,
-            components,
-            abstract_state_ids,
-            original_costs,
-            ..
-        } = collection;
-        let mut cp = CostPartitioningHeuristic::default();
-        let mut remaining_costs = original_costs.to_vec();
-
-        for &component_id in order {
-            if deadline.passed() {
-                break;
-            }
-            let component = components.get(component_id).ok_or_else(|| {
-                EvaluationError::InvalidState(format!(
-                    "label SCP order references missing component {component_id}"
-                ))
-            })?;
-            match self.add_label_saturation_step(
-                &mut cp,
-                &mut remaining_costs,
-                ComponentStepContext {
-                    component_id,
-                    component,
-                    task,
-                    abstract_state_ids,
-                    deadline,
-                    cost_space: SaturationCostSpace::Label,
-                    saturator: self.config.saturator,
-                    step_prefix: "label",
-                },
-            ) {
-                Ok(true) => {}
-                Ok(false) => unreachable!("label residual reduction has no deadline"),
-                Err(error) if Self::is_deadline_exceeded(&error) => {
-                    info!(
-                        "scp: label component {component_id} stopped while computing table (deadline)"
-                    );
-                    break;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-
-        Ok(cp)
-    }
-
-    pub(super) fn saturate_domain(
-        abstraction: &DomainAbstraction,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        remaining_costs: &[f64],
-        deadline: Deadline,
-    ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
-        let start = Instant::now();
-        let (table, saturated) = abstraction
-            .factory
-            .build_cost_partitioned_distance_table(
-                task,
-                combine_labels,
-                remaining_costs,
-                DistanceTableOptions::default()
-                    .with_goal_facts(&abstraction.distance_table.goal_facts)
-                    .with_deadline(deadline),
-            )
-            .map_err(|error| Self::construction_error("failed to compute SCP table", error))?;
-        debug!(
-            "scp: label distance-table/CP construction finished in {:.3}s, states={}, saturated_costs={}",
-            start.elapsed().as_secs_f64(),
-            table.distances.len(),
-            saturated.len()
-        );
-        Ok((table.distances, saturated))
-    }
-
-    /// Build a PERIM domain CP entry.
-    ///
-    /// Saturated costs are computed from a table where states outside the
-    /// perimeter are inactive. The returned lookup table is then recomputed
-    /// globally from those saturated costs, so stored online CPs remain valid
-    /// for later states outside the original perimeter.
-    pub(super) fn saturate_domain_perim(
-        abstraction: &DomainAbstraction,
-        task: &dyn AbstractNumericTask,
-        combine_labels: bool,
-        remaining_costs: &[f64],
-        h_cap: f64,
-    ) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
-        let (table, _) = abstraction
-            .factory
-            .build_cost_partitioned_distance_table(
-                task,
-                combine_labels,
-                remaining_costs,
-                DistanceTableOptions::default()
-                    .with_goal_facts(&abstraction.distance_table.goal_facts),
-            )
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute SCP table for PERIM: {error:#}"
-                ))
-            })?;
-        let mut perim_distances = table.distances;
-        if h_cap.is_finite() {
-            for h in &mut perim_distances {
-                if !h.is_finite() || *h > h_cap {
-                    *h = f64::NEG_INFINITY;
-                }
-            }
-        }
-        let mut operators = abstraction
-            .factory
-            .abstract_operators(task, combine_labels, Deadline::NONE)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to build abstract operators for PERIM: {error:#}"
-                ))
-            })?;
-        apply_operator_costs_from_slice(&mut operators, remaining_costs)?;
-        let perim_table = AbstractDistanceTable {
-            distances: perim_distances,
-            generating_op_ids: table.generating_op_ids,
-            initial_state_hash: table.initial_state_hash,
-            goal_facts: table.goal_facts,
-        };
-        let saturated = abstraction
-            .factory
-            .saturated_costs_for_table(task, &operators, &perim_table)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute PERIM saturated costs: {error:#}"
-                ))
-            })?;
-        let global_table = abstraction
-            .factory
-            .build_goal_distances_for_goals(
-                task,
-                combine_labels,
-                &saturated,
-                &abstraction.distance_table.goal_facts,
-            )
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute global PERIM lookup table: {error:#}"
-                ))
-            })?;
-        Ok((global_table.distances, saturated))
     }
 }
 
@@ -666,141 +264,23 @@ pub(super) fn should_skip_zero_current_table(
     true
 }
 
-pub(super) fn positive_cost_stats(costs: &[f64]) -> (usize, f64) {
-    costs
-        .iter()
-        .copied()
+fn log_table_summary(
+    step: &str,
+    abstraction_id: usize,
+    distances: &[f64],
+    saturated: &SaturatedCosts,
+    abstract_state_ids: &[Option<usize>],
+) {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return;
+    }
+    let (positive_count, total_positive) = saturated
+        .amounts()
+        .into_iter()
         .filter(|cost| cost.is_finite() && *cost > 0.0)
-        .fold((0, 0.0), |(count, total), cost| (count + 1, total + cost))
-}
-
-pub(super) fn allocation_amounts(allocation: &SourceSetCostAllocation) -> Vec<f64> {
-    allocation
-        .entries()
-        .iter()
-        .map(|entry| entry.amount)
-        .collect()
-}
-
-pub(super) fn apply_operator_costs_from_slice(
-    operators: &mut [AbstractOperator],
-    operator_costs: &[f64],
-) -> Result<(), EvaluationError> {
-    for op in operators {
-        if op.concrete_op_ids.is_empty() {
-            return Err(EvaluationError::ComputationFailed(
-                "abstract operator without concrete labels".to_string(),
-            ));
-        }
-        let mut cost = f64::INFINITY;
-        for &concrete_op_id in &op.concrete_op_ids {
-            let concrete_cost = operator_costs
-                .get(concrete_op_id.index())
-                .copied()
-                .ok_or_else(|| {
-                    EvaluationError::ComputationFailed(format!(
-                        "missing residual cost for concrete operator {concrete_op_id}"
-                    ))
-                })?;
-            if !concrete_cost.is_finite() {
-                return Err(EvaluationError::ComputationFailed(format!(
-                    "residual cost for concrete operator {concrete_op_id} must be finite"
-                )));
-            }
-            cost = cost.min(concrete_cost);
-        }
-        op.cost = NumericValue::new(cost);
-    }
-    Ok(())
-}
-
-pub(super) fn reduce_costs(
-    remaining_costs: &mut [f64],
-    saturated_costs: &[f64],
-) -> Result<(), EvaluationError> {
-    if remaining_costs.len() != saturated_costs.len() {
-        return Err(EvaluationError::ComputationFailed(format!(
-            "cost vector length mismatch: remaining={}, saturated={}",
-            remaining_costs.len(),
-            saturated_costs.len()
-        )));
-    }
-    for (op_id, (r, s)) in remaining_costs
-        .iter_mut()
-        .zip(saturated_costs.iter())
-        .enumerate()
-    {
-        if !s.is_finite() {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "saturated cost for operator {op_id} must be finite"
-            )));
-        }
-        if *s < -float_tolerance::SEARCH_EPSILON {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "negative saturated cost for operator {op_id}: {s}"
-            )));
-        }
-        if *s <= float_tolerance::SEARCH_EPSILON {
-            continue;
-        }
-        let new_remaining = *r - *s;
-        if new_remaining < -float_tolerance::SEARCH_EPSILON {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "label residual cost underflow for operator {op_id}: remaining={r}, saturated={s}, result={new_remaining}"
-            )));
-        }
-        *r = new_remaining.max(0.0);
-    }
-    Ok(())
-}
-
-/// The goal distances of `component` under the original operator costs, the
-/// costs it saturates there, and its initial abstract state. Order generation
-/// scores abstractions by these distances and the costs they steal.
-pub(super) fn saturate_original_costs(
-    component: &AbstractionComponent<'_>,
-    component_id: usize,
-    task: &dyn AbstractNumericTask,
-    combine_labels: bool,
-    original_costs: &[f64],
-) -> Result<(Vec<f64>, Vec<f64>), EvaluationError> {
-    match component {
-        AbstractionComponent::Domain(abstraction) => {
-            let (table, saturated) = abstraction
-                .factory
-                .build_cost_partitioned_distance_table(
-                    task,
-                    combine_labels,
-                    original_costs,
-                    DistanceTableOptions::default()
-                        .with_goal_facts(&abstraction.distance_table.goal_facts),
-                )
-                .map_err(|error| {
-                    EvaluationError::ComputationFailed(format!(
-                        "failed to compute domain order-generator table {component_id}: {error:#}"
-                    ))
-                })?;
-            Ok((table.distances, saturated))
-        }
-        AbstractionComponent::Cartesian(abstraction) => {
-            build_explicit_label_cost_partitioning_table(
-                &abstraction.transition_system,
-                original_costs,
-                None,
-                Deadline::NONE,
-            )
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute Cartesian order-generator table {component_id}: {error:#}"
-                ))
-            })
-        }
-        AbstractionComponent::PatternDatabase(pdb) => pdb
-            .build_cost_partitioned_distance_table(original_costs)
-            .map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to compute PDB order-generator table {component_id}: {error}"
-                ))
-            }),
-    }
+        .fold((0, 0.0), |(count, total), cost| (count + 1, total + cost));
+    let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
+    debug!(
+        "scp: {step} abstraction {abstraction_id}: current_h={current_h}, positive_saturated_costs={positive_count}, total_positive_saturated={total_positive:.6}"
+    );
 }

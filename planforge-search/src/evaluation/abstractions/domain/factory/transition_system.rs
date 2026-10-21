@@ -113,12 +113,7 @@ impl DomainAbstractionFactory {
         #[cfg(debug_assertions)]
         let mut seen_transition_triples: HashSet<(usize, usize, usize)> = HashSet::new();
 
-        let mut graph = MatchTreeGraph {
-            operators,
-            match_tree: &match_tree,
-            num_states,
-            applicable: Vec::new(),
-        };
+        let mut graph = MatchTreeGraph::new(operators, &match_tree, num_states, &[]);
         let mut incoming = Vec::new();
         for (target_hash, target_backward) in backward.iter_mut().enumerate() {
             if target_hash % 64 == 0 {
@@ -218,12 +213,7 @@ impl DomainAbstractionFactory {
         operators: &[AbstractOperator],
     ) -> Vec<OperatorIndex> {
         let match_tree = MatchTree::new(&self.layout, operators);
-        let mut graph = MatchTreeGraph {
-            operators,
-            match_tree: &match_tree,
-            num_states: self.layout.num_states(),
-            applicable: Vec::new(),
-        };
+        let mut graph = MatchTreeGraph::new(operators, &match_tree, self.layout.num_states(), &[]);
         let mut relevant = vec![false; task.get_operators().len()];
         let mut num_relevant = 0usize;
         let mut incoming = Vec::new();

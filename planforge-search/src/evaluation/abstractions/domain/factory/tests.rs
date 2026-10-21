@@ -8,7 +8,7 @@ use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, LabelSourceSet,
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{
-    RemainingCosts, build_explicit_label_cost_partitioning_table,
+    ExplicitSaturationGraph, RemainingCosts, saturate_labels, saturate_regions,
 };
 use crate::evaluation::abstractions::domain::initial_splits::identity_domain_mapping_and_sizes;
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
@@ -223,8 +223,8 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
             DistanceTableOptions::default().without_cartesian_sets(),
         )
         .unwrap();
-    let (explicit, _) = build_explicit_label_cost_partitioning_table(
-        &transition_system,
+    let (explicit, _) = saturate_labels(
+        &mut ExplicitSaturationGraph::new(&transition_system),
         &[1.0, 1.0],
         None,
         Deadline::NONE,
@@ -295,17 +295,19 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
     }];
     let mut residuals = RemainingCosts::from_operator_costs(&[1.0]);
 
-    let (table, allocation) = factory
-        .build_interval_cost_partitioned_distance_table(
-            &transition_system,
-            &source_sets,
-            &residuals,
-            0,
-            DistanceTableOptions::default(),
-        )
-        .unwrap();
+    let (distances, allocation) = saturate_regions(
+        &transition_system,
+        &source_sets,
+        |transition, source_set| {
+            source_set_within(&factory.state_region(transition.source_hash), source_set)
+        },
+        &residuals,
+        None,
+        Deadline::NONE,
+    )
+    .unwrap();
 
-    assert_eq!(table.distances[table.initial_state_hash], 1.0);
+    assert_eq!(distances[transition_system.initial_state_hash], 1.0);
     assert_eq!(allocation.entries().len(), 1);
     assert_eq!(
         allocation.entries()[0].source_set.source.propositions()[0],
@@ -323,7 +325,7 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         )
         .into(),
     };
-    assert_eq!(residuals.cost_for_source_set(1, 0, &disjoint_source), 1.0);
+    assert_eq!(residuals.cost_for_source_set(&disjoint_source), 1.0);
 }
 
 #[test]

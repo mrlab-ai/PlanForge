@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, NumericValue, TaskRef, metric_operator_cost_from_initial_values,
+    AbstractNumericTask, TaskRef, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
 use planforge_sas::utils::float_tolerance;
@@ -20,16 +19,12 @@ use crate::successor_generator::SuccessorTree;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
-use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
-    RemainingCosts, SourceSetCostAllocation, build_explicit_label_cost_partitioning_table,
-    build_explicit_regional_cost_partitioning_table,
+    RemainingCosts, SourceSetCostAllocation,
 };
-use crate::evaluation::abstractions::domain::abstract_operators::AbstractOperator;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
-use crate::evaluation::abstractions::domain::factory::DistanceTableOptions;
 use planforge_sas::explicit_state::ExplicitState;
 
 mod config;
@@ -162,13 +157,13 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let mut saturated_costs_by_abstraction: Vec<Vec<f64>> =
             Vec::with_capacity(components.len());
         for (component_id, component) in components.iter().enumerate() {
-            let (distances, saturated) = saturate_original_costs(
-                component,
-                component_id,
-                task,
-                config.combine_labels,
-                &original_costs,
-            )?;
+            let (distances, saturated) =
+                saturate_component_labels(component, task, &original_costs, None, Deadline::NONE)
+                    .map_err(|error| {
+                        EvaluationError::ComputationFailed(format!(
+                            "failed to saturate component {component_id} under the original costs: {error:#}"
+                        ))
+                    })?;
             h_values.push(distances);
             saturated_costs_by_abstraction.push(saturated);
         }

@@ -1,5 +1,10 @@
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
+use crate::evaluation::abstractions::cost_partitioning::costs::{
+    ExplicitSaturationGraph, RemainingCosts, SourceSetCostAllocation, saturate_labels,
+    saturate_regions,
+};
+use crate::resource_limits::Deadline;
 
 #[derive(Debug, Clone)]
 pub struct CartesianAbstraction {
@@ -39,5 +44,42 @@ impl CegarAbstraction for CartesianAbstraction {
         self.transition_system.backward = Vec::new();
         self.transition_system.cartesian_sets = Vec::new();
         self.abstract_source_sets = Vec::new();
+    }
+}
+
+impl CartesianAbstraction {
+    /// Label saturation of the abstraction under `operator_costs`; see
+    /// [`saturate_labels`].
+    pub(crate) fn saturate_labels(
+        &self,
+        operator_costs: &[f64],
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, Vec<f64>)> {
+        saturate_labels(
+            &mut ExplicitSaturationGraph::new(&self.transition_system),
+            operator_costs,
+            perimeter_state,
+            deadline,
+        )
+    }
+
+    /// Regional saturation of the abstraction under `remaining`; see
+    /// [`saturate_regions`]. Every abstract operator is one transition, so
+    /// its source sets are already those of the transition.
+    pub(crate) fn saturate_regions(
+        &self,
+        remaining: &RemainingCosts,
+        perimeter_state: Option<usize>,
+        deadline: Deadline,
+    ) -> Result<(Vec<f64>, SourceSetCostAllocation)> {
+        saturate_regions(
+            &self.transition_system,
+            &self.abstract_source_sets,
+            |_, source_set| Ok(source_set.clone()),
+            remaining,
+            perimeter_state,
+            deadline,
+        )
     }
 }

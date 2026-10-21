@@ -1,28 +1,29 @@
 use super::*;
 
 #[test]
-fn reduce_costs_rejects_significant_underflow() {
-    let mut remaining = vec![1.0];
-    let saturated = vec![1.5];
+fn uniform_reduction_rejects_significant_underflow() {
+    let mut remaining = RemainingCosts::from_operator_costs(&[1.0]);
 
-    let err = reduce_costs(&mut remaining, &saturated).unwrap_err();
-    assert!(format!("{err}").contains("underflow"));
+    let error = remaining.reduce_operator_costs_uniform(&[1.5]).unwrap_err();
+    assert!(format!("{error:#}").contains("underflow"));
 }
 
 #[test]
-fn reduce_costs_rejects_non_finite_saturated_costs() {
-    let mut remaining = vec![1.0];
+fn uniform_reduction_rejects_non_finite_saturated_costs() {
+    let mut remaining = RemainingCosts::from_operator_costs(&[1.0]);
 
-    let error = reduce_costs(&mut remaining, &[f64::NEG_INFINITY]).unwrap_err();
-
-    assert!(error.to_string().contains("must be finite"));
+    let error = remaining
+        .reduce_operator_costs_uniform(&[f64::NEG_INFINITY])
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid saturated cost"));
 }
 
 #[test]
-fn reduce_costs_clamps_tiny_negative_roundoff() {
-    let mut remaining = vec![1.0];
-    let saturated = vec![1.0 + 1e-12];
+fn uniform_reduction_clamps_tiny_negative_roundoff() {
+    let mut remaining = RemainingCosts::from_operator_costs(&[1.0]);
 
-    reduce_costs(&mut remaining, &saturated).unwrap();
-    assert_eq!(remaining, vec![0.0]);
+    remaining
+        .reduce_operator_costs_uniform(&[1.0 + 1e-12])
+        .unwrap();
+    assert_eq!(remaining.operator_costs_for_label_cp(), vec![0.0]);
 }
