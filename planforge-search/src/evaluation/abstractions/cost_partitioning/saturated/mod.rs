@@ -30,15 +30,15 @@ mod diverse_orders;
 mod goal_cover_orders;
 mod lookup;
 mod orders;
+mod partition;
 mod sampling;
-mod saturation;
 mod scoring;
 pub use config::{CostPartitioningMethod, OrderGenerator, Saturator, ScpConfig};
 use deadline::*;
 use diagnostics::*;
 use goal_cover_orders::*;
 use lookup::*;
-use saturation::*;
+use partition::*;
 use scoring::*;
 
 // ---------------------------------------------------------------------------
