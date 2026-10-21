@@ -32,6 +32,10 @@ pub struct CegarOptions {
     pub split_selection_rank: Option<usize>,
     /// Log the refined abstraction.
     pub debug: bool,
+    /// Keep the transition system after refinement, which cost partitioning
+    /// reads; the distances alone answer lookups.
+    #[option(skip)]
+    pub keep_transition_system: bool,
 }
 
 impl CegarOptions {

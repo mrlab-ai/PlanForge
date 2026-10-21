@@ -4,17 +4,13 @@ use std::time::{Duration, Instant};
 use crate::resource_limits::{Deadline, min_time_limit, time_limit_from_secs};
 
 use crate::config::{ConfigArg, ConfigCall, ConfigValue, FromOptionValue, configure};
-use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator,
+use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
+use crate::evaluation::abstractions::collections::config::{CollectionConfig, MemberConfig};
+use crate::evaluation::abstractions::collections::generator::{
+    AbstractionGenerator, CollectionGenerator,
 };
-use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::component::AbstractionComponent;
-use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
-use crate::evaluation::abstractions::domain::config::{
-    DomainAbstractionCollectionConfig, DomainAbstractionConfig,
-};
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -193,11 +189,11 @@ impl PdbSourceConfig {
 }
 
 impl ComponentUse {
-    fn needs_source_sets(self) -> bool {
+    pub(crate) fn needs_source_sets(self) -> bool {
         matches!(self, Self::RegionalCostPartitioning)
     }
 
-    fn needs_transition_system(self) -> bool {
+    pub(crate) fn needs_transition_system(self) -> bool {
         !matches!(self, Self::Standalone)
     }
 }
@@ -406,106 +402,27 @@ pub(crate) fn build_components<'task>(
         let remaining = remaining_construction_time(construction_deadline)?;
         let before = components.len();
         match source.name() {
-            "domain" => {
-                let mut config = configure(
-                    "domain",
-                    DomainAbstractionConfig {
-                        compute_source_sets: component_use.needs_source_sets(),
-                        ..DomainAbstractionConfig::default()
-                    },
-                    source.args(),
-                )?;
-                config.cegar.max_time = min_time_limit(config.cegar.max_time, remaining);
-                info!("Building domain abstraction source {source_index}...");
-                let abstraction = DomainAbstractionGenerator::new(config)
-                    .and_then(|generator| generator.generate(task))
-                    .map_err(|error| {
-                        HeuristicBuildError::from_source(
-                            error,
-                            format!("failed to build domain abstraction source {source_index}"),
-                        )
-                    })?;
-                components.push(AbstractionComponent::from(abstraction));
-            }
-            "domain_collection" => {
-                let mut config = configure(
-                    "domain_collection",
-                    DomainAbstractionCollectionConfig::default(),
-                    source.args(),
-                )?;
-                if let Some(remaining) = remaining {
-                    config.cap_construction_time(remaining);
-                }
-                // Operator regions do not influence CEGAR. Build them after the collection so
-                // canonical, label SCP, and region SCP receive the same generation budget.
-                config.member.compute_source_sets = false;
-                info!("Building domain abstraction collection source {source_index}...");
-                let mut abstractions = DomainAbstractionCollectionGenerator::new(config)
-                    .and_then(|generator| generator.generate(task))
-                    .map_err(|error| {
-                    HeuristicBuildError::from_source(
-                        error,
-                        format!(
-                            "failed to build domain abstraction collection source {source_index}"
-                        ),
-                    )
-                })?;
-                if component_use.needs_source_sets() {
-                    for (component_index, abstraction) in abstractions.iter_mut().enumerate() {
-                        abstraction
-                            .ensure_abstract_source_sets(task)
-                            .map_err(|error| {
-                    HeuristicBuildError::from_source(error, format!("failed to build regional operator regions for domain abstraction source {source_index}, component {component_index}"))
-                })?;
-                    }
-                }
-                components.extend(abstractions.into_iter().map(AbstractionComponent::from));
-            }
-            "cartesian" => {
-                let mut config =
-                    configure("cartesian", cartesian_config(component_use), source.args())?;
-                config.cegar.max_time = min_time_limit(config.cegar.max_time, remaining);
-                info!("Building Cartesian abstraction source {source_index}...");
-                let abstraction = CartesianAbstractionGenerator::new(config)
-                    .map_err(|error| {
-                        HeuristicBuildError::from_source(
-                            error,
-                            format!(
-                                "failed to construct Cartesian abstraction source {source_index}"
-                            ),
-                        )
-                    })?
-                    .generate(task)
-                    .map_err(|error| {
-                        HeuristicBuildError::from_source(
-                            error,
-                            format!("failed to build Cartesian abstraction source {source_index}"),
-                        )
-                    })?;
-                components.push(AbstractionComponent::from(abstraction));
-            }
+            "domain" => components.extend(build_cegar_source::<DomainAbstractionGenerator>(
+                task,
+                source,
+                component_use,
+                remaining,
+            )?),
+            "domain_collection" => components.extend(build_cegar_collection_source::<
+                DomainAbstractionGenerator,
+            >(
+                task, source, component_use, remaining
+            )?),
+            "cartesian" => components.extend(build_cegar_source::<CartesianAbstractionGenerator>(
+                task,
+                source,
+                component_use,
+                remaining,
+            )?),
             "cartesian_collection" => {
-                let mut config = configure(
-                    "cartesian_collection",
-                    CartesianAbstractionCollectionConfig {
-                        member: cartesian_config(component_use),
-                        ..CartesianAbstractionCollectionConfig::default()
-                    },
-                    source.args(),
-                )?;
-                if let Some(remaining) = remaining {
-                    config.cap_construction_time(remaining);
-                }
-                info!("Building Cartesian abstraction collection source {source_index}...");
-                let abstractions = CartesianAbstractionCollectionGenerator::new(config)
-                    .map_err(|error| {
-                    HeuristicBuildError::from_source(error, format!("failed to construct Cartesian abstraction collection source {source_index}"))
-                })?
-                    .generate(task)
-                    .map_err(|error| {
-                    HeuristicBuildError::from_source(error, format!("failed to build Cartesian abstraction collection source {source_index}"))
-                })?;
-                components.extend(abstractions.into_iter().map(AbstractionComponent::from));
+                components.extend(build_cegar_collection_source::<
+                    CartesianAbstractionGenerator,
+                >(task, source, component_use, remaining)?)
             }
             "icaps26_cartesian" => {
                 validate_restricted_task(task)?;
@@ -588,6 +505,91 @@ pub(crate) fn build_components<'task>(
 
 /// The construction time left before `deadline`, `None` without one; a
 /// [`HeuristicBuildError::ConstructionTimeout`] once it passed.
+/// The abstraction source `source` describes, built by `G` for use as
+/// `component_use` within `remaining`.
+fn build_cegar_source<'task, G>(
+    task: &dyn AbstractNumericTask,
+    source: &ConfigCall,
+    component_use: ComponentUse,
+    remaining: Option<Duration>,
+) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError>
+where
+    G: AbstractionGenerator,
+    G::Config: Default,
+    G::Abstraction: Into<AbstractionComponent<'task>>,
+{
+    let mut member = G::Config::default();
+    member.cegar_mut().keep_transition_system = component_use.needs_transition_system();
+    let mut config = configure(source.name(), member, source.args())?;
+    let cegar = config.cegar_mut();
+    cegar.max_time = min_time_limit(cegar.max_time, remaining);
+    info!("Building {} abstraction source...", G::NAME);
+    let abstraction = G::new(config)
+        .and_then(|generator| generator.generate(task))
+        .map_err(|error| {
+            HeuristicBuildError::from_source(error, format!("failed to build `{}`", source.name()))
+        })?;
+    finish_cegar_components(task, vec![abstraction], component_use, source)
+}
+
+/// The abstraction collection source `source` describes, built by `G` for
+/// use as `component_use` within `remaining`.
+fn build_cegar_collection_source<'task, G>(
+    task: &dyn AbstractNumericTask,
+    source: &ConfigCall,
+    component_use: ComponentUse,
+    remaining: Option<Duration>,
+) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError>
+where
+    G: AbstractionGenerator,
+    CollectionConfig<G::Config>: Default,
+    G::Abstraction: Into<AbstractionComponent<'task>>,
+{
+    let mut config = CollectionConfig::<G::Config>::default();
+    config.member.cegar_mut().keep_transition_system = component_use.needs_transition_system();
+    let mut config = configure(source.name(), config, source.args())?;
+    if let Some(remaining) = remaining {
+        config.cap_construction_time(remaining);
+    }
+    info!("Building {} abstraction collection source...", G::NAME);
+    let abstractions = CollectionGenerator::<G>::new(config)
+        .and_then(|generator| generator.generate(task))
+        .map_err(|error| {
+            HeuristicBuildError::from_source(error, format!("failed to build `{}`", source.name()))
+        })?;
+    finish_cegar_components(task, abstractions, component_use, source)
+}
+
+/// `abstractions` as components, with the source sets regional cost
+/// partitioning reads. They are built after generation, so they take nothing
+/// from its budget.
+fn finish_cegar_components<'task, A>(
+    task: &dyn AbstractNumericTask,
+    mut abstractions: Vec<A>,
+    component_use: ComponentUse,
+    source: &ConfigCall,
+) -> Result<Vec<AbstractionComponent<'task>>, HeuristicBuildError>
+where
+    A: CegarAbstraction + Into<AbstractionComponent<'task>>,
+{
+    if component_use.needs_source_sets() {
+        for (index, abstraction) in abstractions.iter_mut().enumerate() {
+            abstraction
+                .ensure_abstract_source_sets(task)
+                .map_err(|error| {
+                    HeuristicBuildError::from_source(
+                        error,
+                        format!(
+                            "failed to build the source sets of abstraction {index} of `{}`",
+                            source.name()
+                        ),
+                    )
+                })?;
+        }
+    }
+    Ok(abstractions.into_iter().map(Into::into).collect())
+}
+
 pub(crate) fn remaining_construction_time(
     deadline: Deadline,
 ) -> Result<Option<Duration>, HeuristicBuildError> {
@@ -627,15 +629,6 @@ pub(crate) fn apply_icaps26_cartesian_options(
     )
 }
 
-/// The Cartesian defaults for a component used as `component_use`.
-pub(crate) fn cartesian_config(component_use: ComponentUse) -> CartesianAbstractionConfig {
-    CartesianAbstractionConfig {
-        compute_source_sets: component_use.needs_source_sets(),
-        retain_transition_system: component_use.needs_transition_system(),
-        ..CartesianAbstractionConfig::default()
-    }
-}
-
 fn format_config_value(value: &ConfigValue) -> String {
     match value {
         ConfigValue::Atom(atom) => atom.clone(),
@@ -651,12 +644,13 @@ mod tests {
     use crate::resource_limits::Deadline;
 
     use crate::config::{ConfigArg, ConfigCall, ConfigValue};
+    use crate::evaluation::abstractions::cartesian::CartesianAbstractionConfig;
 
     use super::HeuristicBuildError;
 
     use super::{
-        ComponentUse, PdbPatternsConfig, PdbSourceConfig, cartesian_config, configure,
-        remaining_construction_time, require_only_component_sources, split_component_sources,
+        PdbPatternsConfig, PdbSourceConfig, configure, remaining_construction_time,
+        require_only_component_sources, split_component_sources,
     };
     use crate::evaluation::abstractions::common::cegar::SplitSelection;
 
@@ -809,12 +803,8 @@ mod tests {
                 Some("split_selection".to_string()),
                 ConfigValue::Atom(name.to_string()),
             )];
-            let config = configure(
-                "cartesian",
-                cartesian_config(ComponentUse::Standalone),
-                &args,
-            )
-            .unwrap();
+            let config =
+                configure("cartesian", CartesianAbstractionConfig::default(), &args).unwrap();
             assert_eq!(config.cegar.split_selection, expected);
         }
     }
@@ -825,12 +815,8 @@ mod tests {
             Some("split_selection".to_string()),
             ConfigValue::Atom("magic".to_string()),
         )];
-        let error = configure(
-            "cartesian",
-            cartesian_config(ComponentUse::Standalone),
-            &args,
-        )
-        .unwrap_err();
+        let error =
+            configure("cartesian", CartesianAbstractionConfig::default(), &args).unwrap_err();
         assert!(
             error.starts_with("cartesian(...): invalid split_selection `magic`"),
             "{error}"

@@ -6,6 +6,7 @@
 //! CLI help are generated from that declaration.
 
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
+use crate::evaluation::abstractions::collections::config::MemberConfig;
 use crate::evaluation::abstractions::common::abstraction::AbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbstractionHeuristic;
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
@@ -14,7 +15,6 @@ use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::Po
 use crate::evaluation::abstractions::cost_partitioning::saturated::{
     SaturatedCostPartitioningHeuristic, ScpBuildOptions,
 };
-use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
@@ -438,6 +438,29 @@ fn build_scp_from_sources<'task>(
     Ok(Some(Box::new(heuristic)))
 }
 
+/// The heuristic of the one abstraction `spec` configures `G` to build.
+fn standalone_abstraction_heuristic<'a, G>(
+    spec: &HeuristicSpec,
+    task: &dyn AbstractNumericTask,
+) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError>
+where
+    G: AbstractionGenerator,
+    G::Config: Default,
+    G::Abstraction: 'a,
+{
+    info!("Building {} abstraction (CEGAR)...", G::NAME);
+    let mut config = G::Config::default();
+    config.cegar_mut().keep_transition_system = false;
+    let config = configure(&spec.name, config, &spec.args)?;
+    let abstraction = G::new(config)
+        .and_then(|generator| generator.generate(task))
+        .map_err(|error| format!("failed to build {} abstraction: {error:#}", G::NAME))?;
+    Ok(Some(Box::new(AbstractionHeuristic::new(
+        &spec.name,
+        abstraction,
+    ))))
+}
+
 heuristic_registry! {
     build(spec, task, sampling_task);
 
@@ -524,28 +547,7 @@ heuristic_registry! {
         backend: RequiredBackend::None,
         requirements: abstractable_task,
         nested: no_nested_heuristics,
-        build: {
-            info!("Building domain abstraction (CEGAR)...");
-            // Single DA reads only the distance table; operator regions are
-            // SCP-specific. Skip the per-concrete-op CartesianSet cost.
-            let cfg = configure(
-                &spec.name,
-                DomainAbstractionConfig {
-                    compute_source_sets: false,
-                    ..DomainAbstractionConfig::default()
-                },
-                &spec.args,
-            )?;
-            let generator = DomainAbstractionGenerator::new(cfg)
-                .map_err(|e| format!("failed to construct DomainAbstractionGenerator: {e:#}"))?;
-            let abstraction = generator
-                .generate(task)
-                .map_err(|e| format!("failed to build domain abstraction: {e:#}"))?;
-            Ok(Some(
-                Box::new(AbstractionHeuristic::new(&spec.name, abstraction))
-                    as Box<dyn Heuristic + 'a>,
-            ))
-        }
+        build: { standalone_abstraction_heuristic::<DomainAbstractionGenerator>(spec, task) }
     }
 
     CartesianAbstraction {
@@ -553,23 +555,7 @@ heuristic_registry! {
         backend: RequiredBackend::None,
         requirements: abstractable_task,
         nested: no_nested_heuristics,
-        build: {
-            info!("Building Cartesian abstraction (CEGAR)...");
-            let cfg = configure(
-                &spec.name,
-                abstraction_config::cartesian_config(abstraction_config::ComponentUse::Standalone),
-                &spec.args,
-            )?;
-            let generator = CartesianAbstractionGenerator::new(cfg)
-                .map_err(|error| format!("failed to construct Cartesian generator: {error:#}"))?;
-            let abstraction = generator
-                .generate(task)
-                .map_err(|error| format!("failed to build Cartesian abstraction: {error:#}"))?;
-            Ok(Some(
-                Box::new(AbstractionHeuristic::new(&spec.name, abstraction))
-                    as Box<dyn Heuristic + 'a>,
-            ))
-        }
+        build: { standalone_abstraction_heuristic::<CartesianAbstractionGenerator>(spec, task) }
     }
 
     PosthocOptimization {
@@ -679,10 +665,7 @@ heuristic_registry! {
             }
             let da_config = configure(
                 abstraction_call.name(),
-                DomainAbstractionConfig {
-                    compute_source_sets: false,
-                    ..DomainAbstractionConfig::default()
-                },
+                crate::evaluation::abstractions::domain::config::DomainAbstractionConfig::default(),
                 &da_args,
             )?;
             info!("Building recorded domain abstraction for pot_da_ocp...");

@@ -130,7 +130,6 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: false,
         ..Default::default()
     })
     .unwrap()

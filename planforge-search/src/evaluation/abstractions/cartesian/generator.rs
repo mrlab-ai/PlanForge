@@ -85,14 +85,13 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
         let initial_abstract_state = working
             .hierarchy
             .map_state(&initial_state.propositional, &initial_state.numeric)?;
-        let (transition_system, distance_table, relevant_operator_ids, source_sets) =
-            if self.config.retain_transition_system {
+        let (transition_system, distance_table, relevant_operator_ids) =
+            if self.config.cegar.keep_transition_system {
                 finalize_abstraction(
                     &working,
                     &semantics,
                     initial_abstract_state,
                     self.config.cegar.combine_labels,
-                    self.config.compute_source_sets,
                 )?
             } else {
                 finalize_standalone_abstraction(
@@ -102,7 +101,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                     initial_abstract_state,
                 )?
             };
-        let transition_count = if self.config.retain_transition_system {
+        let transition_count = if self.config.cegar.keep_transition_system {
             transition_system.transitions.len()
         } else {
             working_transition_count
@@ -132,7 +131,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             distance_table,
             transition_system,
             relevant_operator_ids,
-            abstract_source_sets: source_sets,
+            abstract_source_sets: Vec::new(),
             metadata: AbstractionMetadata::standalone(
                 outcome,
                 self.config.cegar.split_kind,

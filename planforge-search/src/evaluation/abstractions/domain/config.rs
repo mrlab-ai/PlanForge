@@ -32,14 +32,6 @@ pub struct DomainAbstractionConfig {
     pub blacklisted_prop_var_ids: HashSet<VariableIndex>,
     #[option(skip)]
     pub blacklisted_numeric_var_ids: HashSet<VariableIndex>,
-    /// When false, `DomainAbstractionGenerator::generate` skips building the
-    /// abstract operators' source sets. Only saturated cost partitioning
-    /// reads them; heuristics that read only the distance table, such as the
-    /// canonical and maximum heuristics, turn this off, since the source sets
-    /// can be large (~12 GB of `CartesianSet`s on
-    /// minecraft-sword-advanced/prob_30x30_5).
-    #[option(skip)]
-    pub compute_source_sets: bool,
 }
 
 impl Default for DomainAbstractionConfig {
@@ -57,12 +49,12 @@ impl Default for DomainAbstractionConfig {
                 split_selection: SplitSelection::Random,
                 split_selection_rank: None,
                 debug: false,
+                keep_transition_system: true,
             },
             use_wildcard_plans: false,
             init_split_var_ids: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
-            compute_source_sets: true,
         }
     }
 }

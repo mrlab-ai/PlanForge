@@ -68,7 +68,6 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                compute_source_sets: true,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,

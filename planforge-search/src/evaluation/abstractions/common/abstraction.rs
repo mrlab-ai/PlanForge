@@ -5,7 +5,9 @@ use std::cell::RefCell;
 
 use anyhow::Result;
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorIndex};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, ExplicitValueIndex, NumericValue, OperatorIndex,
+};
 
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;
@@ -113,6 +115,10 @@ pub trait CegarAbstraction {
     /// The source set of every abstract operator's labels, which regional
     /// cost partitioning attaches costs to; empty when not built.
     fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets];
+
+    /// Builds the abstract operators' source sets, unless built already.
+    /// Fails once the transition data was discarded.
+    fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()>;
 
     fn num_states(&self) -> usize {
         self.distance_table().distances.len()

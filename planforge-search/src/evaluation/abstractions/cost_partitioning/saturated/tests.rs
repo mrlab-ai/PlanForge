@@ -7,6 +7,7 @@ use super::orders::*;
 use super::sampling::*;
 
 use super::*;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 
@@ -86,8 +87,9 @@ pub(super) fn independent_goals_task() -> NumericRootTask {
     })
 }
 
+/// A Cartesian abstraction of `task` with its source sets.
 pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstraction {
-    CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+    let mut abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
         cegar: CegarOptions {
             max_states: 16,
             max_time: None,
@@ -96,12 +98,13 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
             debug: false,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
         ..Default::default()
     })
     .unwrap()
     .generate(task)
-    .unwrap()
+    .unwrap();
+    abstraction.ensure_abstract_source_sets(task).unwrap();
+    abstraction
 }
 
 pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpConfig {
@@ -174,7 +177,7 @@ pub(super) fn goal_cover_scp<'task>(
     task: &'task std::sync::Arc<NumericRootTask>,
     max_orders: impl FnOnce(usize) -> usize,
 ) -> (SaturatedCostPartitioningHeuristic<'task>, HashSet<usize>) {
-    let abstractions =
+    let mut abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
@@ -185,7 +188,6 @@ pub(super) fn goal_cover_scp<'task>(
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                compute_source_sets: true,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
@@ -202,6 +204,9 @@ pub(super) fn goal_cover_scp<'task>(
         .unwrap()
         .generate(&**task)
         .unwrap();
+    for abstraction in &mut abstractions {
+        abstraction.ensure_abstract_source_sets(&**task).unwrap();
+    }
     let expected_goals = abstractions
         .iter()
         .filter_map(|abstraction| {

@@ -47,6 +47,53 @@ impl CegarAbstraction for CartesianAbstraction {
         &self.abstract_source_sets
     }
 
+    fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
+        let system = &self.transition_system;
+        if !self.abstract_source_sets.is_empty() || system.transitions.is_empty() {
+            return Ok(());
+        }
+        ensure!(
+            !system.cartesian_sets.is_empty(),
+            "cannot build source sets after the transition system was discarded"
+        );
+        let regions = RegionSemantics::new(task)?;
+        self.abstract_source_sets = system
+            .transitions
+            .iter()
+            .map(|transition| {
+                let source = &system.cartesian_sets[transition.source_state];
+                let target = &system.cartesian_sets[transition.target_state];
+                let labels = transition
+                    .concrete_op_ids
+                    .iter()
+                    .map(|&concrete_op_id| {
+                        let source_set = regions
+                            .transition_source_set(source, concrete_op_id, target)?
+                            .with_context(|| {
+                                format!(
+                                    "transition {} has an empty source set for operator {concrete_op_id}",
+                                    transition.transition_id
+                                )
+                            })?;
+                        // A label that can leave from anywhere in the source
+                        // state shares its region.
+                        let source = if source_set == **source {
+                            Arc::clone(source)
+                        } else {
+                            Arc::new(source_set)
+                        };
+                        Ok(LabelSourceSet {
+                            concrete_op_id,
+                            source,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(AbstractOperatorSourceSets { labels })
+            })
+            .collect::<Result<_>>()?;
+        Ok(())
+    }
+
     fn discard_transition_data(&mut self) {
         self.transition_system.transitions = Vec::new();
         self.transition_system.backward = Vec::new();

@@ -1,5 +1,6 @@
 use super::*;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
@@ -90,13 +91,13 @@ fn interval_scp_combines_all_representations() {
             combine_labels: false,
             ..DomainAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
         ..Default::default()
     };
-    let domain = DomainAbstractionGenerator::new(domain_config)
+    let mut domain = DomainAbstractionGenerator::new(domain_config)
         .unwrap()
         .generate(&task)
         .unwrap();
+    domain.ensure_abstract_source_sets(&task).unwrap();
     let pattern = Pattern::new(vec![VariableIndex::from_usize(1)], vec![]);
     let pdb = PatternDatabase::new(ProjectedTask::new(&task, &pattern).unwrap(), 32).unwrap();
     let components = vec![

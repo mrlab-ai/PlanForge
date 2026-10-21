@@ -81,14 +81,13 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let abstractions =
+    let mut abstractions =
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                compute_source_sets: true,
                 ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
@@ -107,6 +106,9 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         .unwrap()
         .generate(&task)
         .unwrap();
+    for abstraction in &mut abstractions {
+        abstraction.ensure_abstract_source_sets(&task).unwrap();
+    }
 
     assert_eq!(abstractions.len(), 6);
     let initial_h = abstractions

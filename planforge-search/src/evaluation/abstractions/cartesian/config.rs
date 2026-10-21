@@ -9,11 +9,6 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 pub struct CartesianAbstractionConfig {
     #[option(flatten)]
     pub cegar: CegarOptions,
-    #[option(skip)]
-    pub compute_source_sets: bool,
-    /// Retain the explicit graph required by cost partitioning.
-    #[option(skip)]
-    pub retain_transition_system: bool,
     /// The variable to split the trivial abstraction on before CEGAR, in the
     /// encoding of
     /// [`initial_split_candidates`](crate::evaluation::abstractions::collections::standard::initial_split_candidates):
@@ -44,9 +39,8 @@ impl Default for CartesianAbstractionConfig {
                 split_selection: SplitSelection::MinGrowth,
                 split_selection_rank: None,
                 debug: false,
+                keep_transition_system: true,
             },
-            compute_source_sets: true,
-            retain_transition_system: true,
             initial_split_var: None,
             blacklisted_prop_var_ids: HashSet::new(),
             blacklisted_numeric_var_ids: HashSet::new(),
@@ -73,7 +67,6 @@ impl MemberSpecialization for CartesianAbstractionConfig {
             initial_split_var: member.initial_split_var,
             blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
             blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
-            ..self.clone()
         }
     }
 

@@ -16,7 +16,7 @@ use super::factory::DomainAbstractionFactory;
 use super::initial_splits::{apply_initial_goal_splits, trivial_domain_mapping_and_sizes};
 use super::partitions::NumericPartitions;
 use super::view::DomainRefinement;
-use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
+use crate::evaluation::abstractions::common::abstraction::{AbstractionMetadata, CegarAbstraction};
 use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
@@ -159,17 +159,6 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
                 (operators, table)
             }
         };
-        let abstract_source_sets = if self.config.compute_source_sets {
-            factory
-                .build_abstract_source_sets(task, &abstract_operators)
-                .context("failed to build abstract-operator regions")?
-        } else {
-            // Heuristics that read only the distance table (canonical, max,
-            // single domain abstraction) do not consume operator regions;
-            // skipping them saves ~12 GB on minecraft-sword-advanced/prob_30x30_5.
-            // Regional SCP builds them from the finished abstraction.
-            Vec::new()
-        };
         let initial_h = distance_table.distances[distance_table.initial_state];
         // The refinement root is reachable from the initial state, so a dead
         // initial state means a dead root, which is where CEGAR stops.
@@ -184,20 +173,24 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         );
         let relevant_operator_ids = factory.relevant_operator_ids(task, &abstract_operators);
 
-        Ok(DomainAbstraction {
+        let mut abstraction = DomainAbstraction {
             factory,
             distance_table,
             combine_labels,
             relevant_operator_ids,
             abstract_operators,
             transition_data_retained: true,
-            abstract_source_sets,
+            abstract_source_sets: Vec::new(),
             interval_transition_system: RefCell::new(None),
             metadata: AbstractionMetadata::standalone(
                 outcome,
                 self.config.cegar.split_kind,
                 self.config.cegar.split_selection_rank,
             ),
-        })
+        };
+        if !self.config.cegar.keep_transition_system {
+            abstraction.discard_transition_data();
+        }
+        Ok(abstraction)
     }
 }

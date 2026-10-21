@@ -173,7 +173,6 @@ fn mixed_components<'task>(task: &'task NumericRootTask) -> Vec<AbstractionCompo
             debug: false,
             ..CartesianAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
         ..Default::default()
     })
     .unwrap()

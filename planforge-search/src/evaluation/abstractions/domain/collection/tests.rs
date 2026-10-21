@@ -135,7 +135,6 @@ fn member_config(max_states: usize, max_time: Option<Duration>) -> DomainAbstrac
             max_time,
             ..member.cegar
         },
-        compute_source_sets: false,
         ..member
     }
 }

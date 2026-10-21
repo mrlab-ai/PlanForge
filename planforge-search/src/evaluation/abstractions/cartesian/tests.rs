@@ -1,4 +1,5 @@
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -73,7 +74,7 @@ fn numeric_goal_task(
 
 fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
     for flaw_scope in [FlawScope::First, FlawScope::WholePlan] {
-        let abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
+        let mut abstraction = CartesianAbstractionGenerator::new(CartesianAbstractionConfig {
             cegar: CegarOptions {
                 max_states: 64,
                 flaw_kind: FlawKind::Progression,
@@ -85,6 +86,7 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
         .unwrap()
         .generate(task)
         .unwrap();
+        abstraction.ensure_abstract_source_sets(task).unwrap();
         assert_eq!(
             abstraction.distance_table.distances[abstraction.distance_table.initial_state],
             expected_h,

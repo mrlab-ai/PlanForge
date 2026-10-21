@@ -5,12 +5,10 @@ pub(super) fn finalize_abstraction(
     semantics: &CartesianSemantics<'_>,
     initial_state: usize,
     combine_labels: bool,
-    compute_source_sets: bool,
 ) -> Result<(
     AbstractTransitionSystem,
     AbstractDistanceTable,
     Vec<OperatorIndex>,
-    Vec<AbstractOperatorSourceSets>,
 )> {
     let mut grouped: HashMap<(usize, usize), Vec<OperatorIndex>> = HashMap::new();
     let mut raw = Vec::new();
@@ -43,11 +41,6 @@ pub(super) fn finalize_abstraction(
     raw.sort();
     let mut transitions = Vec::with_capacity(raw.len());
     let mut backward = vec![Vec::new(); working.states().len()];
-    let mut source_sets = if compute_source_sets {
-        Vec::with_capacity(raw.len())
-    } else {
-        Vec::new()
-    };
     let shared_cartesian_sets = working
         .states
         .iter()
@@ -60,35 +53,6 @@ pub(super) fn finalize_abstraction(
             for &label in &labels {
                 relevant.insert(label);
             }
-        }
-        if compute_source_sets {
-            source_sets.push(AbstractOperatorSourceSets {
-                labels: labels
-                    .iter()
-                    .copied()
-                    .map(|concrete_op_id| {
-                        let source_set = semantics.regions().transition_source_set(
-                            &shared_cartesian_sets[source],
-                            concrete_op_id,
-                            &shared_cartesian_sets[target],
-                        )?
-                        .with_context(|| {
-                            format!(
-                                "emitted Cartesian transition {source} --{concrete_op_id}--> {target} has an empty source operator region"
-                            )
-                        })?;
-                        let source_region = if source_set == *shared_cartesian_sets[source] {
-                            Arc::clone(&shared_cartesian_sets[source])
-                        } else {
-                            Arc::new(source_set)
-                        };
-                        Ok(LabelSourceSet {
-                            concrete_op_id,
-                            source: source_region,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?,
-            });
         }
         transitions.push(AbstractTransition {
             transition_id,
@@ -142,12 +106,7 @@ pub(super) fn finalize_abstraction(
     };
     let mut relevant_operator_ids: Vec<_> = relevant.into_iter().collect();
     relevant_operator_ids.sort_unstable();
-    Ok((
-        transition_system,
-        distance_table,
-        relevant_operator_ids,
-        source_sets,
-    ))
+    Ok((transition_system, distance_table, relevant_operator_ids))
 }
 
 pub(super) fn finalize_standalone_abstraction(
@@ -159,7 +118,6 @@ pub(super) fn finalize_standalone_abstraction(
     AbstractTransitionSystem,
     AbstractDistanceTable,
     Vec<OperatorIndex>,
-    Vec<AbstractOperatorSourceSets>,
 )> {
     ensure!(
         shortest_paths.distances().len() == working.states().len(),
@@ -187,10 +145,5 @@ pub(super) fn finalize_standalone_abstraction(
         initial_state,
         cartesian_sets: Vec::new(),
     };
-    Ok((
-        transition_system,
-        distance_table,
-        relevant_operator_ids,
-        Vec::new(),
-    ))
+    Ok((transition_system, distance_table, relevant_operator_ids))
 }

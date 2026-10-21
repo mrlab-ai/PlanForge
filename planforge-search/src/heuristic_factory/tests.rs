@@ -85,14 +85,9 @@ fn cartesian_collection_config(
     args: &[ConfigArg],
     component_use: abstraction_config::ComponentUse,
 ) -> Result<CartesianAbstractionCollectionConfig, String> {
-    configure(
-        "cartesian_collection",
-        CartesianAbstractionCollectionConfig {
-            member: abstraction_config::cartesian_config(component_use),
-            ..Default::default()
-        },
-        args,
-    )
+    let mut config = CartesianAbstractionCollectionConfig::default();
+    config.member.cegar.keep_transition_system = component_use.needs_transition_system();
+    configure("cartesian_collection", config, args)
 }
 
 /// The `cartesian(...)` options `args` for a component used as
@@ -101,11 +96,9 @@ fn cartesian_source_config(
     args: &[ConfigArg],
     component_use: abstraction_config::ComponentUse,
 ) -> Result<CartesianAbstractionConfig, String> {
-    configure(
-        "cartesian",
-        abstraction_config::cartesian_config(component_use),
-        args,
-    )
+    let mut config = CartesianAbstractionConfig::default();
+    config.cegar.keep_transition_system = component_use.needs_transition_system();
+    configure("cartesian", config, args)
 }
 
 #[test]
@@ -187,7 +180,7 @@ fn parses_hierarchical_cartesian_collection_source() {
     assert!(config.single_goal_tasks);
     assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(config.member.cegar.flaw_scope, FlawScope::WholePlan);
-    assert!(config.member.compute_source_sets);
+    assert!(config.member.cegar.keep_transition_system);
 }
 
 #[test]
@@ -332,9 +325,10 @@ fn both_representations_take_the_same_cegar_options() {
     let domain = astar_heuristic(&format!("astar(domain_abstraction({options}))"));
     let domain = configure("domain", DomainAbstractionConfig::default(), &domain.args).unwrap();
     let cartesian = astar_heuristic(&format!("astar(cartesian_abstraction({options}))"));
-    let cartesian = cartesian_source_config(
+    let cartesian = configure(
+        "cartesian",
+        CartesianAbstractionConfig::default(),
         &cartesian.args,
-        abstraction_config::ComponentUse::Standalone,
     )
     .unwrap();
     assert_eq!(domain.cegar, cartesian.cegar);

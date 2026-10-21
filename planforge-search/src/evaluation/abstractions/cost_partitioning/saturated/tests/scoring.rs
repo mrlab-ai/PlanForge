@@ -14,7 +14,6 @@ fn interval_stolen_costs_accept_transition_free_components() {
             max_states: 16,
             ..DomainAbstractionConfig::default().cegar
         },
-        compute_source_sets: true,
         ..Default::default()
     };
     let mut domain = DomainAbstractionGenerator::new(domain_config)

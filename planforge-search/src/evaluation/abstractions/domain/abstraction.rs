@@ -71,16 +71,7 @@ impl CegarAbstraction for DomainAbstraction {
         &self.abstract_source_sets
     }
 
-    fn discard_transition_data(&mut self) {
-        self.abstract_operators.clear();
-        self.transition_data_retained = false;
-        self.abstract_source_sets.clear();
-        self.interval_transition_system.get_mut().take();
-    }
-}
-
-impl DomainAbstraction {
-    pub fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
+    fn ensure_abstract_source_sets(&mut self, task: &dyn AbstractNumericTask) -> Result<()> {
         if !self.abstract_source_sets.is_empty() {
             ensure!(
                 self.abstract_source_sets.len() == self.abstract_operators.len(),
@@ -107,6 +98,15 @@ impl DomainAbstraction {
         Ok(())
     }
 
+    fn discard_transition_data(&mut self) {
+        self.abstract_operators.clear();
+        self.transition_data_retained = false;
+        self.abstract_source_sets.clear();
+        self.interval_transition_system.get_mut().take();
+    }
+}
+
+impl DomainAbstraction {
     pub fn interval_transition_system<'a>(
         &'a self,
         task: &dyn AbstractNumericTask,
