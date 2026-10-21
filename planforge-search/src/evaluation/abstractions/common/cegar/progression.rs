@@ -115,7 +115,7 @@ pub(crate) fn replay_plan(
         let mut precondition_splits = Vec::new();
         let mut deviation_splits = Vec::new();
         let mut executed = None;
-        for op_id in view.step_operators(transition) {
+        for &op_id in view.step_operators(&transition) {
             let op = &semantics.task().get_operators()[op_id.index()];
             let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if !failed_preconditions.is_empty() {
@@ -280,10 +280,10 @@ fn replay_whole_plan(
         // the precondition flaws of the operators before it are not flaws of
         // the plan. If none applies, the first operator is executed anyway and
         // the step's precondition flaws are kept.
-        let step_operators = view.step_operators(transition);
+        let step_operators = view.step_operators(&transition);
         let mut step_splits = Vec::new();
         let mut applicable = None;
-        for &op_id in &step_operators {
+        for &op_id in step_operators {
             let op = &semantics.task().get_operators()[op_id.index()];
             let failed_preconditions = state.unsatisfied(op.preconditions()).collect::<Vec<_>>();
             if failed_preconditions.is_empty() {

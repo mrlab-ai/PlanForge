@@ -446,7 +446,8 @@ fn first_plan_step(
             task.get_initial_numeric_state_values(),
         )
         .unwrap();
-    view.step_operators(view.optimal_transition(initial).unwrap())
+    view.step_operators(&view.optimal_transition(initial).unwrap())
+        .to_vec()
 }
 
 #[test]

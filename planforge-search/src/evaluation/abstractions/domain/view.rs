@@ -70,9 +70,8 @@ impl AbstractionView for DomainView<'_> {
             })?;
         let concrete_op_id = *op
             .concrete_op_ids
-            .iter()
-            .min()
-            .with_context(|| format!("abstract operator {op_id} has no concrete operator"))?;
+            .first()
+            .expect("every abstract operator has a label");
         Ok(TransitionKey {
             source: state,
             concrete_op_id,
@@ -94,18 +93,15 @@ impl AbstractionView for DomainView<'_> {
         self.factory.states_after_split(split)
     }
 
-    fn step_operators(&self, transition: TransitionKey) -> Vec<OperatorIndex> {
+    /// With wildcard plans, every label of the transition's abstract
+    /// operator, ascending.
+    fn step_operators<'a>(&'a self, transition: &'a TransitionKey) -> &'a [OperatorIndex] {
         if !self.wildcard_plans {
-            return vec![transition.concrete_op_id];
+            return std::slice::from_ref(&transition.concrete_op_id);
         }
         let op_id = self.built.generating_op_ids[transition.source]
             .expect("an optimal transition leaves through its generating operator");
-        let mut labels = self.built.transitions.operators[op_id]
-            .concrete_op_ids
-            .clone();
-        labels.sort_unstable();
-        labels.dedup();
-        labels
+        &self.built.transitions.operators[op_id].concrete_op_ids
     }
 }
 
