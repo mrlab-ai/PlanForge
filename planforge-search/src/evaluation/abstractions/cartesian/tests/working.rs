@@ -93,7 +93,6 @@ fn finalized_abstractions_omit_zero_contribution_self_loops() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..CartesianAbstractionConfig::default()
     })
     .unwrap()
     .generate(&task)
@@ -154,7 +153,6 @@ fn standalone_finalization_reuses_exact_distances_without_materializing_transiti
                 keep_transition_system,
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..CartesianAbstractionConfig::default()
         })
         .unwrap()
         .generate(&task)

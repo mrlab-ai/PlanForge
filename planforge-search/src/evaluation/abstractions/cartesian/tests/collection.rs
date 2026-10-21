@@ -91,7 +91,6 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
@@ -230,7 +229,6 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 3,
@@ -260,7 +258,6 @@ fn goal_collection_builds_every_goal_with_source_sets() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
@@ -349,7 +346,6 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
@@ -513,7 +509,6 @@ fn progress_states_complete_after_reaching_the_full_goal() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
@@ -634,7 +629,6 @@ fn progress_states_complete_after_a_dead_progress_state() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
@@ -776,7 +770,6 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
                     max_states: 3,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::PerGoal,
             variants_per_goal: 1,
@@ -951,7 +944,6 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,

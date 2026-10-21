@@ -133,7 +133,6 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
                 random_seed: Some(1),
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         },
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,

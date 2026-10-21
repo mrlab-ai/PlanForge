@@ -11,7 +11,6 @@ use super::member::MemberConstruction;
 use super::standard::StandardSchedule;
 use super::strategy::CollectionStrategy;
 use crate::config::ApplyOptions;
-use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{FlawKind, SplitKind};
 use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
@@ -23,8 +22,6 @@ pub trait MemberConfig: ApplyOptions + Clone {
 
     fn cegar_mut(&mut self) -> &mut CegarOptions;
 
-    fn scope_mut(&mut self) -> &mut RefinementScope;
-
     /// This configuration for the member `construction` describes.
     fn for_member(&self, construction: &MemberConstruction) -> Self {
         let mut config = self.clone();
@@ -34,7 +31,6 @@ pub trait MemberConfig: ApplyOptions + Clone {
         cegar.random_seed = construction.random_seed;
         cegar.split_kind = construction.split_kind;
         cegar.split_selection_rank = construction.split_selection_rank;
-        *config.scope_mut() = construction.scope.clone();
         config
     }
 }

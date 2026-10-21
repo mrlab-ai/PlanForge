@@ -66,7 +66,6 @@ fn a_derived_goal_is_refused_by_name() {
             max_states: 64,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)
@@ -130,7 +129,6 @@ fn state_limit_returns_an_admissible_partial_snp_abstraction() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)

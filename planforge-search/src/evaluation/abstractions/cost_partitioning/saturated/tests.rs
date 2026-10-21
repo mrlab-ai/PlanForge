@@ -98,7 +98,6 @@ pub(super) fn cartesian_abstraction(task: &NumericRootTask) -> CartesianAbstract
             debug: false,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(task)
@@ -190,7 +189,6 @@ pub(super) fn goal_cover_scp<'task>(
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,

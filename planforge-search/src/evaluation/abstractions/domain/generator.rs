@@ -17,7 +17,9 @@ use super::view::{DomainBuild, DomainRefinement};
 use crate::evaluation::abstractions::common::abstraction::{
     AbstractionCore, AbstractionMetadata, finish_abstraction,
 };
-use crate::evaluation::abstractions::common::cegar::initial_splits::initial_splits;
+use crate::evaluation::abstractions::common::cegar::initial_splits::{
+    RefinementScope, initial_splits,
+};
 use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, refine_from_root};
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
@@ -46,6 +48,7 @@ pub(super) fn refine_domain_abstraction(
     config: &DomainAbstractionConfig,
     task: &dyn AbstractNumericTask,
     refinement_root: Option<&ExplicitState>,
+    scope: &RefinementScope,
 ) -> Result<DomainRefinementOutcome> {
     let start = Instant::now();
     let semantics = CegarSemantics::for_options(task, &config.cegar)?;
@@ -63,7 +66,7 @@ pub(super) fn refine_domain_abstraction(
     // abstraction, so it divides every abstract state if it divides one. As
     // for Cartesian abstractions, a split that would exceed `max_states` is
     // left out.
-    for initial_split in initial_splits(&semantics, &config.scope, config.cegar.random_seed) {
+    for initial_split in initial_splits(&semantics, scope, config.cegar.random_seed) {
         if let Some(split) = initial_split.in_state(0, &factory.state_region(0))
             && factory.states_after_split(&split) <= config.cegar.max_states as u128
         {
@@ -74,7 +77,7 @@ pub(super) fn refine_domain_abstraction(
     let mut refinement = DomainRefinement::new(
         task,
         factory,
-        RefinementLimits::new(&config.cegar, &config.scope),
+        RefinementLimits::new(&config.cegar, scope),
         config,
     );
     let outcome = refine_from_root(
@@ -124,13 +127,14 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
     ) -> Result<DomainAbstraction> {
         let start = Instant::now();
         let DomainRefinementOutcome {
             factory,
             outcome,
             built,
-        } = refine_domain_abstraction(&self.config, task, refinement_root)
+        } = refine_domain_abstraction(&self.config, task, refinement_root, scope)
             .context("CEGAR failed to build abstraction")?;
         let DomainBuild {
             transitions,

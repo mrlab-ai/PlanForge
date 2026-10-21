@@ -65,7 +65,6 @@ fn refines_through_a_comparison_goal() {
             max_states: 16,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)

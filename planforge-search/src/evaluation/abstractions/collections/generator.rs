@@ -14,6 +14,7 @@ use super::member::MemberConstruction;
 use super::standard::build_standard_collection;
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::component::AbstractionKind;
 
 /// A CEGAR generator of single abstractions, which collections build their
@@ -31,16 +32,19 @@ pub trait AbstractionGenerator: Sized {
     fn new(config: Self::Config) -> Result<Self>;
 
     /// Builds an abstraction of `task` whose CEGAR loop searches for flaws
-    /// from `refinement_root`, or from the task's initial state when `None`.
+    /// from `refinement_root`, or from the task's initial state when `None`,
+    /// and refines within `scope`.
     fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
     ) -> Result<Self::Abstraction>;
 
-    /// Builds an abstraction of `task` refined from its initial state.
+    /// Builds an abstraction of `task` refined from its initial state, on
+    /// every variable.
     fn generate(&self, task: &dyn AbstractNumericTask) -> Result<Self::Abstraction> {
-        self.generate_from_root(task, None)
+        self.generate_from_root(task, None, &RefinementScope::default())
     }
 
     fn key(abstraction: &Self::Abstraction) -> Self::Key;
@@ -112,6 +116,10 @@ impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
         root: Option<&ExplicitState>,
         construction: &MemberConstruction,
     ) -> Result<Self::Member> {
-        G::new(self.config.member.for_member(construction))?.generate_from_root(task, root)
+        G::new(self.config.member.for_member(construction))?.generate_from_root(
+            task,
+            root,
+            &construction.scope,
+        )
     }
 }

@@ -12,7 +12,6 @@ fn interval_stolen_costs_accept_transition_free_components() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .unwrap()
     .generate(&task)

@@ -25,7 +25,6 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,

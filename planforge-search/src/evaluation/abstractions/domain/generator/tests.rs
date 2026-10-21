@@ -155,10 +155,10 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
             ..DomainAbstractionConfig::default().cegar
         },
         use_wildcard_plans: false,
-        ..Default::default()
     };
 
-    let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
+    let outcome =
+        refine_domain_abstraction(&config, &task, None, &RefinementScope::default()).unwrap();
     assert!(outcome.outcome.concrete_plan.is_some());
     let plan = outcome
         .outcome
@@ -214,6 +214,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
         },
         &task,
         None,
+        &RefinementScope::default(),
     )
     .unwrap();
 
@@ -245,12 +246,13 @@ fn blacklisted_propositional_vars_are_not_refined() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let mut config = DomainAbstractionConfig::default();
-    config
-        .scope
-        .blacklisted_prop_var_ids
-        .insert(VariableIndex::from_usize(0));
-    let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
+    let scope = RefinementScope {
+        blacklisted_prop_var_ids: [VariableIndex::from_usize(0)].into(),
+        ..RefinementScope::default()
+    };
+    let outcome =
+        refine_domain_abstraction(&DomainAbstractionConfig::default(), &task, None, &scope)
+            .unwrap();
 
     assert_eq!(
         outcome.outcome.stop_reason,
@@ -289,13 +291,18 @@ fn init_value_split_separates_the_initial_value() {
             max_states: 2,
             ..DomainAbstractionConfig::default().cegar
         },
-        scope: RefinementScope {
+        ..Default::default()
+    };
+    let outcome = refine_domain_abstraction(
+        &config,
+        &task,
+        None,
+        &RefinementScope {
             initial_split_var: Some(InitialSplitVar::Propositional(VariableIndex::from_usize(0))),
             ..RefinementScope::default()
         },
-        ..Default::default()
-    };
-    let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
+    )
+    .unwrap();
 
     assert_eq!(
         outcome.factory.domain_mapping()[0],
@@ -322,7 +329,7 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
         ..Default::default()
     };
 
-    let outcome = refine_domain_abstraction(&config, &task, None)
+    let outcome = refine_domain_abstraction(&config, &task, None, &RefinementScope::default())
         .expect("normal one-dimensional CEGAR run should make progress");
 
     let x_partitions = outcome
@@ -368,6 +375,7 @@ fn backward_splits_build_goal_side_partitions() {
         },
         &task,
         None,
+        &RefinementScope::default(),
     )
     .expect("backward-split CEGAR should build goal-side partitions");
     let progression = refine_domain_abstraction(
@@ -383,6 +391,7 @@ fn backward_splits_build_goal_side_partitions() {
         },
         &task,
         None,
+        &RefinementScope::default(),
     )
     .expect("progression CEGAR should build start-side partitions");
 

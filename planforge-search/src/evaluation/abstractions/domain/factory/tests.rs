@@ -429,7 +429,6 @@ fn first_plan_step(
             ..DomainAbstractionConfig::default().cegar
         },
         use_wildcard_plans,
-        ..DomainAbstractionConfig::default()
     };
     let no_variables = std::collections::HashSet::new();
     let limits = RefinementLimits {

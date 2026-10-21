@@ -8,6 +8,7 @@ use planforge_sas::numeric_task::{
 };
 
 use super::*;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind};
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
@@ -104,7 +105,7 @@ fn a_rooted_domain_abstraction_plans_from_the_root_and_reports_the_initial_state
     let root = root_after(&task, 2);
     let abstraction = DomainAbstractionGenerator::new(cegar_config())
         .unwrap()
-        .generate_from_root(&task, Some(&root))
+        .generate_from_root(&task, Some(&root), &RefinementScope::default())
         .unwrap();
 
     assert!(abstraction.metadata().solved_by_self());
@@ -126,7 +127,7 @@ fn a_dead_root_stops_refinement_as_a_dead_end() {
     let root = root_after(&task, 1);
     let abstraction = DomainAbstractionGenerator::new(cegar_config())
         .unwrap()
-        .generate_from_root(&task, Some(&root))
+        .generate_from_root(&task, Some(&root), &RefinementScope::default())
         .unwrap();
 
     assert_eq!(abstraction.metadata().stop_reason, CegarStopReason::DeadEnd);

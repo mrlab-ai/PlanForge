@@ -45,7 +45,6 @@ fn regression_splits_at_comparison_target_while_progression_splits_at_witness() 
                 split_kind: direction,
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         })
         .unwrap()
         .generate(&task)
@@ -94,7 +93,6 @@ fn regression_cegar_solves_the_regression_tasks_optimally() {
                         split_kind,
                         ..CartesianAbstractionConfig::default().cegar
                     },
-                    ..Default::default()
                 })
                 .unwrap()
                 .generate(&task)

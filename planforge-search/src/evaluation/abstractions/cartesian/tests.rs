@@ -83,7 +83,6 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
                 flaw_scope,
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         })
         .unwrap()
         .generate(task)

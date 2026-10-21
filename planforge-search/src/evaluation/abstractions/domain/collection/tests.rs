@@ -334,7 +334,7 @@ fn a_member_construction_sets_exactly_the_options_it_names() {
         random_seed: Some(9),
         split_kind: SplitKind::Wanted,
         split_selection_rank: Some(2),
-        scope: scope.clone(),
+        scope,
     });
 
     assert_eq!(
@@ -348,7 +348,6 @@ fn a_member_construction_sets_exactly_the_options_it_names() {
                 split_selection_rank: Some(2),
                 ..member.cegar.clone()
             },
-            scope,
             ..member
         }
     );
@@ -525,7 +524,6 @@ fn cartesian_members(
                     random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal,
@@ -661,7 +659,6 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
                     random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 3,
@@ -726,7 +723,6 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
                     random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 2,
@@ -846,7 +842,6 @@ fn cartesian_collection(
                 random_seed: Some(1),
                 ..CartesianAbstractionConfig::default().cegar
             },
-            ..Default::default()
         },
         collection_strategy: strategy,
         max_collection_size,
@@ -945,13 +940,16 @@ fn cartesian_cegar_leaves_blacklisted_variables_alone() {
             max_states: 100,
             ..CartesianAbstractionConfig::default().cegar
         },
-        scope: RefinementScope {
+    })
+    .unwrap()
+    .generate_from_root(
+        &task,
+        None,
+        &RefinementScope {
             blacklisted_numeric_var_ids: [0, 1].map(VariableIndex::from_usize).into(),
             ..RefinementScope::default()
         },
-    })
-    .unwrap()
-    .generate(&task)
+    )
     .unwrap();
     assert_eq!(
         abstraction.metadata().stop_reason,
@@ -968,13 +966,16 @@ fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initi
             max_states: 2,
             ..CartesianAbstractionConfig::default().cegar
         },
-        scope: RefinementScope {
+    })
+    .unwrap()
+    .generate_from_root(
+        &task,
+        None,
+        &RefinementScope {
             initial_split_var: Some(InitialSplitVar::Propositional(VariableIndex::from_usize(0))),
             ..RefinementScope::default()
         },
-    })
-    .unwrap()
-    .generate(&task)
+    )
     .unwrap();
     assert!(
         matches!(
@@ -995,13 +996,16 @@ fn a_numeric_initial_split_candidate_starts_from_the_trivial_abstraction() {
             max_states: 1,
             ..CartesianAbstractionConfig::default().cegar
         },
-        scope: RefinementScope {
+    })
+    .unwrap()
+    .generate_from_root(
+        &task,
+        None,
+        &RefinementScope {
             initial_split_var: Some(InitialSplitVar::Numeric(VariableIndex::from_usize(0))),
             ..RefinementScope::default()
         },
-    })
-    .unwrap()
-    .generate(&task)
+    )
     .unwrap();
     assert_eq!(abstraction.num_states(), 1);
     assert_eq!(

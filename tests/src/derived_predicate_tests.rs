@@ -435,7 +435,6 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
             max_states: 10_000,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .expect("the Cartesian generator constructs")
     .generate(&task);

@@ -277,7 +277,6 @@ fn unrestricted_single_abstractions_start_astar_in_final_f_layer() {
             max_states: usize::MAX,
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..Default::default()
     })
     .expect("unrestricted Cartesian abstraction generator should construct")
     .generate(&task)
@@ -319,7 +318,6 @@ fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfi
                 ..DomainAbstractionCollectionConfig::default().member.cegar
             },
             use_wildcard_plans: true,
-            ..DomainAbstractionCollectionConfig::default().member
         },
         ..Default::default()
     }

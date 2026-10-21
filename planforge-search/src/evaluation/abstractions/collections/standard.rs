@@ -113,7 +113,7 @@ pub(crate) fn build_standard_collection<G: AbstractionGenerator>(
             construction.split_kind
         );
         let mut built = match G::new(member.for_member(&construction))
-            .and_then(|generator| generator.generate_from_root(task, None))
+            .and_then(|generator| generator.generate_from_root(task, None, &construction.scope))
         {
             Ok(built) => built,
             Err(error) if resource_limits::is_deadline_exceeded(&error) => {

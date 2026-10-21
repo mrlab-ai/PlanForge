@@ -195,7 +195,6 @@ fn native_random_selector_is_seeded() {
             random_seed: Some(7),
             ..CartesianAbstractionConfig::default().cegar
         },
-        ..CartesianAbstractionConfig::default()
     };
     let random_a = CartesianSemantics::new(&task, &random_config).unwrap();
     let random_b = CartesianSemantics::new(&task, &random_config).unwrap();

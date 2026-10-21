@@ -1,6 +1,7 @@
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::abstraction::finish_abstraction;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::component::AbstractionKind;
 
 pub struct CartesianAbstractionGenerator {
@@ -27,6 +28,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
+        scope: &RefinementScope,
     ) -> Result<CartesianAbstraction> {
         let start = Instant::now();
         let semantics = CartesianSemantics::new(task, &self.config)?;
@@ -42,13 +44,13 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                 working.add_transition(0, OperatorIndex::from_usize(op_id), 0);
             }
         }
-        apply_initial_splits(&mut working, &semantics, &self.config)?;
+        apply_initial_splits(&mut working, &semantics, &self.config.cegar, scope)?;
         let shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let mut refinement = CartesianRefinement {
             working,
             shortest_paths,
             semantics: &semantics,
-            limits: RefinementLimits::new(&self.config.cegar, &self.config.scope),
+            limits: RefinementLimits::new(&self.config.cegar, scope),
         };
         let outcome = refine_from_root(
             &mut refinement,

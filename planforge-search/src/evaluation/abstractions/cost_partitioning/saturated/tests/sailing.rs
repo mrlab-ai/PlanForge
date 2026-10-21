@@ -70,7 +70,6 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
                     debug: false,
                     ..CartesianAbstractionConfig::default().cegar
                 },
-                ..Default::default()
             },
             collection_strategy: CollectionStrategy::GoalFocused,
             variants_per_goal: 4,
