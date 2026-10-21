@@ -9,7 +9,6 @@ use planforge_sas::numeric_task::{
 };
 
 use super::abstract_operators::AbstractOperator;
-use super::abstraction_numeric_var;
 use super::config::DomainAbstractionConfig;
 use super::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
@@ -99,13 +98,7 @@ impl AbstractionView for DomainView<'_> {
     /// Splitting a dimension of `values` values multiplies the abstract state
     /// count by `(values + 1) / values`.
     fn states_after(&self, split: &Split) -> u128 {
-        let layout = self.factory.layout();
-        layout.states_after_split(match split {
-            Split::Propositional { var_id, .. } => var_id.index(),
-            Split::Numeric { var_id, .. } => {
-                abstraction_numeric_var(layout.domain_sizes().len(), *var_id).index()
-            }
-        })
+        self.factory.states_after_split(split)
     }
 
     fn step_operators(&self, transition: TransitionKey) -> Vec<OperatorIndex> {

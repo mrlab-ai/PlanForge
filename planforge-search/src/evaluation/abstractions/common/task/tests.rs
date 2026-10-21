@@ -93,7 +93,6 @@ fn cegar_config() -> DomainAbstractionConfig {
             flaw_kind: FlawKind::Progression,
             ..DomainAbstractionConfig::default().cegar
         },
-        init_split_var_ids: Some(Default::default()),
         ..Default::default()
     }
 }

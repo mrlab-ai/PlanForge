@@ -9,6 +9,7 @@ use super::goal_focused::{GoalFocusedSchedule, GoalVariant, MemberBudget};
 use super::standard::{StandardMember, StandardSchedule};
 use super::strategy::CollectionStrategy;
 use crate::config::ApplyOptions;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{FlawKind, SplitKind};
 use crate::resource_limits::min_time_limit;
@@ -18,21 +19,36 @@ pub trait MemberConfig: ApplyOptions + Clone {
     fn cegar(&self) -> &CegarOptions;
 
     fn cegar_mut(&mut self) -> &mut CegarOptions;
-}
 
-/// How a collection specialises its member configuration.
-pub trait MemberSpecialization: MemberConfig {
-    /// This configuration for restart `member` of a standard collection.
-    fn for_restart(&self, member: &StandardMember) -> Self;
+    fn scope_mut(&mut self) -> &mut RefinementScope;
 
-    /// This configuration for a goal-focused variant; see
-    /// [`CegarOptions::for_variant`].
+    /// This configuration for restart `member` of a standard collection,
+    /// which splits the restart's initial variable and keeps away from its
+    /// blacklisted variables.
+    fn for_restart(&self, member: &StandardMember) -> Self {
+        let mut config = self.clone();
+        *config.cegar_mut() = self.cegar().for_restart(member);
+        *config.scope_mut() = RefinementScope {
+            initial_split_var: member.initial_split_var,
+            blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
+            blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
+        };
+        config
+    }
+
+    /// This configuration for a goal-focused variant, which starts from the
+    /// trivial abstraction; see [`CegarOptions::for_variant`].
     fn for_variant(
         &self,
         variant: &GoalVariant,
         fixed_split_kind: Option<SplitKind>,
         budget: MemberBudget,
-    ) -> Self;
+    ) -> Self {
+        let mut config = self.clone();
+        *config.cegar_mut() = self.cegar().for_variant(variant, fixed_split_kind, budget);
+        *config.scope_mut() = RefinementScope::default();
+        config
+    }
 }
 
 /// A collection of abstractions configured by `M`. The member options bound

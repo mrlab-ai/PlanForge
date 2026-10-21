@@ -1,15 +1,8 @@
 //! Configuration of domain-abstraction CEGAR.
 
-use std::collections::HashSet;
-
-use planforge_sas::numeric_task::VariableIndex;
-
-use crate::evaluation::abstractions::collections::config::{
-    CollectionConfig, MemberConfig, MemberSpecialization,
-};
-use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
-use crate::evaluation::abstractions::collections::standard::StandardMember;
+use crate::evaluation::abstractions::collections::config::{CollectionConfig, MemberConfig};
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitKind, SplitSelection,
@@ -23,15 +16,8 @@ pub struct DomainAbstractionConfig {
     /// Extract abstract plans whose steps leave the variables they do not
     /// touch open.
     pub use_wildcard_plans: bool,
-    /// The variables the trivial abstraction is split on before CEGAR; the
-    /// goal variables when `None`.
     #[option(skip)]
-    pub init_split_var_ids: Option<HashSet<VariableIndex>>,
-    /// Variables CEGAR may not refine.
-    #[option(skip)]
-    pub blacklisted_prop_var_ids: HashSet<VariableIndex>,
-    #[option(skip)]
-    pub blacklisted_numeric_var_ids: HashSet<VariableIndex>,
+    pub scope: RefinementScope,
 }
 
 impl Default for DomainAbstractionConfig {
@@ -52,9 +38,7 @@ impl Default for DomainAbstractionConfig {
                 keep_transition_system: true,
             },
             use_wildcard_plans: false,
-            init_split_var_ids: None,
-            blacklisted_prop_var_ids: HashSet::new(),
-            blacklisted_numeric_var_ids: HashSet::new(),
+            scope: RefinementScope::default(),
         }
     }
 }
@@ -67,36 +51,9 @@ impl MemberConfig for DomainAbstractionConfig {
     fn cegar_mut(&mut self) -> &mut CegarOptions {
         &mut self.cegar
     }
-}
 
-impl MemberSpecialization for DomainAbstractionConfig {
-    /// A restart splits its initial variable alone and keeps away from its
-    /// blacklisted variables.
-    fn for_restart(&self, member: &StandardMember) -> Self {
-        Self {
-            cegar: self.cegar.for_restart(member),
-            init_split_var_ids: Some(member.initial_split_var.into_iter().collect()),
-            blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
-            blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
-            ..self.clone()
-        }
-    }
-
-    /// A goal-focused member starts from the trivial abstraction: no initial
-    /// splits and no blacklisted variables.
-    fn for_variant(
-        &self,
-        variant: &GoalVariant,
-        fixed_split_kind: Option<SplitKind>,
-        budget: MemberBudget,
-    ) -> Self {
-        Self {
-            cegar: self.cegar.for_variant(variant, fixed_split_kind, budget),
-            init_split_var_ids: Some(HashSet::new()),
-            blacklisted_prop_var_ids: HashSet::new(),
-            blacklisted_numeric_var_ids: HashSet::new(),
-            ..self.clone()
-        }
+    fn scope_mut(&mut self) -> &mut RefinementScope {
+        &mut self.scope
     }
 }
 

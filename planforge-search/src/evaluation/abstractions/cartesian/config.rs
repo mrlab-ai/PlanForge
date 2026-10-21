@@ -1,27 +1,15 @@
 use super::*;
 
-use crate::evaluation::abstractions::collections::config::{
-    CollectionConfig, MemberConfig, MemberSpecialization,
-};
+use crate::evaluation::abstractions::collections::config::{CollectionConfig, MemberConfig};
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct CartesianAbstractionConfig {
     #[option(flatten)]
     pub cegar: CegarOptions,
-    /// The variable to split the trivial abstraction on before CEGAR, in the
-    /// encoding of
-    /// [`initial_split_candidates`](crate::evaluation::abstractions::collections::standard::initial_split_candidates):
-    /// a propositional variable is
-    /// split into its initial value and the rest, a goal condition at the
-    /// initial values of its numeric operands.
     #[option(skip)]
-    pub initial_split_var: Option<VariableIndex>,
-    /// Variables CEGAR may not refine.
-    #[option(skip)]
-    pub blacklisted_prop_var_ids: HashSet<VariableIndex>,
-    #[option(skip)]
-    pub blacklisted_numeric_var_ids: HashSet<VariableIndex>,
+    pub scope: RefinementScope,
 }
 
 impl Default for CartesianAbstractionConfig {
@@ -41,9 +29,7 @@ impl Default for CartesianAbstractionConfig {
                 debug: false,
                 keep_transition_system: true,
             },
-            initial_split_var: None,
-            blacklisted_prop_var_ids: HashSet::new(),
-            blacklisted_numeric_var_ids: HashSet::new(),
+            scope: RefinementScope::default(),
         }
     }
 }
@@ -56,30 +42,9 @@ impl MemberConfig for CartesianAbstractionConfig {
     fn cegar_mut(&mut self) -> &mut CegarOptions {
         &mut self.cegar
     }
-}
 
-impl MemberSpecialization for CartesianAbstractionConfig {
-    /// A restart splits its initial variable and keeps away from its
-    /// blacklisted variables.
-    fn for_restart(&self, member: &StandardMember) -> Self {
-        Self {
-            cegar: self.cegar.for_restart(member),
-            initial_split_var: member.initial_split_var,
-            blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
-            blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
-        }
-    }
-
-    fn for_variant(
-        &self,
-        variant: &GoalVariant,
-        fixed_split_kind: Option<SplitKind>,
-        budget: MemberBudget,
-    ) -> Self {
-        Self {
-            cegar: self.cegar.for_variant(variant, fixed_split_kind, budget),
-            ..self.clone()
-        }
+    fn scope_mut(&mut self) -> &mut RefinementScope {
+        &mut self.scope
     }
 }
 

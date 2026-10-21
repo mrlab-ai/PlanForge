@@ -2,11 +2,12 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::evaluation::abstractions::collections::config::MemberSpecialization;
+use crate::evaluation::abstractions::collections::config::MemberConfig;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionUse, CegarAbstraction};
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{
     CegarStopReason, FlawKind, FlawScope, SplitKind, SplitSelection,
@@ -290,9 +291,7 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
     assert_eq!(forward.cegar.random_seed, None);
     assert_eq!(forward.cegar.max_states, 30);
     assert_eq!(forward.cegar.max_time, Some(Duration::from_secs(5)));
-    assert_eq!(forward.init_split_var_ids, Some(HashSet::new()));
-    assert!(forward.blacklisted_prop_var_ids.is_empty());
-    assert!(forward.blacklisted_numeric_var_ids.is_empty());
+    assert_eq!(forward.scope, RefinementScope::default());
 
     let backward = member(variant(SplitKind::Wanted, 2, Some(9)));
     assert_eq!(
@@ -915,8 +914,10 @@ fn cartesian_cegar_leaves_blacklisted_variables_alone() {
             max_states: 100,
             ..CartesianAbstractionConfig::default().cegar
         },
-        blacklisted_numeric_var_ids: [0, 1].map(VariableIndex::from_usize).into(),
-        ..Default::default()
+        scope: RefinementScope {
+            blacklisted_numeric_var_ids: [0, 1].map(VariableIndex::from_usize).into(),
+            ..RefinementScope::default()
+        },
     })
     .unwrap()
     .generate(&task)
@@ -936,8 +937,10 @@ fn a_cartesian_initial_split_on_a_goal_condition_splits_its_operand_at_the_initi
             max_states: 2,
             ..CartesianAbstractionConfig::default().cegar
         },
-        initial_split_var: Some(VariableIndex::from_usize(0)),
-        ..Default::default()
+        scope: RefinementScope {
+            initial_split_var: Some(VariableIndex::from_usize(0)),
+            ..RefinementScope::default()
+        },
     })
     .unwrap()
     .generate(&task)

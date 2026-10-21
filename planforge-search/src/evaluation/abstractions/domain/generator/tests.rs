@@ -1,6 +1,5 @@
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::explicit_state::ExplicitState;
-use std::collections::HashSet;
 
 use planforge_sas::numeric_conditions::ConditionValue;
 
@@ -8,10 +7,10 @@ use planforge_sas::utils::float_tolerance;
 
 use super::*;
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
+use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitKind, SplitSelection,
 };
-use crate::evaluation::abstractions::domain::initial_splits::initial_split_mapping;
 
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 
@@ -245,6 +244,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
 
     let mut config = DomainAbstractionConfig::default();
     config
+        .scope
         .blacklisted_prop_var_ids
         .insert(VariableIndex::from_usize(0));
     let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
@@ -281,10 +281,21 @@ fn init_value_split_separates_the_initial_value() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let mapping = initial_split_mapping(&task, VariableIndex::from_usize(0)).unwrap();
+    let config = DomainAbstractionConfig {
+        cegar: CegarOptions {
+            max_states: 2,
+            ..DomainAbstractionConfig::default().cegar
+        },
+        scope: RefinementScope {
+            initial_split_var: Some(VariableIndex::from_usize(0)),
+            ..RefinementScope::default()
+        },
+        ..Default::default()
+    };
+    let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
 
     assert_eq!(
-        mapping,
+        outcome.factory.domain_mapping()[0],
         vec![
             ExplicitValueIndex::new(0),
             ExplicitValueIndex::new(1),
@@ -458,7 +469,6 @@ fn cegar_distance_tables_and_lookups_agree_on_boundary_values() {
                 flaw_kind: FlawKind::Progression,
                 ..DomainAbstractionConfig::default().cegar
             },
-            init_split_var_ids: Some(HashSet::new()),
             ..Default::default()
         })
         .unwrap()

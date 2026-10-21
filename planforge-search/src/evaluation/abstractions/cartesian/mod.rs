@@ -56,8 +56,6 @@ use planforge_sas::utils::float_tolerance;
 use super::common::cegar::{CegarDriver, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
-use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
-use crate::evaluation::abstractions::collections::standard::StandardMember;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,

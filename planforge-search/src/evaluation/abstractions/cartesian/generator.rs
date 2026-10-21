@@ -43,15 +43,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
         }
         let initial_state = semantics.cegar().states().initial_state()?;
         let refinement_root = refinement_root.unwrap_or(&initial_state);
-        if let Some(var) = self.config.initial_split_var {
-            apply_initial_split(
-                &mut working,
-                &semantics,
-                &self.config,
-                &initial_state.propositional,
-                var,
-            )?;
-        }
+        apply_initial_splits(&mut working, &semantics, &self.config)?;
         let shortest_paths = compute_shortest_paths(&working, &semantics)?;
         let mut refinement = CartesianRefinement {
             working,
@@ -59,8 +51,8 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
             semantics: &semantics,
             limits: RefinementLimits {
                 max_states: self.config.cegar.max_states,
-                blacklisted_prop_var_ids: &self.config.blacklisted_prop_var_ids,
-                blacklisted_numeric_var_ids: &self.config.blacklisted_numeric_var_ids,
+                blacklisted_prop_var_ids: &self.config.scope.blacklisted_prop_var_ids,
+                blacklisted_numeric_var_ids: &self.config.scope.blacklisted_numeric_var_ids,
             },
         };
         let outcome = refine(

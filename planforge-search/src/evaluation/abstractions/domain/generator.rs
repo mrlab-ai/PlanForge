@@ -9,17 +9,17 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
-use rand::{SeedableRng, rngs::SmallRng};
 
 use super::config::DomainAbstractionConfig;
 use super::factory::DomainAbstractionFactory;
-use super::initial_splits::{apply_initial_goal_splits, trivial_domain_mapping_and_sizes};
+use super::initial_splits::trivial_domain_mapping_and_sizes;
 use super::partitions::NumericPartitions;
 use super::view::DomainRefinement;
 use crate::evaluation::abstractions::common::abstraction::{
     AbstractionMetadata, CegarAbstraction, finish_abstraction,
 };
 use crate::evaluation::abstractions::common::cegar::CegarDriver;
+use crate::evaluation::abstractions::common::cegar::initial_splits::initial_splits;
 use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
@@ -43,8 +43,8 @@ pub(super) struct DomainRefinementOutcome {
 
 /// Refines a domain abstraction of `task` by CEGAR from `refinement_root`,
 /// or from the initial state of `task` when `None`: the trivial abstraction
-/// split on the goal variables, refined until the abstract plan is concrete
-/// or a limit is reached.
+/// with the initial splits of the configured scope, refined until the
+/// abstract plan is concrete or a limit is reached.
 pub(super) fn refine_domain_abstraction(
     config: &DomainAbstractionConfig,
     task: &dyn AbstractNumericTask,
@@ -53,27 +53,24 @@ pub(super) fn refine_domain_abstraction(
     let start = Instant::now();
     let semantics = CegarSemantics::for_options(task, &config.cegar)?;
 
-    // The run is a function of its configuration alone: collection
-    // generators hand every member its own seed.
-    let mut rng = SmallRng::seed_from_u64(
-        config
-            .cegar
-            .random_seed
-            .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
-    );
-    let (mut domain_mapping, mut domain_sizes) =
+    let (domain_mapping, domain_sizes) =
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
-    let mut partitions = NumericPartitions::trivial(task);
-    apply_initial_goal_splits(
-        &semantics,
-        config,
-        &mut rng,
-        &mut domain_mapping,
-        &mut domain_sizes,
-        &mut partitions,
-    )?;
-    let factory = DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions)
-        .context("failed to construct the initial domain abstraction")?;
+    let mut factory = DomainAbstractionFactory::new(
+        task,
+        domain_mapping,
+        domain_sizes,
+        NumericPartitions::trivial(task),
+    )
+    .context("failed to construct the trivial domain abstraction")?;
+    // Every initial split divides a different variable of the trivial
+    // abstraction, so it divides every abstract state if it divides one.
+    for initial_split in initial_splits(&semantics, &config.scope, config.cegar.random_seed) {
+        if let Some(split) = initial_split.in_state(0, &factory.state_region(0))
+            && factory.states_after_split(&split) <= config.cegar.max_states as u128
+        {
+            factory.apply_split(task, &split)?;
+        }
+    }
 
     let initial_state;
     let root = match refinement_root {
@@ -85,8 +82,8 @@ pub(super) fn refine_domain_abstraction(
     };
     let limits = RefinementLimits {
         max_states: config.cegar.max_states,
-        blacklisted_prop_var_ids: &config.blacklisted_prop_var_ids,
-        blacklisted_numeric_var_ids: &config.blacklisted_numeric_var_ids,
+        blacklisted_prop_var_ids: &config.scope.blacklisted_prop_var_ids,
+        blacklisted_numeric_var_ids: &config.scope.blacklisted_numeric_var_ids,
     };
     let mut refinement = DomainRefinement::new(task, factory, limits, config);
     let outcome = refine(

@@ -187,6 +187,17 @@ impl DomainAbstractionFactory {
         self.operator_costs[op_id.index()]
     }
 
+    /// The number of abstract states after `split`, exactly: it splits one
+    /// abstract value of a variable in every state.
+    pub(super) fn states_after_split(&self, split: &Split) -> u128 {
+        self.layout.states_after_split(match split {
+            Split::Propositional { var_id, .. } => var_id.index(),
+            Split::Numeric { var_id, .. } => {
+                abstraction_numeric_var(self.layout.domain_sizes().len(), *var_id).index()
+            }
+        })
+    }
+
     /// Refine with `split` in every abstract state: a propositional split
     /// gives the wanted values of the witness's abstract value a new abstract
     /// value, a numeric split divides the partition the boundary lies in.

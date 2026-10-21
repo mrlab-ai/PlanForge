@@ -8,7 +8,7 @@ use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
 use tracing::info;
 
-use super::config::{CollectionConfig, MemberConfig, MemberSpecialization};
+use super::config::{CollectionConfig, MemberConfig};
 use super::goal_focused::{
     GoalFocusedBackend, GoalVariant, MemberBudget, build_goal_focused_collection,
 };
@@ -19,7 +19,7 @@ use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 /// A CEGAR generator of single abstractions, which collections build their
 /// members with.
 pub trait AbstractionGenerator: Sized {
-    type Config: MemberSpecialization;
+    type Config: MemberConfig;
     type Abstraction: CegarAbstraction;
     /// Equal exactly for abstractions that are the same abstraction.
     type Key: Eq + Hash;
