@@ -65,9 +65,21 @@ heuristic is an explicit configuration error.
 
 Single-call PDDL pipeline:
 
-    planforge --search 'astar(canonical_abstractions::domain(...))' \
+    planforge --search 'astar(canonical([domain(max_states=1000)]))' \
               --max-time 30m --max-memory 8G \
               domain.pddl problem.pddl
+
+A* accepts an optional lazy heuristic: `astar(blind(),lazy=lmcutnumeric())`.
+This is Lazy A*: a state is evaluated by the second heuristic when popped and
+reinserted with the combined priority before expansion. The spelling
+`astar_fs(fast=blind(),slow=lmcutnumeric())` remains an alias. Evaluation
+statistics include calls to both heuristics. Dynamic heuristic re-evaluation
+is enabled separately with `mpd=true` on A*.
+
+`max([ff(),lmcutnumeric(),domain(max_states=1000)])` takes the maximum over
+any heuristics. Abstraction sources among its children share one abstraction
+evaluator; other heuristics are evaluated alongside it. This also works with
+the flat form, for example `max(ff(),blind())`.
 
 Hierarchical abstraction sources make collection generation and combination
 independent. For example:
@@ -88,6 +100,14 @@ The `[...]` source-list form is canonical for `max`, `canonical` and `scp`; the
 older flat positional source form remains accepted. PDB sources
 select their generator explicitly with `patterns=systematic(...)` or
 `patterns=greedy(...)`.
+
+Configurations support nested lists and single- or double-quoted scalar
+values. Quote paths containing spaces or delimiters, for example
+`ray_certificate_file="Results/Run 1,certificate.txt"`. Scalar case is preserved;
+option names, heuristic names and enum values match without regard to case.
+Configuration errors are reported before PDDL translation, with the nested
+option path. The `search(astar(...))` wrapper and trailing `.` or `;` remain
+accepted for compatibility.
 
 Domain and Cartesian abstractions take the same CEGAR options, by name:
 `max_states`, `max_iterations`, `max_time` (seconds, or `infinity`),
@@ -145,7 +165,7 @@ Common options:
   already restricted tasks are retained unchanged.
 - `--portfolio` — two sequential stages instead of one search: `astar(lmcutnumeric())`
   under a tight budget (`--lmcut-time`, `--lmcut-memory`), then
-  `astar(canonical_abstractions::domain(...))` (`--canonical-construction-time`,
+  `astar(canonical([domain(max_states=1000)]))` (`--canonical-construction-time`,
   `--canonical-memory`, `--canonical-time`). Each stage is a child `planforge`
   process, so stage 1's limits are enforced and stage 2 starts clean.
 

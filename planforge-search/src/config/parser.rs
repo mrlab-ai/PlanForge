@@ -1,14 +1,10 @@
 //! Text to AST for the option language.
 //!
-//! One grammar: `name`, `name(...)`, and inside the parentheses a
-//! comma-separated list of positional values and `key=value` pairs, where a
-//! value is itself a call or a bare scalar. Every `--search` heuristic, every
-//! abstraction source and every nested collection is spelled in it, so it is
-//! parsed once, here, next to the [`ConfigArg`](super::ConfigArg) nodes it
-//! produces and the configs those populate.
-//!
-//! Which *search engine* a spec names is a separate, smaller grammar, and lives
-//! in [`super::SearchConfig`].
+//! Calls contain positional values and named `key=value` arguments. Values
+//! are calls, recursive lists or scalars; quoted scalars preserve delimiters.
+//! Bare identifiers and zero-argument calls share the same call node. Paths
+//! without whitespace or delimiters remain accepted as unquoted scalars for
+//! compatibility. Search engine options are decoded by [`super::SearchConfig`].
 
 use super::{ConfigArg, ConfigCall, ConfigValue, HeuristicSpec};
 

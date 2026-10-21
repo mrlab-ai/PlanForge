@@ -8,8 +8,8 @@
 //!   each option into the typed config.
 //! - [`FromOptionValue`] is the per-type "parse a single option value"
 //!   trait. The derive picks it up automatically per field; you just need
-//!   one impl per option type. Primitive impls (bool, usize, u64, f64,
-//!   `Option<u64>`, `String`) live here; per-enum impls live next to each
+//!   one impl per option type. Primitive and container impls (bool, usize, u64, f64,
+//!   `Option<T>`, `Vec<T>`, `String`) live here; per-enum impls live next to each
 //!   enum definition.
 
 use std::collections::HashSet;
@@ -30,7 +30,7 @@ pub use time_limit::TimeLimit;
 ///
 /// The descriptor type decides what a plugin must declare. Registry users add
 /// one entry containing every required field; omitted fields are therefore a
-/// compile error. Heuristics and search algorithms share this mechanism.
+/// compile error. Other name-indexed registries can reuse this mechanism.
 #[macro_export]
 macro_rules! plugin_registry {
     (
