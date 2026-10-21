@@ -719,6 +719,7 @@ impl NumericRootTask {
             global_constraint,
         };
         task.assign_fact_namespaces();
+        task.assert_invariants();
         task.close_initial_state_under_axioms();
         for group in &task.mutexes {
             for (index, &left) in group.iter().enumerate() {
@@ -737,7 +738,6 @@ impl NumericRootTask {
             .iter()
             .map(|operator| metric_operator_cost_from_initial_values(&task, operator))
             .collect();
-        task.assert_invariants();
         debug_assert_fact_namespaces(&task);
         task
     }
@@ -1217,10 +1217,16 @@ impl AbstractNumericTask for NumericRootTask {
     fn evaluate_initial_state_values(
         &self,
     ) -> Result<(Vec<ExplicitValueIndex>, Vec<NumericValue>), String> {
-        let mut propositional = self.get_initial_propositional_state_values().to_vec();
-        let mut numeric = self.get_initial_numeric_state_values().to_vec();
-        evaluate_state_with_axiom_closure(self, &mut propositional, &mut numeric)?;
-        Ok((propositional, numeric))
+        // Closed as given: the initial values are not canonicalized, unlike
+        // `ExplicitStateSpace::initial_state`.
+        let mut state = ExplicitState {
+            propositional: self.get_initial_propositional_state_values().to_vec(),
+            numeric: self.get_initial_numeric_state_values().to_vec(),
+        };
+        ExplicitStateSpace::new(self)
+            .close_under_axioms(&mut state)
+            .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
+        Ok((state.propositional, state.numeric))
     }
 }
 
@@ -1274,44 +1280,6 @@ fn narrow_condition_variables(
             }
         }
     }
-}
-
-fn evaluate_state_with_axiom_closure(
-    task: &dyn AbstractNumericTask,
-    propositional: &mut [ExplicitValueIndex],
-    numeric: &mut [NumericValue],
-) -> Result<(), String> {
-    let packer = Arc::new(StatePacker::propositional(task));
-    let mut packed = vec![0u64; packer.num_bins()];
-    for (var_id, value) in propositional.iter().enumerate() {
-        packer.set(&mut packed, var_id, value.index() as u64);
-    }
-    let axiom_evaluator = AxiomEvaluator::new(Arc::new(task), packer.clone());
-    finish_axiom_closure(
-        &packer,
-        propositional,
-        numeric,
-        &mut packed,
-        &axiom_evaluator,
-    )
-}
-
-fn finish_axiom_closure(
-    packer: &StatePacker,
-    propositional: &mut [ExplicitValueIndex],
-    numeric: &mut [NumericValue],
-    packed: &mut [u64],
-    axiom_evaluator: &AxiomEvaluator<'_>,
-) -> Result<(), String> {
-    axiom_evaluator
-        .evaluate(packed, numeric)
-        .map_err(|err| format!("failed to evaluate axioms: {err:?}"))?;
-
-    for (var_id, slot) in propositional.iter_mut().enumerate() {
-        *slot = ExplicitValueIndex::new(packer.get(packed, var_id) as u32);
-    }
-
-    Ok(())
 }
 
 /// Lives here rather than in `crate::tests` because it has to plant a
@@ -1371,6 +1339,22 @@ mod root_task_invariants {
             assignment_axioms: Vec::new(),
             global_constraint: ExplicitFact::propositional(0, 0),
         }
+    }
+
+    #[test]
+    fn closing_the_initial_state_keeps_numeric_values_as_given() {
+        let off_lattice = NumericValue::new(0.1 + 0.2);
+        assert_ne!(
+            crate::utils::float_tolerance::canonicalize(off_lattice).to_bits(),
+            off_lattice.to_bits()
+        );
+        let mut parts = valid_parts();
+        parts.numeric_state = vec![off_lattice];
+        let task = NumericRootTask::new(parts);
+        assert_eq!(
+            task.get_initial_numeric_state_values()[0].to_bits(),
+            off_lattice.to_bits()
+        );
     }
 
     #[test]

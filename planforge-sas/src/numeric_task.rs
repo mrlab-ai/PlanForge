@@ -13,7 +13,8 @@
 //! propositional axioms occupy higher layers. [`NumericRootTask::new`] checks
 //! these representation and layer invariants once before publishing a task.
 
-use crate::axioms::{AssignmentAxiom, AxiomEvaluator, ComparisonAxiom, PropositionalAxiom};
+use crate::axioms::{AssignmentAxiom, ComparisonAxiom, PropositionalAxiom};
+use crate::explicit_state::{ExplicitState, ExplicitStateSpace};
 use crate::numeric_conditions::{
     ConditionValue, NumericConditionError, NumericConditions, assignment_axiom_lookup,
 };
@@ -23,7 +24,6 @@ use crate::utils::linear_effects::{
     LinearNumericEffect, LinearizationError, linearize_numeric_var,
     linearize_operator_assignment_effects,
 };
-use crate::utils::state_packer::StatePacker;
 use std::{collections::HashSet, fmt, sync::Arc};
 
 mod task_api;

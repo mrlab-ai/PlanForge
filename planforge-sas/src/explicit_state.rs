@@ -183,8 +183,9 @@ impl<'task> ExplicitStateSpace<'task> {
         state.holds_all(self.task.goals())
     }
 
-    /// Re-derives the axiom variables of `state` from its other values.
-    fn close_under_axioms(&self, state: &mut ExplicitState) -> Result<(), AxiomEvalError> {
+    /// Re-derives the axiom variables of `state` from its other values. The
+    /// other values are taken as they are, without canonicalization.
+    pub fn close_under_axioms(&self, state: &mut ExplicitState) -> Result<(), AxiomEvalError> {
         self.assert_layout(state);
         let mut packed = vec![0u64; self.state_packer.num_bins()];
         for (var_id, value) in state.propositional.iter().enumerate() {
