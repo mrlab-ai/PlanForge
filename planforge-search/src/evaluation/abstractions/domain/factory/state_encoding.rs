@@ -369,7 +369,7 @@ impl DomainAbstractionFactory {
                 continue;
             }
             let abs_var = abstraction_numeric_var(domain_sizes.len(), num_var_id);
-            let concrete_value = match self.additive_numeric_views.get(num_var_id.index()) {
+            let concrete_value = match &self.additive_numeric_views[num_var_id.index()] {
                 Some(view) => view.evaluate(numeric),
                 None => numeric[num_var_id.index()],
             };

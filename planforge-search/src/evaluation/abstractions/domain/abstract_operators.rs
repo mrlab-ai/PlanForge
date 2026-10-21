@@ -12,8 +12,6 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use crate::evaluation::abstractions::common::task::validate_abstraction_operator;
-
 use super::abstraction_numeric_var;
 use super::comparison_inputs::fill_derived_numeric_intervals_from_comparison_trees;
 use super::factory::DomainAbstractionFactory;
@@ -593,7 +591,6 @@ impl<'a> AbstractOperatorGenerator<'a> {
         op: &Operator,
         concrete_op_id: OperatorIndex,
     ) -> Result<Vec<AbstractOperatorSkeleton>> {
-        validate_abstraction_operator(task, op, concrete_op_id)?;
         let effects: Vec<&Effect> = op.effects().iter().collect();
         build_branch_for_operator(
             task,
@@ -854,7 +851,11 @@ fn compute_hash_effects_with_preconditions(
             affected_numeric_vars.insert(v);
         }
     }
-    for (numeric_var_id, view) in additive_numeric_views.iter() {
+    for (numeric_var_id, view) in additive_numeric_views
+        .iter()
+        .enumerate()
+        .filter_map(|(numeric_var_id, view)| Some((numeric_var_id, view.as_ref()?)))
+    {
         if numeric_domain_sizes[numeric_var_id] > 1
             && view.operator_delta(concrete_op_id).value().abs() >= float_tolerance::ABS_EPSILON
         {
@@ -896,7 +897,7 @@ fn compute_hash_effects_with_preconditions(
             continue;
         }
         if task.numeric_variables()[v].get_type() == &NumericType::Derived {
-            let view = additive_numeric_views.get(v).with_context(|| {
+            let view = additive_numeric_views[v].as_ref().with_context(|| {
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
             let delta = view.operator_delta(concrete_op_id);

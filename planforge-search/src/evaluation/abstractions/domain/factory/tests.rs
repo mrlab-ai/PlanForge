@@ -1,4 +1,6 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use ordered_float::NotNan;
 
 use std::collections::{BTreeSet, HashSet};
@@ -132,7 +134,12 @@ fn cutpoint_partitions_for_task(task: &dyn AbstractNumericTask) -> Result<Numeri
 fn factory_identity_cutpoints(task: &dyn AbstractNumericTask) -> Result<DomainAbstractionFactory> {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task)?;
     let partitions = cutpoint_partitions_for_task(task)?;
-    DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions)
+    DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
 }
 
 #[test]
@@ -410,7 +417,6 @@ fn first_plan_step(
     combine_labels: bool,
     use_wildcard_plans: bool,
 ) -> Vec<OperatorIndex> {
-    use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
     use crate::evaluation::abstractions::common::cegar::refine::Refinable;
     use crate::evaluation::abstractions::common::cegar::view::AbstractionView;
     use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
@@ -449,7 +455,7 @@ fn wildcard_plan_collects_all_equivalent_concrete_ops() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        Some(0),
+        None,
         ExplicitValueIndex::new(0),
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
@@ -506,7 +512,7 @@ fn wildcard_plan_uses_first_matching_operator_group_when_labels_uncombined() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        Some(0),
+        None,
         ExplicitValueIndex::new(0),
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
@@ -560,7 +566,7 @@ fn singleton_plan_is_produced_when_wildcards_are_disabled() {
         2,
         "v".into(),
         vec!["v0".into(), "v1".into()],
-        Some(0),
+        None,
         ExplicitValueIndex::new(0),
     )];
     let numeric_variables: Vec<NumericVariable> = vec![];
@@ -770,8 +776,13 @@ fn factory_numeric_context_keeps_consistent_additive_derived_partition() {
         ],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory =
-        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap();
     let hash_multipliers = factory.layout().multipliers();
 
     let x_partition = 0;
@@ -854,8 +865,13 @@ fn additive_numeric_source_set_task() -> (NumericRootTask, DomainAbstractionFact
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory =
-        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap();
 
     (task, factory)
 }
@@ -907,8 +923,13 @@ fn additive_numeric_source_set_task_with_partitions(
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory =
-        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap();
 
     (task, factory)
 }
@@ -1082,7 +1103,7 @@ fn abstract_source_set_allocates_operator_without_numeric_effects() {
     });
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
     let factory = DomainAbstractionFactory::new(
-        &task,
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         domain_mapping,
         domain_sizes,
         NumericPartitions::with_partitions(vec![]),
@@ -1175,8 +1196,13 @@ fn abstract_source_set_allows_one_finite_changed_source() {
         vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory =
-        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap();
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
@@ -1296,8 +1322,13 @@ fn source_set_one_finite_dim_suffices() {
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory =
-        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap();
 
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
@@ -1399,8 +1430,13 @@ fn abstract_source_set_ignores_zero_additive_effect_dimension() {
         vec![Interval::singleton(NumericValue::new(0.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task).unwrap();
-    let factory =
-        DomainAbstractionFactory::new(&task, domain_mapping, domain_sizes, partitions).unwrap();
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap();
     let x_abs_var = task.variables().len();
     let y_abs_var = x_abs_var + 1;
     let op = super::super::abstract_operators::AbstractOperator {
@@ -1542,7 +1578,7 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
     // Start coarse: both concrete values share one abstract class, so the single
     // class covers the variable's whole domain and constrains nothing.
     let mut factory = DomainAbstractionFactory::new(
-        &task,
+        &CegarSemantics::for_options(&task, &CegarOptions::default()).unwrap(),
         vec![vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(0)]],
         vec![1],
         NumericPartitions::with_partitions(vec![]),

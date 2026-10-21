@@ -3,6 +3,7 @@
 //! wanted splits split at, and how splits are chosen.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitStateSpace;
@@ -38,7 +39,7 @@ pub(crate) struct SplitOptions {
 pub(crate) struct CegarSemantics<'task> {
     states: ExplicitStateSpace<'task>,
     regions: RegionSemantics<'task>,
-    operator_costs: Vec<NumericValue>,
+    operator_costs: Arc<[NumericValue]>,
     numeric_integer_lattice: Vec<bool>,
     wanted_split_boundaries: Vec<NumericValue>,
     split_options: SplitOptions,
@@ -138,6 +139,11 @@ impl<'task> CegarSemantics<'task> {
     /// The nonnegative cost of every operator.
     pub(crate) fn operator_costs(&self) -> &[NumericValue] {
         &self.operator_costs
+    }
+
+    /// The costs, shared with an abstraction that outlives the task borrow.
+    pub(crate) fn shared_operator_costs(&self) -> Arc<[NumericValue]> {
+        Arc::clone(&self.operator_costs)
     }
 
     /// Per numeric dimension, whether every reachable value is an integer.

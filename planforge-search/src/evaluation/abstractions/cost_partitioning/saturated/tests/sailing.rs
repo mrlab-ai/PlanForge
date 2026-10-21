@@ -22,6 +22,7 @@ use crate::evaluation::abstractions::common::abstraction::{
 use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::refine::CegarOutcome;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::task::SingleGoalTask;
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
@@ -407,8 +408,12 @@ fn build_handcrafted_abstraction(
                 .map_or(0, |value| value.index() + 1)
         })
         .collect::<Vec<_>>();
-    let factory =
-        DomainAbstractionFactory::new(transformed_task, domain_mapping, domain_sizes, partitions)?;
+    let factory = DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(transformed_task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )?;
     let transitions = factory.transitions(transformed_task, false, Deadline::NONE)?;
     let (distances, _) = transitions.goal_distances(Deadline::NONE)?;
     let core = AbstractionCore {

@@ -52,7 +52,7 @@ pub(super) fn refine_domain_abstraction(
     let (domain_mapping, domain_sizes) =
         trivial_domain_mapping_and_sizes(task).context("failed to build trivial domain mapping")?;
     let mut factory = DomainAbstractionFactory::new(
-        task,
+        &semantics,
         domain_mapping,
         domain_sizes,
         NumericPartitions::trivial(task),

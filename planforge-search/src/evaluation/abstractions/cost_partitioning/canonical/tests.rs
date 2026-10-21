@@ -20,6 +20,7 @@ use crate::evaluation::evaluator::EvaluationState;
 
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use crate::evaluation::abstractions::domain::factory::DomainAbstractionFactory;
 use crate::evaluation::abstractions::domain::partitions::NumericPartitions;
@@ -83,7 +84,7 @@ fn simple_task() -> NumericRootTask {
 
 fn make_abstraction(task: &NumericRootTask, distances: Vec<f64>) -> DomainAbstraction {
     let factory = DomainAbstractionFactory::new(
-        task,
+        &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
         vec![
             vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],
             vec![ExplicitValueIndex::new(0), ExplicitValueIndex::new(1)],

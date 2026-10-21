@@ -1,4 +1,6 @@
 use super::*;
+use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 
 use planforge_sas::axioms::{AssignmentAxiom, CalOperator, ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
@@ -19,7 +21,21 @@ fn identity_factory(
     partitions: NumericPartitions,
 ) -> DomainAbstractionFactory {
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(task).unwrap();
-    DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions).unwrap()
+    DomainAbstractionFactory::new(
+        &CegarSemantics::for_options(task, &CegarOptions::default()).unwrap(),
+        domain_mapping,
+        domain_sizes,
+        partitions,
+    )
+    .unwrap()
+}
+
+/// Why the CEGAR semantics rejects `task`.
+fn semantics_error(task: &NumericRootTask) -> anyhow::Error {
+    match CegarSemantics::for_options(task, &CegarOptions::default()) {
+        Ok(_) => panic!("the CEGAR semantics accepted the task"),
+        Err(error) => error,
+    }
 }
 
 /// The abstract operators of [`identity_factory`].
@@ -899,18 +915,7 @@ fn duplicate_assignment_effects_are_rejected() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let partitions = NumericPartitions::with_partitions(vec![
-        vec![
-            Interval::singleton(NumericValue::new(0.0)),
-            Interval::singleton(NumericValue::new(1.0)),
-            Interval::singleton(NumericValue::new(2.0)),
-            Interval::singleton(NumericValue::new(3.0)),
-        ],
-        vec![Interval::singleton(NumericValue::new(1.0))],
-        vec![Interval::singleton(NumericValue::new(2.0))],
-    ]);
-
-    let error = identity_operators(&task, partitions, false).unwrap_err();
+    let error = semantics_error(&task);
     assert!(
         error
             .to_string()
@@ -988,9 +993,7 @@ fn conditional_propositional_effect_branches() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let partitions = NumericPartitions::with_partitions(vec![]);
-
-    let err = identity_operators(&task, partitions, false).unwrap_err();
+    let err = semantics_error(&task);
     assert!(crate::unsupported::is_unsupported_task(&err), "{err:#}");
     assert!(err.to_string().contains("has a conditional"), "{err:#}");
 }
@@ -1054,15 +1057,7 @@ fn conditional_assignment_effect_branches() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let partitions = NumericPartitions::with_partitions(vec![
-        vec![
-            Interval::new(NEG_INF_VALUE, NumericValue::new(0.0), false, false),
-            Interval::new(NumericValue::new(0.0), INF_VALUE, true, false),
-        ],
-        vec![Interval::singleton(NumericValue::new(1.0))],
-    ]);
-
-    let err = identity_operators(&task, partitions, false).unwrap_err();
+    let err = semantics_error(&task);
     assert!(crate::unsupported::is_unsupported_task(&err), "{err:#}");
     assert!(err.to_string().contains("has a conditional"), "{err:#}");
 }
@@ -1105,12 +1100,7 @@ fn variable_rhs_assignment_effect_is_rejected_for_parity() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    let partitions = NumericPartitions::with_partitions(vec![
-        vec![Interval::unbounded()],
-        vec![Interval::unbounded()],
-    ]);
-
-    let err = identity_operators(&task, partitions, false).unwrap_err();
+    let err = semantics_error(&task);
     assert!(crate::unsupported::is_unsupported_task(&err), "{err:#}");
     assert!(err.to_string().contains("not a constant"), "{err:#}");
 }

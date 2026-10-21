@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests;
 
-use anyhow::{Result, bail, ensure};
+use std::sync::Arc;
+
+use anyhow::Result;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, INF_VALUE,
     NEG_INF_VALUE, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
@@ -30,55 +32,6 @@ impl AdditiveNumericView {
 
     pub(crate) fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
         self.expression.evaluate(numeric_values)
-    }
-}
-
-/// Active derived views, indexed by the task's numeric variable IDs.
-#[derive(Clone, Debug)]
-pub(crate) struct AdditiveNumericViews {
-    by_numeric_var: Vec<Option<AdditiveNumericView>>,
-}
-
-impl AdditiveNumericViews {
-    pub(crate) fn for_active_dimensions(
-        task: &dyn AbstractNumericTask,
-        numeric_domain_sizes: &[usize],
-    ) -> Result<Self> {
-        ensure!(
-            numeric_domain_sizes.len() == task.numeric_variables().len(),
-            "numeric-domain-size count {} does not match task numeric-variable count {}",
-            numeric_domain_sizes.len(),
-            task.numeric_variables().len()
-        );
-        let mut by_numeric_var = vec![None; numeric_domain_sizes.len()];
-        for (numeric_var_id, &domain_size) in numeric_domain_sizes.iter().enumerate() {
-            if task.numeric_variables()[numeric_var_id].get_type() != &NumericType::Derived {
-                continue;
-            }
-            let view =
-                analyze_additive_numeric_view(task, VariableIndex::from_usize(numeric_var_id));
-            if domain_size > 1 && view.is_none() {
-                bail!(
-                    "derived numeric variable {numeric_var_id} ({}) was refined, but is not an affine coordinate with deterministic additive operator effects",
-                    task.numeric_variables()[numeric_var_id].name()
-                );
-            }
-            by_numeric_var[numeric_var_id] = view;
-        }
-        Ok(Self { by_numeric_var })
-    }
-
-    pub(crate) fn get(&self, numeric_var_id: usize) -> Option<&AdditiveNumericView> {
-        self.by_numeric_var
-            .get(numeric_var_id)
-            .and_then(Option::as_ref)
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (usize, &AdditiveNumericView)> {
-        self.by_numeric_var
-            .iter()
-            .enumerate()
-            .filter_map(|(numeric_var_id, view)| view.as_ref().map(|view| (numeric_var_id, view)))
     }
 }
 
@@ -181,7 +134,7 @@ fn numeric_expression_depends_on_cost(
 pub(crate) fn active_comparison_dimensions(
     tree: &NumericCondition,
     numeric_domain_sizes: &[usize],
-    additive_views: &AdditiveNumericViews,
+    additive_views: &[Option<AdditiveNumericView>],
 ) -> Vec<VariableIndex> {
     let mut dimensions = tree
         .regular_numeric_var_dependencies()
@@ -204,7 +157,7 @@ pub(crate) fn active_comparison_dimensions(
         if numeric_domain_sizes
             .get(result_numeric_var_id.index())
             .is_some_and(|&size| size > 1)
-            && additive_views.get(result_numeric_var_id.index()).is_some()
+            && additive_views[result_numeric_var_id.index()].is_some()
         {
             dimensions.push(*result_numeric_var_id);
         }
@@ -282,7 +235,7 @@ fn constant_effect_delta(
 /// interval of it, so regression over coordinates is exact.
 pub(crate) struct Coordinates<'task> {
     task: &'task dyn AbstractNumericTask,
-    views: Vec<Option<AdditiveNumericView>>,
+    views: Arc<[Option<AdditiveNumericView>]>,
     /// Per numeric condition, its requirement on the one coordinate it
     /// constrains when it holds and when it does not, if it constrains one.
     requirements: Vec<[Option<CoordinateRequirement>; 2]>,
@@ -297,7 +250,7 @@ pub(crate) struct CoordinateRequirement {
 
 impl<'task> Coordinates<'task> {
     pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Self {
-        let views: Vec<_> = (0..task.numeric_variables().len())
+        let views: Arc<[_]> = (0..task.numeric_variables().len())
             .map(|var_id| analyze_additive_numeric_view(task, VariableIndex::from_usize(var_id)))
             .collect();
         let is_coordinate = |var_id: VariableIndex| is_coordinate(task, &views, var_id);
@@ -320,6 +273,11 @@ impl<'task> Coordinates<'task> {
     /// The additive view of every numeric variable that has one.
     pub(crate) fn views(&self) -> &[Option<AdditiveNumericView>] {
         &self.views
+    }
+
+    /// The views, shared with an abstraction that outlives the task borrow.
+    pub(crate) fn shared_views(&self) -> Arc<[Option<AdditiveNumericView>]> {
+        Arc::clone(&self.views)
     }
 
     /// Whether numeric variable `var_id` is a coordinate: regular, or derived

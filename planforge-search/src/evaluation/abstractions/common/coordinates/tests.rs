@@ -84,7 +84,6 @@ fn non_additive_effect_rejects_affine_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Assign);
 
     assert!(analyze_additive_numeric_view(&task, VariableIndex::from_usize(2)).is_none());
-    assert!(AdditiveNumericViews::for_active_dimensions(&task, &[1, 1, 2, 1]).is_err());
 }
 
 #[test]

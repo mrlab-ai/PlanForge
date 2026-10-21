@@ -6,8 +6,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, ensure};
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
-    OperatorIndex, VariableIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericValue, OperatorIndex,
+    VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
 
@@ -17,8 +17,9 @@ use super::comparison_inputs::fill_state_intervals;
 use super::layout::StateLayout;
 use super::partitions::NumericPartitions;
 use super::partitions::partition_for_value;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::split::Split;
-use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
+use crate::evaluation::abstractions::common::coordinates::AdditiveNumericView;
 
 mod distances;
 mod source_sets;
@@ -53,10 +54,11 @@ pub struct DomainAbstractionFactory {
     /// Shared with the task the factory was built from: the conditions are
     /// task data, not abstraction data, but the factory outlives the borrow.
     numeric_conditions: Arc<NumericConditions>,
-    additive_numeric_views: AdditiveNumericViews,
-    /// Per-concrete-operator cost, read once through the task's
-    /// [`NumericTaskExt::abstract_operator_cost`] hook. Task views that move
-    /// the initial state keep these costs pinned to the base task.
+    /// The additive view of every derived coordinate.
+    additive_numeric_views: Arc<[Option<AdditiveNumericView>]>,
+    /// The validated cost of every concrete operator, shared with the CEGAR
+    /// semantics. Task views that move the initial state keep these costs
+    /// pinned to the base task.
     operator_costs: Arc<[NumericValue]>,
     /// Propositional dimensions that a single abstract state can constrain,
     /// ascending: exactly the variables this abstraction split into more than
@@ -73,15 +75,18 @@ pub struct DomainAbstractionFactory {
 }
 
 impl DomainAbstractionFactory {
-    /// The domain abstraction of `task` that maps propositional values by
-    /// `domain_mapping` into `domain_sizes` abstract values per variable, and
-    /// numeric values by `partitions`.
-    pub fn new(
-        task: &dyn AbstractNumericTask,
+    /// The domain abstraction of the task of `semantics` that maps
+    /// propositional values by `domain_mapping` into `domain_sizes` abstract
+    /// values per variable, and numeric values by `partitions`. Operator
+    /// costs and the additive views of derived coordinates are those of
+    /// `semantics`.
+    pub(crate) fn new(
+        semantics: &CegarSemantics<'_>,
         domain_mapping: DomainMapping,
         domain_sizes: Vec<usize>,
         partitions: NumericPartitions,
     ) -> Result<Self> {
+        let task = semantics.task();
         ensure!(
             domain_mapping.len() == domain_sizes.len()
                 && domain_sizes.len() == task.get_num_variables(),
@@ -132,11 +137,16 @@ impl DomainAbstractionFactory {
             task.numeric_variables().len()
         );
         let layout = StateLayout::new(&domain_sizes, &numeric_domain_sizes)?;
-        let operator_costs: Arc<[NumericValue]> = (0..task.get_operators().len())
-            .map(|operator_id| task.abstract_operator_cost(OperatorIndex::from_usize(operator_id)))
-            .collect();
-        let additive_numeric_views =
-            AdditiveNumericViews::for_active_dimensions(task, &numeric_domain_sizes)?;
+        let additive_numeric_views = semantics.coordinates().shared_views();
+        for (numeric_var_id, &domain_size) in numeric_domain_sizes.iter().enumerate() {
+            assert!(
+                domain_size == 1
+                    || semantics
+                        .coordinates()
+                        .is_coordinate(VariableIndex::from_usize(numeric_var_id)),
+                "numeric variable {numeric_var_id} is partitioned but is no coordinate"
+            );
+        }
         let state_constrained_props = Self::derive_state_constrained_props(layout.domain_sizes());
 
         Ok(Self {
@@ -145,7 +155,7 @@ impl DomainAbstractionFactory {
             layout: Arc::new(layout),
             numeric_conditions: Arc::clone(task.numeric_conditions()),
             additive_numeric_views,
-            operator_costs,
+            operator_costs: semantics.shared_operator_costs(),
             state_constrained_props,
         })
     }
@@ -170,7 +180,7 @@ impl DomainAbstractionFactory {
         self.layout.numeric_domain_sizes()
     }
 
-    pub(super) fn additive_numeric_views(&self) -> &AdditiveNumericViews {
+    pub(super) fn additive_numeric_views(&self) -> &[Option<AdditiveNumericView>] {
         &self.additive_numeric_views
     }
 
