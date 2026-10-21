@@ -1001,11 +1001,7 @@ fn abstract_source_set_rejects_empty_inverse_target_image() {
     let error = factory
         .build_abstract_source_sets(&task, &[op])
         .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("empty regressed source operator region")
-    );
+    assert!(error.to_string().contains("empty source set"));
 }
 
 #[test]

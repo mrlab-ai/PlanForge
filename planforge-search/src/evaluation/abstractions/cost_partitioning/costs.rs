@@ -10,8 +10,8 @@
 //! Each [`LabelSourceSet::source`] stores the *regressed
 //! preimage source* of an abstract operator's effect — the intersection of the
 //! abstract source region with the inverse image of the abstract target region
-//! under the operator's numeric effect (computed in
-//! `factory::build_source_set`).
+//! under the operator's numeric effect (computed by
+//! `RegionSemantics::transition_source_set` for both representations).
 //!
 //! Unbounded preimages are ordinary regions. Cost is allocated on their exact
 //! operator region and remains available on disjoint regions.

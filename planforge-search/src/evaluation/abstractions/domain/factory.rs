@@ -9,8 +9,8 @@ use std::time::Instant;
 use anyhow::{Context, Result, anyhow, ensure};
 
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentOperation, ExplicitFact, ExplicitValueIndex, NumericTaskExt,
-    NumericType, NumericValue, Operator, OperatorIndex, VariableIndex,
+    AbstractNumericTask, ExplicitFact, ExplicitValueIndex, NumericTaskExt, NumericValue,
+    OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
 
