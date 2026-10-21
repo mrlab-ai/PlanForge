@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
@@ -127,6 +129,76 @@ fn computes_max_additive_subsets_from_relevant_operators() {
     assert_eq!(subsets, vec![vec![0, 1], vec![1, 2]]);
 }
 
+/// The canonical heuristic over the given additive subsets of `components`.
+fn with_explicit_subsets<'task>(
+    name: Option<String>,
+    task: &dyn AbstractNumericTask,
+    components: Vec<AbstractionComponent<'task>>,
+    max_additive_subsets: Vec<Vec<usize>>,
+) -> Result<CanonicalAbstractionHeuristic<'task>, String> {
+    if components.is_empty() {
+        return Err("canonical abstraction heuristic requires at least one component".to_string());
+    }
+    let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
+        .iter()
+        .map(|component| component.relevant_operator_ids(task))
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_additive_subsets(
+        components.len(),
+        &max_additive_subsets,
+        &relevant_operator_ids,
+    )?;
+    Ok(CanonicalAbstractionHeuristic::from_validated_parts(
+        name,
+        components,
+        max_additive_subsets,
+        relevant_operator_ids,
+    ))
+}
+
+fn validate_additive_subsets(
+    component_count: usize,
+    subsets: &[Vec<usize>],
+    relevant_operator_ids: &[BTreeSet<OperatorIndex>],
+) -> Result<(), String> {
+    if subsets.is_empty() {
+        return Err("canonical abstraction heuristic requires at least one subset".to_string());
+    }
+    for (subset_id, subset) in subsets.iter().enumerate() {
+        if subset.is_empty() {
+            return Err(format!("canonical subset {subset_id} is empty"));
+        }
+        let mut seen = HashSet::new();
+        for &component_id in subset {
+            if component_id >= component_count {
+                return Err(format!(
+                    "canonical subset {subset_id} references component {component_id}, but collection has {component_count} components"
+                ));
+            }
+            if !seen.insert(component_id) {
+                return Err(format!(
+                    "canonical subset {subset_id} contains duplicate component {component_id}"
+                ));
+            }
+        }
+        for left_index in 0..subset.len() {
+            for right_index in (left_index + 1)..subset.len() {
+                let left = subset[left_index];
+                let right = subset[right_index];
+                if !are_operator_sets_additive(
+                    &relevant_operator_ids[left],
+                    &relevant_operator_ids[right],
+                ) {
+                    return Err(format!(
+                        "canonical subset {subset_id} contains non-additive components {left} and {right}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn canonical_domain_abstraction_uses_explicit_subsets() {
     let task = simple_task();
@@ -139,7 +211,7 @@ fn canonical_domain_abstraction_uses_explicit_subsets() {
     let mut da2 = make_abstraction(&task, vec![4.0, 0.0, 0.0, 0.0]);
     da2.core_mut().relevant_operator_ids = vec![OperatorIndex::new(0), OperatorIndex::new(1)];
 
-    let heuristic = CanonicalAbstractionHeuristic::with_explicit_subsets(
+    let heuristic = with_explicit_subsets(
         None,
         &task,
         vec![
@@ -200,7 +272,7 @@ fn mixed_domain_cartesian_and_pdb_components_work_in_max_and_canonical() {
         CanonicalAbstractionHeuristic::new(None, &task, mixed_components(&task)).unwrap();
     assert!(
         canonical
-            .max_additive_subsets()
+            .max_additive_subsets
             .iter()
             .any(|subset| subset == &[0, 2])
     );

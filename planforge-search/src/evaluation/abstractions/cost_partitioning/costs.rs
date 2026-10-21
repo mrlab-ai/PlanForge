@@ -1,8 +1,7 @@
 //! Label and regional saturated cost partitioning for abstraction components.
 //!
 //! Vocabulary:
-//! - A *region* is geometry represented by [`CartesianSet`] (defined in
-//!   `region.rs`).
+//! - A *region* is a set of states represented by a [`CartesianSet`].
 //! - An *operator region* is the region on which a concrete operator's cost is
 //!   claimed.
 //! - *Regional* means per-region cost accounting.
@@ -22,15 +21,10 @@ mod tests;
 use crate::resource_limits::Deadline;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-#[cfg(test)]
-use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
 use planforge_sas::numeric_task::{NEG_INF_VALUE, NumericValue, OperatorIndex};
 use planforge_sas::utils::float_tolerance;
-
-#[cfg(test)]
-use planforge_sas::utils::interval::Interval;
 
 mod saturation;
 
@@ -263,12 +257,6 @@ impl SourceSetUsage {
 
     /// Pointwise addition. Table envelopes are independent cost partitions and
     /// therefore add across completed tables.
-    #[cfg(test)]
-    fn add(&mut self, region: &CartesianSet, amount: f64) {
-        self.add_with_deadline(region, amount, Deadline::NONE)
-            .expect("an unbounded regional-usage update cannot exceed a deadline");
-    }
-
     fn add_with_deadline(
         &mut self,
         region: &CartesianSet,
@@ -469,12 +457,6 @@ impl RemainingCosts {
                 residual.full_source_set_usage.cells.len() + residual.source_set_usage.cells.len()
             })
             .sum()
-    }
-
-    pub fn has_reductions(&self) -> bool {
-        self.operator_residuals.iter().any(|residual| {
-            !residual.full_source_set_usage.is_empty() || !residual.source_set_usage.is_empty()
-        })
     }
 
     pub fn base_cost(&self, concrete_op_id: OperatorIndex) -> f64 {

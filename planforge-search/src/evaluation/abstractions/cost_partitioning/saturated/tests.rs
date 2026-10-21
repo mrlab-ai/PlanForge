@@ -20,9 +20,11 @@ use planforge_sas::numeric_task::{
 use planforge_sas::state_registry::StateRegistry;
 
 use crate::evaluation::abstractions::cartesian::{
-    CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
-    CartesianAbstractionConfig, CartesianAbstractionGenerator,
+    CartesianAbstraction, CartesianAbstractionCollectionConfig,
+    CartesianAbstractionCollectionGenerator, CartesianAbstractionConfig,
+    CartesianAbstractionGenerator,
 };
+use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
 

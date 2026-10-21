@@ -8,8 +8,6 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
-use crate::evaluation::abstractions::cartesian::CartesianAbstraction;
-use crate::evaluation::abstractions::pdb::pattern_database::PatternDatabase;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::resource_limits::Deadline;
@@ -23,7 +21,6 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     RemainingCosts, SourceSetCostAllocation,
 };
-use crate::evaluation::abstractions::domain::abstraction::DomainAbstraction;
 use planforge_sas::explicit_state::ExplicitState;
 
 mod config;
@@ -117,25 +114,6 @@ pub struct ScpBuildOptions<'task> {
     /// When the heuristic's construction must end, which bounds building the
     /// cost partitionings at the first evaluated state too.
     pub construction_deadline: Deadline,
-}
-
-/// The components of a collection of domain abstractions, Cartesian
-/// abstractions and pattern databases, in that order.
-pub fn collection_components<'task>(
-    domain_abstractions: Vec<DomainAbstraction>,
-    cartesian_abstractions: Vec<CartesianAbstraction>,
-    pdbs: Vec<PatternDatabase<'task>>,
-) -> Vec<AbstractionComponent<'task>> {
-    domain_abstractions
-        .into_iter()
-        .map(AbstractionComponent::from)
-        .chain(
-            cartesian_abstractions
-                .into_iter()
-                .map(AbstractionComponent::from),
-        )
-        .chain(pdbs.into_iter().map(AbstractionComponent::from))
-        .collect()
 }
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {

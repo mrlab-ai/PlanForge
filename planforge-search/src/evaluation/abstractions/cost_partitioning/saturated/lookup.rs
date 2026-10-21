@@ -118,20 +118,6 @@ pub(super) fn max_abstraction_heuristic(
         .iter()
         .enumerate()
         .map(|(abstraction_id, distances)| {
-            // A miss contributes nothing, for every kind of abstraction.
-            //
-            // This used to be infinity for a prefix of component kinds, on the
-            // reading that a domain abstraction covers every concrete state, so
-            // a state it has no entry for cannot reach the goal. That reading is
-            // wrong here: when the online path is not rebuilding a partitioning,
-            // it computes abstract state ids only for abstractions selected by
-            // `lookup_mask`, so every other one is legitimately absent.
-            // Absent then meant infinite, the maximum swallowed every finite
-            // estimate, and the search recorded a solvable state as a dead end.
-            //
-            // A distance that is present and infinite still means unreachable,
-            // and still propagates, because that one was computed rather than
-            // assumed.
             current_h_for_distances(abstraction_id, distances, abstract_state_ids)
         })
         .fold(0.0, f64::max)

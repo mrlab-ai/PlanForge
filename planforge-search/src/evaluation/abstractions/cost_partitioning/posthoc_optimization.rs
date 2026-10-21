@@ -63,10 +63,13 @@ pub struct PostHocOptimizationHeuristic<'task> {
 }
 
 impl<'task> PostHocOptimizationHeuristic<'task> {
+    /// Post-hoc optimization over `components`, which it reads only the
+    /// goal distances and relevant operators of: components built for
+    /// standalone use keep no transition data.
     pub fn new(
         name: Option<String>,
         task: &dyn AbstractNumericTask,
-        mut components: Vec<AbstractionComponent<'task>>,
+        components: Vec<AbstractionComponent<'task>>,
     ) -> Result<Self, String> {
         if components.is_empty() {
             return Err(
@@ -77,9 +80,6 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             .iter()
             .map(|component| component.relevant_operator_ids(task))
             .collect::<Result<Vec<_>, _>>()?;
-        for component in &mut components {
-            component.discard_transition_data();
-        }
 
         let original_costs: Vec<f64> = (0..task.get_operators().len())
             .map(|op_id| {
@@ -110,10 +110,6 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             values: RefCell::default(),
             diagnostics_logged: Cell::new(false),
         })
-    }
-
-    pub fn components(&self) -> &[AbstractionComponent<'task>] {
-        &self.components
     }
 
     fn evaluate_lp(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {

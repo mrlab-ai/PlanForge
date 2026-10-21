@@ -14,25 +14,20 @@ pub struct MaxAbstractionHeuristic<'task> {
 }
 
 impl<'task> MaxAbstractionHeuristic<'task> {
+    /// The maximum over `components`, which it reads only the goal distances
+    /// of: components built for standalone use keep no transition data.
     pub fn new(
         name: Option<String>,
-        mut components: Vec<AbstractionComponent<'task>>,
+        components: Vec<AbstractionComponent<'task>>,
     ) -> Result<Self, String> {
         if components.is_empty() {
             return Err("max abstraction heuristic requires at least one component".to_string());
-        }
-        for component in &mut components {
-            component.discard_transition_data();
         }
         Ok(Self {
             name: name.unwrap_or_else(|| "max_abstractions".to_string()),
             components,
             state_values: RefCell::default(),
         })
-    }
-
-    pub fn components(&self) -> &[AbstractionComponent<'task>] {
-        &self.components
     }
 }
 
@@ -60,10 +55,6 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
             best = best.max(value);
         }
         Ok(best)
-    }
-
-    fn proves_initial_state_optimal(&self) -> bool {
-        false
     }
 
     fn heuristic_name(&self) -> &str {

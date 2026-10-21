@@ -207,7 +207,7 @@ pub(super) fn best_goal_cover_order_indices(
 }
 
 /// Adds an order the heuristic requires. Unlike the diversified orders, it is
-/// not subject to max_orders or max_size.
+/// not subject to max_orders.
 pub(super) fn retain_required_order(
     candidate: CostPartitioningHeuristic,
     sample_ids: &[Vec<Option<usize>>],

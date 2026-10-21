@@ -2,7 +2,7 @@
 mod tests;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
@@ -28,6 +28,10 @@ pub struct CanonicalAbstractionHeuristic<'task> {
 }
 
 impl<'task> CanonicalAbstractionHeuristic<'task> {
+    /// The canonical heuristic over the maximal additive subsets of
+    /// `components`, which it reads only the goal distances and relevant
+    /// operators of: components built for standalone use keep no
+    /// transition data.
     pub fn new(
         name: Option<String>,
         task: &dyn AbstractNumericTask,
@@ -43,50 +47,25 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             .map(|component| component.relevant_operator_ids(task))
             .collect::<Result<Vec<_>, _>>()?;
         let subsets = compute_max_additive_subsets_from_relevant_operators(&relevant_operator_ids);
-        Self::from_validated_parts(name, components, subsets, relevant_operator_ids)
-    }
-
-    pub fn with_explicit_subsets(
-        name: Option<String>,
-        task: &dyn AbstractNumericTask,
-        components: Vec<AbstractionComponent<'task>>,
-        max_additive_subsets: Vec<Vec<usize>>,
-    ) -> Result<Self, String> {
-        if components.is_empty() {
-            return Err(
-                "canonical abstraction heuristic requires at least one component".to_string(),
-            );
-        }
-        let relevant_operator_ids: Vec<BTreeSet<OperatorIndex>> = components
-            .iter()
-            .map(|component| component.relevant_operator_ids(task))
-            .collect::<Result<Vec<_>, _>>()?;
-        validate_additive_subsets(
-            components.len(),
-            &max_additive_subsets,
-            &relevant_operator_ids,
-        )?;
-        Self::from_validated_parts(
+        Ok(Self::from_validated_parts(
             name,
             components,
-            max_additive_subsets,
+            subsets,
             relevant_operator_ids,
-        )
+        ))
     }
 
     fn from_validated_parts(
         name: Option<String>,
-        mut components: Vec<AbstractionComponent<'task>>,
+        components: Vec<AbstractionComponent<'task>>,
         max_additive_subsets: Vec<Vec<usize>>,
         relevant_operator_ids: Vec<BTreeSet<OperatorIndex>>,
-    ) -> Result<Self, String> {
-        if max_additive_subsets.is_empty() {
-            return Err("canonical abstraction heuristic has no additive subsets".to_string());
-        }
-        for component in &mut components {
-            component.discard_transition_data();
-        }
-        Ok(Self {
+    ) -> Self {
+        assert!(
+            !max_additive_subsets.is_empty(),
+            "a nonempty collection has an additive subset"
+        );
+        Self {
             name: name.unwrap_or_else(|| "canonical_abstractions".to_string()),
             components,
             max_additive_subsets,
@@ -95,15 +74,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             state_value_cache: RefCell::new(StateValueCache::default()),
             component_state_values: RefCell::default(),
             diagnostics_logged: Cell::new(false),
-        })
-    }
-
-    pub fn components(&self) -> &[AbstractionComponent<'task>] {
-        &self.components
-    }
-
-    pub fn max_additive_subsets(&self) -> &[Vec<usize>] {
-        &self.max_additive_subsets
+        }
     }
 
     fn component_value(
@@ -207,56 +178,9 @@ impl Heuristic for CanonicalAbstractionHeuristic<'_> {
         Ok(value)
     }
 
-    fn proves_initial_state_optimal(&self) -> bool {
-        false
-    }
-
     fn heuristic_name(&self) -> &str {
         &self.name
     }
-}
-
-fn validate_additive_subsets(
-    component_count: usize,
-    subsets: &[Vec<usize>],
-    relevant_operator_ids: &[BTreeSet<OperatorIndex>],
-) -> Result<(), String> {
-    if subsets.is_empty() {
-        return Err("canonical abstraction heuristic requires at least one subset".to_string());
-    }
-    for (subset_id, subset) in subsets.iter().enumerate() {
-        if subset.is_empty() {
-            return Err(format!("canonical subset {subset_id} is empty"));
-        }
-        let mut seen = HashSet::new();
-        for &component_id in subset {
-            if component_id >= component_count {
-                return Err(format!(
-                    "canonical subset {subset_id} references component {component_id}, but collection has {component_count} components"
-                ));
-            }
-            if !seen.insert(component_id) {
-                return Err(format!(
-                    "canonical subset {subset_id} contains duplicate component {component_id}"
-                ));
-            }
-        }
-        for left_index in 0..subset.len() {
-            for right_index in (left_index + 1)..subset.len() {
-                let left = subset[left_index];
-                let right = subset[right_index];
-                if !are_operator_sets_additive(
-                    &relevant_operator_ids[left],
-                    &relevant_operator_ids[right],
-                ) {
-                    return Err(format!(
-                        "canonical subset {subset_id} contains non-additive components {left} and {right}"
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn are_operator_sets_additive(

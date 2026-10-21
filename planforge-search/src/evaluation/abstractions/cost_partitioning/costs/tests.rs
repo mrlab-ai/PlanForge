@@ -2,10 +2,21 @@ use planforge_sas::numeric_task::{
     ExplicitValueIndex, INF_VALUE, NEG_INF_VALUE, NumericValue, ONE_VALUE, ZERO_VALUE,
 };
 
+use std::sync::Arc;
+
+use planforge_sas::utils::interval::Interval;
+
 use super::*;
 use crate::evaluation::abstractions::common::transition_system::{
     AbstractOperatorSourceSets, AbstractTransition, AbstractTransitionSystem,
 };
+
+impl SourceSetUsage {
+    fn add(&mut self, region: &CartesianSet, amount: f64) {
+        self.add_with_deadline(region, amount, Deadline::NONE)
+            .expect("an unbounded regional-usage update cannot exceed a deadline");
+    }
+}
 
 #[test]
 fn regional_overlay_handles_multiple_multidimensional_uncovered_pieces() {

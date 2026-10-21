@@ -192,7 +192,10 @@ fn initial_cartesian_scp_value(
     };
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(vec![], abstractions, vec![]),
+        abstractions
+            .into_iter()
+            .map(AbstractionComponent::from)
+            .collect(),
         config,
         task,
         Default::default(),
@@ -257,7 +260,10 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
         .collect::<Vec<_>>();
     let heuristic = SaturatedCostPartitioningHeuristic::new(
         None,
-        collection_components(abstractions, Vec::new(), vec![]),
+        abstractions
+            .into_iter()
+            .map(AbstractionComponent::from)
+            .collect(),
         config,
         transformed_task,
         Default::default(),
