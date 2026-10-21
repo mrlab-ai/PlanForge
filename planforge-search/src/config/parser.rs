@@ -27,8 +27,7 @@ pub fn parse_call(raw: &str) -> Result<ConfigCall, String> {
 /// Parse a heuristic configuration such as `scp(domain(max_states=100),
 /// online=false)`.
 pub fn parse_heuristic_spec(raw: &str) -> Result<HeuristicSpec, String> {
-    let call = parse_call(raw)?;
-    Ok(HeuristicSpec::new(call.name, call.args))
+    parse_call(raw)
 }
 
 struct ConfigParser<'a> {

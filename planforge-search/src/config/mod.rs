@@ -184,28 +184,10 @@ impl ConfigValue {
     }
 }
 
-/// A parsed heuristic configuration. The heuristic is identified by `name`; its
-/// options are an ordered list of [`ConfigArg`]s (each optionally keyed),
-/// applied to a typed config struct at construction time.
-///
-/// Storing args as `Vec<ConfigArg>` (not a map) lets each config resolve
-/// positional args against its own option order -- so both
-/// `greedy_numeric_pdb(max_pdb_states=321)` and `greedy_numeric_pdb(321)` work,
-/// and they can be mixed: `greedy_numeric_pdb(321, numeric_first=false)`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HeuristicSpec {
-    pub name: String,
-    pub args: Vec<ConfigArg>,
-}
+/// A heuristic specification is a call in the shared configuration AST.
+pub type HeuristicSpec = ConfigCall;
 
-impl HeuristicSpec {
-    pub fn new(name: impl Into<String>, args: Vec<ConfigArg>) -> Self {
-        Self {
-            name: name.into(),
-            args,
-        }
-    }
-
+impl ConfigCall {
     pub fn blind() -> Self {
         Self::new("blind", Vec::new())
     }
@@ -227,26 +209,6 @@ impl HeuristicSpec {
         self.name == name || self.args.iter().any(|arg| arg.value().contains_call(name))
     }
 }
-
-impl std::fmt::Display for HeuristicSpec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.args.is_empty() {
-            return write!(f, "{}()", self.name);
-        }
-        write!(f, "{}(", self.name)?;
-        for (index, arg) in self.args.iter().enumerate() {
-            if index > 0 {
-                write!(f, ", ")?;
-            }
-            match arg.key() {
-                Some(key) => write!(f, "{key}={}", arg.value())?,
-                None => write!(f, "{}", arg.value())?,
-            }
-        }
-        write!(f, ")")
-    }
-}
-
 impl std::fmt::Display for ConfigValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -283,10 +245,6 @@ impl std::fmt::Display for ConfigCall {
         }
         write!(f, ")")
     }
-}
-
-pub fn atom(value: &ConfigValue) -> Result<&str, ConfigError> {
-    value.as_atom()
 }
 
 /// Walk `args` and dispatch each one as either named (`arg.key`) or
@@ -368,7 +326,7 @@ pub trait FromOptionValue: Sized {
 
 impl FromOptionValue for bool {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        match atom(value)? {
+        match value.as_atom()? {
             "true" => Ok(true),
             "false" => Ok(false),
             other => Err(format!("expected boolean, got `{other}`").into()),
@@ -377,30 +335,26 @@ impl FromOptionValue for bool {
 }
 
 impl FromOptionValue for usize {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        Ok(atom(value)?.parse::<usize>().map_err(|_| {
-            format!(
-                "expected non-negative integer, got `{}`",
-                atom(value).unwrap()
-            )
-        })?)
+    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
+        let scalar = value.as_atom()?;
+        scalar
+            .parse::<usize>()
+            .map_err(|_| format!("expected non-negative integer, got `{scalar}`").into())
     }
 }
 
 impl FromOptionValue for u64 {
-    fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        Ok(atom(value)?.parse::<u64>().map_err(|_| {
-            format!(
-                "expected non-negative integer, got `{}`",
-                atom(value).unwrap()
-            )
-        })?)
+    fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
+        let scalar = value.as_atom()?;
+        scalar
+            .parse::<u64>()
+            .map_err(|_| format!("expected non-negative integer, got `{scalar}`").into())
     }
 }
 
 impl FromOptionValue for f64 {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        let s = atom(value)?;
+        let s = value.as_atom()?;
         if s.eq_ignore_ascii_case("infinity") {
             Ok(f64::INFINITY)
         } else {
@@ -437,7 +391,7 @@ impl<T: FromOptionValue> FromOptionValue for Vec<T> {
 
 impl FromOptionValue for String {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
-        Ok(atom(value)?.to_string())
+        Ok(value.as_atom()?.to_string())
     }
 }
 
