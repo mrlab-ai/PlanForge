@@ -41,6 +41,9 @@ pub(crate) struct CegarSemantics<'task> {
     regions: RegionSemantics<'task>,
     operator_costs: Arc<[NumericValue]>,
     numeric_integer_lattice: Vec<bool>,
+    /// Per numeric variable, the seed of its name that split choice keys
+    /// mix in.
+    numeric_name_seeds: Vec<u64>,
     wanted_split_boundaries: Vec<NumericValue>,
     split_options: SplitOptions,
     random_split_rng: Option<RefCell<SmallRng>>,
@@ -108,11 +111,17 @@ impl<'task> CegarSemantics<'task> {
             ))
         });
         let numeric_integer_lattice = numeric_integer_lattice(task, regions.coordinates());
+        let numeric_name_seeds = task
+            .numeric_variables()
+            .iter()
+            .map(|variable| stable_text_seed(variable.name()))
+            .collect();
         Ok(Self {
             states: ExplicitStateSpace::new(task),
             regions,
             operator_costs,
             numeric_integer_lattice,
+            numeric_name_seeds,
             wanted_split_boundaries,
             split_options,
             random_split_rng,
@@ -229,20 +238,23 @@ impl<'task> CegarSemantics<'task> {
                 boundary,
                 lower_includes_boundary,
                 ..
-            } => {
-                let variable_name = self.task().numeric_variables()[var_id.index()].name();
-                numeric_split_choice_key(variable_name, *boundary, *lower_includes_boundary)
-            }
+            } => numeric_split_choice_key(
+                self.numeric_name_seeds[var_id.index()],
+                *boundary,
+                *lower_includes_boundary,
+            ),
         }
     }
 }
 
+/// The choice key of a numeric split of the variable whose name has seed
+/// `name_seed`.
 pub(crate) fn numeric_split_choice_key(
-    variable_name: &str,
+    name_seed: u64,
     boundary: NumericValue,
     lower_closed: bool,
 ) -> u64 {
-    mix_seed(stable_text_seed(variable_name) ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
+    mix_seed(name_seed ^ boundary.to_bits()) ^ (u64::from(lower_closed) << 63)
 }
 
 /// Per numeric dimension, whether the initial value and every effect keep it

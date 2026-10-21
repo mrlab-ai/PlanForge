@@ -32,18 +32,18 @@ fn operator_bitsets_preserve_exact_membership_and_intersections() {
 
 #[test]
 fn numeric_split_keys_include_semantic_identity_and_boundary() {
-    let key = numeric_split_choice_key("x(b0)", NumericValue::new(1.0), true);
+    let key = numeric_split_choice_key(stable_text_seed("x(b0)"), NumericValue::new(1.0), true);
     assert_ne!(
         key,
-        numeric_split_choice_key("x(b1)", NumericValue::new(1.0), true)
+        numeric_split_choice_key(stable_text_seed("x(b1)"), NumericValue::new(1.0), true)
     );
     assert_ne!(
         key,
-        numeric_split_choice_key("x(b0)", NumericValue::new(2.0), true)
+        numeric_split_choice_key(stable_text_seed("x(b0)"), NumericValue::new(2.0), true)
     );
     assert_ne!(
         key,
-        numeric_split_choice_key("x(b0)", NumericValue::new(1.0), false)
+        numeric_split_choice_key(stable_text_seed("x(b0)"), NumericValue::new(1.0), false)
     );
 }
 

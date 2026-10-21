@@ -30,6 +30,7 @@ use crate::evaluation::abstractions::common::cegar::selection::{
 use crate::evaluation::abstractions::common::cegar::semantics::numeric_split_choice_key;
 use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
+use crate::evaluation::seed::stable_text_seed;
 use planforge_sas::utils::interval::Interval;
 
 mod collection;
