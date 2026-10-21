@@ -26,7 +26,7 @@ pub use recursive_config::{SearchConfig, parse_heuristic_spec, parse_search_spec
 /// `planforge-search`; all this adds is walking the engine's heuristics.
 pub fn preflight_required_backends(spec: &SearchConfig) -> std::io::Result<()> {
     for heuristic in spec.heuristics() {
-        planforge_search::heuristic_factory::preflight_required_backends(heuristic)?;
+        heuristic.preflight()?;
     }
     Ok(())
 }

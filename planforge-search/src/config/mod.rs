@@ -22,6 +22,7 @@ mod parser;
 pub use error::ConfigError;
 mod search;
 pub(crate) mod time_limit;
+pub use crate::heuristic_factory::HeuristicConfig;
 pub use search::{SearchConfig, parse_search_spec};
 pub use time_limit::TimeLimit;
 

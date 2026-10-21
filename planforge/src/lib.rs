@@ -38,7 +38,7 @@ use planforge_search::search::{
 };
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
-use planforge_searcher::{HeuristicSpec, SearchConfig};
+use planforge_searcher::SearchConfig;
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -332,10 +332,15 @@ pub fn solve_task(
             lazy,
             mpd,
         } => {
-            let heuristic = build_heuristic_from_spec(heuristic, &context)?;
+            let heuristic = heuristic
+                .build(&context)
+                .map_err(HeuristicBuildError::into_io_error)?;
             let lazy = lazy
                 .as_ref()
-                .map(|spec| build_heuristic_from_spec(spec, &context))
+                .map(|spec| {
+                    spec.build(&context)
+                        .map_err(HeuristicBuildError::into_io_error)
+                })
                 .transpose()?;
             info!("Starting A* search, mpd={mpd}, lazy={}", lazy.is_some());
             Box::new(AStarSearch::new(
@@ -351,7 +356,9 @@ pub fn solve_task(
             ))
         }
         SearchConfig::Gbfs { heuristic } => {
-            let heuristic = build_heuristic_from_spec(heuristic, &context)?;
+            let heuristic = heuristic
+                .build(&context)
+                .map_err(HeuristicBuildError::into_io_error)?;
             info!("Starting GBFS search...");
             Box::new(GreedyBestFirstSearch::new(
                 &*task,
@@ -549,12 +556,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     };
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
-        let restricted_task = if cli
-            .search
-            .requirements()
-            .map_err(std::io::Error::other)?
-            .icaps26_restriction
-        {
+        let restricted_task = if cli.search.requirements().icaps26_restriction {
             build_icaps26_restricted_task(&task)
         } else {
             build_restricted_task(&task)
@@ -590,12 +592,4 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     print_search_result(&result);
 
     Ok(result)
-}
-
-fn build_heuristic_from_spec<'a>(
-    spec: &HeuristicSpec,
-    context: &BuildContext<'a>,
-) -> std::io::Result<Box<dyn planforge_search::evaluation::Heuristic + 'a>> {
-    planforge_search::heuristic_factory::build_heuristic_from_spec(spec, context)
-        .map_err(HeuristicBuildError::into_io_error)
 }

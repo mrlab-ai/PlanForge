@@ -174,6 +174,16 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
 #[derive(Debug, Clone)]
 pub struct HeuristicConfig(Arc<dyn ErasedHeuristicConfig>);
 impl HeuristicConfig {
+    pub fn blind() -> Self {
+        Self::default()
+    }
+    pub fn from_value(value: &ConfigValue) -> Result<Self, ConfigError> {
+        <Self as crate::config::FromOptionValue>::from_option_value(value)
+    }
+    pub fn preflight(&self) -> std::io::Result<()> {
+        check_backend(self.required_backend())
+    }
+
     pub fn from_spec(spec: &HeuristicSpec) -> Result<Self, ConfigError> {
         let entry = lookup(&spec.name).ok_or_else(|| {
             ConfigError::from(format!(

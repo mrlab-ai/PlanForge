@@ -2,7 +2,7 @@ use super::*;
 
 fn astar_heuristic(input: &str) -> HeuristicSpec {
     match parse_search_spec(input).unwrap() {
-        SearchConfig::AStar { heuristic, .. } => heuristic,
+        SearchConfig::AStar { heuristic, .. } => (*heuristic).clone(),
         other => panic!("expected astar(...), got {other:?}"),
     }
 }
@@ -96,14 +96,9 @@ fn rejects_nested_collection_source_lists() {
 }
 
 #[test]
-fn parses_astar_scp_with_or_without_unit_parens() {
-    let h = astar_heuristic("astar(scp)");
-    assert_eq!(h.name, "scp");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(scp())");
-    assert_eq!(h.name, "scp");
-    assert!(h.args.is_empty());
+fn rejects_scp_without_abstraction_sources() {
+    assert!(parse_search_spec("astar(scp)").is_err());
+    assert!(parse_search_spec("astar(scp())").is_err());
 }
 
 #[test]
@@ -170,7 +165,7 @@ fn display_round_trips_hierarchical_abstraction_collection() {
 #[test]
 fn display_round_trips_scp_options() {
     let parsed = parse_search_spec(
-        "astar(scp([domain_collection(max_states=42, max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, max_orders=3))",
+        "astar(scp([domain_collection(max_states=42, max_time=infinity)], max_time=12.5, partitioning=region, saturator=perimstar, orders=diverse_orders, diversify=true, max_orders=3))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -178,13 +173,10 @@ fn display_round_trips_scp_options() {
 }
 
 #[test]
-fn display_round_trips_scp_with_nested_collection() {
-    let parsed = parse_search_spec(
-        "astar(scp(max(domain_collection(max_collection_size=99, total_max_time=2.5)), saturator=perimstar))",
-    )
-    .unwrap();
-    let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
-    assert_eq!(parsed, reparsed);
+fn rejects_heuristic_combinators_in_abstraction_source_positions() {
+    let error =
+        parse_search_spec("astar(scp(max(domain_collection()),saturator=perimstar))").unwrap_err();
+    assert!(error.contains("unknown AbstractionSource `max`"), "{error}");
 }
 
 #[test]
@@ -307,15 +299,10 @@ fn unknown_heuristic_name_is_rejected_from_the_registry() {
 
 #[test]
 fn contains_call_finds_only_nested_icaps_cartesian_sources() {
-    let icaps = parse_search_spec(
-        "astar(scp(cartesian_collection(source=icaps26_cartesian(pick=min_unwanted))))",
-    )
-    .unwrap();
+    let icaps = parse_search_spec("astar(scp(icaps26_cartesian(pick=min_unwanted)))").unwrap();
     assert!(icaps.contains_call("icaps26_cartesian"));
 
-    let native =
-        parse_search_spec("astar(scp(cartesian_collection(source=cartesian(max_states=1000))))")
-            .unwrap();
+    let native = parse_search_spec("astar(scp(cartesian_collection(max_states=1000)))").unwrap();
     assert!(!native.contains_call("icaps26_cartesian"));
 }
 
@@ -329,7 +316,7 @@ fn contains_call_recurses_into_source_lists() {
 #[test]
 fn lists_are_typed_errors_where_heuristics_are_expected() {
     let error = parse_search_spec("astar([blind()])").unwrap_err();
-    assert_eq!(error, "expected heuristic, got a list");
+    assert_eq!(error, "astar.heuristic: expected heuristic, got a list");
 }
 
 #[test]
@@ -381,13 +368,26 @@ fn gbfs_has_no_mpd_or_lazy_options() {
 #[test]
 fn task_requirements_follow_typed_sources_and_wrappers() {
     let spec = parse_search_spec("astar(check_admissible(scp([domain(),pdb()])))").unwrap();
-    let requirements = spec.requirements().unwrap();
+    let requirements = spec.requirements();
     assert!(requirements.restricted);
     assert!(requirements.abstractable_goal);
     assert!(!requirements.icaps26_restriction);
 
     let spec = parse_search_spec("astar(blind(), lazy=canonical([icaps26_cartesian()]))").unwrap();
-    let requirements = spec.requirements().unwrap();
+    let requirements = spec.requirements();
     assert!(requirements.restricted);
     assert!(requirements.icaps26_restriction);
+}
+
+#[test]
+fn fast_slow_keeps_its_existing_last_value_wins_semantics() {
+    let repeated =
+        parse_search_spec("astar_fs(fast=scp(domian()),fast=blind(),slow=lmcutnumeric())").unwrap();
+    let final_only = parse_search_spec("astar_fs(fast=blind(),slow=lmcutnumeric())").unwrap();
+    assert_eq!(repeated, final_only);
+}
+
+#[test]
+fn potential_seconds_beyond_duration_range_are_still_valid_configuration() {
+    parse_search_spec("astar(numeric_potential(max_ray_generation_time=1e300))").unwrap();
 }

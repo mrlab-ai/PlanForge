@@ -1,25 +1,25 @@
-use super::{ConfigCall, ConfigValue, HeuristicSpec, parse_call};
+use super::{ConfigCall, ConfigValue, FromOptionValue, HeuristicConfig, parse_call};
 use std::fmt;
 
 // =============================================================================
-// HeuristicSpec + SearchConfig
+// HeuristicConfig + SearchConfig
 // =============================================================================
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchConfig {
     AStar {
-        heuristic: HeuristicSpec,
-        lazy: Option<HeuristicSpec>,
+        heuristic: HeuristicConfig,
+        lazy: Option<HeuristicConfig>,
         mpd: bool,
     },
     Gbfs {
-        heuristic: HeuristicSpec,
+        heuristic: HeuristicConfig,
     },
 }
 
 impl SearchConfig {
     /// Every heuristic the engine will build, in configuration order.
-    pub fn heuristics(&self) -> impl Iterator<Item = &HeuristicSpec> {
+    pub fn heuristics(&self) -> impl Iterator<Item = &HeuristicConfig> {
         let (first, second) = match self {
             Self::AStar {
                 heuristic, lazy, ..
@@ -29,15 +29,10 @@ impl SearchConfig {
         std::iter::once(first).chain(second)
     }
 
-    pub fn requirements(&self) -> Result<crate::heuristic_factory::TaskRequirements, String> {
-        self.heuristics().try_fold(
+    pub fn requirements(&self) -> crate::heuristic_factory::TaskRequirements {
+        self.heuristics().fold(
             crate::heuristic_factory::TaskRequirements::ANY,
-            |requirements, heuristic| {
-                Ok(
-                    requirements
-                        .union(crate::heuristic_factory::heuristic_requirements(heuristic)?),
-                )
-            },
+            |requirements, heuristic| requirements.union(heuristic.requirements()),
         )
     }
 
@@ -79,9 +74,6 @@ impl fmt::Display for SearchConfig {
 
 pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
     let spec = build_search_spec(&parse_call(raw)?)?;
-    for heuristic in spec.heuristics() {
-        crate::heuristic_factory::validate_heuristic_spec(heuristic)?;
-    }
     Ok(spec)
 }
 
@@ -111,16 +103,20 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
                     "`astar_fs(...)` expects named `fast=...` and `slow=...` arguments".to_string()
                 })?;
                 match key {
-                    "fast" => fast = Some(HeuristicSpec::from_value(&arg.value)?),
-                    "slow" => slow = Some(HeuristicSpec::from_value(&arg.value)?),
+                    "fast" => fast = Some(super::HeuristicSpec::from_value(&arg.value)?),
+                    "slow" => slow = Some(super::HeuristicSpec::from_value(&arg.value)?),
                     other => return Err(format!("unknown option `{other}` for `astar_fs`")),
                 }
             }
             let fast = fast.ok_or_else(|| "`astar_fs(...)` requires `fast=...`".to_string())?;
             let slow = slow.ok_or_else(|| "`astar_fs(...)` requires `slow=...`".to_string())?;
             Ok(SearchConfig::AStar {
-                heuristic: fast,
-                lazy: Some(slow),
+                heuristic: HeuristicConfig::from_spec(&fast)
+                    .map_err(|error| error.at_option("fast").at("astar_fs"))?,
+                lazy: Some(
+                    HeuristicConfig::from_spec(&slow)
+                        .map_err(|error| error.at_option("slow").at("astar_fs"))?,
+                ),
                 mpd: false,
             })
         }
@@ -142,42 +138,40 @@ fn extract_astar_options(call: &ConfigCall) -> Result<SearchConfig, String> {
                 if heuristic.is_some() {
                     return Err("`astar(...)` received more than one heuristic".to_string());
                 }
-                heuristic = Some(HeuristicSpec::from_value(&arg.value)?);
+                heuristic = Some(
+                    HeuristicConfig::from_value(&arg.value)
+                        .map_err(|error| error.at_option("heuristic").at("astar"))?,
+                );
             }
             Some("lazy") => {
                 if saw_lazy {
                     return Err("duplicate option `lazy` for `astar`".to_string());
                 }
                 saw_lazy = true;
-                lazy = match &arg.value {
-                    ConfigValue::Atom(value) if value == "none" => None,
-                    value => Some(HeuristicSpec::from_value(value)?),
-                };
+                lazy = Option::<HeuristicConfig>::from_option_value(&arg.value)
+                    .map_err(|error| error.at_option("lazy").at("astar"))?;
             }
             Some("mpd") => {
                 if saw_mpd {
                     return Err("duplicate option `mpd` for `astar`".to_string());
                 }
                 saw_mpd = true;
-                mpd = match &arg.value {
-                    ConfigValue::Atom(value) if value == "true" => true,
-                    ConfigValue::Atom(value) if value == "false" => false,
-                    _ => return Err("`astar` option `mpd` expects true or false".to_string()),
-                };
+                mpd = bool::from_option_value(&arg.value)
+                    .map_err(|_| "`astar` option `mpd` expects true or false".to_string())?;
             }
             Some(other) => return Err(format!("unknown option `{other}` for `astar`")),
         }
     }
     Ok(SearchConfig::AStar {
-        heuristic: heuristic.unwrap_or_else(HeuristicSpec::blind),
+        heuristic: heuristic.unwrap_or_else(HeuristicConfig::blind),
         lazy,
         mpd,
     })
 }
 
-fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicSpec, String> {
+fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicConfig, String> {
     if call.args.is_empty() {
-        return Ok(HeuristicSpec::blind());
+        return Ok(HeuristicConfig::blind());
     }
     if call.args.len() != 1 {
         return Err(format!(
@@ -194,7 +188,8 @@ fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicSpec, Stri
             call.name
         ));
     }
-    HeuristicSpec::from_value(&arg.value)
+    Ok(HeuristicConfig::from_value(&arg.value)
+        .map_err(|error| error.at_option("heuristic").at(&call.name))?)
 }
 
 fn call_from_value(value: &ConfigValue) -> Result<ConfigCall, String> {

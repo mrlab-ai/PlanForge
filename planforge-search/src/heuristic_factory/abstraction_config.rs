@@ -322,7 +322,13 @@ impl SourcesConfig {
                         return Err("all abstraction sources must appear inside the list".into());
                     }
                     self.sources
-                        .push(AbstractionSource::from_option_value(value)?);
+                        .push(
+                            AbstractionSource::from_option_value(value).map_err(|error| {
+                                error
+                                    .at(format!("[{}]", self.sources.len()))
+                                    .at_option("sources")
+                            })?,
+                        );
                 }
             }
         }
