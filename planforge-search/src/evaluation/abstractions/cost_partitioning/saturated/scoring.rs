@@ -52,20 +52,12 @@ pub(super) fn interval_stolen_costs(
 ) -> Result<Vec<Option<f64>>, EvaluationError> {
     let mut regions_by_component = Vec::with_capacity(components.len());
     for (component_id, component) in components.iter().enumerate() {
-        let (source_sets, expected_source_sets) = match component {
-            AbstractionComponent::Domain(abstraction) => (
-                abstraction.abstract_source_sets.as_slice(),
-                abstraction.abstract_operators.len(),
-            ),
-            AbstractionComponent::Cartesian(abstraction) => (
-                abstraction.abstract_source_sets.as_slice(),
-                abstraction.transition_system.transitions.len(),
-            ),
-            AbstractionComponent::PatternDatabase(_) => {
-                regions_by_component.push(None);
-                continue;
-            }
+        let Some(abstraction) = component.cegar() else {
+            regions_by_component.push(None);
+            continue;
         };
+        let source_sets = abstraction.abstract_source_sets();
+        let expected_source_sets = abstraction.num_abstract_operators();
         if source_sets.len() != expected_source_sets {
             return Err(EvaluationError::ComputationFailed(format!(
                 "region SCP component {component_id} has {} operator regions for {expected_source_sets} retained abstract transitions/operators",

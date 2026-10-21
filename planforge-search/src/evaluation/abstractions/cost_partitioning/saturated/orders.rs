@@ -224,10 +224,11 @@ pub(super) fn abstraction_collection_iteration(
     components: &[AbstractionComponent<'_>],
     component_id: usize,
 ) -> usize {
-    components[component_id]
-        .as_domain()
-        .and_then(|abstraction| abstraction.metadata.collection)
-        .map_or(usize::MAX, |record| record.iteration)
+    match &components[component_id] {
+        AbstractionComponent::Domain(abstraction) => abstraction.metadata.collection,
+        AbstractionComponent::Cartesian(_) | AbstractionComponent::PatternDatabase(_) => None,
+    }
+    .map_or(usize::MAX, |record| record.iteration)
 }
 
 pub(super) fn max_heuristic_greedy_order(

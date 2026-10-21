@@ -10,7 +10,7 @@ use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, OperatorInde
 use super::cegar::progression::ConcretePlan;
 use super::cegar::refine::CegarOutcome;
 use super::cegar::{CegarStopReason, SplitKind};
-use super::transition_system::AbstractDistanceTable;
+use super::transition_system::{AbstractDistanceTable, AbstractOperatorSourceSets};
 use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -105,6 +105,14 @@ pub trait CegarAbstraction {
     /// Drops what only cost partitioning reads: the transitions and the
     /// operators' source sets. Lookups stay intact.
     fn discard_transition_data(&mut self);
+
+    /// The number of abstract operators; a Cartesian abstraction has one
+    /// per transition.
+    fn num_abstract_operators(&self) -> usize;
+
+    /// The source set of every abstract operator's labels, which regional
+    /// cost partitioning attaches costs to; empty when not built.
+    fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets];
 
     fn num_states(&self) -> usize {
         self.distance_table().distances.len()

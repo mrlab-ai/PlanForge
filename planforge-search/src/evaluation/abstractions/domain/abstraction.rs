@@ -63,6 +63,14 @@ impl CegarAbstraction for DomainAbstraction {
         &mut self.metadata
     }
 
+    fn num_abstract_operators(&self) -> usize {
+        self.abstract_operators.len()
+    }
+
+    fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets] {
+        &self.abstract_source_sets
+    }
+
     fn discard_transition_data(&mut self) {
         self.abstract_operators.clear();
         self.transition_data_retained = false;

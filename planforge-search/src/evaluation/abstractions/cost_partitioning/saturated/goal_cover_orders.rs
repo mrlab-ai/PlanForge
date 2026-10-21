@@ -258,8 +258,8 @@ pub(super) fn goal_cover_order(
             .then_with(|| current_h(right).total_cmp(&current_h(left)))
             .then_with(|| {
                 member(left)
-                    .retained_transitions
-                    .cmp(&member(right).retained_transitions)
+                    .abstract_operators
+                    .cmp(&member(right).abstract_operators)
             })
             .then_with(|| left.cmp(&right))
     });
@@ -313,8 +313,8 @@ pub(super) fn goal_cover_order(
                 .cmp(&variant_score(left))
                 .then_with(|| {
                     member(left)
-                        .retained_transitions
-                        .cmp(&member(right).retained_transitions)
+                        .abstract_operators
+                        .cmp(&member(right).abstract_operators)
                 })
                 .then_with(|| current_h(right).total_cmp(&current_h(left)))
                 .then_with(|| left.cmp(&right))
@@ -348,8 +348,8 @@ pub(super) fn goal_cover_order(
     remaining.sort_by(
         |&left, &right| match (is_goal_member(left), is_goal_member(right)) {
             (true, true) => member(left)
-                .retained_transitions
-                .cmp(&member(right).retained_transitions)
+                .abstract_operators
+                .cmp(&member(right).abstract_operators)
                 .then_with(|| current_h(right).total_cmp(&current_h(left)))
                 .then_with(|| left.cmp(&right)),
             (true, false) => std::cmp::Ordering::Less,

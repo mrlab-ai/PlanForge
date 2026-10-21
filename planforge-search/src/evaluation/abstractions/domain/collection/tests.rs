@@ -522,7 +522,7 @@ fn schedule_view(
         .iter()
         .map(|(member, initial_h, plan)| {
             let member = GoalFocusedMember {
-                retained_transitions: 0,
+                abstract_operators: 0,
                 ..member.expect("every member of a goal task is a collection member")
             };
             (member, *initial_h, plan.clone())

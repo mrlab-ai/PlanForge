@@ -36,9 +36,8 @@ pub struct GoalFocusedMember {
     pub membership: CollectionMembership,
     pub split_kind: SplitKind,
     pub tie_rank: Option<usize>,
-    /// Retained abstract transitions (Cartesian) or abstract operators
-    /// (domain): the units operator regions are attached to.
-    pub retained_transitions: usize,
+    /// The abstract operators, which operator regions are attached to.
+    pub abstract_operators: usize,
 }
 
 /// An abstraction that collection heuristics combine.
@@ -150,32 +149,19 @@ impl<'task> AbstractionComponent<'task> {
 
     /// `Some` exactly for members of a goal-focused collection.
     pub fn goal_focused_member(&self) -> Option<GoalFocusedMember> {
-        let retained_transitions = match self {
-            Self::Domain(abstraction) => abstraction.abstract_operators.len(),
-            Self::Cartesian(abstraction) => abstraction.transition_system.transitions.len(),
-            Self::PatternDatabase(_) => return None,
-        };
-        let metadata = self.cegar().expect("not a pattern database").metadata();
+        let abstraction = self.cegar()?;
+        let metadata = abstraction.metadata();
         metadata
             .collection_member
             .map(|membership| GoalFocusedMember {
                 membership,
                 split_kind: metadata.split_kind,
                 tie_rank: metadata.split_selection_rank,
-                retained_transitions,
+                abstract_operators: abstraction.num_abstract_operators(),
             })
     }
 
-    /// The source sets of the abstract operators, which regional cost
-    /// partitioning attaches costs to; `None` for a pattern database.
-    pub fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
-        match self {
-            Self::Domain(abstraction) => Some(&abstraction.abstract_source_sets),
-            Self::Cartesian(abstraction) => Some(&abstraction.abstract_source_sets),
-            Self::PatternDatabase(_) => None,
-        }
-    }
-
+    #[cfg(test)]
     pub fn as_domain(&self) -> Option<&DomainAbstraction> {
         match self {
             Self::Domain(abstraction) => Some(abstraction),
@@ -183,11 +169,18 @@ impl<'task> AbstractionComponent<'task> {
         }
     }
 
+    #[cfg(test)]
     pub fn as_cartesian(&self) -> Option<&CartesianAbstraction> {
         match self {
             Self::Cartesian(abstraction) => Some(abstraction),
             Self::Domain(_) | Self::PatternDatabase(_) => None,
         }
+    }
+
+    /// The source sets of the abstract operators, which regional cost
+    /// partitioning attaches costs to; `None` for a pattern database.
+    pub fn abstract_source_sets(&self) -> Option<&[AbstractOperatorSourceSets]> {
+        self.cegar().map(CegarAbstraction::abstract_source_sets)
     }
 }
 

@@ -9,6 +9,7 @@ use crate::evaluation::abstractions::cartesian::{
     CartesianAbstractionConfig, CartesianAbstractionGenerator,
 };
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
+use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::domain::collection::DomainAbstractionCollectionGenerator;
 use crate::evaluation::abstractions::domain::config::{
@@ -568,31 +569,17 @@ pub(crate) fn build_components<'task>(
             "abstraction collection state count exceeds addressable memory".to_string()
         })
     })?;
-    let domain_abstract_operators = components
+    let abstract_operators: usize = components
         .iter()
-        .filter_map(AbstractionComponent::as_domain)
-        .map(|abstraction| abstraction.abstract_operators.len())
-        .try_fold(0usize, |total, operators| {
-            total.checked_add(operators).ok_or_else(|| {
-                "domain abstract-operator count exceeds addressable memory".to_string()
-            })
-        })?;
-    let cartesian_transitions = components
-        .iter()
-        .filter_map(AbstractionComponent::as_cartesian)
-        .map(|abstraction| abstraction.transition_count)
-        .try_fold(0usize, |total, transitions| {
-            total
-                .checked_add(transitions)
-                .ok_or_else(|| "Cartesian transition count exceeds addressable memory".to_string())
-        })?;
+        .filter_map(AbstractionComponent::cegar)
+        .map(CegarAbstraction::num_abstract_operators)
+        .sum();
     info!(
-        "Abstraction collection: abstractions={}, total_states={}, states={:?}, domain_abstract_operators={}, cartesian_transitions={}, construction_time={:.3}s",
+        "Abstraction collection: abstractions={}, total_states={}, states={:?}, abstract_operators={}, construction_time={:.3}s",
         components.len(),
         total_states,
         states,
-        domain_abstract_operators,
-        cartesian_transitions,
+        abstract_operators,
         construction_start.elapsed().as_secs_f64(),
     );
 

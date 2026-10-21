@@ -14,7 +14,7 @@ pub struct CartesianAbstraction {
     pub relevant_operator_ids: Vec<OperatorIndex>,
     pub abstract_source_sets: Vec<AbstractOperatorSourceSets>,
     pub metadata: AbstractionMetadata,
-    /// Number of non-loop transitions built before optional standalone compaction.
+    /// The non-loop transitions CEGAR built, retained or not.
     pub transition_count: usize,
 }
 
@@ -37,6 +37,14 @@ impl CegarAbstraction for CartesianAbstraction {
 
     fn metadata_mut(&mut self) -> &mut AbstractionMetadata {
         &mut self.metadata
+    }
+
+    fn num_abstract_operators(&self) -> usize {
+        self.transition_count
+    }
+
+    fn abstract_source_sets(&self) -> &[AbstractOperatorSourceSets] {
+        &self.abstract_source_sets
     }
 
     fn discard_transition_data(&mut self) {
