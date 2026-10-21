@@ -11,6 +11,7 @@ use crate::evaluation::abstractions::collections::generator::{
 };
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
 use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
@@ -37,19 +38,6 @@ pub(crate) const COMPONENT_SOURCE_NAMES: &[&str] = &[
     "icaps26_cartesian",
     "pdb",
     "numeric_pdb",
-];
-
-const SCP_COMBINATOR_OPTIONS: &[&str] = &[
-    "max_time",
-    "table_construction_max_time",
-    "diversify",
-    "samples",
-    "max_orders",
-    "orders",
-    "initial_order_generation_max_time",
-    "saturator",
-    "random_seed",
-    "partitioning",
 ];
 
 pub(crate) fn component_source_help() -> String {
@@ -229,13 +217,11 @@ pub(crate) fn split_component_sources(
                     sources.push(source);
                     continue;
                 }
-                if combinator == "scp"
-                    && let ConfigValue::Atom(option) = value
-                    && let Some((key, _)) = option.split_once('=')
-                    && SCP_COMBINATOR_OPTIONS.contains(&key)
+                if let ConfigValue::Atom(option) = value
+                    && option.contains('=')
                 {
                     return Err(format!(
-                        "`{option}` is a collection option and cannot appear inside the source list; move it after `]`"
+                        "`{option}` is a `{combinator}` option and cannot appear inside the source list; move it after `]`"
                     ));
                 }
                 let name = match value {
@@ -323,19 +309,28 @@ pub(crate) fn canonical_sources_and_deadline(
 #[derive(Debug)]
 pub(crate) struct ScpSourceConfig {
     pub sources: Vec<ConfigCall>,
-    pub options: Vec<ConfigArg>,
+    pub config: ScpConfig,
     pub construction_deadline: Deadline,
 }
 
-pub(crate) fn scp_sources_options_and_deadline(
+/// The sources of `name(...)` and its combinator options, which configure
+/// [`ScpConfig`]; that rejects unknown and duplicate keys.
+pub(crate) fn scp_sources_config_and_deadline(
+    name: &str,
     args: &[ConfigArg],
 ) -> Result<ScpSourceConfig, String> {
-    let (sources, options) = split_component_sources("scp", args)?;
+    let (sources, options) = split_component_sources(name, args)?;
     let (options, construction_deadline) = take_construction_deadline(options)?;
-    validate_scp_combinator_options(&options)?;
+    if let Some(option) = options.iter().find(|option| option.key().is_none()) {
+        return Err(format!(
+            "options in hierarchical `{name}(...)` must be named; abstraction sources are the only positional arguments, got `{}`",
+            format_config_value(option.value())
+        ));
+    }
+    let config = configure(name, ScpConfig::default(), &options)?;
     Ok(ScpSourceConfig {
         sources,
-        options,
+        config,
         construction_deadline,
     })
 }
@@ -362,26 +357,6 @@ pub(crate) fn require_only_component_sources(
         ));
     }
     Ok(sources)
-}
-
-pub(crate) fn validate_scp_combinator_options(args: &[ConfigArg]) -> Result<(), String> {
-    let mut seen = HashSet::new();
-    for arg in args {
-        let key = arg.key().ok_or_else(|| {
-            "options in hierarchical `scp(...)` must be named; abstraction sources are the only positional arguments"
-                .to_string()
-        })?;
-        if !SCP_COMBINATOR_OPTIONS.contains(&key) {
-            return Err(format!(
-                "unknown `scp` combinator option `{key}`; abstraction-generation options belong inside one of: {}",
-                component_source_help(),
-            ));
-        }
-        if !seen.insert(key) {
-            return Err(format!("duplicate option `{key}` for `scp`"));
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn build_components<'task>(
@@ -677,7 +652,7 @@ mod tests {
         );
         assert_eq!(
             split("scp([domain_collection(), partitioning=region])").unwrap_err(),
-            "`partitioning=region` is a collection option and cannot appear inside the source list; move it after `]`"
+            "`partitioning=region` is a `scp` option and cannot appear inside the source list; move it after `]`"
         );
         assert_eq!(
             split("scp([], partitioning=region)").unwrap_err(),

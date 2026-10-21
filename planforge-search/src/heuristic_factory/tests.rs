@@ -127,9 +127,9 @@ fn parses_hierarchical_scp_options_and_sources() {
     let (sources, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
     assert_eq!(sources.len(), 3);
     assert_eq!(options.len(), 7);
-    abstraction_config::validate_scp_combinator_options(&options).unwrap();
-    let mut config = ScpConfig::default();
-    ApplyOptions::apply_options(&mut config, &options).unwrap();
+    let config = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args)
+        .unwrap()
+        .config;
     assert!(config.diversify);
     assert_eq!(config.samples, 123);
     assert_eq!(config.max_orders, 17);
@@ -140,18 +140,34 @@ fn parses_hierarchical_scp_options_and_sources() {
 #[test]
 fn hierarchical_scp_rejects_legacy_pdb_switches() {
     let h = astar_heuristic("astar(scp([domain_collection()], use_numeric_pdbs=true))");
-    let error = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap_err();
-    assert!(error.contains("unknown `scp` combinator option `use_numeric_pdbs`"));
-    assert!(error.contains("pdb(...)"));
+    let error = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
+    assert_eq!(error, "scp(...): unknown option `use_numeric_pdbs`");
+}
+
+#[test]
+fn hierarchical_scp_sets_every_scp_option() {
+    let h = astar_heuristic(
+        "astar(scp([domain_collection()], goal_cover_orders_per_goal=2, random_orders=5))",
+    );
+    let config = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args)
+        .unwrap()
+        .config;
+    assert_eq!(config.goal_cover_orders_per_goal, 2);
+    assert_eq!(config.random_orders, 5);
+}
+
+#[test]
+fn hierarchical_scp_rejects_positional_options() {
+    let h = astar_heuristic("astar(scp([domain_collection()], 5))");
+    let error = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
+    assert!(error.contains("must be named"), "got `{error}`");
 }
 
 #[test]
 fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
     let h = astar_heuristic("astar(scp([domain_collection()], max_time=[5]))");
-    let source_config = abstraction_config::scp_sources_options_and_deadline(&h.args).unwrap();
-    let error =
-        ApplyOptions::apply_options(&mut ScpConfig::default(), &source_config.options).unwrap_err();
-    assert_eq!(error, "expected scalar value, got a list");
+    let error = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
+    assert_eq!(error, "scp(...): expected scalar value, got a list");
 
     let wrapper = astar_heuristic("astar(check_admissible([domain_collection()]))");
     let error =
@@ -243,9 +259,10 @@ fn parses_shared_construction_deadlines_for_canonical_and_scp() {
     assert_ne!(deadline, Deadline::NONE);
 
     let scp = astar_heuristic("astar(scp(cartesian(max_states=100),construction_max_time=900))");
-    let source_config = abstraction_config::scp_sources_options_and_deadline(&scp.args).unwrap();
+    let source_config =
+        abstraction_config::scp_sources_config_and_deadline(&scp.name, &scp.args).unwrap();
     assert_eq!(source_config.sources.len(), 1);
-    assert_eq!(source_config.options.len(), 0);
+    assert_eq!(source_config.config, ScpConfig::default());
     assert_ne!(source_config.construction_deadline, Deadline::NONE);
 }
 
@@ -630,8 +647,7 @@ fn external_registration_rejects_duplicate_external_names() {
 #[test]
 fn rejects_unknown_options_inside_known_heuristics() {
     let h = astar_heuristic("astar(scp(domain_collection(), deviation_flaws=false))");
-    let (_, options) = abstraction_config::split_component_sources(&h.name, &h.args).unwrap();
-    let err = abstraction_config::validate_scp_combinator_options(&options).unwrap_err();
+    let err = abstraction_config::scp_sources_config_and_deadline(&h.name, &h.args).unwrap_err();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let err = domain_collection_source_error(
