@@ -4,8 +4,9 @@
 
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitState;
+use planforge_sas::utils::float_tolerance;
 
 use super::progression::{ConcretePlan, PlanCheck, progression_plan_check, validate_concrete_plan};
 use super::regression::regression_plan_check;
@@ -89,6 +90,16 @@ pub(crate) fn refine<R: Refinable>(
             let split = match check_abstract_plan(&view, run)? {
                 PlanCheck::ConcretePlan(plan) => {
                     validate_concrete_plan(run.semantics, run.refinement_root, &plan)?;
+                    let root = view.abstract_state(
+                        &run.refinement_root.propositional,
+                        &run.refinement_root.numeric,
+                    )?;
+                    let root_distance = view.goal_distance(root);
+                    ensure!(
+                        (plan.cost() - root_distance).abs() <= float_tolerance::AGREEMENT_EPSILON,
+                        "the concrete plan costs {}, but the refinement root's abstract goal distance is {root_distance}",
+                        plan.cost()
+                    );
                     concrete_plan = Some(plan);
                     return Ok(CegarIterationResult::Stop(CegarStopReason::ConcretePlan));
                 }

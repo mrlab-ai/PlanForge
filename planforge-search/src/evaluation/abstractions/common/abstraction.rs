@@ -131,6 +131,32 @@ pub trait CegarAbstraction {
     }
 }
 
+/// Checks and logs an abstraction `G::NAME` built in `elapsed`: CEGAR
+/// reaches a refinement root from the initial state, so an initial state
+/// without finite goal distance means CEGAR stopped at a dead end.
+pub(crate) fn finish_abstraction(
+    name: &str,
+    abstraction: &impl CegarAbstraction,
+    elapsed: std::time::Duration,
+) -> Result<()> {
+    let metadata = abstraction.metadata();
+    let initial_h = abstraction.initial_h();
+    anyhow::ensure!(
+        initial_h.is_finite() || metadata.stop_reason == CegarStopReason::DeadEnd,
+        "the initial state of a {name} abstraction has no finite goal distance, but CEGAR stopped with {:?}",
+        metadata.stop_reason
+    );
+    tracing::info!(
+        "{name} abstraction: states={}, abstract_operators={}, refinements={}, h(init)={initial_h}, stop={:?}, elapsed={:.3}s",
+        abstraction.num_states(),
+        abstraction.num_abstract_operators(),
+        metadata.refinements,
+        metadata.stop_reason,
+        elapsed.as_secs_f64()
+    );
+    Ok(())
+}
+
 /// The heuristic of one abstraction: the goal distance of the abstract state
 /// a state maps to.
 #[derive(Debug, Clone)]

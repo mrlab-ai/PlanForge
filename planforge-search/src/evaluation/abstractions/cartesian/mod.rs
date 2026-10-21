@@ -52,7 +52,6 @@ use planforge_sas::numeric_task::{
     OperatorIndex, VariableIndex,
 };
 use planforge_sas::utils::float_tolerance;
-use tracing::info;
 
 use super::common::cegar::{CegarDriver, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;

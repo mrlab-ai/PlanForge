@@ -1,5 +1,6 @@
 use super::*;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
+use crate::evaluation::abstractions::common::abstraction::finish_abstraction;
 
 pub struct CartesianAbstractionGenerator {
     pub(super) config: CartesianAbstractionConfig,
@@ -106,27 +107,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
         } else {
             working_transition_count
         };
-        if let Some(plan) = &outcome.concrete_plan {
-            let root_state_id = working
-                .hierarchy
-                .map_state(&refinement_root.propositional, &refinement_root.numeric)?;
-            let h = distance_table.distances[root_state_id];
-            ensure!(
-                (plan.cost() - h).abs() <= float_tolerance::AGREEMENT_EPSILON,
-                "concrete Cartesian plan cost {} differs from abstract h(refinement root) {h}",
-                plan.cost()
-            );
-        }
-        info!(
-            "Cartesian abstraction: states={}, transitions={}, refinements={}, h(init)={}, stop={:?}, elapsed={:.3}s",
-            distance_table.distances.len(),
-            transition_count,
-            outcome.refinements,
-            distance_table.distances[distance_table.initial_state],
-            outcome.stop_reason,
-            start.elapsed().as_secs_f64()
-        );
-        Ok(CartesianAbstraction {
+        let abstraction = CartesianAbstraction {
             hierarchy: working.hierarchy,
             distance_table,
             transition_system,
@@ -138,6 +119,8 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                 self.config.cegar.split_selection_rank,
             ),
             transition_count,
-        })
+        };
+        finish_abstraction(Self::NAME, &abstraction, start.elapsed())?;
+        Ok(abstraction)
     }
 }

@@ -7,6 +7,7 @@ use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::utils::float_tolerance;
 
 use super::*;
+use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::{
     FlawKind, FlawScope, SplitKind, SplitSelection,
 };
