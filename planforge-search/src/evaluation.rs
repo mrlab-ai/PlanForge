@@ -6,6 +6,7 @@ pub mod evaluator;
 pub mod ff_heuristic;
 pub mod heuristic;
 pub(crate) mod maximal_cliques;
+pub mod maximum;
 pub mod numeric_landmarks;
 #[path = "evaluation/numeric_potentials/config.rs"]
 pub mod numeric_potential_config;

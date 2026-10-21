@@ -13,17 +13,45 @@ impl ApplyOptions for EmptyConfig {
     }
 }
 
+/// Children of a maximum, accepting both the historical flat form and a list.
 #[derive(Debug, Clone, Default)]
-pub struct MaxSourcesConfig(pub SourcesConfig);
-impl ApplyOptions for MaxSourcesConfig {
+pub struct MaxConfig {
+    pub heuristics: Vec<HeuristicConfig>,
+}
+impl ApplyOptions for MaxConfig {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), ConfigError> {
-        if args
-            .iter()
-            .any(|arg| arg.key() == Some("construction_max_time"))
-        {
-            return Err("max does not accept construction_max_time".into());
+        let mut listed = false;
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(key) = arg.key() {
+                return Err(format!("unknown option `{key}` for max").into());
+            }
+            match arg.value() {
+                ConfigValue::List(_) => {
+                    if index != 0 {
+                        return Err("the heuristic list must be the first argument".into());
+                    }
+                    listed = true;
+                    self.heuristics =
+                        crate::config::FromOptionValue::from_option_value(arg.value())
+                            .map_err(|error: ConfigError| error.at_option("heuristics"))?;
+                }
+                value => {
+                    if listed {
+                        return Err("all heuristics must appear inside the list".into());
+                    }
+                    self.heuristics
+                        .push(HeuristicConfig::from_value(value).map_err(|error| {
+                            error
+                                .at(format!("[{}]", self.heuristics.len()))
+                                .at_option("heuristics")
+                        })?);
+                }
+            }
         }
-        self.0.apply_options(args)
+        if self.heuristics.is_empty() {
+            return Err("max requires at least one heuristic".into());
+        }
+        Ok(())
     }
 }
 
@@ -114,5 +142,60 @@ impl HeuristicFeature for MaxPdbFeature {
             &[AbstractionSource::Pdb(config.clone())],
             &context.name,
         )
+    }
+}
+
+// Sources that did not previously have a standalone spelling use the same typed
+// configuration as their occurrences inside abstraction combinators.
+pub trait SourceConfig: ApplyOptions + Default + Clone + Debug + Send + Sync + 'static {
+    const NAME: &'static str;
+    fn source(&self) -> AbstractionSource;
+}
+pub struct SourceFeature<C>(std::marker::PhantomData<C>);
+impl<C: SourceConfig> HeuristicFeature for SourceFeature<C> {
+    const NAME: &'static str = C::NAME;
+    type Config = C;
+    fn requirements(config: &C) -> TaskRequirements {
+        config.source().requirements()
+    }
+    fn validate(config: &C) -> Result<(), ConfigError> {
+        config.source().validate()
+    }
+    fn source(config: &C) -> Option<AbstractionSource> {
+        Some(config.source())
+    }
+    fn build<'a>(
+        config: &C,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        build_max_from_sources(&**context.task, &[config.source()], &context.name)
+    }
+}
+impl SourceConfig
+    for crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig
+{
+    const NAME: &'static str = "domain_collection";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::DomainCollection(self.clone())
+    }
+}
+impl SourceConfig
+    for crate::evaluation::abstractions::cartesian::CartesianAbstractionCollectionConfig
+{
+    const NAME: &'static str = "cartesian_collection";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::CartesianCollection(self.clone())
+    }
+}
+impl SourceConfig for PdbSourceConfig {
+    const NAME: &'static str = "pdb";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::Pdb(self.clone())
+    }
+}
+impl SourceConfig for crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig {
+    const NAME: &'static str = "icaps26_cartesian";
+    fn source(&self) -> AbstractionSource {
+        AbstractionSource::Icaps26Cartesian(self.clone())
     }
 }

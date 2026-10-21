@@ -391,3 +391,29 @@ fn fast_slow_keeps_its_existing_last_value_wins_semantics() {
 fn potential_seconds_beyond_duration_range_are_still_valid_configuration() {
     parse_search_spec("astar(numeric_potential(max_ray_generation_time=1e300))").unwrap();
 }
+
+#[test]
+fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
+    for text in [
+        "astar(max(ff()))",
+        "astar(max([blind(),ff()]))",
+        "astar(max(domain(),lmcutnumeric()))",
+    ] {
+        let config = parse_search_spec(text).unwrap();
+        assert_eq!(parse_search_spec(&config.to_string()).unwrap(), config);
+    }
+    let config = parse_search_spec("astar(max([ff(),pdb(),numeric_potential()]))").unwrap();
+    assert!(config.requirements().restricted);
+    assert!(config.requirements().abstractable_goal);
+    assert_eq!(
+        config.heuristics().next().unwrap().required_backend(),
+        planforge_search::heuristic_factory::RequiredBackend::Cplex
+    );
+    let error = parse_search_spec("astar(max([ff(),scp(domian())]))").unwrap_err();
+    assert!(
+        error.contains("max.heuristics[1].scp.sources[0]"),
+        "{error}"
+    );
+    assert!(parse_search_spec("astar(max([]))").is_err());
+    assert!(parse_search_spec("astar(max([ff()],blind()))").is_err());
+}

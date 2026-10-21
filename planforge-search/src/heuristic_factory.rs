@@ -14,7 +14,7 @@ use std::fmt::{self, Debug};
 use std::sync::{Arc, OnceLock};
 mod abstraction_config;
 pub(crate) mod features;
-pub use features::{EmptyConfig, MaxSourcesConfig};
+pub use features::{EmptyConfig, MaxConfig};
 #[cfg(test)]
 mod tests;
 pub use abstraction_config::{
@@ -298,8 +298,22 @@ static BUILTIN: &[HeuristicEntry] = &[
     entry::<features::MaxFeature>(),
     entry::<features::CanonicalFeature>(),
     entry::<features::ScpFeature>().with_aliases(&["cost_partitioning"]),
-    entry::<features::DomainFeature>(),
-    entry::<features::CartesianFeature>(),
+    entry::<features::DomainFeature>().with_aliases(&["domain"]),
+    entry::<features::CartesianFeature>().with_aliases(&["cartesian"]),
+    entry::<
+        features::SourceFeature<
+            crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig,
+        >,
+    >(),
+    entry::<
+        features::SourceFeature<
+            crate::evaluation::abstractions::cartesian::CartesianAbstractionCollectionConfig,
+        >,
+    >(),
+    entry::<features::SourceFeature<PdbSourceConfig>>().with_aliases(&["numeric_pdb"]),
+    entry::<
+        features::SourceFeature<crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig>,
+    >(),
     entry::<features::PostHocFeature>().with_aliases(&["pho"]),
     entry::<crate::evaluation::numeric_potential_config::NumericPotentialFeature>(),
     entry::<features::GreedyPdbFeature>(),

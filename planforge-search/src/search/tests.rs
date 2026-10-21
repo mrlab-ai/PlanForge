@@ -539,3 +539,138 @@ fn mpd_and_lazy_compare_dynamic_estimates_with_the_primary_estimate() {
     assert!(matches!(status, SearchStatus::Solved(_)));
     assert_eq!(search.finish(status).solution_cost, Some(1.0));
 }
+
+struct MaximumChild {
+    estimate: Result<f64, EvaluationError>,
+    preferred: Vec<planforge_sas::numeric_task::OperatorIndex>,
+    revision: Rc<Cell<u64>>,
+    every_pop: bool,
+}
+impl Heuristic for MaximumChild {
+    fn compute_heuristic(&self, _: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        self.estimate.clone()
+    }
+    fn heuristic_name(&self) -> &str {
+        "test child"
+    }
+    fn revision(&self) -> u64 {
+        self.revision.get()
+    }
+    fn reevaluate_on_every_pop(&self) -> bool {
+        self.every_pop
+    }
+    fn copy_preferred_operator_ids(
+        &self,
+        out: &mut Vec<planforge_sas::numeric_task::OperatorIndex>,
+    ) {
+        out.clear();
+        out.extend_from_slice(&self.preferred);
+    }
+}
+
+#[test]
+fn maximum_combines_estimates_preferences_and_independent_revisions() {
+    use crate::evaluation::maximum::MaximumHeuristic;
+    use planforge_sas::numeric_task::OperatorIndex;
+    let first = Rc::new(Cell::new(100));
+    let second = Rc::new(Cell::new(1));
+    let maximum = MaximumHeuristic::new(
+        "max".into(),
+        vec![
+            Box::new(MaximumChild {
+                estimate: Ok(2.0),
+                preferred: vec![OperatorIndex::from_usize(2)],
+                revision: first.clone(),
+                every_pop: false,
+            }),
+            Box::new(MaximumChild {
+                estimate: Ok(5.0),
+                preferred: vec![OperatorIndex::from_usize(0), OperatorIndex::from_usize(2)],
+                revision: second.clone(),
+                every_pop: true,
+            }),
+        ],
+    );
+    let task = one_step_task();
+    let mut registry = StateRegistry::for_task(task.clone());
+    let state = registry.get_initial_state();
+    let eval = EvaluationState::new(&state, &*task, &registry);
+    assert_eq!(maximum.compute_heuristic(&eval).unwrap(), 5.0);
+    let mut preferred = Vec::new();
+    maximum.copy_preferred_operator_ids(&mut preferred);
+    assert_eq!(
+        preferred,
+        vec![OperatorIndex::from_usize(0), OperatorIndex::from_usize(2)]
+    );
+    assert!(maximum.reevaluate_on_every_pop());
+    assert_eq!(maximum.revision(), 0);
+    second.set(2);
+    assert_eq!(
+        maximum.revision(),
+        1,
+        "a smaller child's revision still invalidates the maximum"
+    );
+    assert_eq!(maximum.revision(), 1);
+    first.set(101);
+    assert_eq!(maximum.revision(), 2);
+}
+
+#[test]
+fn maximum_propagates_child_errors_and_rejects_nan() {
+    use crate::evaluation::maximum::MaximumHeuristic;
+    let task = one_step_task();
+    let mut registry = StateRegistry::for_task(task.clone());
+    let state = registry.get_initial_state();
+    let eval = EvaluationState::new(&state, &*task, &registry);
+    for error in [
+        EvaluationError::DeadEnd { reliable: true },
+        EvaluationError::ComputationFailed("failure".into()),
+    ] {
+        let maximum = MaximumHeuristic::new(
+            "max".into(),
+            vec![Box::new(MaximumChild {
+                estimate: Err(error.clone()),
+                preferred: Vec::new(),
+                revision: Rc::new(Cell::new(0)),
+                every_pop: false,
+            })],
+        );
+        assert_eq!(maximum.compute_heuristic(&eval), Err(error));
+    }
+    let maximum = MaximumHeuristic::new(
+        "max".into(),
+        vec![Box::new(MaximumChild {
+            estimate: Ok(f64::NAN),
+            preferred: Vec::new(),
+            revision: Rc::new(Cell::new(0)),
+            every_pop: false,
+        })],
+    );
+    assert!(matches!(
+        maximum.compute_heuristic(&eval),
+        Err(EvaluationError::ComputationFailed(_))
+    ));
+}
+
+#[test]
+fn configured_maximum_builds_arbitrary_and_mixed_children() {
+    use crate::config::parse_search_spec;
+    use crate::heuristic_factory::BuildContext;
+    let task = one_step_task();
+    let context = BuildContext::new(&task);
+    let mut registry = StateRegistry::for_task(task.clone());
+    let state = registry.get_initial_state();
+    let eval = EvaluationState::new(&state, &*task, &registry);
+    for text in [
+        "astar(max(ff()))",
+        "astar(max([blind(), ff(), lmcutnumeric()]))",
+        "astar(max([domain(), ff(), cartesian()]))",
+        "astar(max([max(blind()), ff()]))",
+        "astar(max([domain()]))",
+        "astar(max(domain(),cartesian()))",
+    ] {
+        let config = parse_search_spec(text).unwrap();
+        let heuristic = config.heuristics().next().unwrap().build(&context).unwrap();
+        assert_eq!(heuristic.compute_heuristic(&eval).unwrap(), 1.0, "{text}");
+    }
+}
