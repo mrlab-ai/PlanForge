@@ -19,6 +19,8 @@ pub use parser::{parse_call, parse_heuristic_spec};
 pub use planforge_config_derive::ApplyOptions;
 
 mod parser;
+mod search;
+pub use search::{SearchConfig, parse_search_spec};
 
 /// Declares a name-indexed static plugin table and its lookup function.
 ///

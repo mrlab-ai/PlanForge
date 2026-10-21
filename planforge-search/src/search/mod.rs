@@ -1,7 +1,7 @@
 //! Best-first search for numeric planning.
 //!
 //! Split into focused submodules:
-//! - `open_list`: the dual-queue open list and its entry ordering.
+//! - `open_list`: the open lists and its entry ordering.
 //! - `space`: per-state search bookkeeping (parents, g-values, closed
 //!   flags, preferred-operator snapshots) and plan extraction.
 //! - `stats`: counters, progress snapshots, and trace flags.
@@ -18,12 +18,10 @@ mod registry;
 mod space;
 mod stats;
 
-pub use engine::{AStarSearch, BestFirstSearch};
-pub use policy::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm};
-pub use registry::{
-    SEARCH_ALGORITHMS, SearchAlgorithmPlugin, SearchBuildContext, SearchBuilder, SearchOptionKind,
-    search_algorithm, search_algorithm_help, search_algorithm_names,
-};
+pub use engine::{AStarSearch, BestFirstSearch, GreedyBestFirstSearch, SearchParams};
+pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
+pub use policy::{G, GPlusH, H, Priority};
+pub use registry::search_algorithm_help;
 
 use anyhow::Result;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericValue, Operator};

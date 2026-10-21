@@ -224,7 +224,17 @@ fn assert_exact_single_abstraction_search<H>(
         "unrestricted {backend} CEGAR must finish with a concrete plan"
     );
     let state_registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(task, state_registry, Box::new(heuristic), None, None);
+    let mut search = AStarSearch::new(
+        task,
+        state_registry,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search
         .search()
         .expect("single-abstraction A* search failed");
@@ -405,7 +415,17 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
     )
     .expect("scp heuristic should construct");
     let state_registry = StateRegistry::for_task(Arc::new(&task));
-    let mut search = AStarSearch::new(&task, state_registry, Box::new(heuristic), None, None);
+    let mut search = AStarSearch::new(
+        &task,
+        state_registry,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search.search().expect("scp A* search failed");
     result.solution_cost
 }

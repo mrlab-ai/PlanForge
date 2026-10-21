@@ -1,6 +1,6 @@
 use super::config::{ExpansionScratch, SearchConfig};
-use super::open_list::{DualQueueOpenList, OpenEntry};
-use super::policy::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm};
+use super::open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
+use super::policy::{GPlusH, H, Priority};
 use super::space::{SearchNodeInfo, SearchSpace};
 use super::stats::{ProgressSnapshot, SearchCounters, SearchStats};
 use super::{SearchEngine, SearchResult, SearchStatus, current_memory_kb, format_progress_value};
@@ -59,7 +59,41 @@ struct SearchEvaluation {
     heuristic_revision: u64,
 }
 
-pub struct BestFirstSearch<'a, A: SearchAlgorithm> {
+/// Inputs shared by every best-first search instantiation.
+pub struct SearchParams<'a> {
+    pub heuristic: Box<dyn Heuristic + 'a>,
+    pub lazy: Option<Box<dyn Heuristic + 'a>>,
+    pub reevaluate_dynamic: bool,
+    pub time_limit: Option<Duration>,
+    pub max_memory_bytes: Option<u64>,
+}
+
+impl<'a> SearchParams<'a> {
+    pub fn new(heuristic: Box<dyn Heuristic + 'a>) -> Self {
+        Self {
+            heuristic,
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct HeuristicRecord {
+    revision: u64,
+    h: f64,
+}
+
+enum PopAction {
+    Expand,
+    Requeue(OpenEntry),
+    Prune,
+    Skip,
+}
+
+pub struct BestFirstSearch<'a, P: Priority, Q: OpenList> {
     task: &'a dyn AbstractNumericTask,
     operators: &'a [Operator],
     goals: &'a [ExplicitFact],
@@ -67,14 +101,16 @@ pub struct BestFirstSearch<'a, A: SearchAlgorithm> {
     successor_generator: SuccessorTree,
 
     // Search components.
-    open_list: DualQueueOpenList,
+    open_list: Q,
     space: SearchSpace,
 
     // Evaluators.
     heuristic: Box<dyn Heuristic + 'a>,
     heuristic_name: String,
     initial_state_is_proven_optimal: bool,
-    algorithm: A,
+    lazy: Option<Box<dyn Heuristic + 'a>>,
+    priority: std::marker::PhantomData<P>,
+    next_insertion_order: u32,
 
     config: SearchConfig<'a>,
     stats: SearchStats,
@@ -89,120 +125,25 @@ pub struct BestFirstSearch<'a, A: SearchAlgorithm> {
     /// Per-state heuristic revision at the most recent evaluation. Allocated
     /// only for A* with `mpd=true`; ordinary static searches pay no per-state
     /// memory cost.
-    heuristic_revisions: Option<Vec<u64>>,
+    heuristic_revisions: Option<Vec<HeuristicRecord>>,
 }
 
-pub type AStarSearch<'a> = BestFirstSearch<'a, AStar>;
+pub type AStarSearch<'a> = BestFirstSearch<'a, GPlusH, TieBreakingOpenList>;
+pub type GreedyBestFirstSearch<'a> = BestFirstSearch<'a, H, PreferredFirstOpenList>;
 
-impl<'a> BestFirstSearch<'a, AStar> {
-    /// Create a new A* search instance.
+impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
     pub fn new(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Box<dyn Heuristic + 'a>,
-        time_limit: Option<Duration>,
-        max_memory_bytes: Option<u64>,
+        params: SearchParams<'a>,
     ) -> Self {
-        Self::with_algorithm(
-            task,
-            state_registry,
+        let SearchParams {
             heuristic,
+            lazy,
+            reevaluate_dynamic,
             time_limit,
             max_memory_bytes,
-            AStar,
-            false,
-        )
-    }
-
-    /// Create A* with optional pop-time re-evaluation for monotonically
-    /// strengthening dynamic heuristics (`mpd` in Fast Downward).
-    pub fn new_with_mpd(
-        task: &'a dyn AbstractNumericTask,
-        state_registry: StateRegistry<'a>,
-        heuristic: Box<dyn Heuristic + 'a>,
-        time_limit: Option<Duration>,
-        max_memory_bytes: Option<u64>,
-        mpd: bool,
-    ) -> Self {
-        Self::with_algorithm(
-            task,
-            state_registry,
-            heuristic,
-            time_limit,
-            max_memory_bytes,
-            AStar,
-            mpd,
-        )
-    }
-
-    /// Create a new greedy best-first search instance. Identical to A* except
-    /// the open-list priority is `h` only — `g` is still tracked for plan cost
-    /// but not used in tie-breaking. GBFS is incomplete in pathological cases
-    /// and not admissible, but it solves many tasks far faster than A* with
-    /// the same heuristic.
-    pub fn new_gbfs(
-        task: &'a dyn AbstractNumericTask,
-        state_registry: StateRegistry<'a>,
-        heuristic: Box<dyn Heuristic + 'a>,
-        time_limit: Option<Duration>,
-        max_memory_bytes: Option<u64>,
-    ) -> BestFirstSearch<'a, GreedyBestFirst> {
-        BestFirstSearch::with_algorithm(
-            task,
-            state_registry,
-            heuristic,
-            time_limit,
-            max_memory_bytes,
-            GreedyBestFirst,
-            false,
-        )
-    }
-
-    /// A* with two admissible heuristics — a fast preliminary one
-    /// (`heuristic_fast`, used to order the open list) and a slower but
-    /// possibly tighter one (`heuristic_slow`, evaluated only when a state
-    /// is about to be expanded).
-    ///
-    /// On the first pop of a state's open-list entry, the slow heuristic
-    /// is computed, the entry is reinserted with priority
-    /// `f' = g + max(h_f, h_s)`, and the expansion is deferred until the
-    /// second pop. Because `max` of two admissible heuristics is
-    /// admissible, the resulting search remains optimal. The benefit is
-    /// that the slow heuristic is only evaluated on states A* actually
-    /// considers expanding, not on every state generated.
-    pub fn new_fast_slow(
-        task: &'a dyn AbstractNumericTask,
-        state_registry: StateRegistry<'a>,
-        heuristic_fast: Box<dyn Heuristic + 'a>,
-        heuristic_slow: Box<dyn Heuristic + 'a>,
-        time_limit: Option<Duration>,
-        max_memory_bytes: Option<u64>,
-    ) -> BestFirstSearch<'a, FastSlow<'a>> {
-        BestFirstSearch::with_algorithm(
-            task,
-            state_registry,
-            heuristic_fast,
-            time_limit,
-            max_memory_bytes,
-            FastSlow {
-                slow: heuristic_slow,
-            },
-            false,
-        )
-    }
-}
-
-impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
-    /// Build the standard best-first driver around a custom algorithm.
-    pub fn with_algorithm(
-        task: &'a dyn AbstractNumericTask,
-        state_registry: StateRegistry<'a>,
-        heuristic: Box<dyn Heuristic + 'a>,
-        time_limit: Option<Duration>,
-        max_memory_bytes: Option<u64>,
-        algorithm: A,
-        mpd: bool,
-    ) -> Self {
+        } = params;
         let successor_generator = SuccessorTree::new(task);
 
         // Build initial state early so numeric constants are initialized in the registry.
@@ -227,8 +168,6 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();
 
         let use_metric = task.metric().use_metric();
-        // Dual-queue preferred-first ordering is the FF default for GBFS.
-        let use_preferred_first = algorithm.uses_preferred_first();
         let num_variables = task.variables().len();
         let num_numeric_variables = task.numeric_variables().len();
         info!(
@@ -241,12 +180,14 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             goals: task.goals(),
             state_registry,
             successor_generator,
-            open_list: DualQueueOpenList::new(use_preferred_first),
+            open_list: Q::default(),
             space: SearchSpace::new(),
             heuristic,
             heuristic_name,
             initial_state_is_proven_optimal,
-            algorithm,
+            lazy,
+            priority: std::marker::PhantomData,
+            next_insertion_order: 0,
             config: SearchConfig {
                 operator_costs,
                 min_action_cost: min_action_cost.value(),
@@ -261,7 +202,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             next_memory_check_expanded: 0,
             last_reported_f_layer: None,
             best_reported_heuristic_value: None,
-            heuristic_revisions: mpd.then(Vec::new),
+            heuristic_revisions: reevaluate_dynamic.then(Vec::new),
         }
     }
 
@@ -291,7 +232,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         // For GBFS the priority is `h`, which is non-monotonic — the "next
         // layer" abstraction doesn't apply. Skip; per-improvement progress is
         // still reported via `maybe_report_heuristic_progress`.
-        if !self.algorithm.reports_priority_layers() {
+        if !P::MONOTONE {
             return;
         }
         let f_layer = f_value as i64;
@@ -318,7 +259,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
         info!(
             "{} = {} [{} evaluated, {} expanded, {} states, {} open, t={:.6}s, {} KB]",
-            self.algorithm.priority_label(),
+            P::LABEL,
             f_layer,
             self.stats.nodes_evaluated,
             self.stats.nodes_expanded,
@@ -376,6 +317,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     /// Evaluate a state for A* without materializing named evaluator results.
     fn evaluate_state(
         &self,
+        heuristic: &dyn Heuristic,
         state: &ConcreteState,
         g_value: f64,
         is_goal: bool,
@@ -383,14 +325,14 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         let mut eval_state = EvaluationState::new(state, self.task, &self.state_registry);
         eval_state.set_is_goal(is_goal);
 
-        let evaluation = match self.heuristic.compute_heuristic(&eval_state) {
+        let evaluation = match heuristic.compute_heuristic(&eval_state) {
             Ok(h_value) if h_value.is_infinite() && h_value.is_sign_positive() => {
                 SearchEvaluation {
                     h_value,
                     f_value: f64::INFINITY,
                     g_value,
                     is_dead_end: true,
-                    heuristic_revision: self.heuristic.revision(),
+                    heuristic_revision: heuristic.revision(),
                 }
             }
             Ok(h_value) => {
@@ -406,10 +348,10 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
                 };
                 SearchEvaluation {
                     h_value,
-                    f_value: self.algorithm.priority(g_value, h_value),
+                    f_value: P::key(g_value, h_value),
                     g_value,
                     is_dead_end: false,
-                    heuristic_revision: self.heuristic.revision(),
+                    heuristic_revision: heuristic.revision(),
                 }
             }
             Err(EvaluationError::DeadEnd { reliable }) => {
@@ -424,7 +366,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
                 if !reliable {
                     debug!(
                         "pruning state on an unreliable dead-end report from {}",
-                        self.heuristic.heuristic_name()
+                        heuristic.heuristic_name()
                     );
                 }
                 SearchEvaluation {
@@ -432,7 +374,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
                     f_value: f64::INFINITY,
                     g_value,
                     is_dead_end: true,
-                    heuristic_revision: self.heuristic.revision(),
+                    heuristic_revision: heuristic.revision(),
                 }
             }
             Err(err) => return Err(anyhow!(err)),
@@ -440,17 +382,17 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         Ok(evaluation)
     }
 
-    fn record_heuristic_revision(&mut self, state_id: usize, revision: u64) {
+    fn record_heuristic_revision(&mut self, state_id: usize, revision: u64, h: f64) {
         let Some(revisions) = &mut self.heuristic_revisions else {
             return;
         };
         if revisions.len() <= state_id {
-            revisions.resize(state_id + 1, 0);
+            revisions.resize(state_id + 1, HeuristicRecord::default());
         }
-        revisions[state_id] = revision;
+        revisions[state_id] = HeuristicRecord { revision, h };
     }
 
-    fn recorded_heuristic_revision(&self, state_id: usize) -> u64 {
+    fn recorded_heuristic_revision(&self, state_id: usize) -> HeuristicRecord {
         self.heuristic_revisions
             .as_ref()
             .expect("revision tracking is enabled for mpd")
@@ -459,105 +401,79 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             .expect("every queued state has a recorded heuristic revision")
     }
 
-    /// Re-evaluate a popped entry if a dynamic heuristic strengthened since
-    /// this state was last evaluated. Returns true when the current pop is
-    /// consumed (reinserted or pruned), false when expansion should continue.
-    fn reevaluate_stale_entry(&mut self, entry: OpenEntry, state: &ConcreteState) -> Result<bool> {
-        if self.heuristic_revisions.is_none() {
-            return Ok(false);
+    /// Closed and superseded paths, MPD and lazy evaluation all consume a pop
+    /// here. Queue insertion and dead-end bookkeeping are handled by the caller.
+    fn on_pop(&mut self, entry: OpenEntry, state: &ConcreteState) -> Result<PopAction> {
+        let state_id = entry.state_id();
+        let info = self
+            .space
+            .node(state_id)
+            .expect("open-list entry must have a search node");
+        if info.is_closed || info.g_value < entry.g_value {
+            return Ok(PopAction::Skip);
         }
-        if !self.heuristic.reevaluate_on_every_pop()
-            && self.recorded_heuristic_revision(entry.state_id()) >= self.heuristic.revision()
+        let is_goal = self.space.is_goal(state_id);
+        if self.heuristic_revisions.is_some() {
+            let previous = self.recorded_heuristic_revision(state_id);
+            if self.heuristic.reevaluate_on_every_pop()
+                || previous.revision < self.heuristic.revision()
+            {
+                let evaluation = self
+                    .evaluate_state(&*self.heuristic, state, entry.g_value, is_goal)
+                    .with_context(|| {
+                        format!("pop-time heuristic re-evaluation failed for state {state_id}")
+                    })?;
+                self.stats.evaluations += 1;
+                self.record_heuristic_revision(
+                    state_id,
+                    evaluation.heuristic_revision,
+                    evaluation.h_value,
+                );
+                assert!(
+                    evaluation.h_value + float_tolerance::SEARCH_EPSILON >= previous.h,
+                    "dynamic heuristic decreased for state {state_id} at revision {}: {} -> {}",
+                    evaluation.heuristic_revision,
+                    previous.h,
+                    evaluation.h_value
+                );
+                if evaluation.is_dead_end {
+                    return Ok(PopAction::Prune);
+                }
+                if evaluation.h_value > entry.h_value.into_inner() {
+                    return Ok(PopAction::Requeue(
+                        entry.with_estimate(evaluation.h_value, evaluation.f_value),
+                    ));
+                }
+            }
+        }
+        if let Some(lazy) = &self.lazy
+            && !entry.is_lazy_evaluated()
         {
-            return Ok(false);
+            let evaluation = self
+                .evaluate_state(&**lazy, state, entry.g_value, is_goal)
+                .with_context(|| {
+                    format!("slow heuristic evaluation failed for state {state_id}")
+                })?;
+            // Lazy evaluations retain the historical counter until the separate
+            // evaluation-accounting change.
+            if evaluation.is_dead_end {
+                return Ok(PopAction::Prune);
+            }
+            let combined = entry.h_value.into_inner().max(evaluation.h_value);
+            let mut entry = entry.with_estimate(combined, P::key(entry.g_value, combined));
+            entry.mark_lazy_evaluated();
+            return Ok(PopAction::Requeue(entry));
         }
-
-        let evaluation = self
-            .evaluate_state(state, entry.g_value, self.space.is_goal(entry.state_id()))
-            .with_context(|| {
-                format!(
-                    "pop-time heuristic re-evaluation failed for state {}",
-                    entry.state_id()
-                )
-            })?;
-        self.stats.evaluations += 1;
-        self.record_heuristic_revision(entry.state_id(), evaluation.heuristic_revision);
-
-        let previous_h = entry.h_value.into_inner();
-        assert!(
-            evaluation.h_value + float_tolerance::SEARCH_EPSILON >= previous_h,
-            "dynamic heuristic decreased for state {} at revision {}: {} -> {}",
-            entry.state_id(),
-            evaluation.heuristic_revision,
-            previous_h,
-            evaluation.h_value,
-        );
-        if evaluation.is_dead_end {
-            self.stats.dead_ends += 1;
-            self.space.mark_dead_end(entry.state_id());
-            return Ok(true);
-        }
-        if evaluation.h_value > previous_h {
-            self.open_list.insert_with_second(
-                entry.state_id(),
-                entry.g_value,
-                evaluation.h_value,
-                evaluation.f_value,
-                entry.is_preferred(),
-                entry.is_second(),
-            );
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(PopAction::Expand)
     }
 
-    /// Compute the slow heuristic for `state`, fold it into the entry via
-    /// `max(h_f, h_s)`, and reinsert as a `second == true` entry. On
-    /// dead-end (h_s = +infinity), mark the state dead in
-    /// the search space instead of reinserting. The caller is responsible
-    /// for `return`-ing immediately after this method so the existing
-    /// pop is treated as a deferred expansion.
-    fn evaluate_and_reinsert_for_slow(
-        &mut self,
-        entry: OpenEntry,
-        state: &ConcreteState,
-    ) -> Result<()> {
-        let Some(slow) = self.algorithm.slow_heuristic() else {
-            unreachable!("slow evaluation requires the fast/slow search policy");
-        };
-        let mut eval_state = EvaluationState::new(state, self.task, &self.state_registry);
-        eval_state.set_is_goal(self.space.is_goal(entry.state_id()));
-        let slow_h = match slow.compute_heuristic(&eval_state) {
-            Ok(h) => h,
-            Err(EvaluationError::DeadEnd { .. }) => f64::INFINITY,
-            Err(error) => {
-                return Err(error).context(format!(
-                    "slow heuristic evaluation failed for state {}",
-                    entry.state_id()
-                ));
-            }
-        };
-        if slow_h.is_infinite() && slow_h.is_sign_positive() {
-            // h_s reports a dead end. Mark state and drop the entry.
-            self.stats.dead_ends = self.stats.dead_ends.saturating_add(1);
-            assert!(
-                self.space.contains_node(entry.state_id()),
-                "open-list entry must have a search node"
-            );
-            self.space.mark_dead_end(entry.state_id());
-            return Ok(());
-        }
-        let combined_h = entry.h_value.into_inner().max(slow_h);
-        let new_f = self.algorithm.priority(entry.g_value, combined_h);
-        self.open_list.insert_with_second(
-            entry.state_id(),
-            entry.g_value,
-            combined_h,
-            new_f,
-            entry.is_preferred(),
-            true,
-        );
-        Ok(())
+    fn push_entry(&mut self, mut entry: OpenEntry) {
+        entry.insertion_order = self.next_insertion_order;
+        self.next_insertion_order = self
+            .next_insertion_order
+            .checked_add(1)
+            .expect("open-list insertion count exceeds u32");
+        self.open_list.push(entry);
     }
 
     fn populate_applicable_operators(&mut self, state: &ConcreteState) {
@@ -582,13 +498,14 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         // Add initial state to open list
         let initial_is_goal = self.is_goal_state(&initial_state);
         let initial_evaluation = self
-            .evaluate_state(&initial_state, 0.0, initial_is_goal)
+            .evaluate_state(&*self.heuristic, &initial_state, 0.0, initial_is_goal)
             .context("initial state evaluation failed")?;
         self.stats.nodes_evaluated += 1;
         self.stats.evaluations += 1;
         self.record_heuristic_revision(
             initial_state.get_id(),
             initial_evaluation.heuristic_revision,
+            initial_evaluation.h_value,
         );
         if initial_evaluation.is_dead_end {
             self.stats.dead_ends += 1;
@@ -614,13 +531,13 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
                 .copy_preferred_operator_ids(&mut self.scratch.preferred_ids);
             self.space
                 .store_preferred(initial_id, &self.scratch.preferred_ids);
-            self.open_list.insert(
+            self.push_entry(OpenEntry::new(
                 initial_id,
                 0.0,
                 initial_evaluation.h_value,
                 initial_evaluation.f_value,
                 false,
-            );
+            ));
         }
 
         // Initialize search node info for initial state.
@@ -668,7 +585,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     ///
     /// An entry is skipped when its state is already closed, when a cheaper
     /// path to it has been found since it was queued, or when it is a stale
-    /// re-evaluation. Under a fast/slow policy the first pop of an entry only
+    /// re-evaluation. With a lazy heuristic the first pop of an entry only
     /// triggers the slow heuristic and reinserts it; the second pop expands.
     fn pop_next_to_expand(&mut self) -> Result<PoppedNode> {
         let Some(entry) = self.open_list.pop() else {
@@ -681,37 +598,19 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             .lookup_state(state_id)
             .map_err(|error| anyhow!("open list references missing state {state_id}: {error:?}"))?;
 
-        let info = self
-            .space
-            .node(state_id)
-            .expect("open-list entry must have a search node");
-        if info.is_closed {
-            return Ok(PoppedNode::Skipped);
+        match self.on_pop(entry, &state)? {
+            PopAction::Expand => Ok(PoppedNode::Expand(entry, state)),
+            PopAction::Requeue(entry) => {
+                self.push_entry(entry);
+                Ok(PoppedNode::Skipped)
+            }
+            PopAction::Prune => {
+                self.stats.dead_ends += 1;
+                self.space.mark_dead_end(state_id);
+                Ok(PoppedNode::Skipped)
+            }
+            PopAction::Skip => Ok(PoppedNode::Skipped),
         }
-        // A cheaper path to this state was found after the entry was
-        // queued, so the entry describes a path we no longer take.
-        if info.g_value < entry.g_value {
-            return Ok(PoppedNode::Skipped);
-        }
-
-        if self.reevaluate_stale_entry(entry, &state)? {
-            return Ok(PoppedNode::Skipped);
-        }
-
-        // Fast/slow A* lazy slow-heuristic step. If a slow heuristic is
-        // configured and this entry hasn't yet been re-evaluated against
-        // it, compute h_s now, reinsert with `f' = g + max(h_f, h_s)` and
-        // `second = true`, and defer the actual expansion to the next pop.
-        // Mirrors the AAAI paper's algorithm: every popped entry is
-        // either a "first pop" that triggers the slow evaluation, or a
-        // "second pop" that proceeds to expand. Because max of admissible
-        // heuristics is admissible, optimality is preserved.
-        if self.algorithm.slow_heuristic().is_some() && !entry.is_second() {
-            self.evaluate_and_reinsert_for_slow(entry, &state)?;
-            return Ok(PoppedNode::Skipped);
-        }
-
-        Ok(PoppedNode::Expand(entry, state))
     }
 
     /// Close the node the search is about to expand and count the expansion.
@@ -849,7 +748,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
 
         let is_goal = self.is_goal_state(succ_state);
         let evaluation = self
-            .evaluate_state(succ_state, new_g_value, is_goal)
+            .evaluate_state(&*self.heuristic, succ_state, new_g_value, is_goal)
             .with_context(|| {
                 format!(
                     "heuristic evaluation failed for successor state {succ_state_id} generated by operator {operator_id} ({})",
@@ -860,7 +759,11 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         if !improved_duplicate {
             self.stats.nodes_evaluated += 1;
         }
-        self.record_heuristic_revision(succ_state_id, evaluation.heuristic_revision);
+        self.record_heuristic_revision(
+            succ_state_id,
+            evaluation.heuristic_revision,
+            evaluation.h_value,
+        );
 
         // Snapshot the heuristic's preferred-operator IDs for the successor
         // *now*, before any other state's evaluation overwrites the
@@ -890,13 +793,13 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         }
 
         let _ = self.maybe_report_heuristic_progress(&evaluation, start_time);
-        self.open_list.insert(
+        self.push_entry(OpenEntry::new(
             succ_state_id,
             new_g_value,
             evaluation.h_value,
             evaluation.f_value,
             is_preferred,
-        );
+        ));
         Ok(())
     }
 
@@ -960,7 +863,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     }
 }
 
-impl<'a, A: SearchAlgorithm> SearchEngine for BestFirstSearch<'a, A> {
+impl<P: Priority, Q: OpenList> SearchEngine for BestFirstSearch<'_, P, Q> {
     fn initialize(&mut self) -> Result<()> {
         BestFirstSearch::initialize(self)
     }

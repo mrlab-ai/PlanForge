@@ -57,9 +57,15 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
     let mut search = AStarSearch::new(
         task,
         StateRegistry::for_task(Arc::new(task)),
-        Box::new(planforge_search::evaluation::heuristic::BlindHeuristic::for_task(task)),
-        None,
-        None,
+        planforge_search::search::SearchParams {
+            heuristic: Box::new(
+                planforge_search::evaluation::heuristic::BlindHeuristic::for_task(task),
+            ),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
     );
     let result = search.search().expect("blind A* search failed");
     assert!(

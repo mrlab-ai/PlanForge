@@ -2,7 +2,7 @@ use super::*;
 
 fn astar_heuristic(input: &str) -> HeuristicSpec {
     match parse_search_spec(input).unwrap() {
-        SearchSpec::Astar(heuristic, _) => heuristic,
+        SearchConfig::AStar { heuristic, .. } => heuristic,
         other => panic!("expected astar(...), got {other:?}"),
     }
 }
@@ -35,12 +35,12 @@ fn parses_astar_blind_with_or_without_unit_parens() {
 #[test]
 fn parses_and_round_trips_astar_mpd() {
     let parsed = parse_search_spec("astar(blind(), mpd=true)").unwrap();
-    assert!(matches!(&parsed, SearchSpec::Astar(_, true)));
+    assert!(matches!(&parsed, SearchConfig::AStar { mpd: true, .. }));
     assert_eq!(parsed.to_string(), "astar(blind(), mpd=true)");
     assert_eq!(parse_search_spec(&parsed.to_string()).unwrap(), parsed);
 
     let default = parse_search_spec("astar(blind())").unwrap();
-    assert!(matches!(default, SearchSpec::Astar(_, false)));
+    assert!(matches!(default, SearchConfig::AStar { mpd: false, .. }));
 }
 
 #[test]
@@ -347,9 +347,33 @@ fn display_round_trips_enum_valued_options() {
 fn parses_registry_style_search_with_keyed_heuristic() {
     let spec = parse_search_spec("search(astar(heuristic=greedy_numeric_pdb(max_pdb_states=321)))")
         .unwrap();
-    let SearchSpec::Astar(heuristic, false) = &spec else {
+    let SearchConfig::AStar {
+        heuristic,
+        mpd: false,
+        ..
+    } = &spec
+    else {
         panic!("expected astar(...), got {spec:?}");
     };
     assert_eq!(heuristic.name, "greedy_numeric_pdb");
     assert_eq!(heuristic.args.len(), 1);
+}
+
+#[test]
+fn astar_fs_is_an_alias_for_astar_with_a_lazy_evaluator() {
+    let alias = parse_search_spec("astar_fs(fast=blind(), slow=lmcutnumeric())").unwrap();
+    let astar = parse_search_spec("astar(blind(), lazy=lmcutnumeric())").unwrap();
+    assert_eq!(alias, astar);
+    assert_eq!(parse_search_spec(&alias.to_string()).unwrap(), astar);
+    assert_eq!(
+        parse_search_spec("astar(blind(), lazy=none)").unwrap(),
+        parse_search_spec("astar(blind())").unwrap()
+    );
+}
+
+#[test]
+fn gbfs_has_no_mpd_or_lazy_options() {
+    assert!(parse_search_spec("gbfs(blind(), mpd=true)").is_err());
+    assert!(parse_search_spec("gbfs(blind(), lazy=ff())").is_err());
+    assert!(parse_search_spec("astar(blind(), lazy=none, lazy=ff())").is_err());
 }

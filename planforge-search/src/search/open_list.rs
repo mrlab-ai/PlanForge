@@ -4,20 +4,20 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct OpenEntry {
+pub struct OpenEntry {
     pub(crate) f_value: OrderedFloat<f64>,
     pub(crate) h_value: OrderedFloat<f64>,
     pub(crate) g_value: f64,
     pub(crate) insertion_order: u32,
-    /// Compact state ID plus the preferred and fast/slow-second-pop flags in
+    /// Compact state ID plus the preferred and lazy-evaluated flags in
     /// its two high bits. Keeping all priority values as `f64` while packing
     /// these booleans makes an entry 32 rather than 40 bytes.
     tagged_state_id: u32,
 }
 
 const PREFERRED_FLAG: u32 = 1 << 31;
-const SECOND_FLAG: u32 = 1 << 30;
-const STATE_ID_MASK: u32 = SECOND_FLAG - 1;
+const LAZY_EVALUATED_FLAG: u32 = 1 << 30;
+const STATE_ID_MASK: u32 = LAZY_EVALUATED_FLAG - 1;
 
 impl OpenEntry {
     pub(crate) fn state_id(self) -> StateID {
@@ -28,8 +28,8 @@ impl OpenEntry {
         self.tagged_state_id & PREFERRED_FLAG != 0
     }
 
-    pub(crate) fn is_second(self) -> bool {
-        self.tagged_state_id & SECOND_FLAG != 0
+    pub(crate) fn is_lazy_evaluated(self) -> bool {
+        self.tagged_state_id & LAZY_EVALUATED_FLAG != 0
     }
 }
 
@@ -64,97 +64,77 @@ impl Ord for OpenEntry {
     }
 }
 
-/// Open list with a primary heap and an optional "preferred-first"
-/// secondary heap.
-///
-/// When `use_preferred_first` is `true` (GBFS with a heuristic that emits
-/// preferred operators), entries flagged as preferred go into
-/// `preferred_heap` and `pop` drains that heap first. This is the
-/// canonical FF/FD dual-queue lazy-greedy ordering: states reached via a
-/// helpful action are expanded ahead of the rest, which empirically
-/// dwarfs the speedup of a tie-break-only integration.
-///
-/// When `use_preferred_first` is `false` (A\*), only `regular_heap` is
-/// used; preferred-ness still participates in `OpenEntry`'s `Ord` as a
-/// tie-break between `f` and `h`, which is safe for admissibility since
-/// it only reorders entries with identical `f`.
-#[derive(Debug)]
-pub(crate) struct DualQueueOpenList {
-    regular_heap: BinaryHeap<OpenEntry>,
-    preferred_heap: BinaryHeap<OpenEntry>,
-    use_preferred_first: bool,
-    next_insertion_order: u32,
+/// Storage discipline for best-first search. Entry ordering is shared by all queues.
+pub trait OpenList: Default {
+    fn push(&mut self, entry: OpenEntry);
+    fn pop(&mut self) -> Option<OpenEntry>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
-impl DualQueueOpenList {
-    pub(crate) fn new(use_preferred_first: bool) -> Self {
-        Self {
-            regular_heap: BinaryHeap::new(),
-            preferred_heap: BinaryHeap::new(),
-            use_preferred_first,
-            next_insertion_order: 0,
-        }
+/// One heap ordered by priority, preference, heuristic value and FIFO insertion.
+#[derive(Debug, Default)]
+pub struct TieBreakingOpenList(BinaryHeap<OpenEntry>);
+impl OpenList for TieBreakingOpenList {
+    fn push(&mut self, entry: OpenEntry) {
+        self.0.push(entry);
     }
-
-    pub(crate) fn insert(
-        &mut self,
-        state_id: StateID,
-        g_value: f64,
-        h_value: f64,
-        f_value: f64,
-        is_preferred: bool,
-    ) {
-        self.insert_with_second(state_id, g_value, h_value, f_value, is_preferred, false);
+    fn pop(&mut self) -> Option<OpenEntry> {
+        self.0.pop()
     }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
-    pub(crate) fn insert_with_second(
-        &mut self,
-        state_id: StateID,
-        g_value: f64,
-        h_value: f64,
-        f_value: f64,
-        is_preferred: bool,
-        second: bool,
-    ) {
-        let compact_state_id = u32::try_from(state_id).unwrap_or_else(|_| {
-            panic!("open-list state id {state_id} exceeds the compact representation")
-        });
-        assert!(
-            compact_state_id <= STATE_ID_MASK,
-            "open-list state id {state_id} exceeds the 30-bit compact representation"
-        );
-        let tagged_state_id = compact_state_id
-            | if is_preferred { PREFERRED_FLAG } else { 0 }
-            | if second { SECOND_FLAG } else { 0 };
-        let entry = OpenEntry {
-            f_value: OrderedFloat(f_value),
-            h_value: OrderedFloat(h_value),
-            g_value,
-            insertion_order: self.next_insertion_order,
-            tagged_state_id,
-        };
-        self.next_insertion_order = self
-            .next_insertion_order
-            .checked_add(1)
-            .expect("open-list insertion count exceeds u32");
-        if self.use_preferred_first && is_preferred {
-            self.preferred_heap.push(entry);
+/// GBFS drains the preferred heap strictly before the regular heap.
+#[derive(Debug, Default)]
+pub struct PreferredFirstOpenList {
+    preferred: BinaryHeap<OpenEntry>,
+    regular: BinaryHeap<OpenEntry>,
+}
+impl OpenList for PreferredFirstOpenList {
+    fn push(&mut self, entry: OpenEntry) {
+        if entry.is_preferred() {
+            self.preferred.push(entry);
         } else {
-            self.regular_heap.push(entry);
+            self.regular.push(entry);
+        }
+    }
+    fn pop(&mut self) -> Option<OpenEntry> {
+        self.preferred.pop().or_else(|| self.regular.pop())
+    }
+    fn len(&self) -> usize {
+        self.preferred.len() + self.regular.len()
+    }
+}
+
+impl OpenEntry {
+    pub(crate) fn new(state_id: StateID, g: f64, h: f64, priority: f64, preferred: bool) -> Self {
+        let compact = u32::try_from(state_id).expect("open-list state id exceeds u32");
+        assert!(
+            compact <= STATE_ID_MASK,
+            "open-list state id exceeds the 30-bit compact representation"
+        );
+        Self {
+            f_value: OrderedFloat(priority),
+            h_value: OrderedFloat(h),
+            g_value: g,
+            insertion_order: 0,
+            tagged_state_id: compact | if preferred { PREFERRED_FLAG } else { 0 },
         }
     }
 
-    pub(crate) fn pop(&mut self) -> Option<OpenEntry> {
-        if self.use_preferred_first
-            && let Some(entry) = self.preferred_heap.pop()
-        {
-            return Some(entry);
-        }
-        self.regular_heap.pop()
+    pub(crate) fn with_estimate(mut self, h: f64, priority: f64) -> Self {
+        self.h_value = OrderedFloat(h);
+        self.f_value = OrderedFloat(priority);
+        self
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.regular_heap.len() + self.preferred_heap.len()
+    pub(crate) fn mark_lazy_evaluated(&mut self) {
+        self.tagged_state_id |= LAZY_EVALUATED_FLAG;
     }
 }
 
@@ -165,14 +145,49 @@ mod tests {
     #[test]
     fn open_entry_is_32_bytes_and_preserves_flags_and_id() {
         assert_eq!(std::mem::size_of::<OpenEntry>(), 32);
-        let mut open = DualQueueOpenList::new(false);
-        open.insert_with_second(123, 2.0, 3.0, 5.0, true, true);
+        let mut open = TieBreakingOpenList::default();
+        let mut entry = OpenEntry::new(123, 2.0, 3.0, 5.0, true);
+        entry.mark_lazy_evaluated();
+        open.push(entry);
         let entry = open.pop().unwrap();
         assert_eq!(entry.state_id(), 123);
         assert!(entry.is_preferred());
-        assert!(entry.is_second());
+        assert!(entry.is_lazy_evaluated());
         assert_eq!(entry.g_value, 2.0);
         assert_eq!(entry.h_value.into_inner(), 3.0);
         assert_eq!(entry.f_value.into_inner(), 5.0);
+    }
+
+    #[test]
+    fn tie_breaking_preserves_priority_preference_estimate_and_fifo() {
+        let mut open = TieBreakingOpenList::default();
+        for (order, (f, preferred, h)) in [
+            (5.0, true, 3.0),
+            (4.0, false, 2.0),
+            (5.0, false, 1.0),
+            (5.0, true, 2.0),
+            (5.0, true, 2.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut entry = OpenEntry::new(order, 0.0, h, f, preferred);
+            entry.insertion_order = order as u32;
+            open.push(entry);
+        }
+        let ids = std::iter::from_fn(|| open.pop())
+            .map(OpenEntry::state_id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, [1, 3, 4, 0, 2]);
+    }
+
+    #[test]
+    fn preferred_first_ignores_regular_priority_until_preferred_heap_is_empty() {
+        let mut open = PreferredFirstOpenList::default();
+        open.push(OpenEntry::new(1, 0.0, 1.0, 1.0, false));
+        open.push(OpenEntry::new(2, 0.0, 100.0, 100.0, true));
+        assert_eq!(open.pop().unwrap().state_id(), 2);
+        assert_eq!(open.pop().unwrap().state_id(), 1);
+        assert!(open.pop().is_none());
     }
 }

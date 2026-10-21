@@ -33,10 +33,12 @@ use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::{
     ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
 };
-use planforge_search::search::{SearchBuildContext, SearchResult, search_algorithm};
+use planforge_search::search::{
+    AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchParams, SearchResult,
+};
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
-use planforge_searcher::{HeuristicSpec, SearchSpec};
+use planforge_searcher::{HeuristicSpec, SearchConfig};
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -160,7 +162,7 @@ pub struct PlannersCli {
         value_parser = planforge_searcher::parse_search_spec,
         long_help = planforge_search::search::search_algorithm_help()
     )]
-    pub search: SearchSpec,
+    pub search: SearchConfig,
 
     #[command(flatten)]
     pub portfolio: PortfolioOptions,
@@ -318,42 +320,50 @@ pub fn install_process_hooks(memory_limit: Option<u64>) -> std::io::Result<()> {
 /// stay in `run_internal`.
 pub fn solve_task(
     task: TaskRef<'_>,
-    spec: &SearchSpec,
+    spec: &SearchConfig,
     time_limit: Option<Duration>,
     memory_limit: Option<u64>,
 ) -> std::io::Result<SearchResult> {
     let state_registry = StateRegistry::for_task(task.clone());
-    let (algorithm_name, primary_heuristic, secondary_heuristic, mpd) = match spec {
-        SearchSpec::Astar(heuristic, mpd) => {
-            let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            info!("Starting A* search with {heuristic:?}, mpd={mpd}...");
-            ("astar", heuristic_override, None, *mpd)
+    let mut engine: Box<dyn SearchEngine + '_> = match spec {
+        SearchConfig::AStar {
+            heuristic,
+            lazy,
+            mpd,
+        } => {
+            let heuristic = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
+            let lazy = lazy
+                .as_ref()
+                .map(|spec| build_heuristic_from_spec(spec, &*task, task.clone()))
+                .transpose()?;
+            info!("Starting A* search, mpd={mpd}, lazy={}", lazy.is_some());
+            Box::new(AStarSearch::new(
+                &*task,
+                state_registry,
+                SearchParams {
+                    heuristic,
+                    lazy,
+                    reevaluate_dynamic: *mpd,
+                    time_limit,
+                    max_memory_bytes: memory_limit,
+                },
+            ))
         }
-        SearchSpec::Gbfs(heuristic) => {
-            let heuristic_override = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
-            info!("Starting GBFS search with {heuristic:?}...");
-            ("gbfs", heuristic_override, None, false)
-        }
-        SearchSpec::AstarFs(fast_spec, slow_spec) => {
-            let fast_h = build_heuristic_from_spec(fast_spec, &*task, task.clone())?;
-            let slow_h = build_heuristic_from_spec(slow_spec, &*task, task.clone())?;
-            info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
-            ("astar_fs", fast_h, Some(slow_h), false)
+        SearchConfig::Gbfs { heuristic } => {
+            let heuristic = build_heuristic_from_spec(heuristic, &*task, task.clone())?;
+            info!("Starting GBFS search...");
+            Box::new(GreedyBestFirstSearch::new(
+                &*task,
+                state_registry,
+                SearchParams {
+                    time_limit,
+                    max_memory_bytes: memory_limit,
+                    ..SearchParams::new(heuristic)
+                },
+            ))
         }
     };
-    let plugin = search_algorithm(algorithm_name)
-        .expect("every parsed state-space search has a registered builder");
-    let mut driver = (plugin.build)(SearchBuildContext {
-        task: &*task,
-        state_registry,
-        primary_heuristic,
-        secondary_heuristic,
-        time_limit,
-        max_memory_bytes: memory_limit,
-        mpd,
-    })
-    .map_err(|error| std::io::Error::other(format!("could not build search: {error:#}")))?;
-    driver
+    engine
         .search()
         .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }

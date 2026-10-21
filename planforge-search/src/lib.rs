@@ -8,7 +8,7 @@
 //! There are three supported Rust extension paths:
 //!
 //! - implement [`evaluation::Heuristic`] for a new state evaluator;
-//! - implement [`search::SearchAlgorithm`] for a new best-first priority
+//! - implement [`search::Priority`] for a new best-first priority
 //!   policy;
 //! - call [`heuristic_factory::register_external_heuristics`] to make external
 //!   heuristic factories visible to the standard configuration grammar.

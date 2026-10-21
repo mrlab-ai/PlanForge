@@ -183,7 +183,17 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
     let registry = StateRegistry::for_task(task.clone());
-    let mut search = AStarSearch::new(&*task, registry, Box::new(FailingHeuristic), None, None);
+    let mut search = AStarSearch::new(
+        &*task,
+        registry,
+        SearchParams {
+            heuristic: Box::new(FailingHeuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
 
     let error = search.search().unwrap_err();
     assert!(
@@ -274,8 +284,17 @@ fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
     };
     let task = one_step_task();
     let registry = StateRegistry::for_task(task.clone());
-    let mut search =
-        AStarSearch::new_with_mpd(&*task, registry, Box::new(heuristic), None, None, true);
+    let mut search = AStarSearch::new(
+        &*task,
+        registry,
+        SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: true,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
 
     search.initialize().unwrap();
     assert_eq!(calls.get(), 1);
@@ -307,7 +326,17 @@ fn static_astar_does_not_pay_for_revision_checks() {
     };
     let task = one_step_task();
     let registry = StateRegistry::for_task(task.clone());
-    let mut search = AStarSearch::new(&*task, registry, Box::new(heuristic), None, None);
+    let mut search = AStarSearch::new(
+        &*task,
+        registry,
+        SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
 
     search.initialize().unwrap();
     revision.set(1);
@@ -334,8 +363,17 @@ fn uncached_mpd_reevaluates_every_popped_entry() {
     };
     let task = one_step_task();
     let registry = StateRegistry::for_task(task.clone());
-    let mut search =
-        AStarSearch::new_with_mpd(&*task, registry, Box::new(heuristic), None, None, true);
+    let mut search = AStarSearch::new(
+        &*task,
+        registry,
+        SearchParams {
+            heuristic: Box::new(heuristic),
+            lazy: None,
+            reevaluate_dynamic: true,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
 
     search.initialize().unwrap();
     let result = loop {
@@ -349,4 +387,149 @@ fn uncached_mpd_reevaluates_every_popped_entry() {
     assert_eq!(calls.get(), 4);
     assert_eq!(result.nodes_evaluated, 2);
     assert_eq!(result.evaluations, 4);
+}
+
+#[derive(Clone, Copy)]
+enum LazyResult {
+    Estimate(f64),
+    DeadEnd(bool),
+}
+
+struct LazyHeuristic {
+    result: LazyResult,
+    calls: Rc<Cell<usize>>,
+}
+
+impl Heuristic for LazyHeuristic {
+    fn compute_heuristic(&self, state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
+        self.calls.set(self.calls.get() + 1);
+        match self.result {
+            LazyResult::Estimate(h) => Ok(if state.is_goal() { 0.0 } else { h }),
+            LazyResult::DeadEnd(reliable) => Err(EvaluationError::DeadEnd { reliable }),
+        }
+    }
+
+    fn heuristic_name(&self) -> &str {
+        "lazy_test"
+    }
+}
+
+#[test]
+fn lazy_astar_defers_each_expansion_even_when_the_estimate_does_not_increase() {
+    let task = one_step_task();
+    let calls = Rc::new(Cell::new(0));
+    let mut params = SearchParams::new(Box::new(
+        crate::evaluation::heuristic::BlindHeuristic::for_task(&*task),
+    ));
+    // Below the non-goal floor: the single evaluation path must preserve it.
+    params.lazy = Some(Box::new(LazyHeuristic {
+        result: LazyResult::Estimate(0.0),
+        calls: calls.clone(),
+    }));
+    let mut search = AStarSearch::new(&*task, StateRegistry::for_task(task.clone()), params);
+    search.initialize().unwrap();
+    assert_eq!(
+        calls.get(),
+        0,
+        "initialization evaluates only the primary heuristic"
+    );
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    assert_eq!(
+        calls.get(),
+        1,
+        "first pop evaluates and requeues the initial entry"
+    );
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    assert_eq!(
+        calls.get(),
+        1,
+        "second pop expands without another lazy evaluation"
+    );
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    assert_eq!(calls.get(), 2, "goal entries also get a lazy evaluation");
+    let status = search.step().unwrap();
+    assert!(matches!(status, SearchStatus::Solved(_)));
+    let result = search.finish(status);
+    assert_eq!(result.solution_cost, Some(1.0));
+    assert_eq!(result.nodes_expanded, 2);
+    assert_eq!(result.nodes_generated, 1);
+    assert_eq!(result.nodes_evaluated, 2);
+    // Historical accounting; changed separately from the engine refactor.
+    assert_eq!(result.evaluations, 2);
+    assert_eq!(calls.get(), 2);
+}
+
+#[test]
+fn lazy_astar_prunes_infinite_and_both_kinds_of_dead_end_reports() {
+    for outcome in [
+        LazyResult::Estimate(f64::INFINITY),
+        LazyResult::DeadEnd(true),
+        LazyResult::DeadEnd(false),
+    ] {
+        let task = one_step_task();
+        let calls = Rc::new(Cell::new(0));
+        let mut params = SearchParams::new(Box::new(
+            crate::evaluation::heuristic::BlindHeuristic::for_task(&*task),
+        ));
+        params.lazy = Some(Box::new(LazyHeuristic {
+            result: outcome,
+            calls: calls.clone(),
+        }));
+        let result = AStarSearch::new(&*task, StateRegistry::for_task(task.clone()), params)
+            .search()
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Failed);
+        assert_eq!(result.nodes_expanded, 0);
+        assert_eq!(result.dead_ends, 1);
+        assert_eq!(calls.get(), 1);
+    }
+}
+
+#[test]
+fn lazy_astar_propagates_evaluation_failures() {
+    let task = one_step_task();
+    let mut params = SearchParams::new(Box::new(
+        crate::evaluation::heuristic::BlindHeuristic::for_task(&*task),
+    ));
+    params.lazy = Some(Box::new(FailingHeuristic));
+    let error = AStarSearch::new(&*task, StateRegistry::for_task(task.clone()), params)
+        .search()
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("slow heuristic evaluation failed"));
+    assert!(format!("{error:#}").contains("construction deadline"));
+}
+
+#[test]
+fn mpd_and_lazy_compare_dynamic_estimates_with_the_primary_estimate() {
+    let task = one_step_task();
+    let revision = Rc::new(Cell::new(0));
+    let primary_calls = Rc::new(Cell::new(0));
+    let lazy_calls = Rc::new(Cell::new(0));
+    let mut params = SearchParams::new(Box::new(RevisionControlledHeuristic {
+        revision: revision.clone(),
+        calls: primary_calls.clone(),
+        reevaluate_on_every_pop: false,
+    }));
+    params.reevaluate_dynamic = true;
+    params.lazy = Some(Box::new(LazyHeuristic {
+        result: LazyResult::Estimate(5.0),
+        calls: lazy_calls.clone(),
+    }));
+    let mut search = AStarSearch::new(&*task, StateRegistry::for_task(task.clone()), params);
+    search.initialize().unwrap();
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    assert_eq!(lazy_calls.get(), 1);
+    revision.set(1);
+    // Primary h grows from 1 to 2 while the lazy entry already has h=5.
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    assert_eq!(
+        primary_calls.get(),
+        3,
+        "re-evaluate primary, then generate the goal"
+    );
+    assert_eq!(lazy_calls.get(), 1);
+    assert_eq!(search.step().unwrap(), SearchStatus::InProgress);
+    let status = search.step().unwrap();
+    assert!(matches!(status, SearchStatus::Solved(_)));
+    assert_eq!(search.finish(status).solution_cost, Some(1.0));
 }

@@ -351,7 +351,17 @@ fn astar_solution<'task>(
     what: &str,
 ) -> Solution {
     let registry = StateRegistry::for_task(Arc::new(task));
-    let mut search = AStarSearch::new(task, registry, heuristic, None, None);
+    let mut search = AStarSearch::new(
+        task,
+        registry,
+        planforge_search::search::SearchParams {
+            heuristic,
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: None,
+            max_memory_bytes: None,
+        },
+    );
     let result = search
         .search()
         .unwrap_or_else(|error| panic!("{what}: A* failed: {error}"));

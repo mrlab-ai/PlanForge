@@ -48,9 +48,13 @@ fn run(path: &str) {
     let mut search = AStarSearch::new(
         &*task,
         registry,
-        heuristic,
-        Some(Duration::from_secs(5)),
-        None,
+        planforge_search::search::SearchParams {
+            heuristic: heuristic,
+            lazy: None,
+            reevaluate_dynamic: false,
+            time_limit: Some(Duration::from_secs(5)),
+            max_memory_bytes: None,
+        },
     );
     let result = search.search().expect("search failed");
     let status = match &result.status {
