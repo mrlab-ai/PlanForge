@@ -228,8 +228,8 @@ pub(super) fn abstraction_collection_iteration(
 ) -> usize {
     components[component_id]
         .cegar()
-        .and_then(|abstraction| abstraction.metadata().collection)
-        .map_or(usize::MAX, |record| record.iteration)
+        .and_then(|abstraction| abstraction.metadata().collection_iteration())
+        .unwrap_or(usize::MAX)
 }
 
 pub(super) fn max_heuristic_greedy_order(

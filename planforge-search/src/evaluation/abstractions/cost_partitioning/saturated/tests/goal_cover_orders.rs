@@ -34,7 +34,6 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })
@@ -57,7 +56,7 @@ fn compact_goal_cover_orders_pair_second_anchor_variants() {
     let goal = |component_id: usize| {
         abstractions[component_id]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id)
             .unwrap()
     };

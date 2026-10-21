@@ -12,7 +12,6 @@ use super::cegar::refine::CegarOutcome;
 use super::cegar::{CegarStopReason, SplitKind};
 use super::regions::RegionSemantics;
 use super::transition_system::AbstractOperatorSourceSets;
-use crate::evaluation::abstractions::collections::goal_focused::CollectionMembership;
 use crate::evaluation::abstractions::component::AbstractionKind;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     RemainingCosts, SourceSetCostAllocation,
@@ -22,11 +21,30 @@ use crate::evaluation::heuristic::Heuristic;
 use crate::resource_limits::Deadline;
 
 /// Whether an abstraction stands alone or is a member of a collection.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AbstractionUse {
     Standalone,
-    #[default]
-    CollectionMember,
+    CollectionMember {
+        /// The one-based number of the build that produced the member; a
+        /// standard collection counts the restarts it dropped as duplicates
+        /// too.
+        iteration: usize,
+        /// Set exactly for a member of a goal-focused collection built on
+        /// its goal's single-goal task.
+        membership: Option<CollectionMembership>,
+    },
+}
+
+/// Where a member of a goal-focused collection sits among the members built
+/// on its goal's task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollectionMembership {
+    pub goal_id: usize,
+    /// The variant whose progress state the member refined from; none for an
+    /// initial-state specialist.
+    pub variant_id: Option<usize>,
+    /// The member refined from an advanced (non-initial) progress state.
+    pub from_progress_state: bool,
 }
 
 impl AbstractionUse {
@@ -50,20 +68,6 @@ pub struct AbstractionMetadata {
     pub split_kind: SplitKind,
     /// The rank CEGAR took among tied best splits, if any.
     pub split_selection_rank: Option<usize>,
-    /// Set for a member of a collection.
-    pub collection: Option<CollectionRecord>,
-    /// Set for a member of a goal-focused collection.
-    pub collection_member: Option<CollectionMembership>,
-}
-
-/// Where a member sits in its collection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollectionRecord {
-    /// The one-based number of the build that produced the member; a
-    /// standard collection counts the restarts it dropped as duplicates too.
-    pub iteration: usize,
-    /// The member abstracts the full task rather than one goal's task.
-    pub full_task: bool,
 }
 
 impl AbstractionMetadata {
@@ -81,8 +85,23 @@ impl AbstractionMetadata {
             refinements: outcome.refinements,
             split_kind,
             split_selection_rank,
-            collection: None,
-            collection_member: None,
+        }
+    }
+
+    /// The iteration that built the abstraction, for a collection member.
+    pub fn collection_iteration(&self) -> Option<usize> {
+        match self.abstraction_use {
+            AbstractionUse::Standalone => None,
+            AbstractionUse::CollectionMember { iteration, .. } => Some(iteration),
+        }
+    }
+
+    /// Set exactly for a member of a goal-focused collection built on its
+    /// goal's single-goal task.
+    pub fn collection_membership(&self) -> Option<CollectionMembership> {
+        match self.abstraction_use {
+            AbstractionUse::Standalone => None,
+            AbstractionUse::CollectionMember { membership, .. } => membership,
         }
     }
 

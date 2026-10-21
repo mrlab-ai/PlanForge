@@ -9,6 +9,7 @@
 //! state is as much a failure as an overestimate.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask};
 use planforge_sas::state_registry::{ConcreteState, StateRegistry};
@@ -106,9 +107,9 @@ fn domain_collection(task: &NumericRootTask) -> Vec<DomainAbstraction> {
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 4,
         progress_states: true,
-        random_seed: Some(1),
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
+                random_seed: Some(1),
                 max_states: 300,
                 max_time: None,
                 flaw_kind: FlawKind::Progression,
@@ -141,9 +142,8 @@ fn cartesian_collection(task: &NumericRootTask) -> Vec<CartesianAbstraction> {
         progress_states: true,
         alternate_split_kinds: None,
         split_kind: None,
-        random_seed: Some(1),
         single_goal_tasks: true,
-        stagnation_limit: 20.0,
+        stagnation_limit: Some(Duration::from_secs(20)),
         blacklist_trigger_percentage: 0.75,
         enable_blacklist_on_stagnation: true,
     })

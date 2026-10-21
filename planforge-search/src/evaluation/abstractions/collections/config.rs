@@ -5,13 +5,16 @@ use std::time::Duration;
 
 use anyhow::{Result, ensure};
 
-use super::goal_focused::{GoalFocusedSchedule, GoalVariant, MemberBudget};
-use super::standard::{StandardMember, StandardSchedule};
+use super::budget::CollectionLimits;
+use super::goal_focused::GoalFocusedSchedule;
+use super::member::MemberConstruction;
+use super::standard::StandardSchedule;
 use super::strategy::CollectionStrategy;
 use crate::config::ApplyOptions;
 use crate::evaluation::abstractions::common::cegar::initial_splits::RefinementScope;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::{FlawKind, SplitKind};
+use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
 use crate::resource_limits::min_time_limit;
 
 /// The configuration of one member of a collection.
@@ -22,37 +25,25 @@ pub trait MemberConfig: ApplyOptions + Clone {
 
     fn scope_mut(&mut self) -> &mut RefinementScope;
 
-    /// This configuration for restart `member` of a standard collection,
-    /// which splits the restart's initial variable and keeps away from its
-    /// blacklisted variables.
-    fn for_restart(&self, member: &StandardMember) -> Self {
+    /// This configuration for the member `construction` describes.
+    fn for_member(&self, construction: &MemberConstruction) -> Self {
         let mut config = self.clone();
-        *config.cegar_mut() = self.cegar().for_restart(member);
-        *config.scope_mut() = RefinementScope {
-            initial_split_var: member.initial_split_var,
-            blacklisted_prop_var_ids: member.blacklisted_prop_var_ids.clone(),
-            blacklisted_numeric_var_ids: member.blacklisted_numeric_var_ids.clone(),
-        };
-        config
-    }
-
-    /// This configuration for a goal-focused variant, which starts from the
-    /// trivial abstraction; see [`CegarOptions::for_variant`].
-    fn for_variant(
-        &self,
-        variant: &GoalVariant,
-        fixed_split_kind: Option<SplitKind>,
-        budget: MemberBudget,
-    ) -> Self {
-        let mut config = self.clone();
-        *config.cegar_mut() = self.cegar().for_variant(variant, fixed_split_kind, budget);
-        *config.scope_mut() = RefinementScope::default();
+        let cegar = config.cegar_mut();
+        cegar.max_states = construction.max_states;
+        cegar.max_time = construction.max_time;
+        cegar.random_seed = construction.random_seed;
+        cegar.split_kind = construction.split_kind;
+        cegar.split_selection_rank = construction.split_selection_rank;
+        *config.scope_mut() = construction.scope.clone();
         config
     }
 }
 
 /// A collection of abstractions configured by `M`. The member options bound
-/// every member: `max_states` and `max_time` are per member.
+/// every member: `max_states` and `max_time` are per member. The members'
+/// `random_seed` is the seed of the collection, which its members derive
+/// theirs from; a [`MemberConstruction`] sets it, and the other options it
+/// names, for every member.
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct CollectionConfig<M: ApplyOptions> {
     pub collection_strategy: CollectionStrategy,
@@ -66,31 +57,57 @@ pub struct CollectionConfig<M: ApplyOptions> {
     /// Let every variant of a goal-focused collection refine from the
     /// concrete states its earlier members' plans reached.
     pub progress_states: bool,
-    /// Alternate concrete and wanted splits between members: by iteration in
-    /// a `standard` collection, by variant parity in a `goal_focused` one.
-    /// Unset, exactly goal-focused collections alternate.
+    /// Alternate concrete and wanted splits between members, starting with
+    /// concrete: by restart in a `standard` collection, by variant in a
+    /// `goal_focused` one. Unset, exactly goal-focused collections alternate.
     pub alternate_split_kinds: Option<bool>,
     /// Build every member of a goal-focused collection on its goal's
     /// single-goal task. When false, every member abstracts the full task and
     /// goals only label the `G * V` members, which are scheduled round-robin
     /// and carry no collection membership.
     pub single_goal_tasks: bool,
-    /// The split kind of every member when the members do not alternate; the
-    /// members' own when unset.
+    /// The split kind of every member when the members do not alternate;
+    /// concrete when unset. The collection chooses its members' split kinds,
+    /// so the members' own `split_kind` keeps its default.
     pub split_kind: Option<SplitKind>,
-    /// The seed the members derive theirs from.
-    pub random_seed: Option<u64>,
-    /// Standard collections: seconds without a new member after which the
-    /// collection stagnates.
-    pub stagnation_limit: f64,
-    /// Standard collections: the share of `total_max_time` after which
-    /// restarts blacklist variables.
+    /// Standard collections: how long without a new member the collection
+    /// stagnates after; never when `None`.
+    pub stagnation_limit: Option<Duration>,
+    /// Standard collections: the share of `total_max_time`, between 0 and 1,
+    /// after which restarts blacklist variables; never without a
+    /// `total_max_time`.
     pub blacklist_trigger_percentage: f64,
     /// Standard collections: start blacklisting at stagnation instead of
     /// stopping.
     pub enable_blacklist_on_stagnation: bool,
     #[option(flatten)]
     pub member: M,
+}
+
+const DEFAULT_STAGNATION_LIMIT: Option<Duration> = Some(Duration::from_secs(20));
+const DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE: f64 = 0.75;
+const DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION: bool = true;
+
+/// How a collection chooses its members' split kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitKinds {
+    /// Every member splits with this kind.
+    Fixed(SplitKind),
+    /// The members alternate concrete and wanted splits, starting with
+    /// concrete.
+    Alternating,
+}
+
+impl SplitKinds {
+    /// The split kind of the member at zero-based position `index` of the
+    /// alternation.
+    pub(crate) fn of(self, index: usize) -> SplitKind {
+        match self {
+            Self::Fixed(kind) => kind,
+            Self::Alternating if index.is_multiple_of(2) => SplitKind::Concrete,
+            Self::Alternating => SplitKind::Wanted,
+        }
+    }
 }
 
 impl<M: MemberConfig + Default> Default for CollectionConfig<M> {
@@ -106,10 +123,9 @@ impl<M: MemberConfig + Default> Default for CollectionConfig<M> {
             alternate_split_kinds: None,
             single_goal_tasks: true,
             split_kind: None,
-            random_seed: member.cegar().random_seed,
-            stagnation_limit: 20.0,
-            blacklist_trigger_percentage: 0.75,
-            enable_blacklist_on_stagnation: true,
+            stagnation_limit: DEFAULT_STAGNATION_LIMIT,
+            blacklist_trigger_percentage: DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE,
+            enable_blacklist_on_stagnation: DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION,
             member,
         }
     }
@@ -157,12 +173,47 @@ impl<M: MemberConfig> CollectionConfig<M> {
             !self.alternates_split_kinds() || self.split_kind.is_none(),
             "`alternate_split_kinds` chooses the split kind per member; it cannot be combined with a fixed `split_kind`"
         );
+        ensure!(
+            self.member.cegar().split_kind == SplitKind::default(),
+            "a collection chooses its members' split kinds with its own `split_kind`"
+        );
+        ensure!(
+            (0.0..=1.0).contains(&self.blacklist_trigger_percentage),
+            "`blacklist_trigger_percentage` must be between 0 and 1, got {}",
+            self.blacklist_trigger_percentage
+        );
+        if strategy != CollectionStrategy::Standard {
+            ensure!(
+                self.stagnation_limit == DEFAULT_STAGNATION_LIMIT
+                    && self.blacklist_trigger_percentage == DEFAULT_BLACKLIST_TRIGGER_PERCENTAGE
+                    && self.enable_blacklist_on_stagnation
+                        == DEFAULT_ENABLE_BLACKLIST_ON_STAGNATION,
+                "`stagnation_limit`, `blacklist_trigger_percentage` and `enable_blacklist_on_stagnation` require `collection_strategy=standard`"
+            );
+        }
         Ok(())
     }
 
+    /// Whether members alternate split kinds: as configured, or by default
+    /// exactly in goal-focused collections.
     fn alternates_split_kinds(&self) -> bool {
-        self.collection_strategy
-            .alternates_split_kinds(self.alternate_split_kinds)
+        self.alternate_split_kinds
+            .unwrap_or(self.collection_strategy.is_goal_focused())
+    }
+
+    fn split_kinds(&self) -> SplitKinds {
+        if self.alternates_split_kinds() {
+            SplitKinds::Alternating
+        } else {
+            SplitKinds::Fixed(self.split_kind.unwrap_or_default())
+        }
+    }
+
+    /// The configured seed of the collection; members that take a seed of
+    /// their own derive it from this one, or from [`DEFAULT_RANDOM_SEED`]
+    /// when unset.
+    fn random_seed(&self) -> Option<u64> {
+        self.member.cegar().random_seed
     }
 
     /// Bounds the collection and each member by `limit`.
@@ -172,20 +223,28 @@ impl<M: MemberConfig> CollectionConfig<M> {
         cegar.max_time = min_time_limit(cegar.max_time, Some(limit));
     }
 
-    pub(crate) fn standard_schedule(&self) -> StandardSchedule {
-        let seconds = |limit: Option<Duration>| limit.map_or(f64::INFINITY, |d| d.as_secs_f64());
+    fn limits(&self) -> CollectionLimits {
         let cegar = self.member.cegar();
+        CollectionLimits {
+            max_collection_states: self.max_collection_size,
+            total_max_time: self.total_max_time,
+            member_max_states: cegar.max_states,
+            member_max_time: cegar.max_time,
+        }
+    }
+
+    pub(crate) fn standard_schedule(&self) -> StandardSchedule {
         StandardSchedule {
-            max_states: cegar.max_states,
-            max_collection_size: self.max_collection_size,
-            max_time: seconds(cegar.max_time),
-            total_max_time: seconds(self.total_max_time),
+            limits: self.limits(),
             stagnation_limit: self.stagnation_limit,
-            blacklist_trigger_percentage: self.blacklist_trigger_percentage,
+            // Blacklisting by time needs a time limit to take the share of.
+            blacklist_start: self
+                .total_max_time
+                .map(|total| total.mul_f64(self.blacklist_trigger_percentage)),
             enable_blacklist_on_stagnation: self.enable_blacklist_on_stagnation,
-            random_seed: self.random_seed,
-            alternate_split_kinds: self.alternates_split_kinds(),
-            split_kind: self.split_kind,
+            random_seed: self.random_seed().unwrap_or(DEFAULT_RANDOM_SEED),
+            split_kinds: self.split_kinds(),
+            split_selection_rank: self.member.cegar().split_selection_rank,
         }
     }
 
@@ -193,11 +252,11 @@ impl<M: MemberConfig> CollectionConfig<M> {
         GoalFocusedSchedule {
             strategy: self.collection_strategy,
             variants_per_goal: self.variants_per_goal,
-            random_seed: self.random_seed,
-            max_collection_states: self.max_collection_size,
-            total_max_time: self.total_max_time,
+            random_seed: self.random_seed(),
+            limits: self.limits(),
             progress_states: self.progress_states,
-            alternate_split_kinds: self.alternates_split_kinds(),
+            split_kinds: self.split_kinds(),
+            split_selection_rank: self.member.cegar().split_selection_rank,
             single_goal_tasks: self.single_goal_tasks,
         }
     }

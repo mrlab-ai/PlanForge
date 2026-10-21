@@ -87,6 +87,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -99,9 +100,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -148,71 +148,71 @@ fn goal_collection_builds_every_goal_with_source_sets() {
     assert_eq!(
         abstractions[0]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[0]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         Some(0)
     );
     assert_eq!(
         abstractions[2]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[2]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         Some(1)
     );
     assert_eq!(
         abstractions[3]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(1)
     );
     assert_eq!(
         abstractions[3]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         Some(1)
     );
     assert_eq!(
         abstractions[4]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(1)
     );
     assert_eq!(
         abstractions[4]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         Some(2)
     );
     assert_eq!(
         abstractions[5]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[5]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         Some(2)
     );
     assert_eq!(abstractions[0].metadata().split_kind, SplitKind::Concrete);
@@ -226,6 +226,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -238,9 +239,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             progress_states: false,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -256,6 +256,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -268,9 +269,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -345,6 +345,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -357,9 +358,8 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -392,21 +392,22 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
     assert_eq!(
         abstractions[2]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(1)
     );
     assert_eq!(
         abstractions[2]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.variant_id),
-        Some(1)
+        Some(None),
+        "an initial-state specialist belongs to no variant"
     );
     assert!(
         !abstractions[2]
             .metadata()
-            .collection_member
+            .collection_membership()
             .is_some_and(|member| member.from_progress_state)
     );
     assert_eq!(
@@ -508,6 +509,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -520,9 +522,8 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -535,7 +536,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             .iter()
             .map(|abstraction| abstraction
                 .metadata()
-                .collection_member
+                .collection_membership()
                 .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
         vec![Some(0), Some(1)]
@@ -560,7 +561,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             .iter()
             .map(|abstraction| abstraction
                 .metadata()
-                .collection_member
+                .collection_membership()
                 .is_some_and(|member| member.from_progress_state))
             .collect::<Vec<_>>(),
         vec![false, false],
@@ -629,6 +630,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -641,9 +643,8 @@ fn progress_states_complete_after_a_dead_progress_state() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -660,15 +661,15 @@ fn progress_states_complete_after_a_dead_progress_state() {
             .map(|abstraction| (
                 abstraction
                     .metadata()
-                    .collection_member
+                    .collection_membership()
                     .map(|member| member.goal_id),
                 abstraction
                     .metadata()
-                    .collection_member
-                    .map(|member| member.variant_id),
+                    .collection_membership()
+                    .and_then(|member| member.variant_id),
                 abstraction
                     .metadata()
-                    .collection_member
+                    .collection_membership()
                     .is_some_and(|member| member.from_progress_state),
                 abstraction.metadata().stop_reason,
                 abstraction.metadata().concrete_plan_operator_ids.as_deref(),
@@ -680,7 +681,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
             .iter()
             .map(|abstraction| abstraction
                 .metadata()
-                .collection_member
+                .collection_membership()
                 .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
         vec![Some(0), Some(1)]
@@ -703,7 +704,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
     assert!(
         !abstractions[1]
             .metadata()
-            .collection_member
+            .collection_membership()
             .is_some_and(|member| member.from_progress_state)
     );
 }
@@ -771,6 +772,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 3,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -783,9 +785,8 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -799,7 +800,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
             .iter()
             .map(|abstraction| abstraction
                 .metadata()
-                .collection_member
+                .collection_membership()
                 .map(|member| member.goal_id))
             .collect::<Vec<_>>(),
         vec![Some(0), Some(1), Some(0)]
@@ -845,7 +846,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
             let h = abstraction.distances()[state_id];
             let goal = abstraction
                 .metadata()
-                .collection_member
+                .collection_membership()
                 .map(|member| member.goal_id)
                 .unwrap();
             let target: usize = if goal == 0 { 4 } else { 2 };
@@ -893,15 +894,15 @@ fn goal_collection_preserves_empty_goal_tasks() {
     assert_eq!(
         abstractions[0]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         None
     );
     assert_eq!(
         abstractions[0]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         None
     );
 }
@@ -946,6 +947,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -958,9 +960,8 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -976,15 +977,15 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
     assert_eq!(
         abstractions[0]
             .metadata()
-            .collection_member
+            .collection_membership()
             .map(|member| member.goal_id),
         Some(0)
     );
     assert_eq!(
         abstractions[0]
             .metadata()
-            .collection_member
-            .map(|member| member.variant_id),
+            .collection_membership()
+            .and_then(|member| member.variant_id),
         Some(0)
     );
 }

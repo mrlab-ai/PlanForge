@@ -199,7 +199,6 @@ pub(super) fn goal_cover_scp<'task>(
             progress_states: true,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })
@@ -216,7 +215,7 @@ pub(super) fn goal_cover_scp<'task>(
         .filter_map(|abstraction| {
             abstraction
                 .metadata()
-                .collection_member
+                .collection_membership()
                 .map(|member| member.goal_id)
         })
         .collect::<HashSet<_>>();
