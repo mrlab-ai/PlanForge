@@ -182,7 +182,7 @@ fn initial_cartesian_scp_value(
     let config = ScpConfig {
         table_construction_max_time: Some(Duration::from_secs(30)),
         saturator: Saturator::All,
-        random_seed: Some(1),
+        random_seed: 1,
         partitioning: if partitioning {
             CostPartitioningMethod::Region
         } else {
@@ -248,7 +248,7 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
         order_generator: OrderGenerator::Greedy,
         initial_order_generation_max_time: Some(Duration::ZERO),
         saturator: Saturator::All,
-        random_seed: Some(1),
+        random_seed: 1,
         partitioning: CostPartitioningMethod::Region,
         ..Default::default()
     };

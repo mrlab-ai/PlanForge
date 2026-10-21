@@ -11,7 +11,7 @@ use super::lookup::{
     current_h_for_distances,
 };
 use super::orders::max_heuristic_greedy_order;
-use super::partition::should_skip_zero_current_table;
+use super::partition::is_zero_at_evaluated_state;
 use super::sampling::random_walk_length;
 use super::scoring::{pairwise_region_stolen_cost, region_stolen_costs};
 use std::collections::{HashMap, HashSet};
@@ -127,7 +127,7 @@ pub(super) fn scp_config(saturator: Saturator, abstract_operator: bool) -> ScpCo
         max_time: Some(Duration::from_secs(10)),
         table_construction_max_time: Some(Duration::from_secs(10)),
         saturator,
-        random_seed: Some(1),
+        random_seed: 1,
         partitioning: if abstract_operator {
             CostPartitioningMethod::Region
         } else {

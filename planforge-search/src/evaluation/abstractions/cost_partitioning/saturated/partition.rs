@@ -175,8 +175,8 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             log_abstract_source_set_summary(component_id, source_sets);
         }
         let state_id = abstract_state_ids[component_id];
-        for &(phase, limited) in self.config.saturator.passes() {
-            let perimeter_state = match (limited, state_id) {
+        for pass in self.config.saturator.passes() {
+            let perimeter_state = match (pass.within_perimeter, state_id) {
                 (false, _) => None,
                 (true, Some(state_id)) => Some(state_id),
                 // A component without an abstract state for the evaluated
@@ -196,7 +196,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                         )));
                     }
                 };
-            let step = format!("{method} {phase}");
+            let step = format!("{method} {}", pass.label);
             log_table_summary(
                 &step,
                 component_id,
@@ -204,13 +204,12 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 &saturated,
                 abstract_state_ids,
             );
-            if should_skip_zero_current_table(
-                self.config.diversify,
-                &step,
-                component_id,
-                &distances,
-                abstract_state_ids,
-            ) {
+            // A cost partitioning for the evaluated state alone does not
+            // spend costs on a component that estimates nothing there.
+            if !self.config.diversify
+                && is_zero_at_evaluated_state(component_id, &distances, abstract_state_ids)
+            {
+                debug!("scp: skipping {step} abstraction {component_id}: current_h=0");
                 return Ok(ControlFlow::Continue(()));
             }
             let reduced = match &saturated {
@@ -239,22 +238,15 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 }
 
-pub(super) fn should_skip_zero_current_table(
-    diversify: bool,
-    step: &str,
+/// Whether `distances` of component `abstraction_id` estimate nothing at the
+/// evaluated state, whose abstract states are `abstract_state_ids`.
+pub(super) fn is_zero_at_evaluated_state(
     abstraction_id: usize,
     distances: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) -> bool {
-    if diversify {
-        return false;
-    }
-    let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    if current_h > float_tolerance::SEARCH_EPSILON {
-        return false;
-    }
-    debug!("scp: skipping {step} abstraction {abstraction_id}: current_h=0");
-    true
+    current_h_for_distances(abstraction_id, distances, abstract_state_ids)
+        <= float_tolerance::SEARCH_EPSILON
 }
 
 fn log_table_summary(

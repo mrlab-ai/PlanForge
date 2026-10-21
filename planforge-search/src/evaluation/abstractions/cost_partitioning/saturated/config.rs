@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
-use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
+use crate::evaluation::seed::RANDOM_SPLIT_SEED;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -35,15 +35,40 @@ option_enum!("saturator", Saturator {
     Perimstar => "perimstar",
 });
 
+/// One saturation pass over an abstraction.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SaturationPass {
+    /// The pass in logs.
+    pub(super) label: &'static str,
+    /// The pass saturates only within the perimeter of the evaluated state's
+    /// abstract goal distance (Seipp et al.).
+    pub(super) within_perimeter: bool,
+}
+
 impl Saturator {
-    /// The saturation passes over one abstraction, each with its log label and
-    /// whether it caps saturation at the evaluated state's abstract goal
-    /// distance (the perimeter of Seipp et al.).
-    pub(super) fn passes(self) -> &'static [(&'static str, bool)] {
+    /// The saturation passes over one abstraction, in order.
+    pub(super) fn passes(self) -> &'static [SaturationPass] {
+        const ALL: SaturationPass = SaturationPass {
+            label: "all",
+            within_perimeter: false,
+        };
+        const PERIM: SaturationPass = SaturationPass {
+            label: "perim",
+            within_perimeter: true,
+        };
         match self {
-            Self::All => &[("all", false)],
-            Self::Perim => &[("perim", true)],
-            Self::Perimstar => &[("perimstar/perim", true), ("perimstar/all", false)],
+            Self::All => &[ALL],
+            Self::Perim => &[PERIM],
+            Self::Perimstar => &[
+                SaturationPass {
+                    label: "perimstar/perim",
+                    ..PERIM
+                },
+                SaturationPass {
+                    label: "perimstar/all",
+                    ..ALL
+                },
+            ],
         }
     }
 }
@@ -109,16 +134,14 @@ pub struct ScpConfig {
     /// state.
     pub random_orders: usize,
     pub saturator: Saturator,
-    pub random_seed: Option<u64>,
+    /// Seeds order selection and sampling; by default the seed CEGAR's
+    /// random split selection starts from.
+    pub random_seed: u64,
     pub partitioning: CostPartitioningMethod,
 }
 
 impl Default for ScpConfig {
     fn default() -> Self {
-        let random_seed = DomainAbstractionCollectionConfig::default()
-            .member
-            .cegar
-            .random_seed;
         Self {
             max_time: Some(Duration::from_secs(200)),
             table_construction_max_time: None,
@@ -130,7 +153,7 @@ impl Default for ScpConfig {
             goal_cover_orders_per_goal: 4,
             random_orders: 3,
             saturator: Saturator::All,
-            random_seed,
+            random_seed: RANDOM_SPLIT_SEED,
             partitioning: CostPartitioningMethod::Label,
         }
     }

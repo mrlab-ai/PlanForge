@@ -156,7 +156,7 @@ fn scp_config(partitioning: CostPartitioningMethod) -> ScpConfig {
     ScpConfig {
         max_time: Some(Duration::from_secs(100)),
         table_construction_max_time: Some(Duration::from_secs(100)),
-        random_seed: Some(1),
+        random_seed: 1,
         partitioning,
         ..Default::default()
     }

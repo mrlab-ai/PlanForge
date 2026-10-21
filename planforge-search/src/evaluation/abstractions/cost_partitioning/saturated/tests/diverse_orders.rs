@@ -189,22 +189,9 @@ fn the_heuristic_is_the_maximum_over_the_retained_orders_only() {
 }
 
 #[test]
-fn diverse_orders_keep_tables_that_are_zero_only_at_the_initial_state() {
+fn a_table_is_zero_at_the_evaluated_state_only_where_it_estimates_nothing() {
     let distances = [0.0, 4.0];
-    let initial_state = [Some(0)];
 
-    assert!(should_skip_zero_current_table(
-        false,
-        "test",
-        0,
-        &distances,
-        &initial_state,
-    ));
-    assert!(!should_skip_zero_current_table(
-        true,
-        "test",
-        0,
-        &distances,
-        &initial_state,
-    ));
+    assert!(is_zero_at_evaluated_state(0, &distances, &[Some(0)]));
+    assert!(!is_zero_at_evaluated_state(0, &distances, &[Some(1)]));
 }

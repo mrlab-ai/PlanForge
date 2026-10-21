@@ -56,8 +56,7 @@ struct OrderSelection<'task> {
 }
 
 impl OrderSelection<'_> {
-    fn new(seed: Option<u64>) -> Self {
-        let seed = seed.unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED);
+    fn new(seed: u64) -> Self {
         Self {
             goal_distances_by_abstraction: Vec::new(),
             stolen_costs_by_abstraction: Vec::new(),
