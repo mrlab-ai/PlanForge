@@ -36,7 +36,10 @@ impl TimeLimit {
                 limit.0
             ));
         }
-        limit.duration()?;
+        // Construction budgets become deadlines before any parent deadline is
+        // applied, so a clock overflow is unconditionally a configuration error.
+        crate::resource_limits::Deadline::after(std::time::Instant::now(), limit.duration()?)
+            .map_err(|error| error.to_string())?;
         Ok(limit)
     }
 }

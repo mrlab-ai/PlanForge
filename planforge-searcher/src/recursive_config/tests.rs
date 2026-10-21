@@ -417,3 +417,20 @@ fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
     assert!(parse_search_spec("astar(max([]))").is_err());
     assert!(parse_search_spec("astar(max([ff()],blind()))").is_err());
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn construction_clock_overflow_is_rejected_without_rejecting_capped_source_budgets() {
+    // This fits Duration but exceeds the Linux Instant range.
+    assert!(std::time::Duration::try_from_secs_f64(1e19).is_ok());
+    for combinator in ["canonical", "scp", "posthoc_optimization"] {
+        let text = format!("astar({combinator}(domain(),construction_max_time=1e19))");
+        let error = parse_search_spec(&text).unwrap_err();
+        assert!(error.contains("construction_max_time"), "{error}");
+        assert!(error.contains("platform clock"), "{error}");
+    }
+    // Unlike the construction budget itself, a source budget is capped by it.
+    parse_search_spec("astar(scp(domain(max_time=1e19),construction_max_time=900))").unwrap();
+    // Potential optimization uses elapsed seconds rather than an Instant deadline.
+    parse_search_spec("astar(numeric_potential(max_diverse_generation_time=1e100))").unwrap();
+}
