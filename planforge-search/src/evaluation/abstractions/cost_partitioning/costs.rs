@@ -501,7 +501,7 @@ impl RemainingCosts {
                         .map(|cell| cell.amount)
                         .fold(0.0, f64::max),
                 );
-                let cost = (residual.base_cost - reduction).max(0.0);
+                let cost = cost_left(residual.base_cost, reduction);
                 residual.uniform_cost_cache.set(Some(cost));
                 cost
             })
@@ -520,7 +520,7 @@ impl RemainingCosts {
         } else {
             residual.source_set_usage.max_over(&source_set.source)
         };
-        (residual.base_cost - regional).max(0.0)
+        cost_left(residual.base_cost, regional)
     }
 
     pub fn reduce_by_source_set_allocation_with_deadline(
@@ -653,6 +653,18 @@ impl OperatorRemainingCost {
     fn invalidate_cache(&self) {
         self.uniform_cost_cache.set(None);
     }
+}
+
+/// What is left of `cost` when `used` of it is used, which never exceeds it
+/// beyond round-off; the round-off is snapped to zero as [`subtract_cost`]
+/// does.
+fn cost_left(cost: f64, used: f64) -> f64 {
+    let left = cost - used;
+    assert!(
+        left >= -float_tolerance::SEARCH_EPSILON,
+        "{used} of the operator cost {cost} is used, more than it is"
+    );
+    left.max(0.0)
 }
 
 fn subtract_cost(cost: f64, saturated: f64) -> Result<f64> {

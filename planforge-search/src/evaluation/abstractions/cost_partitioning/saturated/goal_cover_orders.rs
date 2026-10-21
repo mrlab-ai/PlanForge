@@ -50,10 +50,14 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             .values()
             .filter(|&&variant_count| progress_states || variant_count >= 2)
             .count();
-        let max_variants = variants_by_goal.values().copied().max().unwrap_or(0);
-        if goal_count == 0 || (!progress_states && max_variants < 2) {
+        if goal_count == 0 {
             return Vec::new();
         }
+        let max_variants = variants_by_goal
+            .values()
+            .copied()
+            .max()
+            .expect("a goal with variants has a variant count");
 
         // Rotate the anchor goal before varying its construction variant, so
         // that every goal is covered, including states where that goal is the
@@ -89,16 +93,16 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         components: &[AbstractionComponent<'_>],
     ) -> Option<usize> {
         if order.len() != components.len()
-            || !order.iter().copied().all(|id| {
-                components
-                    .get(id)
-                    .and_then(AbstractionComponent::goal_focused_member)
-                    .is_some()
-            })
+            || !order
+                .iter()
+                .all(|&id| components[id].goal_focused_member().is_some())
         {
             return None;
         }
-        let first = components[*order.first()?].goal_focused_member()?;
+        let first = order.first().expect("an SCP collection has a component");
+        let first = components[*first]
+            .goal_focused_member()
+            .expect("every component of the order is a goal-focused member");
         first
             .membership
             .from_progress_state
@@ -167,11 +171,7 @@ pub(super) fn goal_cover_order(
     require_pure_goal_focused_collection: bool,
     variant: GoalCoverOrderVariant,
 ) -> Option<Vec<usize>> {
-    let goal_member = |component_id: usize| {
-        components
-            .get(component_id)
-            .and_then(AbstractionComponent::goal_focused_member)
-    };
+    let goal_member = |component_id: usize| components[component_id].goal_focused_member();
     let is_goal_member = |component_id: usize| goal_member(component_id).is_some();
     let pure_goal_focused_collection = base_order.iter().copied().all(is_goal_member);
     if (require_pure_goal_focused_collection || variant.compact) && !pure_goal_focused_collection {
@@ -236,9 +236,8 @@ pub(super) fn goal_cover_order(
     };
     let mut sorted_anchor_components = anchor_components.clone();
     sorted_anchor_components.sort_by(compare_anchor);
-    let first_anchor = sorted_anchor_components
-        .get(variant.anchor_offset % sorted_anchor_components.len())
-        .copied()?;
+    let first_anchor =
+        sorted_anchor_components[variant.anchor_offset % sorted_anchor_components.len()];
     let first_member = member(first_anchor);
     let mut second_anchors = anchor_components
         .iter()

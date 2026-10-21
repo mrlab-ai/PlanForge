@@ -39,6 +39,7 @@ use planforge_cplex::{
 };
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex};
+use planforge_sas::utils::float_tolerance;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::info;
 
@@ -55,7 +56,7 @@ pub struct PostHocOptimizationHeuristic<'task> {
     /// appear with coefficient 1 in that constraint. Constraint right-hand
     /// side is uniformly 1.
     constraints: Vec<Vec<usize>>,
-    lp_model: RefCell<Option<LpModel>>,
+    lp_model: RefCell<LpModel>,
     state_value_cache: RefCell<StateValueCache>,
     values: RefCell<ExplicitState>,
     diagnostics_logged: RefCell<bool>,
@@ -67,6 +68,11 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
         task: &dyn AbstractNumericTask,
         mut components: Vec<AbstractionComponent<'task>>,
     ) -> Result<Self, String> {
+        if components.is_empty() {
+            return Err(
+                "posthoc optimization heuristic requires at least one component".to_string(),
+            );
+        }
         let relevant_operators = components
             .iter()
             .map(|component| component.relevant_operator_ids(task))
@@ -111,10 +117,6 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
     }
 
     fn evaluate_lp(&self, eval_state: &EvaluationState<'_, '_>) -> Result<f64, EvaluationError> {
-        if self.components.is_empty() {
-            return Ok(0.0);
-        }
-
         let mut values = self.values.borrow_mut();
         eval_state.fill_values(&mut values)?;
         let mut h_values = Vec::with_capacity(self.components.len());
@@ -143,7 +145,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
         let active: Vec<usize> = h_values
             .iter()
             .enumerate()
-            .filter_map(|(id, h)| (*h > 0.0).then_some(id))
+            .filter_map(|(id, h)| (*h > float_tolerance::SEARCH_EPSILON).then_some(id))
             .collect();
         if active.is_empty() {
             return Ok(0.0);
@@ -164,27 +166,28 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             "posthoc_optimization: active set {active:?} produced no LP rows; \
              this indicates a bug in `build_constraints`",
         );
+        let mut model = self.lp_model.borrow_mut();
         assert_eq!(
             h_values.len(),
-            self.lp_model
-                .borrow()
-                .as_ref()
-                .expect("nonempty active set requires an LP model")
-                .num_columns(),
+            model.num_columns(),
             "posthoc objective dimension differs from its persistent model",
         );
-
-        let mut model = self.lp_model.borrow_mut();
-        let model = model
-            .as_mut()
-            .expect("nonempty active set requires an LP model");
         model.set_objective(h_values).map_err(lp_evaluation_error)?;
         match model.solve().map_err(lp_evaluation_error)? {
-            SolveStatus::Optimal => model
-                .objective_value()
-                .map(|value| value.max(0.0))
-                .map_err(lp_evaluation_error),
-            SolveStatus::Infeasible => Ok(f64::INFINITY),
+            SolveStatus::Optimal => {
+                let value = model.objective_value().map_err(lp_evaluation_error)?;
+                // Every objective coefficient and variable is non-negative,
+                // so only the solver's tolerance can make the optimum
+                // negative.
+                assert!(
+                    value >= -float_tolerance::LP_EPSILON,
+                    "posthoc_optimization: the dual optimum {value} is negative"
+                );
+                Ok(value.max(0.0))
+            }
+            SolveStatus::Infeasible => {
+                unreachable!("posthoc_optimization: the dual LP is feasible at X = 0")
+            }
             other => Err(EvaluationError::ComputationFailed(format!(
                 "posthoc_optimization: CPLEX returned `{other:?}` for a well-formed LP \
                  (active={} abstractions, {} constraints); not falling back",
@@ -206,7 +209,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
         let positive: Vec<_> = h_values
             .iter()
             .enumerate()
-            .filter(|(_, h)| **h > 0.0)
+            .filter(|(_, h)| **h > float_tolerance::SEARCH_EPSILON)
             .collect();
         info!(
             "posthoc_optimization first-state diagnostics: abstractions={}, with_positive_h={}, lp_constraints={}",
@@ -220,17 +223,8 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
     }
 }
 
-fn build_lp_model(
-    num_abstractions: usize,
-    constraints: &[Vec<usize>],
-) -> Result<Option<LpModel>, String> {
-    if num_abstractions == 0 {
-        assert!(
-            constraints.is_empty(),
-            "zero-abstraction posthoc model cannot contain constraints"
-        );
-        return Ok(None);
-    }
+fn build_lp_model(num_abstractions: usize, constraints: &[Vec<usize>]) -> Result<LpModel, String> {
+    assert!(num_abstractions > 0, "a posthoc model has a column");
     let variables = vec![Variable::new(0.0, LpModel::infinity(), 0.0); num_abstractions];
     let constraints: Vec<LpConstraint> = constraints
         .iter()
@@ -249,7 +243,7 @@ fn build_lp_model(
     model
         .load(ObjectiveSense::Maximize, &variables, &constraints)
         .map_err(|error| error.to_string())?;
-    Ok(Some(model))
+    Ok(model)
 }
 
 fn lp_evaluation_error(error: planforge_cplex::Error) -> EvaluationError {

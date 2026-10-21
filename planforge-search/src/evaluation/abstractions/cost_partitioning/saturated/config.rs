@@ -51,7 +51,12 @@ impl Saturator {
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CostPartitioningMethod {
+    /// One cost per operator.
     Label,
+    /// One cost per source set of every abstract transition, for the
+    /// abstractions CEGAR builds. A pattern database has no source sets and
+    /// takes one cost per operator of what remains, as in label cost
+    /// partitioning.
     Region,
 }
 
