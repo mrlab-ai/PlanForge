@@ -59,7 +59,6 @@ pub(crate) enum ComponentUse {
 enum PdbPatternsConfig {
     Systematic(SystematicPatternGeneratorConfig),
     Greedy(GreedyPatternGeneratorConfig),
-    // Phase 4 adds the third closed strategy, CEGAR, here.
 }
 
 #[derive(Debug)]
@@ -70,15 +69,17 @@ struct PdbSourceConfig {
 
 impl PdbSourceConfig {
     fn from_args(args: &[ConfigArg]) -> Result<Self, String> {
+        // Without `patterns=`, the systematic patterns' options are given
+        // directly.
         let Some(patterns_arg) = args.iter().find(|arg| arg.key() == Some("patterns")) else {
-            let legacy = configure("pdb", CanonicalNumericPdbConfig::default(), args)?;
+            let systematic = configure("pdb", CanonicalNumericPdbConfig::default(), args)?;
             return Ok(Self {
                 patterns: PdbPatternsConfig::Systematic(SystematicPatternGeneratorConfig {
-                    max_pdb_states: legacy.max_pdb_states,
-                    max_pattern_size: legacy.max_pattern_size,
-                    only_interesting_patterns: legacy.only_interesting_patterns,
+                    max_pdb_states: systematic.max_pdb_states,
+                    max_pattern_size: systematic.max_pattern_size,
+                    only_interesting_patterns: systematic.only_interesting_patterns,
                 }),
-                systematic_heuristic: legacy.pdb_heuristic_config(),
+                systematic_heuristic: systematic.pdb_heuristic_config(),
             });
         };
 
@@ -550,7 +551,6 @@ fn component_source_call(value: &ConfigValue) -> Option<ConfigCall> {
         ConfigValue::Atom(name) if is_component_source_name(name) => {
             Some(ConfigCall::new(name.clone(), Vec::new()))
         }
-        ConfigValue::List(_) => None,
         _ => None,
     }
 }
