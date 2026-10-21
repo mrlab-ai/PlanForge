@@ -72,7 +72,9 @@ fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> Numer
 #[test]
 fn affine_sum_is_an_exact_additive_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Plus);
-    let view = analyze_additive_numeric_view(&task, VariableIndex::from_usize(2))
+    let coordinates = Coordinates::new(&task);
+    let view = coordinates.views()[2]
+        .as_ref()
         .expect("x+y should be additive");
 
     assert_eq!(view.expression.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
@@ -83,7 +85,7 @@ fn affine_sum_is_an_exact_additive_coordinate() {
 fn non_additive_effect_rejects_affine_coordinate() {
     let task = affine_sum_task(AssignmentOperation::Assign);
 
-    assert!(analyze_additive_numeric_view(&task, VariableIndex::from_usize(2)).is_none());
+    assert!(Coordinates::new(&task).views()[2].is_none());
 }
 
 #[test]
@@ -118,7 +120,7 @@ fn cost_dependent_expression_is_not_an_additive_view() {
         global_constraint: ExplicitFact::propositional(0, 0),
     });
 
-    assert!(analyze_additive_numeric_view(&task, VariableIndex::from_usize(2)).is_none());
+    assert!(Coordinates::new(&task).views()[2].is_none());
 }
 
 #[test]
