@@ -76,10 +76,7 @@ fn affine_sum_is_an_exact_additive_coordinate() {
         .expect("x+y should be additive");
 
     assert_eq!(view.expression.coefficients, vec![1.0, 1.0, 0.0, 0.0]);
-    assert_eq!(
-        view.operator_delta(OperatorIndex::new(0)).unwrap(),
-        ONE_VALUE
-    );
+    assert_eq!(view.operator_delta(OperatorIndex::new(0)), ONE_VALUE);
 }
 
 #[test]

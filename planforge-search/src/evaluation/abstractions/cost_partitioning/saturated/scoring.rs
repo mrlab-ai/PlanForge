@@ -108,14 +108,8 @@ pub(super) fn interval_stolen_costs(
                 let Some(right_regions) = right_by_operator.get(&operator_id) else {
                     continue;
                 };
-                let left_amount = left_saturated
-                    .get(operator_id)
-                    .copied()
-                    .unwrap_or(f64::NEG_INFINITY);
-                let right_amount = right_saturated
-                    .get(operator_id)
-                    .copied()
-                    .unwrap_or(f64::NEG_INFINITY);
+                let left_amount = left_saturated[operator_id];
+                let right_amount = right_saturated[operator_id];
                 let base_cost = operator_costs[operator_id];
                 if !left_amount.is_finite() || !right_amount.is_finite() || !base_cost.is_finite() {
                     continue;
@@ -169,7 +163,7 @@ pub(super) fn compute_surplus_cost(
 ) -> f64 {
     let sum: f64 = saturated_by_abs
         .iter()
-        .map(|costs| costs.get(op_id).copied().unwrap_or(f64::NEG_INFINITY))
+        .map(|costs| costs[op_id])
         .filter(|&w| w > f64::NEG_INFINITY)
         .sum();
     if !remaining_cost.is_finite() || !sum.is_finite() {

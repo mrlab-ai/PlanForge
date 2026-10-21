@@ -266,7 +266,7 @@ impl CartesianSemantics<'_> {
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
         if let Some(view) = self.coordinates.views()[numeric_var_id.index()].as_ref() {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage));
         }

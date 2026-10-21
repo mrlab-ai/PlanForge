@@ -150,7 +150,6 @@ fn diverse_orders_keep_partitionings_that_improve_different_samples() {
         lookup_tables: vec![LookupTable {
             abstraction_id: 0,
             distances,
-            unknown_value: f64::INFINITY,
         }],
         goal_cover_goal_id: None,
     };

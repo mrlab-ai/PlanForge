@@ -25,13 +25,9 @@ pub(crate) struct AdditiveNumericView {
 }
 
 impl AdditiveNumericView {
-    pub(crate) fn operator_delta(&self, operator_id: OperatorIndex) -> Result<NumericValue> {
-        self.operator_deltas
-            .get(operator_id.index())
-            .copied()
-            .ok_or_else(|| {
-                anyhow::anyhow!("missing additive-view delta for operator {operator_id}")
-            })
+    /// The constant every application of `operator_id` adds to the view.
+    pub(crate) fn operator_delta(&self, operator_id: OperatorIndex) -> NumericValue {
+        self.operator_deltas[operator_id.index()]
     }
 
     pub(crate) fn evaluate(&self, numeric_values: &[NumericValue]) -> NumericValue {
@@ -385,7 +381,7 @@ impl<'task> Coordinates<'task> {
     ) -> Result<Option<Interval>> {
         let mut preimage = target;
         if let Some(view) = &self.views[coordinate.index()] {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
             preimage.apply_reverse_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(Some(preimage.canonicalized()));
         }
@@ -426,7 +422,7 @@ impl<'task> Coordinates<'task> {
     ) -> Result<Interval> {
         let mut image = source;
         if let Some(view) = &self.views[coordinate.index()] {
-            let delta = float_tolerance::canonicalize(view.operator_delta(op_id)?);
+            let delta = float_tolerance::canonicalize(view.operator_delta(op_id));
             image.apply_op(&AssignmentOperation::Plus, &Interval::singleton(delta));
             return Ok(image.canonicalized());
         }

@@ -287,12 +287,11 @@ fn sailing_handcrafted_abstractions_interval_scp_initial_h_report() {
     let mut contributions = vec![0.0; specs.len()];
     for cp in &state.cp_heuristics {
         for table in &cp.lookup_tables {
-            let contribution = abstract_state_ids
-                .get(table.abstraction_id)
-                .copied()
-                .flatten()
-                .and_then(|state_id| table.distances.get(state_id).copied())
-                .unwrap_or(table.unknown_value);
+            let contribution = current_h_for_distances(
+                table.abstraction_id,
+                &table.distances,
+                &abstract_state_ids,
+            );
             if let Some(total) = contributions.get_mut(table.abstraction_id) {
                 *total += contribution;
             }

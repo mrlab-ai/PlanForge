@@ -8,7 +8,6 @@ fn scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
         lookup_tables: vec![LookupTable {
             abstraction_id: 0,
             distances,
-            unknown_value: f64::INFINITY,
         }],
         goal_cover_goal_id: None,
     };

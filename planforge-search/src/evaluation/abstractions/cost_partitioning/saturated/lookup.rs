@@ -4,7 +4,6 @@ use super::*;
 pub(super) struct LookupTable {
     pub(super) abstraction_id: usize,
     pub(super) distances: Vec<f64>,
-    pub(super) unknown_value: f64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -23,10 +22,6 @@ impl CostPartitioningHeuristic {
             self.lookup_tables.push(LookupTable {
                 abstraction_id,
                 distances,
-                // As in max_abstraction_heuristic: an entry this table does not
-                // have is an unknown lower bound, which is zero, not a proof
-                // that the state is a dead end.
-                unknown_value: 0.0,
             });
         }
     }
@@ -34,19 +29,9 @@ impl CostPartitioningHeuristic {
     pub(super) fn compute_heuristic(&self, abstract_state_ids: &[Option<usize>]) -> f64 {
         let mut sum = 0.0;
         for table in &self.lookup_tables {
-            let Some(state_id) = abstract_state_ids
-                .get(table.abstraction_id)
-                .copied()
-                .flatten()
-            else {
-                sum += table.unknown_value;
-                continue;
-            };
-            let Some(&value) = table.distances.get(state_id) else {
-                sum += table.unknown_value;
-                continue;
-            };
-            if value.is_infinite() && value.is_sign_positive() {
+            let value =
+                current_h_for_distances(table.abstraction_id, &table.distances, abstract_state_ids);
+            if value == f64::INFINITY {
                 return f64::INFINITY;
             }
             sum += value;
@@ -60,7 +45,7 @@ impl CostPartitioningHeuristic {
             .iter()
             .map(|table| table.distances.len())
             .sum::<usize>();
-        values.saturating_mul(std::mem::size_of::<f64>()) / 1024
+        values * std::mem::size_of::<f64>() / 1024
     }
 }
 
@@ -121,21 +106,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 }
 
-pub(super) fn lookup_distance(
-    abstraction_id: usize,
-    distances: &[f64],
-    unknown_value: f64,
-    abstract_state_ids: &[Option<usize>],
-) -> f64 {
-    abstract_state_ids
-        .get(abstraction_id)
-        .copied()
-        .flatten()
-        .and_then(|state_id| distances.get(state_id))
-        .copied()
-        .unwrap_or(unknown_value)
-}
-
 pub(super) fn max_abstraction_heuristic(
     state: &ScpState,
     abstract_state_ids: &[Option<usize>],
@@ -159,7 +129,7 @@ pub(super) fn max_abstraction_heuristic(
             // A distance that is present and infinite still means unreachable,
             // and still propagates, because that one was computed rather than
             // assumed.
-            lookup_distance(abstraction_id, distances, 0.0, abstract_state_ids)
+            current_h_for_distances(abstraction_id, distances, abstract_state_ids)
         })
         .fold(0.0, f64::max)
 }
@@ -167,26 +137,18 @@ pub(super) fn max_abstraction_heuristic(
 /// What a lookup table contributes for a component without an abstract state
 /// for the evaluated state: a pattern database state outside the database's
 /// enumerated states, or a component this evaluation did not look up. Such a
-/// component claims nothing, which is how cost-partitioning tables read it
-/// (`unknown_value`), and order selection scores it the same way.
+/// component claims nothing, in cost partitionings and in order selection.
 pub(super) const UNKNOWN_STATE_H: f64 = 0.0;
 
-/// The goal distance of the evaluated state in one component's table;
-/// infinite for an abstract dead end.
+/// The goal distance of the evaluated state in component `abstraction_id`'s
+/// table `distances`: infinite for an abstract dead end, and
+/// [`UNKNOWN_STATE_H`] without an abstract state.
 pub(super) fn current_h_for_distances(
     abstraction_id: usize,
     distances: &[f64],
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
-    let Some(state_id) = abstract_state_ids[abstraction_id] else {
-        return UNKNOWN_STATE_H;
-    };
-    *distances.get(state_id).unwrap_or_else(|| {
-        panic!(
-            "component {abstraction_id} state id {state_id} is outside its {} distances",
-            distances.len()
-        )
-    })
+    abstract_state_ids[abstraction_id].map_or(UNKNOWN_STATE_H, |state_id| distances[state_id])
 }
 
 pub(super) fn abstraction_heuristic_values(

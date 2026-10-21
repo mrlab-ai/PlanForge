@@ -859,7 +859,7 @@ fn compute_hash_effects_with_preconditions(
     }
     for (numeric_var_id, view) in additive_numeric_views.iter() {
         if numeric_domain_sizes[numeric_var_id] > 1
-            && view.operator_delta(concrete_op_id)?.value().abs() >= EPSILON
+            && view.operator_delta(concrete_op_id).value().abs() >= EPSILON
         {
             affected_numeric_vars.insert(VariableIndex::from_usize(numeric_var_id));
         }
@@ -902,7 +902,7 @@ fn compute_hash_effects_with_preconditions(
             let view = additive_numeric_views.get(v).with_context(|| {
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
-            let delta = view.operator_delta(concrete_op_id)?;
+            let delta = view.operator_delta(concrete_op_id);
             if delta.value().abs() >= EPSILON {
                 let delta_interval = Interval::singleton(delta);
                 let mut pairs = HashSet::new();

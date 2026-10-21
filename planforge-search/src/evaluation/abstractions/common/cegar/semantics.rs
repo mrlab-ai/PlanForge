@@ -4,7 +4,7 @@
 
 use std::cell::RefCell;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use planforge_sas::explicit_state::ExplicitStateSpace;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, NumericTaskExt, NumericType, NumericValue,
@@ -80,22 +80,24 @@ impl<'task> CegarSemantics<'task> {
             validate_abstraction_operator(task, op, OperatorIndex::from_usize(op_id))?;
         }
         let regions = RegionSemantics::new(task)?;
-        // Task views that move the initial state keep these costs pinned to
-        // the base task, so the goal distances stay admissible there.
+        // Costs within the search tolerance below zero are zero.
         let operator_costs = (0..task.get_operators().len())
-            .map(|op_id| task.abstract_operator_cost(OperatorIndex::from_usize(op_id)))
-            .collect();
+            .map(|op_id| {
+                let cost = task.abstract_operator_cost(OperatorIndex::from_usize(op_id));
+                ensure!(
+                    cost.value() >= -float_tolerance::SEARCH_EPSILON,
+                    "operator {op_id} has the negative cost {cost}"
+                );
+                Ok(NumericValue::new(cost.value().max(0.0)))
+            })
+            .collect::<Result<_>>()?;
         let mut wanted_split_boundaries = task
             .numeric_variables()
             .iter()
             .enumerate()
             .filter(|(_, variable)| variable.get_type() == &NumericType::Constant)
-            .filter_map(|(numeric_var_id, _)| {
-                task.get_initial_numeric_state_values()
-                    .get(numeric_var_id)
-                    .copied()
-                    .filter(|value| value.is_finite())
-            })
+            .map(|(numeric_var_id, _)| task.get_initial_numeric_state_values()[numeric_var_id])
+            .filter(|value| value.is_finite())
             .map(float_tolerance::canonicalize)
             .collect::<Vec<_>>();
         wanted_split_boundaries.sort_by(NumericValue::total_cmp);
@@ -136,6 +138,7 @@ impl<'task> CegarSemantics<'task> {
         self.regions.coordinates()
     }
 
+    /// The nonnegative cost of every operator.
     pub(crate) fn operator_costs(&self) -> &[NumericValue] {
         &self.operator_costs
     }
@@ -273,10 +276,8 @@ fn numeric_integer_lattice(
         lattice[numeric_var_id] =
             approximately_equal(initial_value.value(), initial_value.value().round())
                 && (0..task.get_operators().len()).all(|op_id| {
-                    view.operator_delta(OperatorIndex::from_usize(op_id))
-                        .is_ok_and(|delta| {
-                            approximately_equal(delta.value(), delta.value().round())
-                        })
+                    let delta = view.operator_delta(OperatorIndex::from_usize(op_id));
+                    approximately_equal(delta.value(), delta.value().round())
                 });
     }
     lattice

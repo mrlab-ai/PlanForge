@@ -179,7 +179,9 @@ impl<'task> CartesianSemantics<'task> {
             for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
                 if view.as_ref().is_some_and(|view| {
                     view.operator_delta(OperatorIndex::from_usize(op_id))
-                        .is_ok_and(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON)
+                        .value()
+                        .abs()
+                        > float_tolerance::SEARCH_EPSILON
                 }) {
                     numeric_dependencies[numeric_var_id] = true;
                 }
@@ -231,10 +233,8 @@ impl<'task> CartesianSemantics<'task> {
             numeric_integer_lattice[numeric_var_id] =
                 approximately_equal(initial_value.value(), initial_value.value().round())
                     && (0..operator_count).all(|op_id| {
-                        view.operator_delta(OperatorIndex::from_usize(op_id))
-                            .is_ok_and(|delta| {
-                                approximately_equal(delta.value(), delta.value().round())
-                            })
+                        let delta = view.operator_delta(OperatorIndex::from_usize(op_id));
+                        approximately_equal(delta.value(), delta.value().round())
                     });
         }
         Ok(Self {

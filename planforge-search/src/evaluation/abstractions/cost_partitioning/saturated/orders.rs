@@ -55,39 +55,21 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let total = state.goal_distances_by_abstraction.len();
         let mut order: Vec<usize> = (0..total).collect();
         order.shuffle(&mut state.rng);
-        let current_h: Vec<f64> = (0..total)
-            .map(|abs_id| {
-                abstract_state_ids
-                    .get(abs_id)
-                    .copied()
-                    .flatten()
-                    .and_then(|sid| {
-                        state
-                            .goal_distances_by_abstraction
-                            .get(abs_id)
-                            .and_then(|values| values.get(sid))
-                            .copied()
-                    })
-                    .unwrap_or(0.0)
-            })
-            .collect();
-
         let scores: Vec<f64> = (0..total)
             .map(|abs_id| {
-                let h = current_h[abs_id];
-                let stolen = state
-                    .stolen_costs_by_abstraction
-                    .get(abs_id)
-                    .copied()
-                    .unwrap_or(0.0);
-                compute_score(h, stolen)
+                let h = current_h_for_distances(
+                    abs_id,
+                    &state.goal_distances_by_abstraction[abs_id],
+                    abstract_state_ids,
+                );
+                compute_score(h, state.stolen_costs_by_abstraction[abs_id])
             })
             .collect();
 
         order.sort_by(|&a, &b| {
             scores[b]
                 .partial_cmp(&scores[a])
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .expect("order scores are not NaN")
         });
 
         order

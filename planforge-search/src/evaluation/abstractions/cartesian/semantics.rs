@@ -118,7 +118,9 @@ impl<'task> CartesianSemantics<'task> {
             for (numeric_var_id, view) in additive_numeric_views.iter().enumerate() {
                 if view.as_ref().is_some_and(|view| {
                     view.operator_delta(OperatorIndex::from_usize(op_id))
-                        .is_ok_and(|delta| delta.value().abs() > float_tolerance::SEARCH_EPSILON)
+                        .value()
+                        .abs()
+                        > float_tolerance::SEARCH_EPSILON
                 }) {
                     numeric_dependencies[numeric_var_id] = true;
                 }

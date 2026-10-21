@@ -276,9 +276,7 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let candidate = target_distance
-                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()]
-                    .value()
-                    .max(0.0);
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
                 shortest_paths.set_generating_transition(
@@ -305,9 +303,7 @@ pub(super) fn update_shortest_paths_after_split(
                 continue;
             }
             let alternative = distance
-                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()]
-                    .value()
-                    .max(0.0);
+                + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
             if alternative + float_tolerance::SEARCH_EPSILON
                 < shortest_paths.distances[transition.source]
             {
