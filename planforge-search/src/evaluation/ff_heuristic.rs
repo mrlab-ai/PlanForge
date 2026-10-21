@@ -1220,7 +1220,7 @@ impl<'task> FfHeuristic<'task> {
             &mut scratch.numeric,
         )?;
         // The initial state already evaluates derived numerics correctly,
-        // but `fill_numeric_vars` returns singleton ranges for them. Run
+        // but the decoded numeric state gives singleton ranges for them. Run
         // assignment-axiom propagation once so any wider-than-singleton
         // bounds (e.g. uninitialized derived = -∞/+∞) settle to a
         // consistent starting point. We don't care about which vars
@@ -1237,10 +1237,12 @@ impl<'task> FfHeuristic<'task> {
         scratch.dirty_vars_scratch.clear();
 
         // Layer 0 propositional facts. Batch-read the entire packed
-        // propositional state once (`fill_state`), then index directly
-        // into the resulting Vec — saves O(num_facts) bound-checked
-        // `state_packer.get` calls per evaluation.
-        live_state.fill_state(registry, &mut scratch.prop_state_values);
+        // propositional state once, then index directly into the resulting
+        // Vec — saves O(num_facts) bound-checked `state_packer.get` calls
+        // per evaluation.
+        registry
+            .view(live_state)
+            .fill_propositional(&mut scratch.prop_state_values);
         for (var, &value) in scratch.prop_state_values.iter().enumerate() {
             let Some(&offset) = self.fact_id_offsets.get(var) else {
                 break;

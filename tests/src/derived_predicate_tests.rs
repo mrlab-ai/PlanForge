@@ -567,10 +567,7 @@ fn a_derived_closure_grows_when_an_operator_extends_the_graph() {
 
     let proven = |state: &_| -> BTreeSet<usize> {
         let mut propositional = Vec::new();
-        let mut numeric = Vec::new();
-        registry
-            .fill_state_and_numeric_vars(state, &mut propositional, &mut numeric)
-            .expect("unpacking a state of the fixture");
+        registry.view(state).fill_propositional(&mut propositional);
         derived
             .iter()
             .copied()

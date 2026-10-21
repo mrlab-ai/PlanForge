@@ -1,11 +1,12 @@
 use crate::{
-    axioms::PropositionalAxiom,
+    axioms::{AssignmentAxiom, CalOperator, PropositionalAxiom},
+    explicit_state::ExplicitState,
     numeric_task::{
         Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
         NumericRootTaskParts, NumericType, NumericValue, NumericVariable, Operator, OperatorCost,
         TaskRef, VariableIndex,
     },
-    state_registry::StateRegistry,
+    state_registry::{ConcreteStateView, StateRegistry},
 };
 use std::sync::Arc;
 
@@ -26,20 +27,71 @@ fn test_state_registry_initial_state() {
     );
 }
 
+/// A task with one variable of every numeric type: `x` regular, `c`
+/// constant, `cost` a cost variable and `d = x + c` derived.
+fn task_with_every_numeric_type() -> TaskRef<'static> {
+    Arc::new(NumericRootTask::new(NumericRootTaskParts {
+        version: 4,
+        metric: Metric::new(true, Some(VariableIndex::new(2))),
+        variables: vec![ExplicitVariable::new(
+            2,
+            "p".into(),
+            vec!["false".into(), "true".into()],
+            None,
+            ExplicitValueIndex::new(0),
+        )],
+        numeric_variables: vec![
+            NumericVariable::new("x".into(), NumericType::Regular, None),
+            NumericVariable::new("c".into(), NumericType::Constant, None),
+            NumericVariable::new("cost".into(), NumericType::Cost, None),
+            NumericVariable::new("d".into(), NumericType::Derived, Some(0)),
+        ],
+        goals: vec![ExplicitFact::propositional(0, 1)],
+        mutexes: vec![],
+        state: vec![ExplicitValueIndex::new(1)],
+        numeric_state: [2.0, 3.0, 5.0, 0.0].map(NumericValue::new).to_vec(),
+        operators: vec![],
+        axioms: vec![],
+        comparison_axioms: vec![],
+        assignment_axioms: vec![AssignmentAxiom::new(
+            VariableIndex::new(3),
+            CalOperator::Sum,
+            VariableIndex::new(0),
+            VariableIndex::new(1),
+        )],
+        global_constraint: ExplicitFact::propositional(0, 1),
+    }))
+}
+
 #[test]
-fn concrete_state_view_matches_registry_decoding() {
-    let task: TaskRef = Arc::new(get_root_task());
-    let mut registry = StateRegistry::for_task(task);
+fn concrete_state_view_decodes_inputs_and_derived_values() {
+    let mut registry = StateRegistry::for_task(task_with_every_numeric_type());
     let initial = registry.get_initial_state();
     let view = registry.view(&initial);
 
-    let mut propositional = Vec::new();
-    view.fill_propositional(&mut propositional);
-    assert_eq!(propositional, initial.get_state(&registry));
-
     let mut numeric = Vec::new();
+    view.fill_numeric_unevaluated(&mut numeric);
+    assert_eq!(numeric, [2.0, 3.0, 5.0, 0.0].map(NumericValue::new));
     view.fill_numeric(&mut numeric).unwrap();
-    assert_eq!(numeric, registry.get_numeric_vars(&initial).unwrap());
+    assert_eq!(numeric, [2.0, 3.0, 5.0, 5.0].map(NumericValue::new));
+
+    let mut explicit = ExplicitState::default();
+    view.fill_explicit(&mut explicit).unwrap();
+    assert_eq!(explicit.propositional, [ExplicitValueIndex::new(1)]);
+    assert_eq!(explicit.numeric, numeric);
+    assert_eq!(
+        initial.get_numeric_state(&registry),
+        [NumericValue::new(2.0)]
+    );
+}
+
+#[test]
+#[should_panic(expected = "no numeric values before the axioms")]
+fn a_decoded_view_has_no_unevaluated_numeric_values() {
+    let registry = StateRegistry::for_task(task_with_every_numeric_type());
+    let numeric = [2.0, 3.0, 5.0, 5.0].map(NumericValue::new);
+    let view = ConcreteStateView::from_decoded(registry.global_state_packer(), &[0], &numeric);
+    view.fill_numeric_unevaluated(&mut Vec::new());
 }
 
 #[test]
@@ -105,7 +157,8 @@ fn missing_cost_slot_is_an_invariant_violation() {
     state_registry.numeric_indices[1] = None;
 
     let _ = state_registry
-        .get_numeric_var_value_unevaluated(&initial_state, 1)
+        .view(&initial_state)
+        .numeric_value_unevaluated(VariableIndex::new(1))
         .unwrap();
 }
 
@@ -271,7 +324,8 @@ fn register_state_deduplicates_canonicalized_numeric_values() {
     assert_eq!(first.get_id(), second.get_id());
     assert_eq!(
         state_registry
-            .get_numeric_var_value_unevaluated(&first, 0)
+            .view(&first)
+            .numeric_value_unevaluated(VariableIndex::new(0))
             .unwrap(),
         NumericValue::new(0.3)
     );

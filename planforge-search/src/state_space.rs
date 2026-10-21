@@ -288,13 +288,13 @@ pub fn enumerate_state_space(
                 "registered state {state_id} disappeared: {error:?}"
             ))
         })?;
-        registry
-            .fill_state_and_numeric_vars(&state, &mut propositional_scratch, &mut numeric_scratch)
-            .map_err(|error| {
-                StateSpaceEnumerationError::Enumeration(format!(
-                    "could not decode state {state_id}: {error:?}"
-                ))
-            })?;
+        let view = registry.view(&state);
+        view.fill_propositional(&mut propositional_scratch);
+        view.fill_numeric(&mut numeric_scratch).map_err(|error| {
+            StateSpaceEnumerationError::Enumeration(format!(
+                "could not decode state {state_id}: {error:?}"
+            ))
+        })?;
         for &value in &propositional_scratch {
             propositional_values.push(value);
         }

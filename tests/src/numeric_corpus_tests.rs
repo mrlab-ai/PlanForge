@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
     AbstractNumericTask, ExplicitValueIndex, NumericRootTask, NumericType, VariableIndex,
@@ -566,23 +567,23 @@ fn plant_watering_lmcutnumeric_is_admissible_finite_and_solves_optimally() {
     let mut registry = StateRegistry::for_task(Arc::new(&task));
     let mut state = registry.get_initial_state();
     let mut landmarks = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default());
-    let mut propositional_values = Vec::new();
-    let mut numeric_values = Vec::new();
+    let mut values = ExplicitState::default();
 
     for (step, operator) in std::iter::once(None)
         .chain(blind_plan.iter().map(Some))
         .enumerate()
     {
         registry
-            .fill_state_and_numeric_vars(&state, &mut propositional_values, &mut numeric_values)
+            .view(&state)
+            .fill_explicit(&mut values)
             .unwrap_or_else(|e| {
                 panic!("failed to unpack Plant Watering state at step {step}: {e:?}")
             });
         let (dead_end, total_cost) = landmarks
             .compute_landmark_cost(
-                &propositional_values,
+                &values.propositional,
                 state.buffer(&registry).len(),
-                &numeric_values,
+                &values.numeric,
             )
             .unwrap_or_else(|e| panic!("LM-cut evaluation failed at step {step}: {e}"));
 
@@ -661,15 +662,16 @@ fn lmcutnumeric_counts_numeric_goal_conditions() {
         let task = translate_in_memory(&dir.join("domain.pddl"), &problem_file(&dir));
         let mut registry = StateRegistry::for_task(Arc::new(&task));
         let state = registry.get_initial_state();
-        let (mut propositional_values, mut numeric_values) = (Vec::new(), Vec::new());
+        let mut values = ExplicitState::default();
         registry
-            .fill_state_and_numeric_vars(&state, &mut propositional_values, &mut numeric_values)
+            .view(&state)
+            .fill_explicit(&mut values)
             .unwrap_or_else(|e| panic!("failed to unpack the {domain} initial state: {e:?}"));
         let (dead_end, initial_h) = LandmarkCutLandmarks::new(&task, LmCutNumericConfig::default())
             .compute_landmark_cost(
-                &propositional_values,
+                &values.propositional,
                 state.buffer(&registry).len(),
-                &numeric_values,
+                &values.numeric,
             )
             .unwrap_or_else(|e| panic!("LM-cut evaluation failed on {domain}: {e}"));
         assert!(!dead_end, "the {domain} initial state is not a dead end");

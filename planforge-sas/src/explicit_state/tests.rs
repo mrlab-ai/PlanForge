@@ -10,12 +10,12 @@ fn registry_values(
     registry: &StateRegistry<'_>,
     state: &crate::state_registry::ConcreteState,
 ) -> ExplicitState {
-    ExplicitState {
-        propositional: state.get_state(registry),
-        numeric: registry
-            .get_numeric_vars(state)
-            .expect("a registered state has numeric values"),
-    }
+    let mut values = ExplicitState::default();
+    registry
+        .view(state)
+        .fill_explicit(&mut values)
+        .expect("a registered state has numeric values");
+    values
 }
 
 #[test]

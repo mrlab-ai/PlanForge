@@ -584,7 +584,9 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     }
 
     fn populate_applicable_operators(&mut self, state: &ConcreteState) {
-        state.fill_state(&self.state_registry, &mut self.scratch.state_values);
+        self.state_registry
+            .view(state)
+            .fill_propositional(&mut self.scratch.state_values);
         self.scratch.applicable_operators.clear();
         self.successor_generator.get_applicable_operators(
             &self.scratch.state_values,
