@@ -59,7 +59,9 @@ pub(super) fn refine_domain_abstraction(
     )
     .context("failed to construct the trivial domain abstraction")?;
     // Every initial split divides a different variable of the trivial
-    // abstraction, so it divides every abstract state if it divides one.
+    // abstraction, so it divides every abstract state if it divides one. As
+    // for Cartesian abstractions, a split that would exceed `max_states` is
+    // left out.
     for initial_split in initial_splits(&semantics, &config.scope, config.cegar.random_seed) {
         if let Some(split) = initial_split.in_state(0, &factory.state_region(0))
             && factory.states_after_split(&split) <= config.cegar.max_states as u128
