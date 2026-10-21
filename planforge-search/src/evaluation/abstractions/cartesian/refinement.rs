@@ -37,15 +37,7 @@ impl WorkingAbstraction {
         self.self_loop_operator_ids
             .push(old_self_loops.clone_without(split_dependent_operators));
 
-        let old_transitions: Vec<TransitionKey> = self
-            .remove_incident_transitions(old_state_id)
-            .into_iter()
-            .map(|transition| TransitionKey {
-                source: transition.source,
-                concrete_op_id: transition.concrete_op_id,
-                target: transition.target,
-            })
-            .collect();
+        let old_transitions = self.remove_incident_transitions(old_state_id);
         let replacements = replacement_transitions(
             semantics,
             SplitStates {

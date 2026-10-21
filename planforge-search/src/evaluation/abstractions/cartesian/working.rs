@@ -1,13 +1,6 @@
 use super::*;
 
 #[derive(Debug, Clone)]
-pub(super) struct WorkingTransition {
-    pub(super) source: usize,
-    pub(super) target: usize,
-    pub(super) concrete_op_id: OperatorIndex,
-}
-
-#[derive(Debug, Clone)]
 pub(super) struct OperatorBitSet {
     pub(super) words: Box<[u64]>,
     pub(super) operator_count: usize,
@@ -116,7 +109,7 @@ pub(super) struct WorkingAbstraction {
     pub(super) states: Vec<CartesianSet>,
     pub(super) leaf_node_ids: Vec<usize>,
     pub(super) hierarchy: CartesianRefinementHierarchy,
-    pub(super) transitions: Vec<Option<WorkingTransition>>,
+    pub(super) transitions: Vec<Option<TransitionKey>>,
     pub(super) free_transition_ids: Vec<usize>,
     pub(super) outgoing: Vec<Vec<usize>>,
     pub(super) incoming: Vec<Vec<usize>>,
@@ -172,11 +165,7 @@ impl WorkingAbstraction {
         if self.transition_ids_by_key.contains_key(&key) {
             return;
         }
-        let transition = WorkingTransition {
-            source,
-            target,
-            concrete_op_id: op_id,
-        };
+        let transition = key;
         let transition_id = if let Some(transition_id) = self.free_transition_ids.pop() {
             assert!(
                 self.transitions[transition_id].is_none(),
@@ -195,15 +184,11 @@ impl WorkingAbstraction {
         self.incoming[target].push(transition_id);
     }
 
-    pub(super) fn remove_transition(&mut self, transition_id: usize) -> WorkingTransition {
+    pub(super) fn remove_transition(&mut self, transition_id: usize) -> TransitionKey {
         let transition = self.transitions[transition_id]
             .take()
             .expect("Cartesian adjacency references a removed transition");
-        let removed_id = self.transition_ids_by_key.remove(&TransitionKey {
-            source: transition.source,
-            concrete_op_id: transition.concrete_op_id,
-            target: transition.target,
-        });
+        let removed_id = self.transition_ids_by_key.remove(&transition);
         assert_eq!(
             removed_id,
             Some(transition_id),
@@ -213,14 +198,17 @@ impl WorkingAbstraction {
         transition
     }
 
-    pub(super) fn remove_incident_transitions(
-        &mut self,
-        state_id: usize,
-    ) -> Vec<WorkingTransition> {
+    /// The transitions into or out of `state_id`, ascending.
+    pub(super) fn incident_transition_ids(&self, state_id: usize) -> Vec<usize> {
         let mut incident = self.outgoing[state_id].clone();
         incident.extend(self.incoming[state_id].iter().copied());
         incident.sort_unstable();
         incident.dedup();
+        incident
+    }
+
+    pub(super) fn remove_incident_transitions(&mut self, state_id: usize) -> Vec<TransitionKey> {
+        let incident = self.incident_transition_ids(state_id);
 
         let mut old_transitions = Vec::with_capacity(incident.len());
         let mut changed_outgoing = Vec::with_capacity(incident.len());
@@ -253,7 +241,7 @@ impl WorkingAbstraction {
             .filter_map(|(id, transition)| transition.as_ref().map(|_| id))
     }
 
-    pub(super) fn transition(&self, transition_id: usize) -> &WorkingTransition {
+    pub(super) fn transition(&self, transition_id: usize) -> &TransitionKey {
         self.transitions[transition_id]
             .as_ref()
             .expect("Cartesian adjacency references a removed transition")

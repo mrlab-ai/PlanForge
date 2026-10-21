@@ -183,11 +183,7 @@ impl BackwardGraph for WorkingGraph<'_> {
             }
             incoming.push((
                 transition.source,
-                TransitionKey {
-                    source: transition.source,
-                    concrete_op_id: transition.concrete_op_id,
-                    target,
-                },
+                *transition,
                 operator_costs[transition.concrete_op_id.index()].value(),
             ));
         }
@@ -286,14 +282,7 @@ pub(super) fn update_shortest_paths_after_split(
                 + semantics.cegar().operator_costs()[transition.concrete_op_id.index()].value();
             if candidate + float_tolerance::SEARCH_EPSILON < shortest_paths.distances[source] {
                 shortest_paths.distances[source] = candidate;
-                shortest_paths.set_generating_transition(
-                    source,
-                    TransitionKey {
-                        source,
-                        concrete_op_id: transition.concrete_op_id,
-                        target: transition.target,
-                    },
-                );
+                shortest_paths.set_generating_transition(source, *transition);
                 heap.push((Reverse(NotNan::new(candidate).unwrap()), source));
             }
         }
@@ -315,14 +304,7 @@ pub(super) fn update_shortest_paths_after_split(
                 < shortest_paths.distances[transition.source]
             {
                 shortest_paths.distances[transition.source] = alternative;
-                shortest_paths.set_generating_transition(
-                    transition.source,
-                    TransitionKey {
-                        source: transition.source,
-                        concrete_op_id: transition.concrete_op_id,
-                        target,
-                    },
-                );
+                shortest_paths.set_generating_transition(transition.source, *transition);
                 heap.push((
                     Reverse(NotNan::new(alternative).unwrap()),
                     transition.source,

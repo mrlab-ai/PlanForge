@@ -195,41 +195,75 @@ impl CartesianRefinementHierarchy {
         split: &Split,
         old_state_is_wanted_or_lower: bool,
     ) -> Result<(usize, usize)> {
-        match split {
-            Split::Propositional { var_id, wanted, .. } => self.split_propositional(
-                leaf_node_id,
-                old_state_id,
-                new_state_id,
-                *var_id,
-                wanted.clone(),
-                old_state_is_wanted_or_lower,
-            )?,
-            Split::Numeric {
-                var_id,
-                boundary,
-                lower_includes_boundary,
-                ..
-            } => self.split_numeric(
-                leaf_node_id,
-                old_state_id,
-                new_state_id,
-                NumericSplit {
+        let (first_child, second_child) = self.replace_leaf(
+            leaf_node_id,
+            old_state_id,
+            new_state_id,
+            old_state_is_wanted_or_lower,
+            |first_child, second_child| match split {
+                Split::Propositional { var_id, wanted, .. } => RefinementNode::Propositional {
+                    var_id: *var_id,
+                    wanted: wanted.clone(),
+                    wanted_child: first_child,
+                    other_child: second_child,
+                },
+                Split::Numeric {
+                    var_id,
+                    boundary,
+                    lower_includes_boundary,
+                    ..
+                } => RefinementNode::Numeric {
                     var_id: *var_id,
                     boundary: *boundary,
                     lower_includes_boundary: *lower_includes_boundary,
-                    old_state_is_lower: old_state_is_wanted_or_lower,
+                    lower_child: first_child,
+                    upper_child: second_child,
                 },
-            )?,
-        }
-        // The first child node is the wanted or lower one.
-        let first_child = self.nodes.len() - 2;
+            },
+        )?;
         Ok(if old_state_is_wanted_or_lower {
-            (first_child, first_child + 1)
+            (first_child, second_child)
         } else {
-            (first_child + 1, first_child)
+            (second_child, first_child)
         })
     }
 
+    /// Replaces leaf `leaf_node_id` of `old_state_id` by the node `node`
+    /// builds over two new leaves, the old state's first iff
+    /// `old_state_is_first`. Returns the first and second leaf.
+    fn replace_leaf(
+        &mut self,
+        leaf_node_id: usize,
+        old_state_id: usize,
+        new_state_id: usize,
+        old_state_is_first: bool,
+        node: impl FnOnce(usize, usize) -> RefinementNode,
+    ) -> Result<(usize, usize)> {
+        let leaf = self
+            .nodes
+            .get(leaf_node_id)
+            .with_context(|| format!("missing hierarchy leaf node {leaf_node_id}"))?;
+        ensure!(
+            matches!(leaf, RefinementNode::Leaf { state_id } if *state_id == old_state_id),
+            "hierarchy node {leaf_node_id} is not leaf state {old_state_id}"
+        );
+        let (first_state, second_state) = if old_state_is_first {
+            (old_state_id, new_state_id)
+        } else {
+            (new_state_id, old_state_id)
+        };
+        let first_child = self.nodes.len();
+        self.nodes.push(RefinementNode::Leaf {
+            state_id: first_state,
+        });
+        self.nodes.push(RefinementNode::Leaf {
+            state_id: second_state,
+        });
+        self.nodes[leaf_node_id] = node(first_child, first_child + 1);
+        Ok((first_child, first_child + 1))
+    }
+
+    /// The ICAPS26 abstraction's propositional split; see [`Self::split`].
     pub(crate) fn split_propositional(
         &mut self,
         leaf_node_id: usize,
@@ -241,39 +275,22 @@ impl CartesianRefinementHierarchy {
     ) -> Result<()> {
         wanted.sort_unstable();
         wanted.dedup();
-        let wanted_node_id = self.nodes.len();
-        let other_node_id = wanted_node_id + 1;
-        self.nodes.push(RefinementNode::Leaf {
-            state_id: if old_state_is_wanted {
-                old_state_id
-            } else {
-                new_state_id
+        self.replace_leaf(
+            leaf_node_id,
+            old_state_id,
+            new_state_id,
+            old_state_is_wanted,
+            |wanted_child, other_child| RefinementNode::Propositional {
+                var_id,
+                wanted,
+                wanted_child,
+                other_child,
             },
-        });
-        self.nodes.push(RefinementNode::Leaf {
-            state_id: if old_state_is_wanted {
-                new_state_id
-            } else {
-                old_state_id
-            },
-        });
-        let node = self
-            .nodes
-            .get_mut(leaf_node_id)
-            .with_context(|| format!("missing hierarchy leaf node {leaf_node_id}"))?;
-        ensure!(
-            matches!(node, RefinementNode::Leaf { state_id } if *state_id == old_state_id),
-            "hierarchy node {leaf_node_id} is not leaf state {old_state_id}"
-        );
-        *node = RefinementNode::Propositional {
-            var_id,
-            wanted,
-            wanted_child: wanted_node_id,
-            other_child: other_node_id,
-        };
+        )?;
         Ok(())
     }
 
+    /// The ICAPS26 abstraction's numeric split; see [`Self::split`].
     pub(crate) fn split_numeric(
         &mut self,
         leaf_node_id: usize,
@@ -291,37 +308,19 @@ impl CartesianRefinementHierarchy {
             boundary.is_finite(),
             "Cartesian split boundary must be finite"
         );
-        let lower_node_id = self.nodes.len();
-        let upper_node_id = lower_node_id + 1;
-        self.nodes.push(RefinementNode::Leaf {
-            state_id: if old_state_is_lower {
-                old_state_id
-            } else {
-                new_state_id
+        self.replace_leaf(
+            leaf_node_id,
+            old_state_id,
+            new_state_id,
+            old_state_is_lower,
+            |lower_child, upper_child| RefinementNode::Numeric {
+                var_id,
+                boundary,
+                lower_includes_boundary,
+                lower_child,
+                upper_child,
             },
-        });
-        self.nodes.push(RefinementNode::Leaf {
-            state_id: if old_state_is_lower {
-                new_state_id
-            } else {
-                old_state_id
-            },
-        });
-        let node = self
-            .nodes
-            .get_mut(leaf_node_id)
-            .with_context(|| format!("missing hierarchy leaf node {leaf_node_id}"))?;
-        ensure!(
-            matches!(node, RefinementNode::Leaf { state_id } if *state_id == old_state_id),
-            "hierarchy node {leaf_node_id} is not leaf state {old_state_id}"
-        );
-        *node = RefinementNode::Numeric {
-            var_id,
-            boundary,
-            lower_includes_boundary,
-            lower_child: lower_node_id,
-            upper_child: upper_node_id,
-        };
+        )?;
         Ok(())
     }
 }

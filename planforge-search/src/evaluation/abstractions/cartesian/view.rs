@@ -118,10 +118,7 @@ fn projected_transition_count(
 ) -> Result<usize> {
     let split_state_id = split.state_id();
     let children = split_child_regions(&working.states()[split_state_id], split)?;
-    let mut incident = working.outgoing()[split_state_id].clone();
-    incident.extend(working.incoming()[split_state_id].iter().copied());
-    incident.sort_unstable();
-    incident.dedup();
+    let incident = working.incident_transition_ids(split_state_id);
     let unaffected = working
         .transition_ids_by_key
         .len()
@@ -129,14 +126,7 @@ fn projected_transition_count(
         .expect("incident Cartesian transition count exceeds active transition count");
     let incident: Vec<TransitionKey> = incident
         .into_iter()
-        .map(|transition_id| {
-            let transition = working.transition(transition_id);
-            TransitionKey {
-                source: transition.source,
-                concrete_op_id: transition.concrete_op_id,
-                target: transition.target,
-            }
-        })
+        .map(|transition_id| *working.transition(transition_id))
         .collect();
     let replacements: HashSet<TransitionKey> = replacement_transitions(
         semantics,
