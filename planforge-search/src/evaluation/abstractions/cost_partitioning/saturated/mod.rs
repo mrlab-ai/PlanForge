@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex, TaskRef};
+use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::info;
 
@@ -135,11 +135,10 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
                 }
             }
         }
-        let original_costs: Vec<f64> = (0..task.get_operators().len())
-            .map(|op_id| {
-                task.abstract_operator_cost(OperatorIndex::from_usize(op_id))
-                    .value()
-            })
+        let original_costs: Vec<f64> = task
+            .effective_operator_costs()
+            .iter()
+            .map(|cost| cost.value())
             .collect();
 
         let mut h_values: Vec<Vec<f64>> = Vec::with_capacity(components.len());

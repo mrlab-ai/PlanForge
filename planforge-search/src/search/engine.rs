@@ -3,10 +3,7 @@ use super::open_list::{DualQueueOpenList, OpenEntry};
 use super::policy::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm};
 use super::space::{SearchNodeInfo, SearchSpace};
 use super::stats::{ProgressSnapshot, SearchCounters, SearchStats};
-use super::{
-    SearchEngine, SearchResult, SearchStatus, compute_effective_operator_costs, current_memory_kb,
-    format_progress_value,
-};
+use super::{SearchEngine, SearchResult, SearchStatus, current_memory_kb, format_progress_value};
 use crate::{
     evaluation::{EvaluationError, EvaluationState, Heuristic},
     successor_generator::SuccessorTree,
@@ -79,7 +76,7 @@ pub struct BestFirstSearch<'a, A: SearchAlgorithm> {
     initial_state_is_proven_optimal: bool,
     algorithm: A,
 
-    config: SearchConfig,
+    config: SearchConfig<'a>,
     stats: SearchStats,
     scratch: ExpansionScratch,
     start_time: Option<Instant>,
@@ -212,7 +209,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         // Required to derive a correct min_action_cost under metric.
         let mut state_registry = state_registry;
         let initial_state = state_registry.get_initial_state();
-        let operator_costs = compute_effective_operator_costs(task);
+        let operator_costs = task.effective_operator_costs();
 
         // Determine `min_action_cost`.
         let min_action_cost = operator_costs

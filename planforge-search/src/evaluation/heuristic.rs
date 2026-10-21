@@ -2,8 +2,7 @@
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, INF_VALUE, NumericTaskExt, NumericValue, ONE_VALUE, OperatorIndex,
-    ZERO_VALUE,
+    AbstractNumericTask, INF_VALUE, NumericValue, ONE_VALUE, OperatorIndex, ZERO_VALUE,
 };
 
 /// Base trait for heuristic functions.
@@ -121,8 +120,10 @@ impl Heuristic for BlindHeuristic {
 /// Lower bound used for every non-goal search evaluation, including blind.
 /// An empty task uses one, matching the search engine's historical convention.
 pub(crate) fn minimum_action_cost(task: &dyn AbstractNumericTask) -> NumericValue {
-    let minimum = (0..task.get_operators().len())
-        .map(|id| task.abstract_operator_cost(OperatorIndex::from_usize(id)))
+    let minimum = task
+        .effective_operator_costs()
+        .iter()
+        .copied()
         .fold(INF_VALUE, NumericValue::min);
     if minimum.is_finite() {
         minimum.max(ZERO_VALUE)
