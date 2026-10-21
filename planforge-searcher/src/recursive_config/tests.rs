@@ -377,3 +377,17 @@ fn gbfs_has_no_mpd_or_lazy_options() {
     assert!(parse_search_spec("gbfs(blind(), lazy=ff())").is_err());
     assert!(parse_search_spec("astar(blind(), lazy=none, lazy=ff())").is_err());
 }
+
+#[test]
+fn task_requirements_follow_typed_sources_and_wrappers() {
+    let spec = parse_search_spec("astar(check_admissible(scp([domain(),pdb()])))").unwrap();
+    let requirements = spec.requirements().unwrap();
+    assert!(requirements.restricted);
+    assert!(requirements.abstractable_goal);
+    assert!(!requirements.icaps26_restriction);
+
+    let spec = parse_search_spec("astar(blind(), lazy=canonical([icaps26_cartesian()]))").unwrap();
+    let requirements = spec.requirements().unwrap();
+    assert!(requirements.restricted);
+    assert!(requirements.icaps26_restriction);
+}

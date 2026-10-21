@@ -29,6 +29,18 @@ impl SearchConfig {
         std::iter::once(first).chain(second)
     }
 
+    pub fn requirements(&self) -> Result<crate::heuristic_factory::TaskRequirements, String> {
+        self.heuristics().try_fold(
+            crate::heuristic_factory::TaskRequirements::ANY,
+            |requirements, heuristic| {
+                Ok(
+                    requirements
+                        .union(crate::heuristic_factory::heuristic_requirements(heuristic)?),
+                )
+            },
+        )
+    }
+
     pub fn contains_call(&self, name: &str) -> bool {
         self.heuristics()
             .any(|heuristic| heuristic.contains_call(name))

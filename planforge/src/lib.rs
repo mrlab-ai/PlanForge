@@ -548,7 +548,12 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
     };
     if cli.restrict_task {
         let original_numeric_count = task.numeric_variables().len();
-        let restricted_task = if cli.search.contains_call("icaps26_cartesian") {
+        let restricted_task = if cli
+            .search
+            .requirements()
+            .map_err(std::io::Error::other)?
+            .icaps26_restriction
+        {
             build_icaps26_restricted_task(&task)
         } else {
             build_restricted_task(&task)

@@ -39,21 +39,33 @@ pub enum RequiredBackend {
 pub struct TaskRequirements {
     pub restricted: bool,
     pub abstractable_goal: bool,
+    pub icaps26_restriction: bool,
 }
 
 impl TaskRequirements {
     pub const ANY: Self = Self {
         restricted: false,
         abstractable_goal: false,
+        icaps26_restriction: false,
     };
     pub const ABSTRACTABLE_GOAL: Self = Self {
         restricted: false,
         abstractable_goal: true,
+        icaps26_restriction: false,
     };
     pub const RESTRICTED_ABSTRACTABLE_GOAL: Self = Self {
         restricted: true,
         abstractable_goal: true,
+        icaps26_restriction: false,
     };
+
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            restricted: self.restricted || other.restricted,
+            abstractable_goal: self.abstractable_goal || other.abstractable_goal,
+            icaps26_restriction: self.icaps26_restriction || other.icaps26_restriction,
+        }
+    }
 
     fn validate(self, task: &dyn AbstractNumericTask) -> Result<(), String> {
         if self.restricted {
@@ -152,11 +164,8 @@ fn component_task_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements,
     Ok(sources
         .sources
         .iter()
-        .fold(TaskRequirements::ANY, |mut requirements, source| {
-            let source = source.requirements();
-            requirements.restricted |= source.restricted;
-            requirements.abstractable_goal |= source.abstractable_goal;
-            requirements
+        .fold(TaskRequirements::ANY, |requirements, source| {
+            requirements.union(source.requirements())
         }))
 }
 
@@ -242,9 +251,28 @@ macro_rules! heuristic_registry {
     };
 }
 
-/// Validate a heuristic name and every nested heuristic against the generated
-/// registry. Parsers call this before translation, while direct Rust callers
-/// receive the same check at construction.
+/// Task shape required by the typed configurations of this heuristic and its children.
+pub fn heuristic_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
+    let (mut requirements, nested) = if let Some(plugin) = heuristic_plugin(&spec.name) {
+        (
+            (plugin.requirements)(spec)?,
+            (plugin.nested_heuristics)(spec)?,
+        )
+    } else if let Some(external) = external_heuristic(&spec.name) {
+        (
+            (external.requirements)(spec)?,
+            (external.nested_heuristics)(spec)?,
+        )
+    } else {
+        return Err(format!("unknown heuristic `{}`", spec.name));
+    };
+    for child in nested {
+        requirements = requirements.union(heuristic_requirements(&child)?);
+    }
+    Ok(requirements)
+}
+
+/// Validate heuristic names before translation.
 pub fn validate_heuristic_spec(spec: &HeuristicSpec) -> Result<(), String> {
     let nested = if let Some(plugin) = heuristic_plugin(&spec.name) {
         (plugin.nested_heuristics)(spec)?
