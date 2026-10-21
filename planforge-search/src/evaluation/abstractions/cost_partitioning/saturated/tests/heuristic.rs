@@ -4,25 +4,6 @@ use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 
 #[test]
-fn scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
-    let partition = |distances| CostPartitioningHeuristic {
-        lookup_tables: vec![LookupTable {
-            abstraction_id: 0,
-            distances,
-        }],
-        goal_cover_goal_id: None,
-    };
-    let mut retained = Vec::new();
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut retained, partition(vec![5.0, 1.0]));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut retained, partition(vec![4.0, 4.0]));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut retained, partition(vec![4.0, 4.0]));
-
-    assert_eq!(retained.len(), 2, "duplicates are discarded");
-    assert_eq!(compute_max_h(&retained, &[Some(0)]), 5.0);
-    assert_eq!(compute_max_h(&retained, &[Some(1)]), 4.0);
-}
-
-#[test]
 fn cartesian_scp_supports_every_saturator_in_both_cost_modes() {
     let task = independent_goals_task();
     for saturator in [Saturator::All, Saturator::Perim, Saturator::Perimstar] {

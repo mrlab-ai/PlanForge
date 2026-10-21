@@ -138,9 +138,8 @@ pub(super) fn retain_if_improving_some_sample(
     selected_size_kb: &mut usize,
 ) -> bool {
     assert_eq!(sample_ids.len(), sample_best.len());
-    if selected.contains(&candidate) {
-        return false;
-    }
+    // A candidate equal to a selected one improves no sample, so the
+    // selected stay pairwise distinct.
     let candidate_size = candidate.estimate_size_in_kb();
     let values = sample_ids
         .iter()

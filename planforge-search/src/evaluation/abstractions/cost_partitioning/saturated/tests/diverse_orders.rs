@@ -145,6 +145,13 @@ fn diverse_orders_keep_partitionings_that_improve_different_samples() {
         &mut size_kb,
     ));
     assert!(!retain_if_improving_some_sample(
+        partition(vec![5.0, 1.0]),
+        &samples,
+        &mut best,
+        &mut selected,
+        &mut size_kb,
+    ));
+    assert!(!retain_if_improving_some_sample(
         partition(vec![5.0, 5.0]),
         &samples,
         &mut best,

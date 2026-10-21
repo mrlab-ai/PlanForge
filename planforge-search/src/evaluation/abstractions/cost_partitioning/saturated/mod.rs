@@ -242,7 +242,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
 
     /// The cost partitionings of the collection, built at the first
     /// evaluated state: the greedy order's, or the diverse orders' over the
-    /// random-walk samples.
+    /// random-walk samples, which are pairwise distinct.
     fn build_cost_partitionings(
         &self,
         components: &[AbstractionComponent<'task>],
@@ -300,18 +300,6 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         initial_candidates.extend(candidates.partitions);
         self.select_diverse_orders(collection, state, initial_candidates, budget)
     }
-
-    /// Stores `cp` unless an identical cost partitioning is stored already.
-    fn retain_cp(retained: &mut Vec<CostPartitioningHeuristic>, cp: CostPartitioningHeuristic) {
-        if retained.contains(&cp) {
-            info!(
-                "scp: discarded duplicate cost partitioning with {} lookup tables",
-                cp.lookup_tables.len()
-            );
-            return;
-        }
-        retained.push(cp);
-    }
 }
 
 impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
@@ -342,12 +330,8 @@ impl Heuristic for SaturatedCostPartitioningHeuristic<'_> {
             return Ok(f64::INFINITY);
         }
 
-        let cost_partitionings =
+        let cp_heuristics =
             self.build_cost_partitionings(components, selection, abstract_state_ids)?;
-        let mut cp_heuristics = Vec::with_capacity(cost_partitionings.len());
-        for cp in cost_partitionings {
-            Self::retain_cp(&mut cp_heuristics, cp);
-        }
         let lookup_mask = compute_lookup_mask(&cp_heuristics, components.len());
         for component in components.iter_mut() {
             component.discard_transition_data();
