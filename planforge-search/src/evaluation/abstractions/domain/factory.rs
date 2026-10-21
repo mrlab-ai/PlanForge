@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests;
 
-#[cfg(any(test, debug_assertions))]
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, ensure};
@@ -25,7 +23,6 @@ use crate::evaluation::abstractions::common::coordinates::AdditiveNumericViews;
 mod distances;
 mod source_sets;
 mod state_encoding;
-mod transition_system;
 
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, cartesian_set_intersection,
@@ -36,12 +33,11 @@ use crate::evaluation::abstractions::common::transition_system::{
 };
 use crate::evaluation::abstractions::cost_partitioning::costs::{SaturationGraph, cheapest_label};
 use crate::resource_limits::Deadline;
-pub(crate) use distances::{DomainTransitions, MatchTreeGraph};
+pub(crate) use distances::DomainTransitions;
 use planforge_sas::numeric_conditions::{ConditionValue, NumericConditions};
 use planforge_sas::utils::interval::Interval;
 pub(crate) use source_sets::source_set_within;
 pub(crate) use state_encoding::MatchTree;
-pub use transition_system::*;
 
 /// The operations expired deadlines name.
 const DISTANCE_TABLE: &str = "abstract distance table";

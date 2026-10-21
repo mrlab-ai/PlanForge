@@ -63,6 +63,40 @@ impl DomainTransitions {
         Ok((distances, generating_op_ids))
     }
 
+    /// The explicit transition system of the operators, without self-loops.
+    pub(crate) fn explicit_system(&self, deadline: Deadline) -> Result<AbstractTransitionSystem> {
+        deadline.ensure(TRANSITION_SYSTEM)?;
+        let mut transitions = Vec::with_capacity(self.num_states);
+        let mut backward = vec![Vec::new(); self.num_states];
+        let mut graph = self.graph();
+        let mut incoming = Vec::new();
+        for (target_state, target_backward) in backward.iter_mut().enumerate() {
+            if target_state.is_multiple_of(64) {
+                deadline.ensure(TRANSITION_SYSTEM)?;
+            }
+            graph.incoming(target_state, &mut incoming)?;
+            for &(source_state, abstract_op_id, _) in &incoming {
+                if source_state == target_state {
+                    continue;
+                }
+                let transition_id = transitions.len();
+                transitions.push(AbstractTransition {
+                    transition_id,
+                    abstract_op_id,
+                    concrete_op_ids: self.operators[abstract_op_id].concrete_op_ids.clone(),
+                    source_state,
+                    target_state,
+                });
+                target_backward.push(transition_id);
+            }
+        }
+        Ok(AbstractTransitionSystem {
+            transitions,
+            backward,
+            goal_states: self.goal_states.clone(),
+        })
+    }
+
     /// The concrete operators that label a transition between two distinct
     /// abstract states, ascending: the labels of every operator that changes
     /// the state. Every abstract operator applies in some state of the

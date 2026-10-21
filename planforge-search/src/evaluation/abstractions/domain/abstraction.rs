@@ -63,23 +63,6 @@ impl DomainAbstraction {
             .map(|data| &data.transitions)
             .context("the domain abstraction's transitions were discarded")
     }
-
-    /// The explicit transition system of `task` with self-loops, which
-    /// potential/abstraction OCP constrains.
-    #[cfg(feature = "cplex")]
-    pub(crate) fn ocp_transition_system(
-        &self,
-        task: &dyn planforge_sas::numeric_task::AbstractNumericTask,
-        max_concrete_label_transitions: usize,
-        deadline: Deadline,
-    ) -> Result<super::factory::OcpTransitionSystemBuild> {
-        self.factory.build_ocp_transition_system(
-            task,
-            &self.transitions()?.operators,
-            max_concrete_label_transitions,
-            deadline,
-        )
-    }
 }
 
 impl CegarAbstraction for DomainAbstraction {
@@ -123,14 +106,15 @@ impl CegarAbstraction for DomainAbstraction {
         if data.regional.is_some() {
             return Ok(());
         }
-        let operators = &data.transitions.operators;
-        let system = self
-            .factory
-            .build_transition_system(regions.task(), operators, deadline)
+        let system = data
+            .transitions
+            .explicit_system(deadline)
             .context("failed to build the explicit transition system")?;
-        let source_sets = self
-            .factory
-            .build_abstract_source_sets(regions, operators, deadline)?;
+        let source_sets = self.factory.build_abstract_source_sets(
+            regions,
+            &data.transitions.operators,
+            deadline,
+        )?;
         data.regional = Some((system, source_sets));
         Ok(())
     }

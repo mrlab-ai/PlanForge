@@ -1,7 +1,7 @@
 use super::*;
 use ordered_float::NotNan;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
@@ -214,11 +214,10 @@ fn explicit_transition_system_matches_implicit_distances_across_comparison_casca
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
     let implicit = factory.build_distance_table_for_test(&task, false).unwrap();
-    let abstract_operators = factory
-        .abstract_operators(&task, false, Deadline::NONE)
-        .unwrap();
     let transition_system = factory
-        .build_transition_system(&task, &abstract_operators, Deadline::NONE)
+        .transitions(&task, false, Deadline::NONE)
+        .unwrap()
+        .explicit_system(Deadline::NONE)
         .unwrap();
     let (explicit, _) = saturate_labels(
         &mut ExplicitSaturationGraph::new(&transition_system),
@@ -269,13 +268,9 @@ fn precise_regional_table_charges_only_the_transition_source_partition() {
         global_constraint: ExplicitFact::propositional(0, 1),
     });
     let factory = factory_identity_cutpoints(&task).unwrap();
-    let abstract_operators = factory
-        .abstract_operators(&task, false, Deadline::NONE)
-        .unwrap();
-    assert_eq!(abstract_operators.len(), 1);
-    let transition_system = factory
-        .build_transition_system(&task, &abstract_operators, Deadline::NONE)
-        .unwrap();
+    let transitions = factory.transitions(&task, false, Deadline::NONE).unwrap();
+    assert_eq!(transitions.operators.len(), 1);
+    let transition_system = transitions.explicit_system(Deadline::NONE).unwrap();
     let source_sets = vec![AbstractOperatorSourceSets {
         labels: vec![LabelSourceSet {
             concrete_op_id: OperatorIndex::new(0),
