@@ -5,6 +5,7 @@ use crate::evaluation::heuristic::Heuristic;
 
 use planforge_sas::explicit_state::ExplicitState;
 
+use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 
 pub struct MaxAbstractionHeuristic<'task> {
@@ -40,19 +41,7 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
         eval_state.fill_values(&mut state_values)?;
         let mut best = 0.0_f64;
         for (component_id, component) in self.components.iter().enumerate() {
-            let value = component.standalone_value(&state_values).map_err(|error| {
-                EvaluationError::ComputationFailed(format!(
-                    "failed to evaluate {} component {component_id}: {error}",
-                    component.kind()
-                ))
-            })?;
-            if value.is_nan() || value < 0.0 {
-                return Err(EvaluationError::ComputationFailed(format!(
-                    "{} component {component_id} returned invalid heuristic value {value}",
-                    component.kind()
-                )));
-            }
-            best = best.max(value);
+            best = best.max(standalone_estimate(component, component_id, &state_values)?);
         }
         Ok(best)
     }

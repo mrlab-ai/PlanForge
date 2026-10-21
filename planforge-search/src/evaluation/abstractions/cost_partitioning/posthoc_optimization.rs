@@ -47,6 +47,7 @@ use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::evaluation::state_value_cache::StateValueCache;
 
+use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 
 pub struct PostHocOptimizationHeuristic<'task> {
@@ -116,13 +117,8 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
         let mut values = self.values.borrow_mut();
         eval_state.fill_values(&mut values)?;
         let mut h_values = Vec::with_capacity(self.components.len());
-        for component in &self.components {
-            let value = component.standalone_value(&values)?;
-            assert!(
-                value >= 0.0,
-                "{} returned the invalid heuristic value {value}",
-                component.kind()
-            );
+        for (component_id, component) in self.components.iter().enumerate() {
+            let value = standalone_estimate(component, component_id, &values)?;
             if value == f64::INFINITY {
                 self.log_diagnostics_once(&h_values);
                 return Ok(f64::INFINITY);

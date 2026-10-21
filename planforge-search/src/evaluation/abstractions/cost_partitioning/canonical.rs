@@ -14,6 +14,7 @@ use crate::evaluation::state_value_cache::StateValueCache;
 
 use planforge_sas::explicit_state::ExplicitState;
 
+use super::standalone_estimate;
 use crate::evaluation::abstractions::component::AbstractionComponent;
 
 pub struct CanonicalAbstractionHeuristic<'task> {
@@ -83,32 +84,12 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
         state_values: &ExplicitState,
         cache: &mut [Option<f64>],
     ) -> Result<f64, EvaluationError> {
-        let slot = cache.get_mut(component_id).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "invalid canonical abstraction component index {component_id}"
-            ))
-        })?;
-        if let Some(value) = *slot {
+        if let Some(value) = cache[component_id] {
             return Ok(value);
         }
-        let component = self.components.get(component_id).ok_or_else(|| {
-            EvaluationError::InvalidState(format!(
-                "missing canonical abstraction component {component_id}"
-            ))
-        })?;
-        let value = component.standalone_value(state_values).map_err(|error| {
-            EvaluationError::ComputationFailed(format!(
-                "failed to evaluate {} component {component_id}: {error}",
-                component.kind()
-            ))
-        })?;
-        if value.is_nan() || value < 0.0 {
-            return Err(EvaluationError::ComputationFailed(format!(
-                "{} component {component_id} returned invalid heuristic value {value}",
-                component.kind()
-            )));
-        }
-        *slot = Some(value);
+        let value =
+            standalone_estimate(&self.components[component_id], component_id, state_values)?;
+        cache[component_id] = Some(value);
         Ok(value)
     }
 
