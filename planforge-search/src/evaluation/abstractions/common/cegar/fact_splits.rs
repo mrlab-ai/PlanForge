@@ -24,7 +24,6 @@ pub(crate) fn split_failed_fact(
     fact: &ExplicitFact,
     prop_values: &[ExplicitValueIndex],
     numeric_values: &[NumericValue],
-    description: String,
 ) -> Result<Split> {
     if let Some(tree_id) = semantics
         .task()
@@ -38,7 +37,6 @@ pub(crate) fn split_failed_fact(
             tree_id,
             numeric_values,
             ComparisonRefinementGoal::exclude(fact.value_index())?,
-            description,
         );
     }
     if !semantics.regions().axioms_for(fact.var_index()).is_empty() {
@@ -71,9 +69,6 @@ pub(crate) fn split_failed_fact(
                             condition,
                             prop_values,
                             numeric_values,
-                            format!(
-                                "{description} via concrete axiom {axiom_id} condition {condition:?}"
-                            ),
                         );
                     }
                 }
@@ -105,7 +100,6 @@ pub(crate) fn split_failed_fact(
                         condition,
                         prop_values,
                         numeric_values,
-                        format!("{description} via axiom {axiom_id} condition {condition:?}"),
                     );
                 }
             }
@@ -127,7 +121,6 @@ pub(crate) fn split_failed_fact(
         var_id: fact.var_index(),
         wanted: vec![fact.value_index()],
         witness_value,
-        description,
     })
 }
 
@@ -138,7 +131,6 @@ fn split_to_guarantee_fact(
     fact: &ExplicitFact,
     prop_values: &[ExplicitValueIndex],
     numeric_values: &[NumericValue],
-    description: String,
 ) -> Result<Split> {
     let concrete_value = *prop_values
         .get(fact.var())
@@ -159,7 +151,6 @@ fn split_to_guarantee_fact(
             tree_id,
             numeric_values,
             ComparisonRefinementGoal::guarantee(fact.value_index())?,
-            description,
         );
     }
     if !semantics.regions().axioms_for(fact.var_index()).is_empty() {
@@ -195,7 +186,6 @@ fn split_to_guarantee_fact(
                     &witness_fact,
                     prop_values,
                     numeric_values,
-                    format!("{description} by disabling axiom {axiom_id} condition {condition:?}"),
                 );
             }
             bail!(
@@ -222,7 +212,6 @@ fn split_to_guarantee_fact(
                         condition,
                         prop_values,
                         numeric_values,
-                        format!("{description} via axiom {axiom_id} condition {condition:?}"),
                     );
                 }
             }
@@ -245,7 +234,6 @@ fn split_to_guarantee_fact(
         var_id: fact.var_index(),
         wanted: vec![witness_value],
         witness_value,
-        description,
     })
 }
 
@@ -278,7 +266,6 @@ fn comparison_refinement(
     tree_id: usize,
     numeric_values: &[NumericValue],
     goal: ComparisonRefinementGoal,
-    description: String,
 ) -> Result<Split> {
     let desired_truth = goal.desired_truth();
     let tree = semantics
@@ -367,7 +354,6 @@ fn comparison_refinement(
                     lower_includes_boundary,
                     witness_value,
                     integer_lattice,
-                    description: description.clone(),
                 };
                 candidates.push((separates_truth, achieved, candidate));
             }
@@ -504,9 +490,6 @@ pub(crate) fn split_deviation_candidates(
                 var_id,
                 wanted: allowed.clone(),
                 witness_value: value,
-                description: format!(
-                    "operator {op_id} successor prop var {var_id}={value} outside target {allowed:?}"
-                ),
             });
         }
     }
@@ -569,9 +552,6 @@ pub(crate) fn split_deviation_candidates(
             lower_includes_boundary,
             witness_value: source,
             integer_lattice,
-            description: format!(
-                "operator {op_id} successor numeric var {var_id}={successor} outside target {target_interval:?}"
-            ),
         });
     }
     ensure!(

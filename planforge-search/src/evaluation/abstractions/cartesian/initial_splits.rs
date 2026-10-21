@@ -53,16 +53,13 @@ pub(super) fn apply_initial_split(
                 split_every_state(working, semantics, |state_id, region| {
                     region.numeric[numeric_var.index()]
                         .can_split_at(boundary, lower_includes_boundary)
-                        .then(|| Split::Numeric {
+                        .then_some(Split::Numeric {
                             state_id,
                             var_id: numeric_var,
                             boundary,
                             lower_includes_boundary,
                             witness_value: boundary,
                             integer_lattice,
-                            description: format!(
-                                "initial split of numeric variable {numeric_var} at {boundary}"
-                            ),
                         })
                 })?;
             }
@@ -80,7 +77,6 @@ pub(super) fn apply_initial_split(
             var_id: var,
             wanted: vec![initial],
             witness_value: initial,
-            description: format!("initial split of variable {var} at {initial}"),
         })
     })
 }

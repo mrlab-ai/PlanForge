@@ -1540,7 +1540,6 @@ fn refinement_updates_the_variables_a_cartesian_set_can_constrain() {
                 var_id: VariableIndex::new(0),
                 wanted: vec![ExplicitValueIndex::new(1)],
                 witness_value: ExplicitValueIndex::new(1),
-                description: String::new(),
             },
         )
         .unwrap();

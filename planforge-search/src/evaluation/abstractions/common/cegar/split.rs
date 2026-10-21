@@ -25,7 +25,6 @@ pub(crate) enum Split {
         var_id: VariableIndex,
         wanted: Vec<ExplicitValueIndex>,
         witness_value: ExplicitValueIndex,
-        description: String,
     },
     Numeric {
         state_id: usize,
@@ -34,7 +33,6 @@ pub(crate) enum Split {
         lower_includes_boundary: bool,
         witness_value: NumericValue,
         integer_lattice: bool,
-        description: String,
     },
 }
 
@@ -42,14 +40,6 @@ impl Split {
     pub(crate) fn state_id(&self) -> usize {
         match self {
             Self::Propositional { state_id, .. } | Self::Numeric { state_id, .. } => *state_id,
-        }
-    }
-
-    pub(crate) fn description(&self) -> &str {
-        match self {
-            Self::Propositional { description, .. } | Self::Numeric { description, .. } => {
-                description
-            }
         }
     }
 

@@ -97,7 +97,7 @@ pub(crate) fn refine<R: Refinable>(
                 PlanCheck::Refine(split) => split,
             };
             if let Some(limit) = view.refinement_limit(&split) {
-                pending_flaw = Some(split.description().to_string());
+                pending_flaw = Some(format!("{split:?}"));
                 return Ok(CegarIterationResult::Stop(limit));
             }
             tracing::debug!(

@@ -99,7 +99,6 @@ pub(crate) fn replay_plan(
                         goal,
                         &state.propositional,
                         &state.numeric,
-                        format!("goal {goal:?}"),
                     )
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -135,7 +134,6 @@ pub(crate) fn replay_plan(
                         failed,
                         &state.propositional,
                         &state.numeric,
-                        format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
                     )?);
                 }
                 continue;
@@ -267,7 +265,6 @@ fn replay_whole_plan(
                         goal,
                         &state.propositional,
                         &state.numeric,
-                        format!("goal {goal:?}"),
                     )?;
                     push_unique_split(&mut candidates, &mut candidate_identities, split);
                 }
@@ -316,7 +313,6 @@ fn replay_whole_plan(
                     failed,
                     &state.propositional,
                     &state.numeric,
-                    format!("operator {op_id} ({}) precondition {failed:?}", op.name()),
                 )?);
             }
         }

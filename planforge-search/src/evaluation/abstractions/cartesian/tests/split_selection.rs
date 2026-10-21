@@ -56,17 +56,11 @@ fn whole_plan_candidates_deduplicate_identical_refinements() {
         lower_includes_boundary: true,
         witness_value: NumericValue::new(1.0),
         integer_lattice: false,
-        description: "first witness".into(),
     };
     let mut candidates = Vec::new();
     let mut identities = HashSet::new();
     push_unique_split(&mut candidates, &mut identities, split.clone());
-    let mut duplicate = split;
-    let Split::Numeric { description, .. } = &mut duplicate else {
-        unreachable!()
-    };
-    *description = "same refinement seen later".into();
-    push_unique_split(&mut candidates, &mut identities, duplicate);
+    push_unique_split(&mut candidates, &mut identities, split);
 
     assert_eq!(candidates.len(), 1);
 }
@@ -134,7 +128,6 @@ fn min_growth_uses_projected_transition_count() {
         lower_includes_boundary: true,
         witness_value: NumericValue::new(0.0),
         integer_lattice: false,
-        description: String::new(),
     };
 
     let mut candidates = vec![split(VariableIndex::new(0)), split(VariableIndex::new(1))];
@@ -190,7 +183,6 @@ fn native_random_selector_is_seeded() {
         var_id,
         wanted: vec![ExplicitValueIndex::new(1)],
         witness_value: ExplicitValueIndex::new(0),
-        description: String::new(),
     };
     let candidates = vec![
         split(VariableIndex::from_usize(0)),

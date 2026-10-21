@@ -863,10 +863,6 @@ fn flaw_split(
     flaw: &RegressionFlaw,
 ) -> Result<Split> {
     let state_id = state_ids[flaw.state];
-    let description = format!(
-        "regression flaw in abstract state {} of the plan",
-        flaw.state
-    );
     Ok(match flaw.split {
         FlawSplit::Numeric {
             var,
@@ -891,7 +887,6 @@ fn flaw_split(
                 lower_includes_boundary,
                 witness_value: interior_value(if wanted_is_lower { upper } else { lower }),
                 integer_lattice,
-                description,
             }
         }
         FlawSplit::Propositional { var, wanted } => {
@@ -906,7 +901,6 @@ fn flaw_split(
                 var_id: var,
                 wanted: vec![wanted],
                 witness_value,
-                description,
             }
         }
     })
