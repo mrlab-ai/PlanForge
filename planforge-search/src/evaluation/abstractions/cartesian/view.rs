@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use super::refinement::{SplitStates, replacement_transitions};
 use super::*;
 
 pub(super) struct CartesianView<'a> {
@@ -109,102 +110,41 @@ fn projected_transition_count(
     split: &Split,
 ) -> Result<usize> {
     let split_state_id = split.state_id();
-    let split_dimension = split.dimension();
-    let new_state_id = working.states().len();
-    let (old_child, new_child) = split_child_regions(&working.states()[split.state_id()], split)?;
+    let children = split_child_regions(&working.states()[split_state_id], split)?;
     let mut incident = working.outgoing()[split_state_id].clone();
     incident.extend(working.incoming()[split_state_id].iter().copied());
     incident.sort_unstable();
     incident.dedup();
-
     let unaffected = working
         .transition_ids_by_key
         .len()
         .checked_sub(incident.len())
         .expect("incident Cartesian transition count exceeds active transition count");
-    let mut replacements = HashSet::new();
-    for transition_id in incident {
-        let transition = working.transition(transition_id);
-        debug_assert!(
-            transition.source != transition.target,
-            "Cartesian non-loop storage contains a self loop"
-        );
-        let sources: &[usize] = if transition.source == split_state_id {
-            &[split_state_id, new_state_id]
-        } else {
-            std::slice::from_ref(&transition.source)
-        };
-        let targets: &[usize] = if transition.target == split_state_id {
-            &[split_state_id, new_state_id]
-        } else {
-            std::slice::from_ref(&transition.target)
-        };
-        for &source in sources {
-            let source_region = if source == split_state_id {
-                &old_child
-            } else if source == new_state_id {
-                &new_child
-            } else {
-                &working.states()[source]
-            };
-            for &target in targets {
-                let target_region = if target == split_state_id {
-                    &old_child
-                } else if target == new_state_id {
-                    &new_child
-                } else {
-                    &working.states()[target]
-                };
-                let may_transition = if semantics
-                    .operator_depends_on_split(transition.concrete_op_id, split_dimension)
-                {
-                    semantics.regions().may_transition(
-                        source_region,
-                        transition.concrete_op_id,
-                        target_region,
-                    )?
-                } else {
-                    semantics.may_transition_after_independent_split(
-                        source_region,
-                        transition.concrete_op_id,
-                        target_region,
-                        split_dimension,
-                    )?
-                };
-                if may_transition && source != target {
-                    replacements.insert(TransitionKey {
-                        source,
-                        concrete_op_id: transition.concrete_op_id,
-                        target,
-                    });
-                }
+    let incident: Vec<TransitionKey> = incident
+        .into_iter()
+        .map(|transition_id| {
+            let transition = working.transition(transition_id);
+            TransitionKey {
+                source: transition.source,
+                concrete_op_id: transition.concrete_op_id,
+                target: transition.target,
             }
-        }
-    }
-    let split_dependent_operators = semantics.split_dependent_operators(split_dimension);
-    for concrete_op_id in working.self_loop_operator_ids()[split_state_id]
-        .intersection_iter(split_dependent_operators)
-    {
-        for (source, source_region) in [(split_state_id, &old_child), (new_state_id, &new_child)] {
-            let targets = [(split_state_id, &old_child), (new_state_id, &new_child)];
-            let may_targets = semantics.parent_loop_source_to_split_children(
-                source_region,
-                concrete_op_id,
-                [targets[0].1, targets[1].1],
-                split_dimension,
-            )?;
-            for ((target, _), may_transition) in targets.into_iter().zip(may_targets) {
-                if source != target && may_transition {
-                    replacements.insert(TransitionKey {
-                        source,
-                        concrete_op_id,
-                        target,
-                    });
-                }
-            }
-        }
-    }
-    unaffected
-        .checked_add(replacements.len())
-        .context("projected Cartesian transition count overflow")
+        })
+        .collect();
+    let replacements: HashSet<TransitionKey> = replacement_transitions(
+        semantics,
+        SplitStates {
+            split_state_id,
+            new_state_id: working.states().len(),
+            children: [&children.witness, &children.other],
+            split_dimension: split.dimension(),
+        },
+        |state| &working.states()[state],
+        &incident,
+        &working.self_loop_operator_ids()[split_state_id],
+    )?
+    .into_iter()
+    .filter(|transition| transition.source != transition.target)
+    .collect();
+    Ok(unaffected + replacements.len())
 }

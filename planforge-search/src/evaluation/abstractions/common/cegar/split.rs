@@ -120,12 +120,18 @@ pub(crate) enum SplitDimension {
     Numeric(VariableIndex),
 }
 
-/// The two children `split` splits `parent` into: the one keeping the
-/// witness first.
-pub(crate) fn split_child_regions(
-    parent: &CartesianSet,
-    split: &Split,
-) -> Result<(CartesianSet, CartesianSet)> {
+/// The two children a split divides a region into.
+pub(crate) struct SplitChildren {
+    /// The child that keeps the split's witness.
+    pub(crate) witness: CartesianSet,
+    pub(crate) other: CartesianSet,
+    /// Whether the witness child holds the wanted values of a propositional
+    /// split, or the lower values of a numeric one.
+    pub(crate) witness_is_wanted_or_lower: bool,
+}
+
+/// The two children `split` splits `parent` into.
+pub(crate) fn split_child_regions(parent: &CartesianSet, split: &Split) -> Result<SplitChildren> {
     match split {
         Split::Propositional {
             var_id,
@@ -160,10 +166,15 @@ pub(crate) fn split_child_regions(
             wanted_region.narrow_prop(*var_id, wanted_values);
             let mut other_region = parent.clone();
             other_region.narrow_prop(*var_id, other_values);
-            Ok(if witness_is_wanted {
+            let (witness, other) = if witness_is_wanted {
                 (wanted_region, other_region)
             } else {
                 (other_region, wanted_region)
+            };
+            Ok(SplitChildren {
+                witness,
+                other,
+                witness_is_wanted_or_lower: witness_is_wanted,
             })
         }
         Split::Numeric {
@@ -202,10 +213,15 @@ pub(crate) fn split_child_regions(
             Arc::make_mut(&mut lower_region.numeric)[var_id.index()] = lower;
             let mut upper_region = parent.clone();
             Arc::make_mut(&mut upper_region.numeric)[var_id.index()] = upper;
-            Ok(if witness_is_lower {
+            let (witness, other) = if witness_is_lower {
                 (lower_region, upper_region)
             } else {
                 (upper_region, lower_region)
+            };
+            Ok(SplitChildren {
+                witness,
+                other,
+                witness_is_wanted_or_lower: witness_is_lower,
             })
         }
     }

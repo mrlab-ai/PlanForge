@@ -82,6 +82,53 @@ impl CartesianRefinementHierarchy {
         }
     }
 
+    /// Replaces leaf `leaf_node_id` of `old_state_id` by a node for `split`,
+    /// whose wanted or lower child the old state keeps iff
+    /// `old_state_is_wanted_or_lower`. Returns the leaves of the old and the
+    /// new state.
+    pub(crate) fn split(
+        &mut self,
+        leaf_node_id: usize,
+        old_state_id: usize,
+        new_state_id: usize,
+        split: &Split,
+        old_state_is_wanted_or_lower: bool,
+    ) -> Result<(usize, usize)> {
+        match split {
+            Split::Propositional { var_id, wanted, .. } => self.split_propositional(
+                leaf_node_id,
+                old_state_id,
+                new_state_id,
+                *var_id,
+                wanted.clone(),
+                old_state_is_wanted_or_lower,
+            )?,
+            Split::Numeric {
+                var_id,
+                boundary,
+                lower_includes_boundary,
+                ..
+            } => self.split_numeric(
+                leaf_node_id,
+                old_state_id,
+                new_state_id,
+                NumericSplit {
+                    var_id: *var_id,
+                    boundary: *boundary,
+                    lower_includes_boundary: *lower_includes_boundary,
+                    old_state_is_lower: old_state_is_wanted_or_lower,
+                },
+            )?,
+        }
+        // The first child node is the wanted or lower one.
+        let first_child = self.nodes.len() - 2;
+        Ok(if old_state_is_wanted_or_lower {
+            (first_child, first_child + 1)
+        } else {
+            (first_child + 1, first_child)
+        })
+    }
+
     pub(crate) fn split_propositional(
         &mut self,
         leaf_node_id: usize,
