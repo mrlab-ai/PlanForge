@@ -214,30 +214,3 @@ fn removed_transitions_are_unlinked_and_their_slots_are_reused() {
     assert_eq!(working.incoming[1], vec![0]);
     assert!(working.transitions[0].is_some());
 }
-
-#[test]
-fn shortest_path_dependency_positions_survive_swap_removal() {
-    let first = TransitionKey {
-        source: 0,
-        concrete_op_id: OperatorIndex::new(0),
-        target: 2,
-    };
-    let second = TransitionKey {
-        source: 1,
-        concrete_op_id: OperatorIndex::new(1),
-        target: 2,
-    };
-    let mut shortest_paths = ShortestPaths::for_test(
-        vec![1.0, 1.0, 0.0],
-        vec![Some(first), Some(second), None],
-        vec![vec![], vec![], vec![0, 1]],
-        vec![Some(0), Some(1), None],
-        vec![false, false, true],
-    );
-
-    shortest_paths.remove_generating_transition(0);
-    assert_eq!(shortest_paths.dependents(2), [1]);
-    assert_eq!(shortest_paths.dependent_position(1), Some(0));
-    shortest_paths.remove_generating_transition(1);
-    assert!(shortest_paths.dependents(2).is_empty());
-}

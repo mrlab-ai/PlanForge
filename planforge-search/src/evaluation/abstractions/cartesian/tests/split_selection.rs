@@ -131,7 +131,7 @@ fn min_growth_uses_projected_transition_count() {
     };
 
     let mut candidates = vec![split(VariableIndex::new(0)), split(VariableIndex::new(1))];
-    let paths = all_goal_paths(working.states().len());
+    let paths = ShortestPaths::all_goals(working.states().len());
     let view = CartesianView {
         working: &working,
         semantics: &semantics,
@@ -208,7 +208,7 @@ fn native_random_selector_is_seeded() {
         ),
         0,
     );
-    let paths = all_goal_paths(working.states().len());
+    let paths = ShortestPaths::all_goals(working.states().len());
     let draw = |semantics: &CartesianSemantics<'_>| {
         let view = CartesianView {
             working: &working,

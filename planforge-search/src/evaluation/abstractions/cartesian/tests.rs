@@ -21,7 +21,7 @@ use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
     CartesianView, OperatorBitSet, RefinementLimits, RefinementNode, ShortestPaths, Split,
-    SplitDimension, TransitionKey, WorkingAbstraction,
+    SplitDimension, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::selection::{
@@ -114,16 +114,4 @@ fn assert_solved_with_h(task: &NumericRootTask, expected_h: f64) {
                 .len()
         );
     }
-}
-
-/// Shortest paths that make every state a goal: for tests that read only the
-/// regions and growth of a view.
-fn all_goal_paths(states: usize) -> ShortestPaths {
-    ShortestPaths::for_test(
-        vec![0.0; states],
-        vec![None; states],
-        vec![Vec::new(); states],
-        vec![None; states],
-        vec![true; states],
-    )
 }
