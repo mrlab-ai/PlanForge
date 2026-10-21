@@ -14,8 +14,10 @@ use planforge_sas::utils::float_tolerance;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
+use super::options::CegarOptions;
+use super::regression::ensure_regressable;
 use super::split::{Split, SplitDimension, approximately_equal};
-use super::{SplitKind, SplitSelection};
+use super::{FlawKind, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::collections::strategy::{mix_seed, stable_text_seed};
 use crate::evaluation::abstractions::common::coordinates::Coordinates;
 use crate::evaluation::abstractions::common::regions::RegionSemantics;
@@ -47,6 +49,28 @@ pub(crate) struct CegarSemantics<'task> {
 }
 
 impl<'task> CegarSemantics<'task> {
+    /// The semantics a CEGAR run with `options` refines abstractions of
+    /// `task` under. Fails if the run regresses and `task` is not
+    /// regressable.
+    pub(crate) fn for_options(
+        task: &'task dyn AbstractNumericTask,
+        options: &CegarOptions,
+    ) -> Result<Self> {
+        let semantics = Self::new(
+            task,
+            SplitOptions {
+                kind: options.split_kind,
+                selection: options.split_selection,
+                rank: options.split_selection_rank,
+                random_seed: options.random_seed,
+            },
+        )?;
+        if options.flaw_kind == FlawKind::Regression {
+            ensure_regressable(task, semantics.coordinates())?;
+        }
+        Ok(semantics)
+    }
+
     pub(crate) fn new(
         task: &'task dyn AbstractNumericTask,
         split_options: SplitOptions,

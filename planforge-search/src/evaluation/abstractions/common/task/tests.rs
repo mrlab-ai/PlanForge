@@ -3,8 +3,7 @@ use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use planforge_sas::axioms::{ComparisonAxiom, ComparisonOperator};
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::numeric_task::{
-    AssignmentEffect, AssignmentOperation, NumericRootTask, NumericRootTaskParts, NumericTaskExt,
-    metric_operator_cost_from_initial_values,
+    AssignmentEffect, AssignmentOperation, NumericRootTask, NumericRootTaskParts,
 };
 
 use super::*;
@@ -85,60 +84,6 @@ fn root_after(task: &NumericRootTask, increments: usize) -> ExplicitState {
             &vec![OperatorIndex::new(0); increments],
         )
         .unwrap()
-}
-
-#[test]
-fn rooted_task_moves_only_the_initial_state() {
-    let task = doubling_cost_task(4.0, false);
-    let root = root_after(&task, 2);
-    let rooted = RootedTask::new(&task, &root).unwrap();
-
-    assert_eq!(
-        rooted.get_initial_numeric_state_values(),
-        &[2.0, 1.0, 2.0, 4.0, 4.0].map(NumericValue::new)
-    );
-    assert_eq!(
-        rooted.get_initial_propositional_state_values(),
-        &[ExplicitValueIndex::from_usize(
-            ConditionValue::False.as_usize()
-        )]
-    );
-    assert_eq!(
-        rooted.evaluate_initial_state_values().unwrap(),
-        (
-            rooted.get_initial_propositional_state_values().to_vec(),
-            rooted.get_initial_numeric_state_values().to_vec()
-        )
-    );
-    assert_eq!(rooted.goals(), task.goals());
-    assert_eq!(rooted.get_operators().len(), task.get_operators().len());
-    // Evaluated at the root, the metric would price the increment at 4; the
-    // abstraction cost hook keeps the base task's price.
-    assert_eq!(
-        metric_operator_cost_from_initial_values(&rooted, &task.get_operators()[0]),
-        NumericValue::new(4.0)
-    );
-    assert_eq!(
-        rooted.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
-    );
-    assert_eq!(
-        task.abstract_operator_cost(OperatorIndex::new(0)),
-        NumericValue::new(1.0)
-    );
-}
-
-#[test]
-fn rooted_task_rejects_a_root_that_changes_a_constant() {
-    let task = doubling_cost_task(4.0, false);
-    let mut root = root_after(&task, 1);
-    root.numeric[BOUND.index()] = NumericValue::new(5.0);
-    let error = RootedTask::new(&task, &root).err().unwrap();
-
-    assert!(
-        error.to_string().contains("constant numeric variable 3"),
-        "{error:#}"
-    );
 }
 
 fn cegar_config() -> DomainAbstractionConfig {

@@ -155,7 +155,7 @@ fn build_abstraction_finds_a_one_step_concrete_plan() {
         ..Default::default()
     };
 
-    let outcome = refine_domain_abstraction(&config, &task).unwrap();
+    let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
     assert!(outcome.outcome.concrete_plan.is_some());
     let plan = outcome
         .outcome
@@ -210,6 +210,7 @@ fn cegar_stops_when_the_flaw_split_exceeds_the_size_limit() {
             ..Default::default()
         },
         &task,
+        None,
     )
     .unwrap();
 
@@ -245,7 +246,7 @@ fn blacklisted_propositional_vars_are_not_refined() {
     config
         .blacklisted_prop_var_ids
         .insert(VariableIndex::from_usize(0));
-    let outcome = refine_domain_abstraction(&config, &task).unwrap();
+    let outcome = refine_domain_abstraction(&config, &task, None).unwrap();
 
     assert_eq!(
         outcome.outcome.stop_reason,
@@ -306,7 +307,7 @@ fn cegar_progress_fail_fast_does_not_fire_on_normal_runs() {
         ..Default::default()
     };
 
-    let outcome = refine_domain_abstraction(&config, &task)
+    let outcome = refine_domain_abstraction(&config, &task, None)
         .expect("normal one-dimensional CEGAR run should make progress");
 
     let x_partitions = outcome
@@ -351,6 +352,7 @@ fn backward_splits_build_goal_side_partitions() {
             ..Default::default()
         },
         &task,
+        None,
     )
     .expect("backward-split CEGAR should build goal-side partitions");
     let progression = refine_domain_abstraction(
@@ -365,6 +367,7 @@ fn backward_splits_build_goal_side_partitions() {
             ..Default::default()
         },
         &task,
+        None,
     )
     .expect("progression CEGAR should build start-side partitions");
 

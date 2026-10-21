@@ -77,18 +77,7 @@ impl<'task> CartesianSemantics<'task> {
         task: &'task dyn AbstractNumericTask,
         config: &CartesianAbstractionConfig,
     ) -> Result<Self> {
-        let cegar = CegarSemantics::new(
-            task,
-            SplitOptions {
-                kind: config.cegar.split_kind,
-                selection: config.cegar.split_selection,
-                rank: config.cegar.split_selection_rank,
-                random_seed: config.cegar.random_seed,
-            },
-        )?;
-        if config.cegar.flaw_kind == FlawKind::Regression {
-            ensure_regressable(task, cegar.coordinates())?;
-        }
+        let cegar = CegarSemantics::for_options(task, &config.cegar)?;
         let regions = cegar.regions();
         let additive_numeric_views = cegar.coordinates().views();
         let operator_count = task.get_operators().len();

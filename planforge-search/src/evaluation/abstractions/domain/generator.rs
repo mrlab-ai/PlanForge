@@ -18,43 +18,36 @@ use super::partitions::NumericPartitions;
 use super::view::DomainRefinement;
 use crate::evaluation::abstractions::common::abstraction::AbstractionMetadata;
 use crate::evaluation::abstractions::common::cegar::refine::{CegarOutcome, CegarRun, refine};
-use crate::evaluation::abstractions::common::cegar::regression::ensure_regressable;
-use crate::evaluation::abstractions::common::cegar::semantics::{CegarSemantics, SplitOptions};
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
 use crate::evaluation::abstractions::common::cegar::view::RefinementLimits;
-use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason, FlawKind};
-use crate::evaluation::abstractions::common::task::RootedTask;
+use crate::evaluation::abstractions::common::cegar::{CegarDriver, CegarStopReason};
+use crate::evaluation::abstractions::common::transition_system::AbstractDistanceTable;
 
+use super::abstract_operators::AbstractOperator;
 use super::abstraction::DomainAbstraction;
 use super::collection::AbstractionKey;
 use super::debug_dump::log_final_abstraction;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
 
-/// The domain abstraction CEGAR refined, before its distances are finalized.
+/// The domain abstraction CEGAR refined, with the operators and goal
+/// distances of its last flaw search if no split followed it.
 #[derive(Debug)]
 pub(super) struct DomainRefinementOutcome {
     pub(super) factory: DomainAbstractionFactory,
     pub(super) outcome: CegarOutcome,
+    pub(super) built: Option<(Vec<AbstractOperator>, AbstractDistanceTable)>,
 }
 
-/// Refines a domain abstraction of `task` by CEGAR from the initial state of
-/// `task`: the trivial abstraction split on the goal variables, refined until
-/// the abstract plan is concrete or a limit is reached.
+/// Refines a domain abstraction of `task` by CEGAR from `refinement_root`,
+/// or from the initial state of `task` when `None`: the trivial abstraction
+/// split on the goal variables, refined until the abstract plan is concrete
+/// or a limit is reached.
 pub(super) fn refine_domain_abstraction(
     config: &DomainAbstractionConfig,
     task: &dyn AbstractNumericTask,
+    refinement_root: Option<&ExplicitState>,
 ) -> Result<DomainRefinementOutcome> {
-    let semantics = CegarSemantics::new(
-        task,
-        SplitOptions {
-            kind: config.cegar.split_kind,
-            selection: config.cegar.split_selection,
-            rank: config.cegar.split_selection_rank,
-            random_seed: config.cegar.random_seed,
-        },
-    )?;
-    if config.cegar.flaw_kind == FlawKind::Regression {
-        ensure_regressable(task, semantics.coordinates())?;
-    }
+    let semantics = CegarSemantics::for_options(task, &config.cegar)?;
 
     let start = Instant::now();
     // The run is a function of its configuration alone: collection
@@ -80,7 +73,14 @@ pub(super) fn refine_domain_abstraction(
     let factory = DomainAbstractionFactory::new(task, domain_mapping, domain_sizes, partitions)
         .context("failed to construct the initial domain abstraction")?;
 
-    let root = semantics.states().initial_state()?;
+    let initial_state;
+    let root = match refinement_root {
+        Some(root) => root,
+        None => {
+            initial_state = semantics.states().initial_state()?;
+            &initial_state
+        }
+    };
     let limits = RefinementLimits {
         max_states: config.cegar.max_states,
         blacklisted_prop_var_ids: &config.blacklisted_prop_var_ids,
@@ -93,16 +93,20 @@ pub(super) fn refine_domain_abstraction(
             semantics: &semantics,
             flaw_kind: config.cegar.flaw_kind,
             flaw_scope: config.cegar.flaw_scope,
-            refinement_root: &root,
+            refinement_root: root,
             driver: CegarDriver::new(config.cegar.max_iterations, config.cegar.max_time),
         },
         start,
     )?;
-    let factory = refinement.into_factory();
+    let (factory, built) = refinement.into_parts();
     if config.cegar.debug {
         log_final_abstraction(task, &factory);
     }
-    Ok(DomainRefinementOutcome { factory, outcome })
+    Ok(DomainRefinementOutcome {
+        factory,
+        outcome,
+        built,
+    })
 }
 
 /// Numeric-fd style generator that constructs a domain abstraction via CEGAR.
@@ -128,26 +132,33 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
     }
 
     /// The root only chooses counterexamples. The abstraction still partitions
-    /// the full state space of `task`, operator costs stay those of `task`, and
-    /// the distance table's initial state is the initial state of `task`.
+    /// the full state space of `task`, and the distance table's initial state
+    /// is the initial state of `task`.
     fn generate_from_root(
         &self,
         task: &dyn AbstractNumericTask,
         refinement_root: Option<&ExplicitState>,
     ) -> Result<DomainAbstraction> {
-        let DomainRefinementOutcome { factory, outcome } = match refinement_root {
-            Some(root) => {
-                let rooted_task = RootedTask::new(task, root)?;
-                refine_domain_abstraction(&self.config, &rooted_task)
-            }
-            None => refine_domain_abstraction(&self.config, task),
-        }
-        .context("CEGAR failed to build abstraction")?;
+        let DomainRefinementOutcome {
+            factory,
+            outcome,
+            built,
+        } = refine_domain_abstraction(&self.config, task, refinement_root)
+            .context("CEGAR failed to build abstraction")?;
         let stop_reason = outcome.stop_reason;
         let combine_labels = self.config.cegar.combine_labels;
-        let abstract_operators = factory
-            .abstract_operators(task, combine_labels, None)
-            .context("failed to build abstract operators")?;
+        let (abstract_operators, distance_table) = match built {
+            Some(built) => built,
+            None => {
+                let operators = factory
+                    .abstract_operators(task, combine_labels, None)
+                    .context("failed to build abstract operators")?;
+                let table = factory
+                    .build_distance_table(task, &operators, DistanceTableOptions::default())
+                    .context("failed to build abstract distance table")?;
+                (operators, table)
+            }
+        };
         let abstract_source_sets = if self.config.compute_source_sets {
             factory
                 .build_abstract_source_sets(task, &abstract_operators)
@@ -159,9 +170,6 @@ impl AbstractionGenerator for DomainAbstractionGenerator {
             // Regional SCP builds them from the finished abstraction.
             Vec::new()
         };
-        let distance_table = factory
-            .build_distance_table(task, &abstract_operators, DistanceTableOptions::default())
-            .context("failed to build abstract distance table")?;
         let initial_h = distance_table.distances[distance_table.initial_state_hash];
         // The refinement root is reachable from the initial state, so a dead
         // initial state means a dead root, which is where CEGAR stops.

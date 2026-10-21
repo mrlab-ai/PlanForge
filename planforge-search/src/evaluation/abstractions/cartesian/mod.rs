@@ -23,7 +23,7 @@ mod view;
 mod working;
 
 use super::common::cegar::refine::{CegarRun, Refinable, refine};
-use super::common::cegar::semantics::{CegarSemantics, SplitOptions};
+use super::common::cegar::semantics::CegarSemantics;
 use super::common::cegar::split::*;
 use super::common::cegar::view::{AbstractionView, RefinementLimits, TransitionKey};
 use super::common::cegar::{SplitKind, SplitSelection};
@@ -54,7 +54,6 @@ use planforge_sas::numeric_task::{
 use planforge_sas::utils::float_tolerance;
 use tracing::info;
 
-use super::common::cegar::regression::ensure_regressable;
 use super::common::cegar::{CegarDriver, FlawKind, FlawScope};
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;

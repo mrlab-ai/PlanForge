@@ -153,8 +153,15 @@ impl<'a> DomainRefinement<'a> {
         }
     }
 
-    pub(super) fn into_factory(self) -> DomainAbstractionFactory {
-        self.factory
+    /// The abstraction, with the operators and goal distances its last view
+    /// built if no split followed.
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        DomainAbstractionFactory,
+        Option<(Vec<AbstractOperator>, AbstractDistanceTable)>,
+    ) {
+        (self.factory, self.built)
     }
 }
 
