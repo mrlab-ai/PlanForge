@@ -32,15 +32,25 @@ pub const DEFAULT_EPSILON: f64 = 0.0;
     Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
 )]
 pub struct LmCutNumericConfig {
+    #[option(positional)]
     pub ceiling_less_than_one: bool,
+    #[option(positional)]
     pub ignore_numeric: bool,
+    #[option(positional)]
     pub random_pcf: bool,
+    #[option(positional)]
     pub irmax: bool,
+    #[option(positional)]
     pub disable_ma: bool,
+    #[option(positional)]
     pub use_second_order_simple: bool,
+    #[option(positional)]
     pub use_constant_assignment: bool,
+    #[option(positional)]
     pub bound_iterations: usize,
+    #[option(positional)]
     pub precision: f64,
+    #[option(positional)]
     pub epsilon: f64,
 }
 

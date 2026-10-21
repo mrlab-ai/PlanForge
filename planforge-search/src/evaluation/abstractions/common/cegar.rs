@@ -60,12 +60,6 @@ pub enum SplitKind {
     Wanted,
 }
 
-impl crate::config::FromOptionValue for Option<SplitKind> {
-    fn from_option_value(value: &crate::config::ConfigValue) -> Result<Self, String> {
-        SplitKind::from_option_value(value).map(Some)
-    }
-}
-
 option_enum!("split_kind", SplitKind {
     Concrete => "concrete",
     Wanted => "wanted",

@@ -45,42 +45,75 @@ option_enum!("bounds", BoundsProvider {
     Debug, Clone, PartialEq, Deserialize, Serialize, planforge_search::config::ApplyOptions,
 )]
 pub struct NumericPotentialConfig {
+    #[option(positional)]
     pub opt: OptimizeFor,
+    #[option(positional)]
     pub num_samples: usize,
+    #[option(positional)]
     pub num_heuristics: usize,
+    #[option(positional)]
     pub max_diverse_generation_time: f64,
+    #[option(positional)]
     pub include_initial_state_potential: bool,
+    #[option(positional)]
     pub include_all_states_potential: bool,
+    #[option(positional)]
     pub diverse_fallback: DiverseFallback,
+    #[option(positional)]
     pub rays: usize,
+    #[option(positional)]
     pub max_ray_generation_time: f64,
+    #[option(positional)]
     pub ray_epsilon: f64,
+    #[option(positional)]
     pub ray_certificate_file: String,
+    #[option(positional)]
     pub max_potential: f64,
+    #[option(positional)]
     pub ignore_numeric_variables: bool,
+    #[option(positional)]
     pub bounds: BoundsProvider,
+    #[option(positional)]
     pub simple_action_bounds: bool,
+    #[option(positional)]
     pub goal_conditioned: bool,
+    #[option(positional)]
     pub goal_cost_partitioning: bool,
+    #[option(positional)]
     pub num_goal_cost_partitions: usize,
+    #[option(positional)]
     pub num_goal_conditioned_heuristics: usize,
+    #[option(positional)]
     pub num_goal_conditioned_samples: usize,
+    #[option(positional)]
     pub max_conditioned_generation_time: f64,
     #[option(rename = "max_online_heuristics")]
+    #[option(positional)]
     pub max_online_functions: usize,
+    #[option(positional)]
     pub online_reoptimization_interval: usize,
+    #[option(positional)]
     pub max_consecutive_online_misses: usize,
+    #[option(positional)]
     pub max_online_misses: usize,
+    #[option(positional)]
     pub max_online_lp_solves: usize,
+    #[option(positional)]
     pub invalidate_online_cache_on_growth: bool,
+    #[option(positional)]
     pub online_reoptimization_on_new_states_only: bool,
     /// C++ Heuristic base option. Rust stores open-list estimates rather than
     /// a separate heuristic cache, but this flag still controls whether
     /// online growth activates cache invalidation/revision tracking.
+    #[option(positional)]
     pub cache_estimates: bool,
+    #[option(positional)]
     pub precision: f64,
+    #[option(positional)]
     pub epsilon: f64,
+    #[option(positional)]
     pub dump_lp: bool,
+    #[option(positional)]
     pub validate_duality: bool,
 }
 

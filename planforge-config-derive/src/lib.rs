@@ -5,23 +5,15 @@
 //! code for typed search and heuristic configurations; it does not translate
 //! tasks or run search itself.
 //!
-//! It is a crate of its own because a `proc-macro = true` crate has to be, and
-//! it pays for itself at the call-site count: 7 config structs and 112
-//! `--search` options as of this writing, against roughly 370 lines of
-//! hand-written `match` arms and `ORDER` lists. The lines are the smaller half
-//! of the argument. `for_each_option` resolves *positional* arguments through
-//! `ORDER`, and the derive builds `ORDER` from the field declaration order, so
-//! `greedy_numeric_pdb(321)` cannot come to mean a different option than the
-//! struct says. Hand-written or `macro_rules!`-generated, that is 112 chances
-//! for the two lists to drift silently -- and a `macro_rules!` version would
-//! additionally have to own the struct definitions, which rustfmt does not
-//! format inside a macro invocation.
+//! Positional arguments are explicit field annotations, so reordering other
+//! fields cannot silently change the accepted CLI syntax.
 //!
 //! Emits `impl ApplyOptions for X` where `X` is a struct with named fields.
 //! Each non-`#[option(skip)]` field becomes a match arm in the generated
 //! `apply_options(&mut self, args: &[ConfigArg]) -> Result<(), String>`.
 //!
 //! Field attributes:
+//! - `#[option(positional)]` — accepts the field in positional order.
 //! - `#[option(skip)]` — not exposed as a CLI option.
 //! - `#[option(rename = "alias")]` — CLI key differs from field name.
 //! - `#[option(flatten)]` — catch-all: unknown keys delegate to this field's
@@ -101,7 +93,9 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
 
         // Plain assignment field.
         let key = attrs.rename.unwrap_or_else(|| field_ident.to_string());
-        order_keys.push(key.clone());
+        if attrs.positional {
+            order_keys.push(key.clone());
+        }
         let key_lit = syn::LitStr::new(&key, field_span(field));
 
         arms.push(quote! {
@@ -131,12 +125,6 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
         }
     };
 
-    // A struct that delegates to a flattened one takes named options only:
-    // a position would otherwise mean an option of the outer struct while
-    // most options live in the inner one.
-    if flatten_field.is_some() {
-        order_keys.clear();
-    }
     let order_lits: Vec<syn::LitStr> = order_keys
         .iter()
         .map(|s| syn::LitStr::new(s, proc_macro2::Span::call_site()))
@@ -166,6 +154,7 @@ fn build_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
 #[derive(Default)]
 struct FieldAttrs {
     skip: bool,
+    positional: bool,
     flatten: bool,
     rename: Option<String>,
 }
@@ -188,6 +177,7 @@ fn parse_field_attrs(field: &Field) -> Result<FieldAttrs, Error> {
         let nested = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
         for meta in nested {
             match &meta {
+                Meta::Path(path) if path.is_ident("positional") => out.positional = true,
                 Meta::Path(path) if path.is_ident("skip") => out.skip = true,
                 Meta::Path(path) if path.is_ident("flatten") => out.flatten = true,
                 Meta::NameValue(nv) if nv.path.is_ident("rename") => {
@@ -196,7 +186,7 @@ fn parse_field_attrs(field: &Field) -> Result<FieldAttrs, Error> {
                 other => {
                     return Err(Error::new_spanned(
                         other,
-                        "unknown `#[option(...)]` attribute (supported: skip, flatten, \
+                        "unknown `#[option(...)]` attribute (supported: positional, skip, flatten, \
                          rename)",
                     ));
                 }
@@ -220,4 +210,92 @@ fn string_value(nv: &syn::MetaNameValue) -> Result<String, Error> {
 
 fn field_span(field: &Field) -> proc_macro2::Span {
     syn::spanned::Spanned::span(field)
+}
+
+/// Decode a data-carrying option enum, with one named call per variant.
+#[proc_macro_derive(FromOptionValue, attributes(option))]
+pub fn derive_from_option_value(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match build_enum_impl(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
+    let Data::Enum(data) = &input.data else {
+        return Err(Error::new_spanned(
+            input,
+            "FromOptionValue requires an enum",
+        ));
+    };
+    let ty = &input.ident;
+    let mut arms = Vec::new();
+    let mut names = Vec::new();
+    for variant in &data.variants {
+        let mut name = None;
+        let mut aliases = Vec::new();
+        for attr in &variant.attrs {
+            if !attr.path().is_ident("option") {
+                continue;
+            }
+            for meta in attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)? {
+                match meta {
+                    Meta::NameValue(nv) if nv.path.is_ident("rename") => {
+                        if name.is_some() {
+                            return Err(Error::new_spanned(nv, "duplicate call name"));
+                        }
+                        name = Some(string_value(&nv)?);
+                    }
+                    Meta::NameValue(nv) if nv.path.is_ident("alias") => {
+                        aliases.push(string_value(&nv)?)
+                    }
+                    other => return Err(Error::new_spanned(other, "expected rename or alias")),
+                }
+            }
+        }
+        let name = name.ok_or_else(|| {
+            Error::new_spanned(
+                variant,
+                "each variant needs #[option(rename = \"call_name\")]",
+            )
+        })?;
+        names.push(name.clone());
+        let ident = &variant.ident;
+        let body = match &variant.fields {
+            Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                let config = &fields.unnamed[0].ty;
+                quote! { Ok(Self::#ident(::planforge_search::config::configure(
+                    name, <#config as ::std::default::Default>::default(), args,
+                )?)) }
+            }
+            Fields::Unit => quote! {
+                if args.is_empty() { Ok(Self::#ident) }
+                else { Err(format!("`{name}` does not accept arguments")) }
+            },
+            _ => {
+                return Err(Error::new_spanned(
+                    variant,
+                    "expected a unit variant or one configuration field",
+                ));
+            }
+        };
+        arms.push(quote! { #name #( | #aliases )* => { #body } });
+    }
+    let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics ::planforge_search::config::FromOptionValue for #ty #type_generics #where_clause {
+            fn from_option_value(value: &::planforge_search::config::ConfigValue) -> Result<Self, String> {
+                let (name, args) = match value {
+                    ::planforge_search::config::ConfigValue::Atom(name) => (name.as_str(), &[][..]),
+                    ::planforge_search::config::ConfigValue::Call(call) => (call.name(), call.args()),
+                    ::planforge_search::config::ConfigValue::List(_) => return Err(format!("expected {}, got a list", stringify!(#ty))),
+                };
+                match name.to_ascii_lowercase().as_str() {
+                    #(#arms,)*
+                    _ => Err(format!("unknown {} `{name}`; expected one of {}", stringify!(#ty), [#(#names),*].join(", "))),
+                }
+            }
+        }
+    })
 }

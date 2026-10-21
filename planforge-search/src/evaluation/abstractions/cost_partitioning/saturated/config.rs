@@ -112,31 +112,43 @@ option_enum!("partitioning", CostPartitioningMethod {
 pub struct ScpConfig {
     /// Time for diversification, from its start: sampling and the orders
     /// built for the samples (Seipp et al. 2020).
+    #[option(positional)]
     pub max_time: Option<Duration>,
     /// Time for building every cost partitioning, from the first evaluated
     /// state on.
+    #[option(positional)]
     pub table_construction_max_time: Option<Duration>,
     /// Choose orders over random-walk samples (Seipp et al. 2020).
+    #[option(positional)]
     pub diversify: bool,
     /// Number of sampled states that judge whether an order adds value.
+    #[option(positional)]
     pub samples: usize,
     /// Maximum number of diverse orders retained.
+    #[option(positional)]
     pub max_orders: usize,
     #[option(rename = "orders")]
+    #[option(positional)]
     pub order_generator: OrderGenerator,
     /// Time for the candidate orders of the evaluated state, from their
     /// start.
+    #[option(positional)]
     pub initial_order_generation_max_time: Option<Duration>,
     /// Goal-cover orders per goal that every diversified collection keeps
     /// (AAMAS 2027), in addition to the best order.
+    #[option(positional)]
     pub goal_cover_orders_per_goal: usize,
     /// Seeded random orders among the candidate orders of the evaluated
     /// state.
+    #[option(positional)]
     pub random_orders: usize,
+    #[option(positional)]
     pub saturator: Saturator,
     /// Seeds order selection and sampling; by default the seed CEGAR's
     /// random split selection starts from.
+    #[option(positional)]
     pub random_seed: u64,
+    #[option(positional)]
     pub partitioning: CostPartitioningMethod,
 }
 

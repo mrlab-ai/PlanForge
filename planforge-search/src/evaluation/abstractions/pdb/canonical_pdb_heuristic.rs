@@ -66,11 +66,17 @@ impl PdbValueCache {
     planforge_search::config::ApplyOptions,
 )]
 pub struct CanonicalNumericPdbConfig {
+    #[option(positional)]
     pub max_pdb_states: usize,
+    #[option(positional)]
     pub max_pattern_size: usize,
+    #[option(positional)]
     pub only_interesting_patterns: bool,
+    #[option(positional)]
     pub exploration_heuristic: PdbInternalHeuristic,
+    #[option(positional)]
     pub frontier_heuristic: PdbInternalHeuristic,
+    #[option(positional)]
     pub failed_lookup_heuristic: PdbInternalHeuristic,
 }
 

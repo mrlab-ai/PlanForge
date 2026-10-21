@@ -25,8 +25,11 @@ pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;
     planforge_search::config::ApplyOptions,
 )]
 pub struct SystematicPatternGeneratorConfig {
+    #[option(positional)]
     pub max_pdb_states: usize,
+    #[option(positional)]
     pub max_pattern_size: usize,
+    #[option(positional)]
     pub only_interesting_patterns: bool,
 }
 

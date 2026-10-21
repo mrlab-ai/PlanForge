@@ -27,12 +27,19 @@ pub const DEFAULT_NUMERIC_FIRST: bool = true;
     planforge_search::config::ApplyOptions,
 )]
 pub struct GreedyPatternGeneratorConfig {
+    #[option(positional)]
     pub max_pdb_states: usize,
+    #[option(positional)]
     pub numeric_first: bool,
+    #[option(positional)]
     pub random_seed: u64,
+    #[option(positional)]
     pub variable_order_type: GreedyVariableOrderType,
+    #[option(positional)]
     pub exploration_heuristic: super::pattern_database::PdbInternalHeuristic,
+    #[option(positional)]
     pub frontier_heuristic: super::pattern_database::PdbInternalHeuristic,
+    #[option(positional)]
     pub failed_lookup_heuristic: super::pattern_database::PdbInternalHeuristic,
 }
 
