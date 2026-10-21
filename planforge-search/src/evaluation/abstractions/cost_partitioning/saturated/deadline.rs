@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
-use super::*;
+use crate::evaluation::evaluator::EvaluationError;
+use crate::resource_limits::Deadline;
 
 /// The deadline `limit` from now, for the time limit `option`.
 pub(super) fn deadline_from_now(

@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 
-use super::*;
+use planforge_sas::utils::float_tolerance;
+
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::component::AbstractionComponent;
+use crate::evaluation::evaluator::EvaluationError;
 
 /// The greedy-order score of an abstraction (Seipp 2017): its heuristic
 /// value per cost it steals from the others.

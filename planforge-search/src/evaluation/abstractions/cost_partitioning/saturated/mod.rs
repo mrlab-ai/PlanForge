@@ -1,27 +1,15 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 
+use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericTaskExt, OperatorIndex, TaskRef};
-use planforge_sas::state_registry::{ConcreteState, StateRegistry};
-use planforge_sas::utils::float_tolerance;
-use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng, rngs::SmallRng};
-use tracing::{debug, info};
+use rand::{SeedableRng, rngs::SmallRng};
+use tracing::info;
 
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
+use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
 use crate::resource_limits::Deadline;
-use crate::successor_generator::RegistryExpander;
-
-use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
-use crate::evaluation::abstractions::common::cegar::SplitKind;
-use crate::evaluation::abstractions::common::regions::RegionSemantics;
-use crate::evaluation::abstractions::common::transition_system::AbstractOperatorSourceSets;
-use crate::evaluation::abstractions::component::AbstractionComponent;
-use crate::evaluation::abstractions::cost_partitioning::costs::{
-    RemainingCosts, SourceSetCostAllocation,
-};
-use planforge_sas::explicit_state::ExplicitState;
 
 mod config;
 mod deadline;
@@ -34,12 +22,13 @@ mod partition;
 mod sampling;
 mod scoring;
 pub use config::{CostPartitioningMethod, OrderGenerator, Saturator, ScpConfig};
-use deadline::*;
-use diagnostics::*;
-use goal_cover_orders::*;
-use lookup::*;
-use partition::*;
-use scoring::*;
+use deadline::deadline_from_now;
+use lookup::{
+    CostPartitioningHeuristic, abstraction_heuristic_values, compute_lookup_mask, compute_max_h,
+    max_abstraction_heuristic,
+};
+use partition::{PartitionedCollection, saturate_component_labels};
+use scoring::{compute_all_surplus_costs, compute_costs_stolen_by_heuristic, region_stolen_costs};
 
 /// The abstraction components and the phase of the heuristic, which builds
 /// its cost partitionings at the first evaluated state.
