@@ -197,7 +197,6 @@ pub(super) fn goal_cover_scp<'task>(
             progress_states: true,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })

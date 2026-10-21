@@ -20,7 +20,10 @@ pub struct CegarOptions {
     /// Merge the operators that induce the same abstract transitions into one
     /// label.
     pub combine_labels: bool,
-    /// Seeds split selection; without one, ties go to the first candidate.
+    /// Seeds split selection. Without a seed, split selection is unseeded:
+    /// ties go to the first candidate, and random split selection draws from
+    /// the fixed [`RANDOM_SPLIT_SEED`]. In a collection, the seed of the
+    /// collection.
     pub random_seed: Option<u64>,
     pub flaw_kind: FlawKind,
     pub flaw_scope: FlawScope,
@@ -73,29 +76,21 @@ impl CegarOptions {
             max_time: time_limit_from_secs(member.max_time)
                 .expect("a restart's time limit is a non-negative number of seconds"),
             random_seed: Some(member.seed),
-            split_kind: member.split_kind.unwrap_or(self.split_kind),
+            split_kind: member.split_kind,
             ..self.clone()
         }
     }
 
     /// The options of a goal-focused member: capped by what is left of the
-    /// collection's budgets, with the variant's seed and tie rank, and its
-    /// split kind, else the collection's `fixed_split_kind`.
-    pub(crate) fn for_variant(
-        &self,
-        variant: &GoalVariant,
-        fixed_split_kind: Option<SplitKind>,
-        budget: MemberBudget,
-    ) -> Self {
+    /// collection's budgets, with the variant's seed, tie rank and split
+    /// kind.
+    pub(crate) fn for_variant(&self, variant: &GoalVariant, budget: MemberBudget) -> Self {
         Self {
             max_states: self.max_states.min(budget.remaining_states),
             // Whichever of the two budgets exist bind; the tighter one wins.
             max_time: min_time_limit(self.max_time, budget.remaining_time),
             random_seed: variant.seed,
-            split_kind: variant
-                .split_kind
-                .or(fixed_split_kind)
-                .unwrap_or(self.split_kind),
+            split_kind: variant.split_kind,
             split_selection_rank: variant.tie_rank.or(self.split_selection_rank),
             ..self.clone()
         }

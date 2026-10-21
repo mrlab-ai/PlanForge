@@ -33,6 +33,7 @@ use planforge_sas::explicit_state::{ExplicitState, ExplicitStateSpace};
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
 use tracing::{debug, info};
 
+use super::config::SplitKinds;
 use super::member::{BuiltReport, CollectionMember};
 use super::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::abstraction::CollectionMembership;
@@ -63,8 +64,7 @@ pub struct GoalVariant {
     pub(crate) full_task: bool,
     pub(crate) variant_id: usize,
     pub(crate) kind: MemberKind,
-    /// `None` keeps the backend's configured split kind.
-    pub(crate) split_kind: Option<SplitKind>,
+    pub(crate) split_kind: SplitKind,
     /// Which of the tied best refinement candidates to take; `None` keeps the
     /// backend's configured choice.
     pub(crate) tie_rank: Option<usize>,
@@ -114,10 +114,9 @@ pub(crate) struct GoalFocusedSchedule {
     pub(crate) max_collection_states: usize,
     pub(crate) total_max_time: Option<Duration>,
     pub(crate) progress_states: bool,
-    /// Goal-focused collections: alternate concrete and wanted splits by
-    /// variant parity. When false, every variant keeps the backend's
-    /// configured split kind; ranks and seeds are unaffected.
-    pub(crate) alternate_split_kinds: bool,
+    /// Goal-focused collections may alternate split kinds by variant; ranks
+    /// and seeds do not depend on it.
+    pub(crate) split_kinds: SplitKinds,
     /// Goal-focused collections: build every member on its goal's
     /// single-goal task. When false, every member is built on the full task;
     /// goals are then only labels that schedule the `G * V` members
@@ -131,12 +130,12 @@ pub(crate) struct GoalFocusedSchedule {
 impl GoalFocusedSchedule {
     /// How member `member` of a task with `goal_count` goals is constructed.
     ///
-    /// A goal-focused collection alternates progression and regression by
-    /// variant parity (unless `alternate_split_kinds` is off), ranks ties by
-    /// `variant / 2`, and derives a seed for every variant but the first;
-    /// otherwise only the seed varies, and only when more than one variant
-    /// per goal is requested. An initial-state specialist reuses variant 0's
-    /// construction.
+    /// The variant's position in the split kind alternation, if any, is its
+    /// id. A goal-focused collection ranks ties by `variant / 2` and derives
+    /// a seed for every variant but the first, which is unseeded; a per-goal
+    /// collection keeps the configured rank and derives a seed for every
+    /// variant but the first, which keeps the configured seed. An
+    /// initial-state specialist reuses variant 0's construction.
     fn goal_variant(&self, member: &ScheduledMember, goal_count: usize) -> GoalVariant {
         if goal_count == 0 {
             return GoalVariant {
@@ -144,7 +143,7 @@ impl GoalFocusedSchedule {
                 full_task: true,
                 variant_id: member.variant_id,
                 kind: member.kind,
-                split_kind: None,
+                split_kind: self.split_kinds.of(0),
                 tie_rank: None,
                 seed: self.random_seed,
             };
@@ -157,26 +156,19 @@ impl GoalFocusedSchedule {
         let derived_seed =
             || derive_variant_seed(base_seed, member.goal_id, construction_variant - 1);
         assert!(
-            !self.alternate_split_kinds || self.strategy.is_goal_focused(),
+            self.split_kinds != SplitKinds::Alternating || self.strategy.is_goal_focused(),
             "only goal-focused collections choose split kinds per variant"
         );
-        let (split_kind, tie_rank, seed) = if self.strategy.is_goal_focused() {
-            let split_kind = self.alternate_split_kinds.then(|| {
-                if construction_variant.is_multiple_of(2) {
-                    SplitKind::Concrete
-                } else {
-                    SplitKind::Wanted
-                }
-            });
+        let split_kind = self.split_kinds.of(construction_variant);
+        let (tie_rank, seed) = if self.strategy.is_goal_focused() {
             (
-                split_kind,
                 Some(construction_variant / 2),
                 (construction_variant > 0).then(derived_seed),
             )
-        } else if self.variants_per_goal > 1 && construction_variant > 0 {
-            (None, None, Some(derived_seed()))
+        } else if construction_variant > 0 {
+            (None, Some(derived_seed()))
         } else {
-            (None, None, self.random_seed)
+            (None, self.random_seed)
         };
         GoalVariant {
             goal_id: Some(member.goal_id),
@@ -351,7 +343,7 @@ fn build_member<B: GoalFocusedBackend>(
         .as_ref()
         .map_or(task, |goal_task| goal_task as &dyn AbstractNumericTask);
     debug!(
-        "{} collection: building abstraction {}, goal={}, variant={}, kind={:?}, split_kind={:?}, tie_rank={:?}, remaining_states={}, seed={:?}",
+        "{} collection: building abstraction {}, goal={}, variant={}, kind={:?}, split_kind={}, tie_rank={:?}, remaining_states={}, seed={:?}",
         B::NAME,
         abstraction_id + 1,
         member.goal_id,

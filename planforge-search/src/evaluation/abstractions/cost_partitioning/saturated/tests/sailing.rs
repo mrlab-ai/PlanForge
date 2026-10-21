@@ -75,7 +75,6 @@ fn sailing_goal_focused_cartesian_collection_reaches_optimum_with_interval_scp()
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: Some(1),
             single_goal_tasks: true,
             ..Default::default()
         })

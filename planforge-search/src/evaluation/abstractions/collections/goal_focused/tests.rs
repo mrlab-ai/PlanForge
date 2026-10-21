@@ -100,7 +100,7 @@ struct Call {
     goal_id: Option<usize>,
     variant_id: usize,
     kind: MemberKind,
-    split_kind: Option<SplitKind>,
+    split_kind: SplitKind,
     tie_rank: Option<usize>,
     seed: Option<u64>,
     /// `x` at the refinement root, `None` for the task initial state.
@@ -251,7 +251,11 @@ fn schedule(
         max_collection_states: 1_000,
         total_max_time: None,
         progress_states,
-        alternate_split_kinds: strategy.is_goal_focused(),
+        split_kinds: if strategy.is_goal_focused() {
+            SplitKinds::Alternating
+        } else {
+            SplitKinds::Fixed(SplitKind::Concrete)
+        },
         single_goal_tasks: true,
     }
 }
@@ -318,7 +322,7 @@ fn goal_focused_variants_alternate_split_kinds_and_rank_ties_by_pairs() {
             (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.split_kind.unwrap(),
+                member.call.split_kind,
                 member.call.tie_rank.unwrap(),
                 member.call.seed,
             )
@@ -368,8 +372,12 @@ fn per_goal_variants_vary_only_the_seed() {
             ))
             .collect::<Vec<_>>(),
         vec![
-            (None, None, Some(5)),
-            (None, None, Some(derive_variant_seed(5, 0, 0))),
+            (SplitKind::Concrete, None, Some(5)),
+            (
+                SplitKind::Concrete,
+                None,
+                Some(derive_variant_seed(5, 0, 0))
+            ),
         ]
     );
 }
@@ -395,7 +403,7 @@ fn a_goal_free_task_gets_one_full_task_member() {
                 goal_id: None,
                 variant_id: 0,
                 kind: MemberKind::Scheduled,
-                split_kind: None,
+                split_kind: SplitKind::Concrete,
                 tie_rank: None,
                 seed: Some(5),
                 root_x: None,
@@ -654,7 +662,7 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
     let members = build_goal_focused_collection(
         &task,
         &GoalFocusedSchedule {
-            alternate_split_kinds: false,
+            split_kinds: SplitKinds::Fixed(SplitKind::Wanted),
             ..schedule(CollectionStrategy::GoalFocused, 3, false)
         },
         &backend,
@@ -674,12 +682,12 @@ fn without_alternation_every_variant_keeps_the_configured_direction() {
             ))
             .collect::<Vec<_>>(),
         vec![
-            (0, 0, None, Some(0), None),
-            (1, 0, None, Some(0), None),
-            (0, 1, None, Some(0), seed(0, 1)),
-            (1, 1, None, Some(0), seed(1, 1)),
-            (1, 2, None, Some(1), seed(1, 2)),
-            (0, 2, None, Some(1), seed(0, 2)),
+            (0, 0, SplitKind::Wanted, Some(0), None),
+            (1, 0, SplitKind::Wanted, Some(0), None),
+            (0, 1, SplitKind::Wanted, Some(0), seed(0, 1)),
+            (1, 1, SplitKind::Wanted, Some(0), seed(1, 1)),
+            (1, 2, SplitKind::Wanted, Some(1), seed(1, 2)),
+            (0, 2, SplitKind::Wanted, Some(1), seed(0, 2)),
         ]
     );
 }
@@ -714,7 +722,7 @@ fn full_task_members_are_scheduled_round_robin_without_membership() {
             .map(|member| (
                 member.call.goal_id.unwrap(),
                 member.call.variant_id,
-                member.call.split_kind.unwrap(),
+                member.call.split_kind,
                 member.call.tie_rank.unwrap(),
                 member.call.seed,
                 member.membership,

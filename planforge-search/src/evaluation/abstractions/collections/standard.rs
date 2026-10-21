@@ -22,6 +22,7 @@ use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};
 
+use super::config::SplitKinds;
 use super::member::CollectionMember;
 use crate::evaluation::abstractions::common::cegar::SplitKind;
 use crate::evaluation::abstractions::common::cegar::initial_splits::InitialSplitVar;
@@ -42,26 +43,17 @@ pub(crate) struct StandardSchedule {
     pub(crate) blacklist_trigger_percentage: f64,
     /// Start blacklisting at stagnation instead of stopping.
     pub(crate) enable_blacklist_on_stagnation: bool,
-    pub(crate) random_seed: Option<u64>,
-    /// Alternate concrete and wanted splits from member to member.
-    pub(crate) alternate_split_kinds: bool,
-    /// The split kind of every member when not alternating; the backend's
-    /// own when unset.
-    pub(crate) split_kind: Option<SplitKind>,
+    /// The seed the restarts' seeds, initial splits and blacklists are drawn
+    /// with.
+    pub(crate) random_seed: u64,
+    pub(crate) split_kinds: SplitKinds,
 }
 
 impl StandardSchedule {
     /// The split kind of restart `iteration` (one-based).
-    pub(crate) fn split_kind(&self, iteration: usize) -> Option<SplitKind> {
+    pub(crate) fn split_kind(&self, iteration: usize) -> SplitKind {
         assert!(iteration > 0, "restarts are one-based");
-        if !self.alternate_split_kinds {
-            return self.split_kind;
-        }
-        Some(if iteration % 2 == 1 {
-            SplitKind::Concrete
-        } else {
-            SplitKind::Wanted
-        })
+        self.split_kinds.of(iteration - 1)
     }
 }
 
@@ -72,7 +64,7 @@ pub struct StandardMember {
     /// Seconds; infinite when unbounded.
     pub(crate) max_time: f64,
     pub(crate) seed: u64,
-    pub(crate) split_kind: Option<SplitKind>,
+    pub(crate) split_kind: SplitKind,
     pub(crate) initial_split_var: Option<InitialSplitVar>,
     pub(crate) blacklisted_prop_var_ids: HashSet<VariableIndex>,
     pub(crate) blacklisted_numeric_var_ids: HashSet<VariableIndex>,
@@ -102,11 +94,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
     schedule: &StandardSchedule,
     backend: &B,
 ) -> Result<Vec<B::Member>> {
-    let mut rng = SmallRng::seed_from_u64(
-        schedule
-            .random_seed
-            .unwrap_or(crate::evaluation::seed::DEFAULT_RANDOM_SEED),
-    );
+    let mut rng = SmallRng::seed_from_u64(schedule.random_seed);
     let candidates = initial_split_candidates(task);
 
     let start = Instant::now();
@@ -168,7 +156,7 @@ pub(crate) fn build_standard_collection<B: StandardBackend>(
             blacklisted_numeric_var_ids,
         };
         debug!(
-            "{} collection: building restart {iteration}, max_time={max_time:.2}s, split_kind={:?}",
+            "{} collection: building restart {iteration}, max_time={max_time:.2}s, split_kind={}",
             B::NAME,
             member.split_kind
         );

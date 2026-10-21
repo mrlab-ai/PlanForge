@@ -40,7 +40,7 @@ fn standard_collection_defaults() {
     assert_eq!(config.member.cegar.max_states, 1_000_000);
     assert_eq!(config.max_collection_size, 10_000_000);
     assert!(!config.member.use_wildcard_plans);
-    assert_eq!(config.random_seed, Some(2011));
+    assert_eq!(config.member.cegar.random_seed, Some(2011));
     assert_eq!(config.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(config.member.cegar.flaw_scope, FlawScope::First);
     assert_eq!(config.alternate_split_kinds, None);
@@ -116,7 +116,7 @@ fn standard_collection_stops_at_a_member_whose_abstract_plan_is_concrete() {
     let config = DomainAbstractionCollectionConfig {
         max_collection_size: 100_000,
         total_max_time: Some(Duration::from_secs(600)),
-        stagnation_limit: 600.0,
+        stagnation_limit: Some(Duration::from_secs(600)),
         member: member_config(1_000, Some(Duration::from_secs(600))),
         ..Default::default()
     };
@@ -145,6 +145,14 @@ fn member_config(max_states: usize, max_time: Option<Duration>) -> DomainAbstrac
     }
 }
 
+/// [`member_config`] without a time limit and with the collection seed
+/// `seed`.
+fn seeded_member_config(max_states: usize, seed: u64) -> DomainAbstractionConfig {
+    let mut member = member_config(max_states, None);
+    member.cegar.random_seed = Some(seed);
+    member
+}
+
 /// The default collection with the member's `flaw_kind` and `flaw_scope`.
 fn with_flaws(
     config: DomainAbstractionCollectionConfig,
@@ -170,9 +178,9 @@ fn standard_can_alternate_split_kinds_on_the_full_task() {
     );
     let schedule = config.standard_schedule();
 
-    assert_eq!(schedule.split_kind(1), Some(SplitKind::Concrete));
-    assert_eq!(schedule.split_kind(2), Some(SplitKind::Wanted));
-    assert_eq!(schedule.split_kind(3), Some(SplitKind::Concrete));
+    assert_eq!(schedule.split_kind(1), SplitKind::Concrete);
+    assert_eq!(schedule.split_kind(2), SplitKind::Wanted);
+    assert_eq!(schedule.split_kind(3), SplitKind::Concrete);
 }
 
 fn validation_error(config: DomainAbstractionCollectionConfig) -> String {
@@ -246,6 +254,56 @@ fn goal_focused_rejects_options_the_schedule_decides_or_cannot_follow() {
 }
 
 #[test]
+fn goal_focused_collections_reject_the_options_of_standard_collections() {
+    for collection_strategy in [CollectionStrategy::PerGoal, CollectionStrategy::GoalFocused] {
+        let goal_focused = DomainAbstractionCollectionConfig {
+            collection_strategy,
+            ..Default::default()
+        };
+        assert!(goal_focused.validate().is_ok());
+        for config in [
+            DomainAbstractionCollectionConfig {
+                stagnation_limit: None,
+                ..goal_focused.clone()
+            },
+            DomainAbstractionCollectionConfig {
+                blacklist_trigger_percentage: 0.5,
+                ..goal_focused.clone()
+            },
+            DomainAbstractionCollectionConfig {
+                enable_blacklist_on_stagnation: false,
+                ..goal_focused.clone()
+            },
+        ] {
+            let error = validation_error(config);
+            assert!(
+                error.contains("require `collection_strategy=standard`"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_blacklist_trigger_is_a_share_of_the_time_limit() {
+    for share in [-0.1, 1.5, f64::NAN] {
+        let error = validation_error(DomainAbstractionCollectionConfig {
+            blacklist_trigger_percentage: share,
+            ..Default::default()
+        });
+        assert!(error.contains("between 0 and 1"), "{error}");
+    }
+}
+
+#[test]
+fn collections_choose_their_members_split_kinds() {
+    let mut config = DomainAbstractionCollectionConfig::default();
+    config.member.cegar.split_kind = SplitKind::Wanted;
+    let error = validation_error(config);
+    assert!(error.contains("its own `split_kind`"), "{error}");
+}
+
+#[test]
 fn standard_rejects_goal_focused_options() {
     let error = validation_error(DomainAbstractionCollectionConfig {
         variants_per_goal: 2,
@@ -275,7 +333,7 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
         full_task: false,
         variant_id: 3,
         kind: MemberKind::Scheduled,
-        split_kind: Some(direction),
+        split_kind: direction,
         tie_rank: Some(tie_rank),
         seed,
     };
@@ -284,11 +342,7 @@ fn goal_focused_members_keep_the_flaw_kind_and_split_by_variant_parity() {
         remaining_time: Some(Duration::from_secs(5)),
     };
 
-    let member = |variant: GoalVariant| {
-        config
-            .member
-            .for_variant(&variant, config.split_kind, budget)
-    };
+    let member = |variant: GoalVariant| config.member.for_variant(&variant, budget);
     let forward = member(variant(SplitKind::Concrete, 1, None));
     assert_eq!(forward.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(forward.cegar.split_kind, SplitKind::Concrete);
@@ -439,8 +493,7 @@ fn domain_goal_focused_config(
         total_max_time: None,
         variants_per_goal,
         progress_states,
-        random_seed: Some(1),
-        member: member_config(64, None),
+        member: seeded_member_config(64, 1),
         ..Default::default()
     }
 }
@@ -479,7 +532,7 @@ fn cartesian_members(
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
-                    random_seed: Some(1),
+                    random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
                 ..Default::default()
@@ -492,7 +545,6 @@ fn cartesian_members(
             alternate_split_kinds: Some(true),
             single_goal_tasks: true,
             split_kind: None,
-            random_seed: None,
             ..Default::default()
         },
     )
@@ -617,8 +669,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
-                    random_seed: Some(1),
-                    split_kind: SplitKind::Wanted,
+                    random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
                 ..Default::default()
@@ -630,8 +681,7 @@ fn without_alternation_domain_and_cartesian_members_keep_the_configured_directio
             progress_states: true,
             alternate_split_kinds: Some(false),
             single_goal_tasks: true,
-            split_kind: None,
-            random_seed: None,
+            split_kind: Some(SplitKind::Wanted),
             ..Default::default()
         },
     );
@@ -684,7 +734,7 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
                     max_states: 64,
-                    random_seed: Some(1),
+                    random_seed: None,
                     ..CartesianAbstractionConfig::default().cegar
                 },
                 ..Default::default()
@@ -696,9 +746,8 @@ fn full_task_domain_and_cartesian_members_follow_the_same_round_robin() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: false,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -812,7 +861,6 @@ fn cartesian_collection(
         },
         collection_strategy: strategy,
         max_collection_size,
-        random_seed: Some(1),
         ..Default::default()
     }
 }
@@ -824,8 +872,7 @@ fn both_representations_build_one_per_goal_member_per_goal() {
         collection_strategy: CollectionStrategy::PerGoal,
         max_collection_size: 10_000,
         total_max_time: None,
-        random_seed: Some(1),
-        member: member_config(64, None),
+        member: seeded_member_config(64, 1),
         ..Default::default()
     })
     .unwrap()
@@ -857,8 +904,7 @@ fn both_representations_stop_a_standard_collection_at_a_member_that_settles_the_
     let domain = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 100_000,
         total_max_time: None,
-        random_seed: Some(1),
-        member: member_config(1_000, None),
+        member: seeded_member_config(1_000, 1),
         ..Default::default()
     })
     .unwrap()

@@ -305,9 +305,9 @@ fn goal_focused_collection_config(seed: u64) -> DomainAbstractionCollectionConfi
         collection_strategy: CollectionStrategy::GoalFocused,
         variants_per_goal: 2,
         progress_states: true,
-        random_seed: Some(seed),
         member: DomainAbstractionConfig {
             cegar: CegarOptions {
+                random_seed: Some(seed),
                 max_states: 1_000,
                 max_time: None,
                 split_selection: SplitSelection::MinGrowth,

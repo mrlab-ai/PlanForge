@@ -115,7 +115,7 @@ fn parses_canonical_domain_collection_with_named_options() {
     assert!(!cfg.member.use_wildcard_plans);
     assert!(cfg.member.cegar.combine_labels);
     assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Progression);
-    assert_eq!(cfg.random_seed, Some(7));
+    assert_eq!(cfg.member.cegar.random_seed, Some(7));
 }
 
 #[test]
@@ -525,7 +525,7 @@ fn parses_max_domain_collection_with_named_options() {
     assert_eq!(cfg.member.cegar.flaw_kind, FlawKind::Progression);
     assert_eq!(cfg.member.cegar.flaw_scope, FlawScope::WholePlan);
     assert_eq!(cfg.collection_strategy, CollectionStrategy::GoalFocused);
-    assert_eq!(cfg.random_seed, Some(7));
+    assert_eq!(cfg.member.cegar.random_seed, Some(7));
     assert!(cfg.member.cegar.debug);
 }
 
@@ -663,4 +663,25 @@ fn domain_source_is_one_domain_abstraction_with_its_own_options() {
         error.contains("unknown option `max_collection_size`"),
         "{error}"
     );
+}
+
+#[test]
+fn collection_seeds_split_kinds_and_stagnation_limits_parse_once() {
+    let cfg = domain_collection_source(
+        "astar(max(domain_collection(random_seed=none, split_kind=wanted, stagnation_limit=infinity)))",
+    );
+    assert_eq!(cfg.member.cegar.random_seed, None);
+    assert_eq!(cfg.split_kind, Some(SplitKind::Wanted));
+    assert_eq!(cfg.member.cegar.split_kind, SplitKind::Concrete);
+    assert_eq!(cfg.stagnation_limit, None);
+
+    let cfg = domain_collection_source("astar(max(domain_collection(stagnation_limit=2.5)))");
+    assert_eq!(
+        cfg.stagnation_limit,
+        Some(std::time::Duration::from_millis(2500))
+    );
+
+    let error =
+        domain_collection_source_error("astar(max(domain_collection(stagnation_limit=-1)))");
+    assert!(error.contains("non-negative"), "{error}");
 }

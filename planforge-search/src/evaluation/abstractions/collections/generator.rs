@@ -130,10 +130,7 @@ impl<G: AbstractionGenerator> GoalFocusedBackend for CollectionGenerator<G> {
         variant: &GoalVariant,
         budget: MemberBudget,
     ) -> Result<Self::Member> {
-        let config = self
-            .config
-            .member
-            .for_variant(variant, self.config.split_kind, budget);
+        let config = self.config.member.for_variant(variant, budget);
         G::new(config)?.generate_from_root(task, root)
     }
 }

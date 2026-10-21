@@ -26,12 +26,6 @@ impl CollectionStrategy {
     pub fn is_goal_focused(self) -> bool {
         matches!(self, Self::GoalFocused)
     }
-
-    /// Whether members alternate concrete and wanted splits: as configured, or
-    /// by default exactly for goal-focused collections.
-    pub fn alternates_split_kinds(self, alternate_split_kinds: Option<bool>) -> bool {
-        alternate_split_kinds.unwrap_or(self.is_goal_focused())
-    }
 }
 
 option_enum!("collection_strategy", CollectionStrategy {

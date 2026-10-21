@@ -21,6 +21,7 @@ use planforge_search::evaluation::abstractions::collections::generator::Abstract
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
 use planforge_sas::state_registry::StateRegistry;
@@ -409,7 +410,7 @@ fn a_negated_derived_goal_is_refused_by_abstractions_and_solved_by_everything_el
 
     let collection = DomainAbstractionCollectionGenerator::new(DomainAbstractionCollectionConfig {
         max_collection_size: 10_000,
-        stagnation_limit: 0.0,
+        stagnation_limit: Some(Duration::ZERO),
         enable_blacklist_on_stagnation: false,
         member: DomainAbstractionConfig {
             cegar: CegarOptions {

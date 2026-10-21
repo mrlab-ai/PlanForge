@@ -98,7 +98,10 @@ pub struct ScpConfig {
 
 impl Default for ScpConfig {
     fn default() -> Self {
-        let random_seed = DomainAbstractionCollectionConfig::default().random_seed;
+        let random_seed = DomainAbstractionCollectionConfig::default()
+            .member
+            .cegar
+            .random_seed;
         Self {
             max_time: 200.0,
             table_construction_max_time: 30.0,

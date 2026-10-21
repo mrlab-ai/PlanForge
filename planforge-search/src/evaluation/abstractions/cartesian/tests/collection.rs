@@ -85,6 +85,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -97,9 +98,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -213,6 +213,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -225,9 +226,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             progress_states: false,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -243,6 +243,7 @@ fn goal_collection_builds_every_goal_with_source_sets() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -255,9 +256,8 @@ fn goal_collection_builds_every_goal_with_source_sets() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -332,6 +332,7 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -344,9 +345,8 @@ fn progress_states_refine_from_reachable_concrete_checkpoints() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -497,6 +497,7 @@ fn progress_states_complete_after_reaching_the_full_goal() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -509,9 +510,8 @@ fn progress_states_complete_after_reaching_the_full_goal() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -618,6 +618,7 @@ fn progress_states_complete_after_a_dead_progress_state() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -630,9 +631,8 @@ fn progress_states_complete_after_a_dead_progress_state() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -760,6 +760,7 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 3,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -772,9 +773,8 @@ fn progress_states_retry_an_earlier_unsatisfied_goal_after_advancing() {
             progress_states: true,
             alternate_split_kinds: None,
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
@@ -938,6 +938,7 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
         CartesianAbstractionCollectionGenerator::new(CartesianAbstractionCollectionConfig {
             member: CartesianAbstractionConfig {
                 cegar: CegarOptions {
+                    random_seed: None,
                     max_states: 64,
                     ..CartesianAbstractionConfig::default().cegar
                 },
@@ -950,9 +951,8 @@ fn collection_time_limit_keeps_mandatory_first_abstraction() {
             progress_states: false,
             alternate_split_kinds: Some(true),
             split_kind: None,
-            random_seed: None,
             single_goal_tasks: true,
-            stagnation_limit: 20.0,
+            stagnation_limit: Some(Duration::from_secs(20)),
             blacklist_trigger_percentage: 0.75,
             enable_blacklist_on_stagnation: true,
         })
