@@ -155,14 +155,44 @@ pub(crate) enum SplitDimension {
     Numeric(VariableIndex),
 }
 
+/// One of the two children of a split, in the order of a refinement node:
+/// the wanted values of a propositional split or the lower values of a
+/// numeric one first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChildSide {
+    First,
+    Second,
+}
+
+impl ChildSide {
+    /// The first child if `first`, else the second.
+    pub(crate) fn first_if(first: bool) -> Self {
+        if first { Self::First } else { Self::Second }
+    }
+}
+
 /// The two children a split divides a region into.
 pub(crate) struct SplitChildren {
     /// The child that keeps the split's witness.
     pub(crate) witness: CartesianSet,
     pub(crate) other: CartesianSet,
-    /// Whether the witness child holds the wanted values of a propositional
-    /// split, or the lower values of a numeric one.
-    pub(crate) witness_is_wanted_or_lower: bool,
+    pub(crate) witness_side: ChildSide,
+}
+
+impl SplitChildren {
+    /// The children `first` and `second`, of which `witness_side` keeps the
+    /// witness.
+    fn new(first: CartesianSet, second: CartesianSet, witness_side: ChildSide) -> Self {
+        let (witness, other) = match witness_side {
+            ChildSide::First => (first, second),
+            ChildSide::Second => (second, first),
+        };
+        Self {
+            witness,
+            other,
+            witness_side,
+        }
+    }
 }
 
 /// The two children `split` splits `parent` into.
@@ -196,21 +226,17 @@ pub(crate) fn split_child_regions(parent: &CartesianSet, split: &Split) -> Resul
                 !wanted_values.is_empty() && !other_values.is_empty(),
                 "non-strict propositional split on var {var_id}: current={current:?}, wanted={wanted:?}"
             );
-            let witness_is_wanted = wanted_values.binary_search(witness_value).is_ok();
+            let witness_side =
+                ChildSide::first_if(wanted_values.binary_search(witness_value).is_ok());
             let mut wanted_region = parent.clone();
             wanted_region.narrow_prop(*var_id, wanted_values);
             let mut other_region = parent.clone();
             other_region.narrow_prop(*var_id, other_values);
-            let (witness, other) = if witness_is_wanted {
-                (wanted_region, other_region)
-            } else {
-                (other_region, wanted_region)
-            };
-            Ok(SplitChildren {
-                witness,
-                other,
-                witness_is_wanted_or_lower: witness_is_wanted,
-            })
+            Ok(SplitChildren::new(
+                wanted_region,
+                other_region,
+                witness_side,
+            ))
         }
         Split::Numeric {
             var_id,
@@ -244,20 +270,12 @@ pub(crate) fn split_child_regions(parent: &CartesianSet, split: &Split) -> Resul
                 witness_is_lower ^ upper.contains(*witness_value),
                 "numeric split does not place witness {witness_value} in exactly one child"
             );
+            let witness_side = ChildSide::first_if(witness_is_lower);
             let mut lower_region = parent.clone();
             Arc::make_mut(&mut lower_region.numeric)[var_id.index()] = lower;
             let mut upper_region = parent.clone();
             Arc::make_mut(&mut upper_region.numeric)[var_id.index()] = upper;
-            let (witness, other) = if witness_is_lower {
-                (lower_region, upper_region)
-            } else {
-                (upper_region, lower_region)
-            };
-            Ok(SplitChildren {
-                witness,
-                other,
-                witness_is_wanted_or_lower: witness_is_lower,
-            })
+            Ok(SplitChildren::new(lower_region, upper_region, witness_side))
         }
     }
 }

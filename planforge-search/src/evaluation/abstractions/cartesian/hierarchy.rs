@@ -184,22 +184,21 @@ impl CartesianRefinementHierarchy {
     }
 
     /// Replaces leaf `leaf_node_id` of `old_state_id` by a node for `split`,
-    /// whose wanted or lower child the old state keeps iff
-    /// `old_state_is_wanted_or_lower`. Returns the leaves of the old and the
-    /// new state.
+    /// whose child on `old_state_side` the old state keeps. Returns the
+    /// leaves of the old and the new state.
     pub(crate) fn split(
         &mut self,
         leaf_node_id: usize,
         old_state_id: usize,
         new_state_id: usize,
         split: &Split,
-        old_state_is_wanted_or_lower: bool,
+        old_state_side: ChildSide,
     ) -> Result<(usize, usize)> {
         let (first_child, second_child) = self.replace_leaf(
             leaf_node_id,
             old_state_id,
             new_state_id,
-            old_state_is_wanted_or_lower,
+            old_state_side,
             |first_child, second_child| match split {
                 Split::Propositional { var_id, wanted, .. } => RefinementNode::Propositional {
                     var_id: *var_id,
@@ -221,22 +220,21 @@ impl CartesianRefinementHierarchy {
                 },
             },
         )?;
-        Ok(if old_state_is_wanted_or_lower {
-            (first_child, second_child)
-        } else {
-            (second_child, first_child)
+        Ok(match old_state_side {
+            ChildSide::First => (first_child, second_child),
+            ChildSide::Second => (second_child, first_child),
         })
     }
 
     /// Replaces leaf `leaf_node_id` of `old_state_id` by the node `node`
-    /// builds over two new leaves, the old state's first iff
-    /// `old_state_is_first`. Returns the first and second leaf.
+    /// builds over two new leaves, the old state's on `old_state_side`.
+    /// Returns the first and second leaf.
     fn replace_leaf(
         &mut self,
         leaf_node_id: usize,
         old_state_id: usize,
         new_state_id: usize,
-        old_state_is_first: bool,
+        old_state_side: ChildSide,
         node: impl FnOnce(usize, usize) -> RefinementNode,
     ) -> Result<(usize, usize)> {
         let leaf = self
@@ -247,10 +245,9 @@ impl CartesianRefinementHierarchy {
             matches!(leaf, RefinementNode::Leaf { state_id } if *state_id == old_state_id),
             "hierarchy node {leaf_node_id} is not leaf state {old_state_id}"
         );
-        let (first_state, second_state) = if old_state_is_first {
-            (old_state_id, new_state_id)
-        } else {
-            (new_state_id, old_state_id)
+        let (first_state, second_state) = match old_state_side {
+            ChildSide::First => (old_state_id, new_state_id),
+            ChildSide::Second => (new_state_id, old_state_id),
         };
         let first_child = self.nodes.len();
         self.nodes.push(RefinementNode::Leaf {
@@ -279,7 +276,7 @@ impl CartesianRefinementHierarchy {
             leaf_node_id,
             old_state_id,
             new_state_id,
-            old_state_is_wanted,
+            ChildSide::first_if(old_state_is_wanted),
             |wanted_child, other_child| RefinementNode::Propositional {
                 var_id,
                 wanted,
@@ -312,7 +309,7 @@ impl CartesianRefinementHierarchy {
             leaf_node_id,
             old_state_id,
             new_state_id,
-            old_state_is_lower,
+            ChildSide::first_if(old_state_is_lower),
             |lower_child, upper_child| RefinementNode::Numeric {
                 var_id,
                 boundary,

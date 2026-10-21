@@ -17,7 +17,7 @@ impl WorkingAbstraction {
             old_state_id,
             new_state_id,
             &split,
-            children.witness_is_wanted_or_lower,
+            children.witness_side,
         )?;
         self.states[old_state_id] = children.witness;
         self.states.push(children.other);
