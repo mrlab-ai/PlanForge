@@ -3,15 +3,17 @@ mod tests;
 
 use std::sync::Arc;
 
+use planforge_sas::numeric_conditions::{CompOp, ConditionNode, ConditionValue, NumericCondition};
 use planforge_sas::numeric_task::{
-    AbstractNumericTask, AssignmentEffect, AssignmentOperation, ExplicitFact, INF_VALUE,
-    NEG_INF_VALUE, NumericType, NumericValue, Operator, OperatorIndex, VariableIndex, ZERO_VALUE,
+    AbstractNumericTask, AssignmentEffect, AssignmentOperation, AxiomIndex, ExplicitFact,
+    INF_VALUE, NEG_INF_VALUE, NumericTaskExt, NumericType, NumericValue, Operator, OperatorIndex,
+    VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::interval::Interval;
-use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_var};
-
-use planforge_sas::numeric_conditions::{CompOp, ConditionNode, NumericCondition};
+use planforge_sas::utils::linear_effects::{
+    LinearExpression, LinearizationError, linearize_numeric_var,
+};
 
 /// A derived affine expression whose value changes by a deterministic constant
 /// under every operator. Such an expression is an exact numeric coordinate of
@@ -48,22 +50,22 @@ pub(crate) fn coordinate_value(
     })
 }
 
-pub(crate) fn analyze_additive_numeric_view(
+/// The additive view of numeric variable `numeric_var_id`, if it is a
+/// derived affine expression of regular variables that every operator
+/// changes by a constant. `definitions` is the assignment axiom of every
+/// derived variable.
+fn analyze_additive_numeric_view(
     task: &dyn AbstractNumericTask,
+    definitions: &[Option<AxiomIndex>],
     numeric_var_id: VariableIndex,
 ) -> Option<AdditiveNumericView> {
-    if task
-        .numeric_variables()
-        .get(numeric_var_id.index())?
-        .get_type()
-        != &NumericType::Derived
-    {
+    if task.numeric_variables()[numeric_var_id.index()].get_type() != &NumericType::Derived {
         return None;
     }
-    if numeric_expression_depends_on_cost(task, numeric_var_id) {
+    if !defined_without_cost(task, definitions, numeric_var_id) {
         return None;
     }
-    let expression = linearize_numeric_var(task, numeric_var_id).ok()?;
+    let expression = linear_expression(task, numeric_var_id)?;
     if expression.is_constant()
         || !expression.constant.is_finite()
         || expression
@@ -98,49 +100,77 @@ pub(crate) fn analyze_additive_numeric_view(
     })
 }
 
-fn numeric_expression_depends_on_cost(
+/// Whether numeric variable `numeric_var_id` has a value without reading a
+/// cost variable: it is regular or constant, or derived by an assignment
+/// axiom over such variables. A derived variable without an assignment
+/// axiom has no definition. Panics on an operand that is no numeric
+/// variable and on a cyclic definition.
+fn defined_without_cost(
     task: &dyn AbstractNumericTask,
+    definitions: &[Option<AxiomIndex>],
     numeric_var_id: VariableIndex,
 ) -> bool {
     fn visit(
         task: &dyn AbstractNumericTask,
+        definitions: &[Option<AxiomIndex>],
         numeric_var_id: VariableIndex,
         visiting: &mut [bool],
     ) -> bool {
-        let Some(variable) = task.numeric_variables().get(numeric_var_id.index()) else {
-            return true;
-        };
+        let variable = task
+            .numeric_variables()
+            .get(numeric_var_id.index())
+            .unwrap_or_else(|| {
+                panic!("an assignment axiom reads the missing numeric variable {numeric_var_id}")
+            });
         match variable.get_type() {
-            NumericType::Cost => true,
-            NumericType::Regular | NumericType::Constant => false,
+            NumericType::Cost => false,
+            NumericType::Regular | NumericType::Constant => true,
             NumericType::Derived => {
-                if visiting[numeric_var_id.index()] {
-                    return true;
-                }
-                let mut axioms = task
-                    .assignment_axioms()
-                    .iter()
-                    .filter(|axiom| axiom.get_affected_var_id() == numeric_var_id);
-                let Some(axiom) = axioms.next() else {
-                    return true;
+                assert!(
+                    !visiting[numeric_var_id.index()],
+                    "derived numeric variable {} is defined cyclically",
+                    variable.name()
+                );
+                let Some(axiom_id) = definitions[numeric_var_id.index()] else {
+                    return false;
                 };
-                if axioms.next().is_some() {
-                    return true;
-                }
+                let axiom = &task.assignment_axioms()[axiom_id.index()];
                 visiting[numeric_var_id.index()] = true;
-                let depends_on_cost = visit(task, axiom.get_left_var_id(), visiting)
-                    || visit(task, axiom.get_right_var_id(), visiting);
+                let defined = visit(task, definitions, axiom.get_left_var_id(), visiting)
+                    && visit(task, definitions, axiom.get_right_var_id(), visiting);
                 visiting[numeric_var_id.index()] = false;
-                depends_on_cost
+                defined
             }
         }
     }
 
     visit(
         task,
+        definitions,
         numeric_var_id,
         &mut vec![false; task.numeric_variables().len()],
     )
+}
+
+/// The affine expression numeric variable `numeric_var_id` stands for, or
+/// `None` if it reads a derived variable without an assignment axiom, or
+/// its definition multiplies or divides by a variable or divides by zero.
+/// Panics on a malformed definition.
+fn linear_expression(
+    task: &dyn AbstractNumericTask,
+    numeric_var_id: VariableIndex,
+) -> Option<LinearExpression> {
+    match linearize_numeric_var(task, numeric_var_id) {
+        Ok(expression) => Some(expression),
+        Err(
+            LinearizationError::MissingAssignmentAxiom { .. }
+            | LinearizationError::NonLinearAssignmentAxiom { .. }
+            | LinearizationError::DivisionByZeroConstant { .. },
+        ) => None,
+        Err(error) => {
+            panic!("numeric variable {numeric_var_id} has a malformed definition: {error}")
+        }
+    }
 }
 
 /// Every refined coordinate that can constrain evaluation of `tree`.
@@ -153,11 +183,7 @@ pub(crate) fn active_comparison_dimensions(
         .regular_numeric_var_dependencies()
         .iter()
         .copied()
-        .filter(|&numeric_var_id| {
-            numeric_domain_sizes
-                .get(numeric_var_id.index())
-                .is_some_and(|&size| size > 1)
-        })
+        .filter(|&numeric_var_id| numeric_domain_sizes[numeric_var_id.index()] > 1)
         .collect::<Vec<_>>();
     for node in tree.nodes() {
         let ConditionNode::Arith {
@@ -167,9 +193,7 @@ pub(crate) fn active_comparison_dimensions(
         else {
             continue;
         };
-        if numeric_domain_sizes
-            .get(result_numeric_var_id.index())
-            .is_some_and(|&size| size > 1)
+        if numeric_domain_sizes[result_numeric_var_id.index()] > 1
             && additive_views[result_numeric_var_id.index()].is_some()
         {
             dimensions.push(*result_numeric_var_id);
@@ -223,13 +247,10 @@ fn constant_effect_delta(
     task: &dyn AbstractNumericTask,
     effect: &AssignmentEffect,
 ) -> Option<NumericValue> {
-    let rhs_variable = task.numeric_variables().get(effect.var_id().index())?;
-    if rhs_variable.get_type() != &NumericType::Constant {
+    if task.numeric_variables()[effect.var_id().index()].get_type() != &NumericType::Constant {
         return None;
     }
-    let rhs = *task
-        .get_initial_numeric_state_values()
-        .get(effect.var_id().index())?;
+    let rhs = task.get_initial_numeric_state_values()[effect.var_id().index()];
     if !rhs.is_finite() {
         return None;
     }
@@ -250,7 +271,8 @@ pub(crate) struct Coordinates<'task> {
     task: &'task dyn AbstractNumericTask,
     views: Arc<[Option<AdditiveNumericView>]>,
     /// Per numeric condition, its requirement on the one coordinate it
-    /// constrains when it holds and when it does not, if it constrains one.
+    /// constrains when it holds and when it does not, if it constrains one;
+    /// indexed by [`ConditionValue`].
     requirements: Vec<[Option<CoordinateRequirement>; 2]>,
 }
 
@@ -263,17 +285,21 @@ pub(crate) struct CoordinateRequirement {
 
 impl<'task> Coordinates<'task> {
     pub(crate) fn new(task: &'task dyn AbstractNumericTask) -> Self {
+        let definitions = task
+            .assignment_axiom_lookup()
+            .expect("a task defines every numeric variable by at most one assignment axiom");
         let views: Arc<[_]> = (0..task.numeric_variables().len())
-            .map(|var_id| analyze_additive_numeric_view(task, VariableIndex::from_usize(var_id)))
+            .map(|var_id| {
+                analyze_additive_numeric_view(task, &definitions, VariableIndex::from_usize(var_id))
+            })
             .collect();
         let is_coordinate = |var_id: VariableIndex| is_coordinate(task, &views, var_id);
         let requirements = task
             .numeric_conditions()
             .iter()
             .map(|condition| {
-                [0, 1].map(|prop_value| {
-                    condition_requirement(task, condition, prop_value, &is_coordinate)
-                })
+                [ConditionValue::True, ConditionValue::False]
+                    .map(|truth| condition_requirement(task, condition, truth, &is_coordinate))
             })
             .collect();
         Self {
@@ -338,7 +364,9 @@ impl<'task> Coordinates<'task> {
             .task
             .numeric_conditions()
             .id_for_var(fact.var_index())?;
-        *self.requirements[condition_id].get(fact.value())?
+        let truth = ConditionValue::from_usize(fact.value())
+            .unwrap_or_else(|| panic!("comparison fact {fact:?} has no truth value"));
+        self.requirements[condition_id][truth.as_usize()]
     }
 
     /// The states whose coordinate `coordinate` `op_id` maps into `target`,
@@ -440,17 +468,17 @@ fn is_coordinate(
     }
 }
 
-/// The requirement of `tree` on its one coordinate where its comparison
-/// variable has `prop_value`, if it constrains exactly one coordinate.
+/// The requirement of `tree` on its one coordinate where its comparison has
+/// `truth`, if it constrains exactly one coordinate.
 fn condition_requirement(
     task: &dyn AbstractNumericTask,
     tree: &NumericCondition,
-    prop_value: usize,
+    truth: ConditionValue,
     is_coordinate: &impl Fn(VariableIndex) -> bool,
 ) -> Option<CoordinateRequirement> {
-    let required_op = required_comparison_op(tree.op(), prop_value)?;
-    let left = linearize_numeric_var(task, tree.left_numeric_var_id()).ok()?;
-    let right = linearize_numeric_var(task, tree.right_numeric_var_id()).ok()?;
+    let required_op = required_comparison_op(tree.op(), truth);
+    let left = linear_expression(task, tree.left_numeric_var_id())?;
+    let right = linear_expression(task, tree.right_numeric_var_id())?;
     let num_numeric_vars = task.numeric_variables().len();
     let requirement = |(coordinate, values): (usize, Interval)| CoordinateRequirement {
         coordinate: VariableIndex::from_usize(coordinate),
@@ -481,18 +509,18 @@ fn condition_requirement(
     single_var_interval_for_linear_zero_comparison(&expression, required_op).map(requirement)
 }
 
-fn required_comparison_op(op: CompOp, prop_value: usize) -> Option<CompOp> {
-    match prop_value {
-        0 => Some(op),
-        1 => Some(match op {
+/// The comparison that holds where comparison `op` has `truth`.
+fn required_comparison_op(op: CompOp, truth: ConditionValue) -> CompOp {
+    match truth {
+        ConditionValue::True => op,
+        ConditionValue::False => match op {
             CompOp::Lt => CompOp::Ge,
             CompOp::Le => CompOp::Gt,
             CompOp::Gt => CompOp::Le,
             CompOp::Ge => CompOp::Lt,
             CompOp::Eq => CompOp::Ne,
             CompOp::Ne => CompOp::Eq,
-        }),
-        _ => None,
+        },
     }
 }
 

@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -23,35 +26,6 @@ pub(super) struct ShortestPaths {
 }
 
 impl ShortestPaths {
-    #[cfg(test)]
-    pub(super) fn for_test(
-        distances: Vec<f64>,
-        generating_transition: Vec<Option<TransitionKey>>,
-        dependents: Vec<Vec<usize>>,
-        dependent_positions: Vec<Option<usize>>,
-        is_goal: Vec<bool>,
-    ) -> Self {
-        let invalid = vec![false; distances.len()];
-        Self {
-            distances,
-            generating_transition,
-            dependents,
-            dependent_positions,
-            is_goal,
-            invalid,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn dependents(&self, state_id: usize) -> &[usize] {
-        &self.dependents[state_id]
-    }
-
-    #[cfg(test)]
-    pub(super) fn dependent_position(&self, state_id: usize) -> Option<usize> {
-        self.dependent_positions[state_id]
-    }
-
     pub(super) fn distances(&self) -> &[f64] {
         &self.distances
     }
