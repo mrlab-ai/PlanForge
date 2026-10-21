@@ -18,15 +18,15 @@ use planforge_sas::numeric_task::{
 use super::{
     CartesianAbstractionCollectionConfig, CartesianAbstractionCollectionGenerator,
     CartesianAbstractionConfig, CartesianAbstractionGenerator, CartesianSemantics, CartesianSet,
-    CartesianView, FlawKind, FlawScope, OperatorBitSet, RefinementLimits, RefinementNode,
-    ShortestPaths, Split, SplitDimension, TransitionKey, WorkingAbstraction,
+    CartesianView, OperatorBitSet, RefinementLimits, RefinementNode, ShortestPaths, Split,
+    SplitDimension, TransitionKey, WorkingAbstraction,
 };
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
-use crate::evaluation::abstractions::common::cegar::CegarStopReason;
 use crate::evaluation::abstractions::common::cegar::selection::{
     push_unique_split, retain_min_growth_splits, select_refinement_split,
 };
 use crate::evaluation::abstractions::common::cegar::semantics::numeric_split_choice_key;
+use crate::evaluation::abstractions::common::cegar::{CegarStopReason, FlawKind, FlawScope};
 use crate::evaluation::abstractions::common::cegar::{SplitKind, SplitSelection};
 use planforge_sas::utils::interval::Interval;
 

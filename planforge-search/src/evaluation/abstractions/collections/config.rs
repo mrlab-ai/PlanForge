@@ -93,6 +93,28 @@ pub struct CollectionConfig<M: ApplyOptions> {
     pub member: M,
 }
 
+impl<M: MemberConfig + Default> Default for CollectionConfig<M> {
+    fn default() -> Self {
+        let mut member = M::default();
+        member.cegar_mut().max_states = 1_000_000;
+        Self {
+            collection_strategy: CollectionStrategy::Standard,
+            variants_per_goal: 1,
+            max_collection_size: 10_000_000,
+            total_max_time: Some(Duration::from_secs(10)),
+            progress_states: false,
+            alternate_split_kinds: None,
+            single_goal_tasks: true,
+            split_kind: None,
+            random_seed: member.cegar().random_seed,
+            stagnation_limit: 20.0,
+            blacklist_trigger_percentage: 0.75,
+            enable_blacklist_on_stagnation: true,
+            member,
+        }
+    }
+}
+
 impl<M: MemberConfig> CollectionConfig<M> {
     /// Rejects options the strategy does not follow.
     pub(crate) fn validate(&self) -> Result<()> {

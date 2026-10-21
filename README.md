@@ -94,8 +94,10 @@ Domain and Cartesian abstractions take the same CEGAR options, by name:
 `combine_labels`, `random_seed`, `flaw_kind=progression|regression`,
 `flaw_scope=first|whole_plan`, `split_kind=concrete|wanted`,
 `split_selection=min_growth|random`, `split_selection_rank` and `debug`;
-`domain(...)` also takes `use_wildcard_plans`. Their defaults differ by
-representation. `domain_collection(...)` and `cartesian_collection(...)` take
+`domain(...)` also takes `use_wildcard_plans`. Both default to
+`max_states=100000`, `combine_labels=true`, `random_seed=2011`,
+`flaw_kind=progression`, `flaw_scope=first`, `split_kind=concrete` and
+`split_selection=random`, and start from the trivial abstraction. `domain_collection(...)` and `cartesian_collection(...)` take
 the options of their members, where `max_states` and `max_time` bound each
 member, and the collection options `collection_strategy=standard|per_goal|goal_focused`,
 `variants_per_goal`, `max_collection_size`, `total_max_time`, `progress_states`,

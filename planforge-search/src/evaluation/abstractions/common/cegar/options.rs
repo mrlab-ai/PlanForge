@@ -6,6 +6,7 @@ use std::time::Duration;
 use super::{FlawKind, FlawScope, SplitKind, SplitSelection};
 use crate::evaluation::abstractions::collections::goal_focused::{GoalVariant, MemberBudget};
 use crate::evaluation::abstractions::collections::standard::StandardMember;
+use crate::evaluation::seed::RANDOM_SPLIT_SEED;
 use crate::resource_limits::{min_time_limit, time_limit_from_secs};
 
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
@@ -36,6 +37,25 @@ pub struct CegarOptions {
     /// reads; the distances alone answer lookups.
     #[option(skip)]
     pub keep_transition_system: bool,
+}
+
+impl Default for CegarOptions {
+    fn default() -> Self {
+        Self {
+            max_states: 100_000,
+            max_iterations: usize::MAX,
+            max_time: None,
+            combine_labels: true,
+            random_seed: Some(RANDOM_SPLIT_SEED),
+            flaw_kind: FlawKind::Progression,
+            flaw_scope: FlawScope::First,
+            split_kind: SplitKind::Concrete,
+            split_selection: SplitSelection::Random,
+            split_selection_rank: None,
+            debug: false,
+            keep_transition_system: true,
+        }
+    }
 }
 
 impl CegarOptions {

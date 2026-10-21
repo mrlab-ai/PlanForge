@@ -26,7 +26,6 @@ use super::common::cegar::refine::{CegarRun, Refinable, refine};
 use super::common::cegar::semantics::CegarSemantics;
 use super::common::cegar::split::*;
 use super::common::cegar::view::{AbstractionView, RefinementLimits, TransitionKey};
-use super::common::cegar::{SplitKind, SplitSelection};
 pub use abstraction::*;
 pub use collection::*;
 pub use config::*;
@@ -53,10 +52,9 @@ use planforge_sas::numeric_task::{
 };
 use planforge_sas::utils::float_tolerance;
 
-use super::common::cegar::{CegarDriver, FlawKind, FlawScope};
+use super::common::cegar::CegarDriver;
 use super::common::regions::RegionSemantics;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
-use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cartesian_set::{
     CartesianSet, sorted_value_sets_overlap,
 };
