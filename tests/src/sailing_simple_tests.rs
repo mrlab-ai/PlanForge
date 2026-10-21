@@ -367,7 +367,7 @@ fn scp_initial_h_for_collection(
         None,
         components(abstractions, Vec::new()),
         config,
-        task,
+        std::sync::Arc::new(task),
         Default::default(),
     )
     .expect("scp heuristic should construct");
@@ -410,7 +410,7 @@ fn scp_search_cost(instance: &str) -> Option<f64> {
         None,
         components(abstractions, Vec::new()),
         config,
-        &task,
+        std::sync::Arc::new(&task),
         Default::default(),
     )
     .expect("scp heuristic should construct");

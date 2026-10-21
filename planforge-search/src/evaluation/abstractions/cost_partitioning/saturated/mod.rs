@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use planforge_sas::explicit_state::ExplicitState;
-use planforge_sas::numeric_task::{AbstractNumericTask, TaskRef};
+use planforge_sas::numeric_task::TaskRef;
 use rand::{SeedableRng, rngs::SmallRng};
 use tracing::info;
 
@@ -75,7 +75,7 @@ struct RetainedCostPartitionings {
 
 pub struct SaturatedCostPartitioningHeuristic<'task> {
     name: String,
-    task: &'task dyn AbstractNumericTask,
+    task: TaskRef<'task>,
     config: ScpConfig,
     original_operator_costs: Vec<f64>,
     state: RefCell<ScpState<'task>>,
@@ -84,41 +84,25 @@ pub struct SaturatedCostPartitioningHeuristic<'task> {
     construction_deadline: Deadline,
 }
 
-/// What a [`SaturatedCostPartitioningHeuristic`] needs besides its abstractions
-/// and configuration.
-#[derive(Default)]
-pub struct ScpBuildOptions<'task> {
-    /// An owned task to sample states from by random walks; required for
-    /// diverse orders.
-    pub sampling_task: Option<TaskRef<'task>>,
-    /// When the heuristic's construction must end, which bounds building the
-    /// cost partitionings at the first evaluated state too.
-    pub construction_deadline: Deadline,
-}
-
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     pub fn new(
         name: Option<String>,
         components: Vec<AbstractionComponent<'task>>,
         config: ScpConfig,
-        task: &'task dyn AbstractNumericTask,
-        options: ScpBuildOptions<'task>,
+        task: TaskRef<'task>,
+        construction_deadline: Deadline,
     ) -> Result<Self, EvaluationError> {
-        let ScpBuildOptions {
-            sampling_task,
-            construction_deadline,
-        } = options;
         if components.is_empty() {
             return Err(EvaluationError::ComputationFailed(
                 "SCP requires at least one abstraction component".to_string(),
             ));
         }
         config
-            .validate(sampling_task.is_some())
+            .validate()
             .map_err(EvaluationError::ComputationFailed)?;
         let mut components = components;
         if config.partitioning.uses_regions() {
-            let regions = RegionSemantics::new(task)
+            let regions = RegionSemantics::new(&*task)
                 .map_err(|error| EvaluationError::ComputationFailed(format!("{error:#}")))?;
             for (component_id, component) in components.iter_mut().enumerate() {
                 match component {
@@ -178,7 +162,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         let selection = OrderSelection {
             goal_distances_by_abstraction: h_values,
             stolen_costs_by_abstraction: stolen_costs,
-            sampling_task,
+            sampling_task: Some(task.clone()),
             ..OrderSelection::new(config.random_seed)
         };
 

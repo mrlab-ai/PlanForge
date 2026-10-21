@@ -176,10 +176,8 @@ impl Default for ScpConfig {
 }
 
 impl ScpConfig {
-    /// Rejects inconsistent settings. Diverse orders need random-walk
-    /// samples, so `has_sampling_task` tells whether the heuristic has a task
-    /// to sample from.
-    pub(super) fn validate(&self, has_sampling_task: bool) -> Result<(), String> {
+    /// Reject inconsistent settings. The heuristic always owns its task.
+    pub(crate) fn validate(&self) -> Result<(), String> {
         self.max_time.duration()?;
         self.table_construction_max_time.duration()?;
         self.initial_order_generation_max_time.duration()?;
@@ -192,9 +190,6 @@ impl ScpConfig {
         }
         if self.diversify && self.max_orders == 0 {
             return fail("SCP diversification requires max_orders > 0");
-        }
-        if self.diversify && !has_sampling_task {
-            return fail("SCP diversification requires an owned task reference for sampling");
         }
         Ok(())
     }

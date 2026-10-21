@@ -197,7 +197,7 @@ fn initial_cartesian_scp_value(
             .map(AbstractionComponent::from)
             .collect(),
         config,
-        task,
+        std::sync::Arc::new(task),
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
@@ -265,7 +265,7 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
             .map(AbstractionComponent::from)
             .collect(),
         config,
-        transformed_task,
+        std::sync::Arc::new(transformed_task),
         Default::default(),
     )
     .expect("failed to construct SCP heuristic");

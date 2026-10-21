@@ -97,7 +97,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         registry: &StateRegistry<'task>,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let eval_state = EvaluationState::new(concrete_state, self.task, registry);
+        let eval_state = EvaluationState::new(concrete_state, &*self.task, registry);
         self.compute_abstract_state_ids_into(components, &eval_state, None, ids)
     }
 }

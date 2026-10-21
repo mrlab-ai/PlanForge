@@ -12,9 +12,7 @@ use crate::evaluation::abstractions::cost_partitioning::canonical::CanonicalAbst
 use crate::evaluation::abstractions::cost_partitioning::max::MaxAbstractionHeuristic;
 #[cfg(feature = "cplex")]
 use crate::evaluation::abstractions::cost_partitioning::posthoc_optimization::PostHocOptimizationHeuristic;
-use crate::evaluation::abstractions::cost_partitioning::saturated::{
-    SaturatedCostPartitioningHeuristic, ScpBuildOptions,
-};
+use crate::evaluation::abstractions::cost_partitioning::saturated::SaturatedCostPartitioningHeuristic;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::pdb::validate_restricted_task;
 use crate::evaluation::check_admissible::CheckAdmissibleHeuristic;
@@ -427,11 +425,8 @@ fn build_scp_from_sources<'task>(
         Some(name.to_string()),
         components,
         config,
-        task,
-        ScpBuildOptions {
-            sampling_task: Some(sampling_task),
-            construction_deadline,
-        },
+        sampling_task,
+        construction_deadline,
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     remaining_construction_time(construction_deadline)?;

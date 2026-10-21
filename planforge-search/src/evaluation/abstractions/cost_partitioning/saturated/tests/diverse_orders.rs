@@ -70,11 +70,8 @@ fn diverse_orders_support_mixed_abstraction_representations() {
         None,
         components,
         config,
-        &*task,
-        ScpBuildOptions {
-            sampling_task: Some(task.clone()),
-            ..Default::default()
-        },
+        task.clone(),
+        Default::default(),
     )
     .unwrap();
 
@@ -101,7 +98,7 @@ fn diverse_order_generator_requires_diversify() {
         None,
         vec![component],
         config,
-        &task,
+        std::sync::Arc::new(&task),
         Default::default(),
     );
     let error = match result {
