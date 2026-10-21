@@ -12,8 +12,6 @@ use planforge_sas::utils::linear_effects::{LinearExpression, linearize_numeric_v
 
 use planforge_sas::numeric_conditions::{CompOp, ConditionNode, NumericCondition};
 
-const EPSILON: f64 = 1e-12;
-
 /// A derived affine expression whose value changes by a deterministic constant
 /// under every operator. Such an expression is an exact numeric coordinate of
 /// the original task and can therefore be partitioned without compiling a new
@@ -128,11 +126,14 @@ pub(crate) fn analyze_additive_numeric_view(
     {
         return None;
     }
-    for dependency in expression
-        .coefficients
-        .iter()
-        .enumerate()
-        .filter_map(|(var_id, coefficient)| (coefficient.abs() >= EPSILON).then_some(var_id))
+    for dependency in
+        expression
+            .coefficients
+            .iter()
+            .enumerate()
+            .filter_map(|(var_id, coefficient)| {
+                (coefficient.abs() >= float_tolerance::ABS_EPSILON).then_some(var_id)
+            })
     {
         if task.numeric_variables()[dependency].get_type() != &NumericType::Regular {
             return None;
@@ -271,7 +272,7 @@ fn additive_view_delta_for_operator(
 ) -> Option<NumericValue> {
     let mut delta: f64 = 0.0;
     for (numeric_var_id, &coefficient) in expression.coefficients.iter().enumerate() {
-        if coefficient.abs() < EPSILON {
+        if coefficient.abs() < float_tolerance::ABS_EPSILON {
             continue;
         }
         delta += coefficient
@@ -499,7 +500,7 @@ fn single_var_interval_for_linear_zero_comparison(
         .coefficients
         .iter()
         .enumerate()
-        .filter(|(_, coefficient)| coefficient.abs() >= 1e-12);
+        .filter(|(_, coefficient)| coefficient.abs() >= float_tolerance::ABS_EPSILON);
     let (numeric_var_id, coefficient) = non_zero_coefficients.next()?;
     if non_zero_coefficients.next().is_some() {
         return None;

@@ -677,7 +677,7 @@ pub(super) fn should_skip_zero_current_table(
         return false;
     }
     let current_h = current_h_for_distances(abstraction_id, distances, abstract_state_ids);
-    if current_h > 1e-9 {
+    if current_h > float_tolerance::SEARCH_EPSILON {
         return false;
     }
     debug!("scp: skipping {step} abstraction {abstraction_id}: current_h=0");
@@ -753,16 +753,16 @@ pub(super) fn reduce_costs(
                 "saturated cost for operator {op_id} must be finite"
             )));
         }
-        if *s < -1e-9 {
+        if *s < -float_tolerance::SEARCH_EPSILON {
             return Err(EvaluationError::ComputationFailed(format!(
                 "negative saturated cost for operator {op_id}: {s}"
             )));
         }
-        if *s <= 1e-9 {
+        if *s <= float_tolerance::SEARCH_EPSILON {
             continue;
         }
         let new_remaining = *r - *s;
-        if new_remaining < -1e-9 {
+        if new_remaining < -float_tolerance::SEARCH_EPSILON {
             return Err(EvaluationError::ComputationFailed(format!(
                 "label residual cost underflow for operator {op_id}: remaining={r}, saturated={s}, result={new_remaining}"
             )));

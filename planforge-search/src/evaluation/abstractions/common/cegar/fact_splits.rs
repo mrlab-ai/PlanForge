@@ -11,7 +11,7 @@ use planforge_sas::utils::float_tolerance;
 
 use super::SplitKind;
 use super::SplitSelection;
-use super::selection::{retain_min_growth_splits, select_refinement_split};
+use super::selection::{COMPARISON_TAG, retain_min_growth_splits, select_refinement_split};
 use super::semantics::CegarSemantics;
 use super::split::{Split, numeric_split_intervals};
 use super::view::AbstractionView;
@@ -396,7 +396,7 @@ fn comparison_refinement(
         view,
         semantics,
         candidates.into_iter().map(|(_, _, split)| split).collect(),
-        0x434F_4D50,
+        COMPARISON_TAG,
     )
 }
 

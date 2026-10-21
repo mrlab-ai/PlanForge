@@ -1160,7 +1160,7 @@ impl Linearizer<'_> {
 }
 
 fn approx_eq(lhs: NumericValue, rhs: NumericValue) -> bool {
-    (lhs - rhs).abs().value() <= 1e-12
+    (lhs - rhs).abs().value() <= float_tolerance::ABS_EPSILON
 }
 
 fn restricted_shape_prefix(expr: &AffineExpression) -> String {

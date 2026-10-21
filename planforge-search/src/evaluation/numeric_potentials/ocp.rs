@@ -4,6 +4,7 @@ use planforge_cplex::{Constraint, Model, ObjectiveSense, SolveStatus, Variable};
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitValueIndex, NumericValue, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_sas::utils::float_tolerance;
 use tracing::{info, warn};
 
 use crate::evaluation::abstractions::common::abstraction::CegarAbstraction;
@@ -232,7 +233,8 @@ impl PotentialAbstractionOcpHeuristic {
                 let abstract_potentials =
                     solution[operator_count..operator_count + state_count].to_vec();
                 let joint = model.objective_value().map_err(|error| error.to_string())?;
-                if joint + 1e-6 < plain_initial_h.max(abstraction_initial_h) {
+                if joint + float_tolerance::LP_EPSILON < plain_initial_h.max(abstraction_initial_h)
+                {
                     return Err(format!(
                         "pot_da_ocp joint optimum {joint} does not dominate component values \
                          {plain_initial_h} and {abstraction_initial_h}"

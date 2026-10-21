@@ -13,9 +13,11 @@ use planforge_sas::utils::interval::Interval;
 
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 
-/// Whether two costs or values agree up to a relative tolerance of `1e-7`.
+/// Whether two costs or values agree up to a relative tolerance of
+/// [`float_tolerance::AGREEMENT_EPSILON`].
 pub(crate) fn approximately_equal(left: f64, right: f64) -> bool {
-    (left - right).abs() <= 1e-7 * left.abs().max(right.abs()).max(1.0)
+    (left - right).abs()
+        <= float_tolerance::AGREEMENT_EPSILON * left.abs().max(right.abs()).max(1.0)
 }
 
 #[derive(Debug, Clone)]

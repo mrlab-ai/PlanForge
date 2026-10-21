@@ -6,6 +6,7 @@ use planforge_sas::numeric_task::{
     AbstractNumericTask, NumericValue, TaskRef, metric_operator_cost_from_initial_values,
 };
 use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegistry};
+use planforge_sas::utils::float_tolerance;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use tracing::{debug, info};

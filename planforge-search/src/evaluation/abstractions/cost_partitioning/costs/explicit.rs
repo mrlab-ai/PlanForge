@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, ensure};
+use planforge_sas::utils::float_tolerance;
 
 use super::{RemainingCosts, SCP_TABLE_CONSTRUCTION};
 use crate::evaluation::abstractions::common::transition_system::{
@@ -272,7 +273,7 @@ pub(crate) fn saturation_need(
     }
     let needed = (source_h - target_h).max(0.0);
     ensure!(
-        needed <= residual_budget + 1e-7,
+        needed <= residual_budget + float_tolerance::AGREEMENT_EPSILON,
         "{context} {needed} exceeds residual cost {residual_budget}"
     );
     Ok(Some(needed))

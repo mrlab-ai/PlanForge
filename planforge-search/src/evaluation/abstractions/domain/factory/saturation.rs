@@ -247,7 +247,7 @@ impl DomainAbstractionFactory {
                 deadline.ensure(ONLINE_SCP)?;
             }
             let saturated = tcf.transition_costs[transition_id];
-            if !saturated.is_finite() || saturated <= 1e-9 {
+            if !saturated.is_finite() || saturated <= float_tolerance::SEARCH_EPSILON {
                 continue;
             }
             let source_region = self.cached_cartesian_set(
@@ -265,7 +265,7 @@ impl DomainAbstractionFactory {
                 let current_residual =
                     residual_costs.cost_for_source_set(abstraction_id, transition_id, &source_set);
                 ensure!(
-                    saturated <= current_residual + 1e-7,
+                    saturated <= current_residual + float_tolerance::AGREEMENT_EPSILON,
                     "regional transition allocation {saturated} exceeds residual {current_residual} for transition {transition_id}, operator {concrete_op_id}"
                 );
                 entries.push(SourceSetCost {

@@ -25,8 +25,6 @@ use crate::resource_limits::Deadline;
 use planforge_sas::numeric_conditions::ConditionValue;
 use planforge_sas::utils::interval::Interval;
 
-const EPSILON: f64 = 1e-12;
-
 /// The operation an expired generation deadline names.
 const OPERATOR_GENERATION: &str = "abstract operator generation";
 
@@ -1183,7 +1181,7 @@ fn compute_hash_effects_with_preconditions(
     }
     for (numeric_var_id, view) in generator.additive_numeric_views.iter() {
         if generator.numeric_domain_sizes[numeric_var_id] > 1
-            && view.operator_delta(concrete_op_id)?.value().abs() >= EPSILON
+            && view.operator_delta(concrete_op_id)?.value().abs() >= float_tolerance::ABS_EPSILON
         {
             affected_numeric_vars.insert(VariableIndex::from_usize(numeric_var_id));
         }
@@ -1271,7 +1269,7 @@ fn compute_hash_effects_with_preconditions(
                 format!("refined derived numeric variable {v} has no additive-view semantics")
             })?;
             let delta = view.operator_delta(concrete_op_id)?;
-            if delta.value().abs() >= EPSILON {
+            if delta.value().abs() >= float_tolerance::ABS_EPSILON {
                 let delta_interval = Interval::singleton(delta);
                 let mut pairs = HashSet::new();
                 for src in 0..num_parts {

@@ -113,7 +113,7 @@ impl AbstractionGenerator for CartesianAbstractionGenerator {
                 .map_state(&refinement_root.propositional, &refinement_root.numeric)?;
             let h = distance_table.distances[root_state_id];
             ensure!(
-                (plan.cost() - h).abs() <= 1e-7,
+                (plan.cost() - h).abs() <= float_tolerance::AGREEMENT_EPSILON,
                 "concrete Cartesian plan cost {} differs from abstract h(refinement root) {h}",
                 plan.cost()
             );

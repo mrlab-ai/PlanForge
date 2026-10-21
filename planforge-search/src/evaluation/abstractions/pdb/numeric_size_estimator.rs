@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use planforge_sas::numeric_task::{
     AbstractNumericTask, AssignmentOperation, NumericType, NumericValue, VariableIndex,
 };
+use planforge_sas::utils::float_tolerance;
 
 use crate::task_restriction::validate_restricted_task;
 
@@ -220,7 +221,7 @@ fn estimate_numeric_domain_size(
                 best_increment = best_increment.min((increment + decrement).abs());
             }
         }
-        if best_increment <= 1e-12 {
+        if best_increment <= float_tolerance::ABS_EPSILON {
             min_change
         } else {
             best_increment
@@ -229,7 +230,7 @@ fn estimate_numeric_domain_size(
         min_change
     };
 
-    if !min_increment.is_finite() || min_increment <= 1e-12 {
+    if !min_increment.is_finite() || min_increment <= float_tolerance::ABS_EPSILON {
         return 1;
     }
 
