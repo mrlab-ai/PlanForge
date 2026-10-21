@@ -300,8 +300,8 @@ pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> 
 
 use crate::evaluation::Heuristic;
 use abstraction_config::{
-    ComponentUse, build_components, component_source_help, remaining_construction_time,
-    require_only_component_sources, validate_scp_combinator_options,
+    ComponentUse, ScpSourceConfig, build_components, component_source_help,
+    remaining_construction_time, require_only_component_sources,
 };
 
 #[derive(Debug)]
@@ -389,14 +389,20 @@ fn build_canonical_from_sources<'task>(
     Ok(Some(Box::new(heuristic)))
 }
 
+/// Builds `name(...)` from its sources and the combinator options that
+/// [`abstraction_config::scp_sources_options_and_deadline`] validated.
 fn build_scp_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sampling_task: TaskRef<'task>,
-    sources: &[crate::config::ConfigCall],
-    options: &[crate::config::ConfigArg],
+    source_config: &ScpSourceConfig,
     name: &str,
-    construction_deadline: Deadline,
 ) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
+    let ScpSourceConfig {
+        sources,
+        options,
+        construction_deadline,
+    } = source_config;
+    let construction_deadline = *construction_deadline;
     if sources.is_empty() {
         return Err(format!(
             "`{name}` requires at least one abstraction source: {}",
@@ -404,7 +410,6 @@ fn build_scp_from_sources<'task>(
         )
         .into());
     }
-    validate_scp_combinator_options(options)?;
     let mut config = configure(
         name,
         crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig::default(),
@@ -510,14 +515,7 @@ heuristic_registry! {
         nested: no_nested_heuristics,
         build: {
             let source_config = abstraction_config::scp_sources_options_and_deadline(&spec.args)?;
-            build_scp_from_sources(
-                task,
-                sampling_task,
-                &source_config.sources,
-                &source_config.options,
-                spec.name.as_str(),
-                source_config.construction_deadline,
-            )
+            build_scp_from_sources(task, sampling_task, &source_config, spec.name.as_str())
         }
     }
 
