@@ -41,11 +41,11 @@ fn build_goal_count<'a>(
     spec: &HeuristicSpec,
     _: &'a dyn AbstractNumericTask,
     _: TaskRef<'a>,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
     if !spec.args.is_empty() {
         return Err("`goalcount` does not accept arguments".to_string().into());
     }
-    Ok(Some(Box::new(GoalCountHeuristic)))
+    Ok(Box::new(GoalCountHeuristic))
 }
 
 fn main() -> std::io::Result<()> {

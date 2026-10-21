@@ -8,7 +8,6 @@ use super::{
     format_progress_value,
 };
 use crate::{
-    evaluation::heuristic::BlindHeuristic,
     evaluation::{EvaluationError, EvaluationState, Heuristic},
     successor_generator::SuccessorTree,
 };
@@ -85,7 +84,7 @@ pub struct BestFirstSearch<'a, A: SearchAlgorithm> {
     scratch: ExpansionScratch,
     start_time: Option<Instant>,
 
-    initial_state: Option<ConcreteState>,
+    initial_state: ConcreteState,
     next_memory_check_expanded: usize,
 
     last_reported_f_layer: Option<i64>,
@@ -103,7 +102,7 @@ impl<'a> BestFirstSearch<'a, AStar> {
     pub fn new(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        heuristic: Box<dyn Heuristic + 'a>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> Self {
@@ -123,7 +122,7 @@ impl<'a> BestFirstSearch<'a, AStar> {
     pub fn new_with_mpd(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        heuristic: Box<dyn Heuristic + 'a>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
         mpd: bool,
@@ -147,7 +146,7 @@ impl<'a> BestFirstSearch<'a, AStar> {
     pub fn new_gbfs(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        heuristic: Box<dyn Heuristic + 'a>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
     ) -> BestFirstSearch<'a, GreedyBestFirst> {
@@ -185,7 +184,7 @@ impl<'a> BestFirstSearch<'a, AStar> {
         BestFirstSearch::with_algorithm(
             task,
             state_registry,
-            Some(heuristic_fast),
+            heuristic_fast,
             time_limit,
             max_memory_bytes,
             FastSlow {
@@ -201,7 +200,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     pub fn with_algorithm(
         task: &'a dyn AbstractNumericTask,
         state_registry: StateRegistry<'a>,
-        heuristic: Option<Box<dyn Heuristic + 'a>>,
+        heuristic: Box<dyn Heuristic + 'a>,
         time_limit: Option<Duration>,
         max_memory_bytes: Option<u64>,
         algorithm: A,
@@ -227,10 +226,6 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             ONE_VALUE
         };
 
-        // Use `BlindHeuristic` as default, configured with `min_action_cost`.
-        let heuristic = heuristic.unwrap_or_else(|| {
-            Box::new(BlindHeuristic::with_min_action_cost(min_action_cost, None))
-        });
         let heuristic_name = heuristic.heuristic_name().to_string();
         let initial_state_is_proven_optimal = heuristic.proves_initial_state_optimal();
 
@@ -265,7 +260,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             stats: SearchStats::default(),
             scratch: ExpansionScratch::with_capacity(num_variables, num_numeric_variables),
             start_time: None,
-            initial_state: Some(initial_state),
+            initial_state,
             next_memory_check_expanded: 0,
             last_reported_f_layer: None,
             best_reported_heuristic_value: None,
@@ -293,26 +288,6 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         }
 
         None
-    }
-
-    fn terminal_result(&self, status: SearchStatus, start_time: &Instant) -> SearchResult {
-        SearchResult {
-            status,
-            plan: None,
-            solution_cost: None,
-            nodes_expanded: self.stats.nodes_expanded,
-            nodes_reopened: self.stats.nodes_reopened,
-            nodes_evaluated: self.stats.nodes_evaluated,
-            evaluations: self.stats.evaluations,
-            nodes_generated: self.stats.nodes_generated,
-            dead_ends: self.stats.dead_ends,
-            nodes_expanded_until_last_jump: self.stats.counters_at_last_jump.expanded,
-            nodes_reopened_until_last_jump: self.stats.counters_at_last_jump.reopened,
-            nodes_evaluated_until_last_jump: self.stats.counters_at_last_jump.evaluated,
-            nodes_generated_until_last_jump: self.stats.counters_at_last_jump.generated,
-            registered_states: self.state_registry.num_registered_states(),
-            search_time: start_time.elapsed(),
-        }
     }
 
     fn maybe_print_f_value(&mut self, f_value: f64, start_time: &Instant) {
@@ -481,9 +456,10 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     fn recorded_heuristic_revision(&self, state_id: usize) -> u64 {
         self.heuristic_revisions
             .as_ref()
-            .and_then(|revisions| revisions.get(state_id))
+            .expect("revision tracking is enabled for mpd")
+            .get(state_id)
             .copied()
-            .unwrap_or(0)
+            .expect("every queued state has a recorded heuristic revision")
     }
 
     /// Re-evaluate a popped entry if a dynamic heuristic strengthened since
@@ -604,11 +580,7 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
         self.start_time = Some(start_time);
 
         // Initialize search with initial state (created in constructor)
-        let initial_state = self
-            .initial_state
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| self.state_registry.get_initial_state());
+        let initial_state = self.initial_state.clone();
 
         // Add initial state to open list
         let initial_is_goal = self.is_goal_state(&initial_state);
@@ -702,9 +674,6 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
     /// re-evaluation. Under a fast/slow policy the first pop of an entry only
     /// triggers the slow heuristic and reinserts it; the second pop expands.
     fn pop_next_to_expand(&mut self) -> Result<PoppedNode> {
-        if self.open_list.is_empty() {
-            return Ok(PoppedNode::Exhausted);
-        }
         let Some(entry) = self.open_list.pop() else {
             return Ok(PoppedNode::Exhausted);
         };
@@ -954,43 +923,42 @@ impl<'a, A: SearchAlgorithm> BestFirstSearch<'a, A> {
             .start_time
             .as_ref()
             .expect("finish called before initialize");
-        match status {
+        let (plan, solution_cost) = match status {
             SearchStatus::Solved(goal_state_id) => {
-                // Use the goal state ID returned from step()
-                let plan = self.space.extract_plan(goal_state_id, self.task);
-                let solution_cost = self.space.node(goal_state_id).map(|info| info.g_value);
-
                 debug_assert!(
                     !self.initial_state_is_proven_optimal
                         || self.stats.counters_at_last_jump.expanded == 0,
-                    "A* entered a higher f-layer after its heuristic proved h(init) = h*: {} nodes were expanded before the last jump",
-                    self.stats.counters_at_last_jump.expanded
+                    "A* entered a higher f-layer after its heuristic proved h(init) = h*"
                 );
-
-                SearchResult {
-                    status: SearchStatus::Solved(goal_state_id),
-                    plan: Some(plan),
-                    solution_cost,
-                    nodes_expanded: self.stats.nodes_expanded,
-                    nodes_reopened: self.stats.nodes_reopened,
-                    nodes_evaluated: self.stats.nodes_evaluated,
-                    evaluations: self.stats.evaluations,
-                    nodes_generated: self.stats.nodes_generated,
-                    dead_ends: self.stats.dead_ends,
-                    nodes_expanded_until_last_jump: self.stats.counters_at_last_jump.expanded,
-                    nodes_reopened_until_last_jump: self.stats.counters_at_last_jump.reopened,
-                    nodes_evaluated_until_last_jump: self.stats.counters_at_last_jump.evaluated,
-                    nodes_generated_until_last_jump: self.stats.counters_at_last_jump.generated,
-                    registered_states: self.state_registry.num_registered_states(),
-                    search_time: start_time.elapsed(),
-                }
+                (
+                    Some(self.space.extract_plan(goal_state_id, self.task)),
+                    Some(
+                        self.space
+                            .node(goal_state_id)
+                            .expect("a solved state has a search node")
+                            .g_value,
+                    ),
+                )
             }
-            SearchStatus::Failed => self.terminal_result(SearchStatus::Failed, &start_time),
-            SearchStatus::InProgress => unreachable!(),
-            SearchStatus::Timeout => self.terminal_result(SearchStatus::Timeout, &start_time),
-            SearchStatus::MemoryLimitReached => {
-                self.terminal_result(SearchStatus::MemoryLimitReached, &start_time)
-            }
+            SearchStatus::InProgress => unreachable!("cannot finish an in-progress search"),
+            _ => (None, None),
+        };
+        SearchResult {
+            status,
+            plan,
+            solution_cost,
+            nodes_expanded: self.stats.nodes_expanded,
+            nodes_reopened: self.stats.nodes_reopened,
+            nodes_evaluated: self.stats.nodes_evaluated,
+            evaluations: self.stats.evaluations,
+            nodes_generated: self.stats.nodes_generated,
+            dead_ends: self.stats.dead_ends,
+            nodes_expanded_until_last_jump: self.stats.counters_at_last_jump.expanded,
+            nodes_reopened_until_last_jump: self.stats.counters_at_last_jump.reopened,
+            nodes_evaluated_until_last_jump: self.stats.counters_at_last_jump.evaluated,
+            nodes_generated_until_last_jump: self.stats.counters_at_last_jump.generated,
+            registered_states: self.state_registry.num_registered_states(),
+            search_time: start_time.elapsed(),
         }
     }
 }

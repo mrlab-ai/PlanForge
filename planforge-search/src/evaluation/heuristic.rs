@@ -1,8 +1,10 @@
 //! Base trait for heuristic evaluators.
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use planforge_sas::numeric_task::{NumericValue, Operator, OperatorIndex};
-use planforge_sas::state_registry::ConcreteState;
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, INF_VALUE, NumericTaskExt, NumericValue, ONE_VALUE, OperatorIndex,
+    ZERO_VALUE,
+};
 
 /// Base trait for heuristic functions.
 ///
@@ -47,34 +49,8 @@ pub trait Heuristic {
         false
     }
 
-    /// Return true if dead ends detected by this heuristic are reliable.
-    fn dead_ends_are_reliable(&self) -> bool {
-        false
-    }
-
     /// Get the name of this heuristic (it allows custom names).
     fn heuristic_name(&self) -> &str;
-
-    /// Called when a new state is reached during search.
-    ///
-    /// This allows heuristics to update internal state or caches.
-    /// Return true if the heuristic successfully processed the state.
-    fn reach_state(
-        &mut self,
-        _parent_state: &ConcreteState,
-        _operator: &Operator,
-        _state: &ConcreteState,
-    ) -> bool {
-        true
-    }
-
-    /// Get preferred operators for the given state.
-    ///
-    /// Some heuristics can suggest operators that are likely to lead
-    /// towards the goal. The default implementation returns no preferences.
-    fn get_preferred_operators(&self, _state: &ConcreteState) -> Vec<Operator> {
-        vec![]
-    }
 
     /// Get the task-operator indices of preferred operators for the most
     /// recently evaluated state.
@@ -90,27 +66,6 @@ pub trait Heuristic {
     fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         out.clear();
     }
-
-    /// Return the cost type used by this heuristic.
-    fn get_cost_type(&self) -> CostType {
-        CostType::Normal
-    }
-
-    /// Print statistics about this heuristic.
-    fn print_statistics(&self) {
-        // Default implementation does nothing.
-    }
-}
-
-/// Different ways to handle operator costs in heuristics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CostType {
-    /// Use normal operator costs.
-    Normal,
-    /// Treat all operators as having cost 1.
-    Unit,
-    /// Use only the cost of the most expensive operator.
-    Max,
 }
 
 /// A heuristic that returns `0` for goal states and `min_action_cost` for
@@ -123,6 +78,11 @@ pub struct BlindHeuristic {
 }
 
 impl BlindHeuristic {
+    /// Build the blind estimate from the task's cheapest effective action cost.
+    pub fn for_task(task: &dyn AbstractNumericTask) -> Self {
+        Self::with_min_action_cost(minimum_action_cost(task), None)
+    }
+
     pub fn new(name: Option<String>) -> Self {
         Self {
             name: name.unwrap_or_else(|| "blind_heuristic".to_string()),
@@ -155,5 +115,18 @@ impl Heuristic for BlindHeuristic {
 
     fn heuristic_name(&self) -> &str {
         &self.name
+    }
+}
+
+/// Lower bound used for every non-goal search evaluation, including blind.
+/// An empty task uses one, matching the search engine's historical convention.
+pub(crate) fn minimum_action_cost(task: &dyn AbstractNumericTask) -> NumericValue {
+    let minimum = (0..task.get_operators().len())
+        .map(|id| task.abstract_operator_cost(OperatorIndex::from_usize(id)))
+        .fold(INF_VALUE, NumericValue::min);
+    if minimum.is_finite() {
+        minimum.max(ZERO_VALUE)
+    } else {
+        ONE_VALUE
     }
 }

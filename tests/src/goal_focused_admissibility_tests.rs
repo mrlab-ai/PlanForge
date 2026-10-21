@@ -57,7 +57,7 @@ fn optimal_plan_states(task: &NumericRootTask) -> (StateRegistry<'_>, Vec<(Concr
     let mut search = AStarSearch::new(
         task,
         StateRegistry::for_task(Arc::new(task)),
-        None,
+        Box::new(planforge_search::evaluation::heuristic::BlindHeuristic::for_task(task)),
         None,
         None,
     );

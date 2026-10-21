@@ -1520,10 +1520,9 @@ impl Task {
         // GIL is held for the whole search: the heuristic calls back into Python
         // once per evaluated state. This is intentionally NOT allow_threads.
         let result = if greedy {
-            AStarSearch::new_gbfs(&*self.task, registry, Some(heur), time_limit, max_memory)
-                .search()
+            AStarSearch::new_gbfs(&*self.task, registry, heur, time_limit, max_memory).search()
         } else {
-            AStarSearch::new(&*self.task, registry, Some(heur), time_limit, max_memory).search()
+            AStarSearch::new(&*self.task, registry, heur, time_limit, max_memory).search()
         };
         if let Some(err) = error.borrow_mut().take() {
             return Err(err);

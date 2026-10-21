@@ -4,7 +4,7 @@ use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::plugin_registry;
 use planforge_search::search::{
-    SearchAlgorithm, SearchAlgorithmPlugin, SearchBuildContext, SearchDriver, SearchOptionKind,
+    SearchAlgorithm, SearchAlgorithmPlugin, SearchBuildContext, SearchEngine, SearchOptionKind,
     SearchStatus,
 };
 use std::sync::Arc;
@@ -20,7 +20,7 @@ impl SearchAlgorithm for UniformCost {
     }
 }
 
-fn build_uniform_cost<'a>(ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchDriver + 'a>> {
+fn build_uniform_cost<'a>(ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchEngine + 'a>> {
     UniformCost.build(ctx)
 }
 
@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     let mut driver = (plugin.build)(SearchBuildContext {
         task: &*task,
         state_registry: registry,
-        primary_heuristic: Some(Box::new(BlindHeuristic::new(None))),
+        primary_heuristic: Box::new(BlindHeuristic::new(None)),
         secondary_heuristic: None,
         // The committed SAS examples are deliberately substantial. A short
         // limit keeps this tutorial executable while still exercising the
@@ -56,7 +56,7 @@ fn main() -> Result<()> {
         max_memory_bytes: None,
         mpd: false,
     })?;
-    let result = driver.run()?;
+    let result = driver.search()?;
     assert!(matches!(
         result.status,
         SearchStatus::Solved(_) | SearchStatus::Timeout

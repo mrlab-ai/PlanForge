@@ -48,7 +48,7 @@ fn run(path: &str) {
     let mut search = AStarSearch::new(
         &*task,
         registry,
-        Some(heuristic),
+        heuristic,
         Some(Duration::from_secs(5)),
         None,
     );

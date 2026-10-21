@@ -518,10 +518,6 @@ impl Heuristic for NumericPotentialHeuristic {
         Ok(value)
     }
 
-    fn dead_ends_are_reliable(&self) -> bool {
-        true
-    }
-
     fn heuristic_name(&self) -> &str {
         "numeric_potential"
     }

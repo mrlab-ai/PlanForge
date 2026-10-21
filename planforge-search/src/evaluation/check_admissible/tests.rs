@@ -1,4 +1,5 @@
 use super::*;
+use planforge_sas::numeric_task::Operator;
 
 use planforge_sas::numeric_task::{
     Effect, ExplicitFact, ExplicitValueIndex, ExplicitVariable, Metric, NumericRootTask,
@@ -82,7 +83,7 @@ impl Heuristic for ConstantHeuristic {
 
 fn evaluate_initial_state(
     task: TaskRef<'static>,
-    inner: Option<Box<dyn Heuristic + 'static>>,
+    inner: Box<dyn Heuristic + 'static>,
 ) -> Result<f64, EvaluationError> {
     let heuristic = CheckAdmissibleHeuristic::new(inner, task.clone())
         .expect("the chain task has finite non-negative costs");
@@ -95,9 +96,8 @@ fn evaluate_initial_state(
 
 #[test]
 fn rejects_an_inadmissible_heuristic() {
-    let error =
-        evaluate_initial_state(chain_task(), Some(ConstantHeuristic::boxed(1000.0, "huge")))
-            .expect_err("h = 1000 must be rejected against a true goal distance of 2");
+    let error = evaluate_initial_state(chain_task(), ConstantHeuristic::boxed(1000.0, "huge"))
+        .expect_err("h = 1000 must be rejected against a true goal distance of 2");
 
     let EvaluationError::ComputationFailed(message) = error else {
         panic!("expected a ComputationFailed error, got {error:?}");
@@ -111,16 +111,15 @@ fn rejects_an_inadmissible_heuristic() {
 
 #[test]
 fn accepts_an_admissible_heuristic() {
-    let h_value = evaluate_initial_state(chain_task(), Some(ConstantHeuristic::boxed(1.0, "one")))
+    let h_value = evaluate_initial_state(chain_task(), ConstantHeuristic::boxed(1.0, "one"))
         .expect("h = 1 is below the true goal distance of 2");
     assert_eq!(h_value, 1.0);
 }
 
 #[test]
 fn accepts_a_perfect_heuristic() {
-    let h_value =
-        evaluate_initial_state(chain_task(), Some(ConstantHeuristic::boxed(2.0, "exact")))
-            .expect("h = 2 equals the true goal distance and stays admissible");
+    let h_value = evaluate_initial_state(chain_task(), ConstantHeuristic::boxed(2.0, "exact"))
+        .expect("h = 2 equals the true goal distance and stays admissible");
     assert_eq!(h_value, 2.0);
 }
 
@@ -128,23 +127,28 @@ fn accepts_a_perfect_heuristic() {
 fn rejects_a_heuristic_that_invents_a_dead_end() {
     let error = evaluate_initial_state(
         chain_task(),
-        Some(ConstantHeuristic::boxed(f64::INFINITY, "fake_dead_end")),
+        ConstantHeuristic::boxed(f64::INFINITY, "fake_dead_end"),
     )
     .expect_err("a solvable state must not be reported as a dead end");
     assert!(matches!(error, EvaluationError::ComputationFailed(_)));
 }
 
 #[test]
-fn materializes_blind_when_no_inner_heuristic_is_given() {
-    let h_value = evaluate_initial_state(chain_task(), None)
-        .expect("the blind estimate is the minimum action cost");
+fn checks_a_blind_heuristic() {
+    let h_value = evaluate_initial_state(
+        chain_task(),
+        Box::new(crate::evaluation::heuristic::BlindHeuristic::for_task(
+            &*chain_task(),
+        )),
+    )
+    .expect("the blind estimate is the minimum action cost");
     assert_eq!(h_value, 1.0);
 }
 
 #[test]
 fn wrapper_name_differs_from_the_wrapped_name() {
     let heuristic =
-        CheckAdmissibleHeuristic::new(Some(ConstantHeuristic::boxed(1.0, "inner")), chain_task())
+        CheckAdmissibleHeuristic::new(ConstantHeuristic::boxed(1.0, "inner"), chain_task())
             .expect("the chain task has finite non-negative costs");
     assert_eq!(heuristic.heuristic_name(), "check_admissible_inner");
 }
@@ -152,8 +156,13 @@ fn wrapper_name_differs_from_the_wrapped_name() {
 #[test]
 fn goal_distance_is_computed_per_state() {
     let task = chain_task();
-    let heuristic = CheckAdmissibleHeuristic::new(None, task.clone())
-        .expect("the chain task has finite non-negative costs");
+    let heuristic = CheckAdmissibleHeuristic::new(
+        Box::new(crate::evaluation::heuristic::BlindHeuristic::for_task(
+            &*task,
+        )),
+        task.clone(),
+    )
+    .expect("the chain task has finite non-negative costs");
     let mut registry = StateRegistry::for_task(task.clone());
     let initial_state = registry.get_initial_state();
     let successor = registry

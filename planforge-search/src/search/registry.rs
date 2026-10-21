@@ -1,4 +1,4 @@
-use super::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm, SearchDriver};
+use super::{AStar, FastSlow, GreedyBestFirst, SearchAlgorithm, SearchEngine};
 use crate::evaluation::Heuristic;
 use anyhow::{Result, bail};
 use planforge_sas::numeric_task::AbstractNumericTask;
@@ -17,14 +17,14 @@ pub enum SearchOptionKind {
 pub struct SearchBuildContext<'a> {
     pub task: &'a dyn AbstractNumericTask,
     pub state_registry: StateRegistry<'a>,
-    pub primary_heuristic: Option<Box<dyn Heuristic + 'a>>,
+    pub primary_heuristic: Box<dyn Heuristic + 'a>,
     pub secondary_heuristic: Option<Box<dyn Heuristic + 'a>>,
     pub time_limit: Option<Duration>,
     pub max_memory_bytes: Option<u64>,
     pub mpd: bool,
 }
 
-pub type SearchBuilder = for<'a> fn(SearchBuildContext<'a>) -> Result<Box<dyn SearchDriver + 'a>>;
+pub type SearchBuilder = for<'a> fn(SearchBuildContext<'a>) -> Result<Box<dyn SearchEngine + 'a>>;
 
 /// One declarative search-algorithm registration.
 ///
@@ -36,22 +36,18 @@ pub struct SearchAlgorithmPlugin {
     pub build: SearchBuilder,
 }
 
-fn build_astar<'a>(ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchDriver + 'a>> {
+fn build_astar<'a>(ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchEngine + 'a>> {
     AStar.build(ctx)
 }
 
-fn build_gbfs<'a>(ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchDriver + 'a>> {
+fn build_gbfs<'a>(ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchEngine + 'a>> {
     if ctx.secondary_heuristic.is_some() || ctx.mpd {
         bail!("GBFS accepts one heuristic and does not support mpd")
     }
     GreedyBestFirst.build(ctx)
 }
 
-fn build_fast_slow<'a>(mut ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchDriver + 'a>> {
-    let fast = ctx
-        .primary_heuristic
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("fast/slow A* requires a fast heuristic"))?;
+fn build_fast_slow<'a>(mut ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchEngine + 'a>> {
     let slow = ctx
         .secondary_heuristic
         .take()
@@ -59,7 +55,6 @@ fn build_fast_slow<'a>(mut ctx: SearchBuildContext<'a>) -> Result<Box<dyn Search
     if ctx.mpd {
         bail!("fast/slow A* does not support mpd")
     }
-    ctx.primary_heuristic = Some(fast);
     ctx.secondary_heuristic = None;
     FastSlow { slow }.build(ctx)
 }

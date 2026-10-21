@@ -91,20 +91,6 @@ pub trait SearchEngine {
     }
 }
 
-/// Type-erased boundary used by search registries.
-///
-/// A registry performs this one dynamic call per complete search run. The
-/// expansion loop itself remains monomorphized over [`SearchAlgorithm`].
-pub trait SearchDriver {
-    fn run(&mut self) -> Result<SearchResult>;
-}
-
-impl<T: SearchEngine> SearchDriver for T {
-    fn run(&mut self) -> Result<SearchResult> {
-        self.search()
-    }
-}
-
 pub(crate) fn format_progress_value(value: f64) -> String {
     if value.is_infinite() && value.is_sign_positive() {
         return "infinity".to_string();
@@ -134,21 +120,17 @@ pub(crate) fn current_memory_kb() -> u64 {
 
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    if result != 0 {
-        return 0;
-    }
+    assert_eq!(
+        result,
+        0,
+        "getrusage failed: {}",
+        std::io::Error::last_os_error()
+    );
     let usage = unsafe { usage.assume_init() };
-    usage.ru_maxrss.max(0) as u64
+    u64::try_from(usage.ru_maxrss).expect("getrusage returned negative resident memory")
 }
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn current_memory_kb() -> u64 {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    WARNED.call_once(|| {
-        tracing::warn!(
-            "resident-memory measurement is unsupported on this platform; in-process memory \
-             limits cannot be enforced"
-        );
-    });
-    0
+    panic!("resident-memory measurement is unsupported on this platform")
 }

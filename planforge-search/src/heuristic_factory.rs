@@ -76,7 +76,7 @@ pub type ExternalHeuristicBuilder =
         &HeuristicSpec,
         &'a dyn AbstractNumericTask,
         TaskRef<'a>,
-    ) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError>;
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError>;
 
 pub struct ExternalHeuristic {
     pub name: &'static str,
@@ -165,7 +165,7 @@ macro_rules! heuristic_registry {
     (
         build($spec:ident, $task:ident, $sampling_task:ident);
         $(
-            $entry:ident {
+            {
                 names: [$($name:literal),+ $(,)?],
                 backend: $backend:expr,
                 requirements: $requirements:expr,
@@ -206,7 +206,7 @@ macro_rules! heuristic_registry {
             $spec: &HeuristicSpec,
             $task: &'a dyn AbstractNumericTask,
             $sampling_task: TaskRef<'a>,
-        ) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
+        ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
             // Resolving the external registry here also seals an empty
             // registry, so registration after construction is an error.
             let external_heuristics = external_heuristics();
@@ -363,11 +363,11 @@ fn build_max_from_sources<'task>(
     task: &'task dyn AbstractNumericTask,
     sources: &[crate::config::ConfigCall],
     name: &str,
-) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
     let components = build_components(task, sources, ComponentUse::Standalone, Deadline::NONE)?;
     let heuristic = MaxAbstractionHeuristic::new(Some(name.to_string()), components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
-    Ok(Some(Box::new(heuristic)))
+    Ok(Box::new(heuristic))
 }
 
 fn build_canonical_from_sources<'task>(
@@ -375,7 +375,7 @@ fn build_canonical_from_sources<'task>(
     sources: &[crate::config::ConfigCall],
     name: &str,
     construction_deadline: Deadline,
-) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
     let components = build_components(
         task,
         sources,
@@ -386,7 +386,7 @@ fn build_canonical_from_sources<'task>(
     let heuristic = CanonicalAbstractionHeuristic::new(Some(name.to_string()), task, components)
         .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     remaining_construction_time(construction_deadline)?;
-    Ok(Some(Box::new(heuristic)))
+    Ok(Box::new(heuristic))
 }
 
 /// Builds `name(...)` from its sources and the configuration that
@@ -396,7 +396,7 @@ fn build_scp_from_sources<'task>(
     sampling_task: TaskRef<'task>,
     source_config: ScpSourceConfig,
     name: &str,
-) -> Result<Option<Box<dyn Heuristic + 'task>>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic + 'task>, HeuristicBuildError> {
     let ScpSourceConfig {
         sources,
         config,
@@ -428,14 +428,14 @@ fn build_scp_from_sources<'task>(
     )
     .map_err(|error| format!("failed to construct `{name}`: {error}"))?;
     remaining_construction_time(construction_deadline)?;
-    Ok(Some(Box::new(heuristic)))
+    Ok(Box::new(heuristic))
 }
 
 /// The heuristic of the one abstraction `spec` configures `G` to build.
 fn standalone_abstraction_heuristic<'a, G>(
     spec: &HeuristicSpec,
     task: &dyn AbstractNumericTask,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError>
+) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError>
 where
     G: AbstractionGenerator,
     G::Config: Default,
@@ -448,16 +448,13 @@ where
     let abstraction = G::new(config)
         .and_then(|generator| generator.generate(task))
         .map_err(|error| format!("failed to build {}: {error:#}", G::KIND))?;
-    Ok(Some(Box::new(AbstractionHeuristic::new(
-        &spec.name,
-        abstraction,
-    ))))
+    Ok(Box::new(AbstractionHeuristic::new(&spec.name, abstraction)))
 }
 
 heuristic_registry! {
     build(spec, task, sampling_task);
 
-    Blind {
+    {
         names: ["blind"],
         backend: RequiredBackend::None,
         requirements: any_task,
@@ -466,11 +463,11 @@ heuristic_registry! {
             if !spec.args.is_empty() {
                 return Err("`blind` does not accept arguments".to_string().into());
             }
-            Ok(None)
+            Ok(Box::new(crate::evaluation::heuristic::BlindHeuristic::for_task(task)))
         }
     }
 
-    CheckAdmissible {
+    {
         names: ["check_admissible"],
         backend: RequiredBackend::None,
         requirements: any_task,
@@ -482,11 +479,11 @@ heuristic_registry! {
             let inner = build_heuristic_from_spec(&inner_spec, task, sampling_task.clone())?;
             let h = CheckAdmissibleHeuristic::new(inner, sampling_task)
                 .map_err(|error| format!("failed to construct `check_admissible`: {error}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            Ok(Box::new(h) as Box<dyn Heuristic + 'a>)
         }
     }
 
-    Ff {
+    {
         names: ["ff"],
         backend: RequiredBackend::None,
         requirements: any_task,
@@ -497,11 +494,11 @@ heuristic_registry! {
             }
             let h = crate::evaluation::ff_heuristic::FfHeuristic::new(task)
                 .map_err(|e| format!("failed to construct ff heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            Ok(Box::new(h) as Box<dyn Heuristic + 'a>)
         }
     }
 
-    Max {
+    {
         names: ["max"],
         backend: RequiredBackend::None,
         requirements: component_task_requirements,
@@ -512,7 +509,7 @@ heuristic_registry! {
         }
     }
 
-    Canonical {
+    {
         names: ["canonical"],
         backend: RequiredBackend::None,
         requirements: component_task_requirements,
@@ -524,7 +521,7 @@ heuristic_registry! {
         }
     }
 
-    Scp {
+    {
         names: ["scp", "cost_partitioning"],
         backend: RequiredBackend::None,
         requirements: component_task_requirements,
@@ -536,7 +533,7 @@ heuristic_registry! {
         }
     }
 
-    DomainAbstraction {
+    {
         names: ["domain_abstraction"],
         backend: RequiredBackend::None,
         requirements: abstractable_task,
@@ -544,7 +541,7 @@ heuristic_registry! {
         build: { standalone_abstraction_heuristic::<DomainAbstractionGenerator>(spec, task) }
     }
 
-    CartesianAbstraction {
+    {
         names: ["cartesian_abstraction"],
         backend: RequiredBackend::None,
         requirements: abstractable_task,
@@ -552,7 +549,7 @@ heuristic_registry! {
         build: { standalone_abstraction_heuristic::<CartesianAbstractionGenerator>(spec, task) }
     }
 
-    PosthocOptimization {
+    {
         names: ["posthoc_optimization", "pho"],
         backend: RequiredBackend::Cplex,
         requirements: component_task_requirements,
@@ -571,7 +568,7 @@ heuristic_registry! {
                 remaining_construction_time(construction_deadline)?;
                 let h = PostHocOptimizationHeuristic::new(Some(spec.name.clone()), task, components)
                     .map_err(|e| format!("failed to construct `{}`: {e}", spec.name))?;
-                Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+                Ok(Box::new(h) as Box<dyn Heuristic + 'a>)
             }
             #[cfg(not(feature = "cplex"))]
             {
@@ -584,7 +581,7 @@ heuristic_registry! {
         }
     }
 
-    NumericPotential {
+    {
         names: ["numeric_potential"],
         backend: RequiredBackend::Cplex,
         requirements: abstractable_task,
@@ -601,7 +598,7 @@ heuristic_registry! {
                 .map_err(|error| {
                     format!("failed to construct numeric_potential heuristic: {error}")
                 })?;
-            Ok(Some(Box::new(heuristic) as Box<dyn Heuristic + 'a>))
+            Ok(Box::new(heuristic) as Box<dyn Heuristic + 'a>)
             }
             #[cfg(not(feature = "cplex"))]
             {
@@ -614,7 +611,7 @@ heuristic_registry! {
         }
     }
 
-    GreedyNumericPdb {
+    {
         names: ["greedy_numeric_pdb"],
         backend: RequiredBackend::None,
         requirements: restricted_abstractable_task,
@@ -634,7 +631,7 @@ heuristic_registry! {
         }
     }
 
-    CanonicalNumericPdb {
+    {
         names: ["canonical_numeric_pdb"],
         backend: RequiredBackend::None,
         requirements: restricted_abstractable_task,
@@ -645,7 +642,7 @@ heuristic_registry! {
         }
     }
 
-    MaxNumericPdb {
+    {
         names: ["max_numeric_pdb"],
         backend: RequiredBackend::None,
         requirements: restricted_abstractable_task,
@@ -656,7 +653,7 @@ heuristic_registry! {
         }
     }
 
-    LmCutNumeric {
+    {
         names: ["lmcutnumeric"],
         backend: RequiredBackend::None,
         requirements: any_task,
@@ -669,7 +666,7 @@ heuristic_registry! {
             )?;
             let h = LandmarkCutNumericHeuristic::from_config(task, cfg)
                 .map_err(|e| format!("failed to build lmcutnumeric heuristic: {e}"))?;
-            Ok(Some(Box::new(h) as Box<dyn Heuristic + 'a>))
+            Ok(Box::new(h) as Box<dyn Heuristic + 'a>)
         }
     }
 }

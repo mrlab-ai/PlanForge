@@ -153,10 +153,6 @@ impl DualQueueOpenList {
         self.regular_heap.pop()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.regular_heap.is_empty() && self.preferred_heap.is_empty()
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.regular_heap.len() + self.preferred_heap.len()
     }

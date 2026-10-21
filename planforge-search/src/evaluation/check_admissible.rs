@@ -18,13 +18,11 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use ordered_float::NotNan;
-use planforge_sas::numeric_task::{
-    INF_VALUE, NumericValue, Operator, OperatorIndex, TaskRef, ZERO_VALUE,
-};
+use planforge_sas::numeric_task::{INF_VALUE, NumericValue, OperatorIndex, TaskRef, ZERO_VALUE};
 use planforge_sas::state_registry::{ConcreteState, StateID, StateRegistry};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
-use crate::evaluation::heuristic::{BlindHeuristic, CostType, Heuristic};
+use crate::evaluation::heuristic::Heuristic;
 use crate::search::compute_effective_operator_costs;
 use crate::successor_generator::RegistryExpander;
 
@@ -48,22 +46,8 @@ pub struct CheckAdmissibleHeuristic<'task> {
 
 impl<'task> CheckAdmissibleHeuristic<'task> {
     /// Wrap `inner`, verifying it against the goal distances of `task`.
-    ///
-    /// `inner` is `None` for `check_admissible(blind())`: the heuristic factory
-    /// reports `blind` as "no heuristic object" and leaves the caller to
-    /// materialize one from the task's minimum action cost, which the oracle
-    /// computes anyway.
-    pub fn new(
-        inner: Option<Box<dyn Heuristic + 'task>>,
-        task: TaskRef<'task>,
-    ) -> Result<Self, String> {
+    pub fn new(inner: Box<dyn Heuristic + 'task>, task: TaskRef<'task>) -> Result<Self, String> {
         let oracle = GoalDistanceOracle::new(task)?;
-        let inner = inner.unwrap_or_else(|| {
-            Box::new(BlindHeuristic::with_min_action_cost(
-                oracle.min_action_cost,
-                None,
-            ))
-        });
         Ok(Self {
             // Keep the wrapper distinct from the heuristic it checks in diagnostics.
             name: format!("check_admissible_{}", inner.heuristic_name()),
@@ -130,33 +114,8 @@ impl Heuristic for CheckAdmissibleHeuristic<'_> {
         self.inner.reevaluate_on_every_pop()
     }
 
-    fn dead_ends_are_reliable(&self) -> bool {
-        Heuristic::dead_ends_are_reliable(&*self.inner)
-    }
-
-    fn reach_state(
-        &mut self,
-        parent_state: &ConcreteState,
-        operator: &Operator,
-        state: &ConcreteState,
-    ) -> bool {
-        self.inner.reach_state(parent_state, operator, state)
-    }
-
-    fn get_preferred_operators(&self, state: &ConcreteState) -> Vec<Operator> {
-        self.inner.get_preferred_operators(state)
-    }
-
     fn copy_preferred_operator_ids(&self, out: &mut Vec<OperatorIndex>) {
         self.inner.copy_preferred_operator_ids(out)
-    }
-
-    fn get_cost_type(&self) -> CostType {
-        self.inner.get_cost_type()
-    }
-
-    fn print_statistics(&self) {
-        self.inner.print_statistics();
     }
 }
 

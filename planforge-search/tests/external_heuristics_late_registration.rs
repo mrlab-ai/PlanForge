@@ -21,7 +21,11 @@ fn external_registration_after_heuristic_construction_is_rejected() {
         backend: RequiredBackend::None,
         requirements: |_| Ok(TaskRequirements::ANY),
         nested_heuristics: |_| Ok(Vec::new()),
-        build: |_, _, _| Ok(None),
+        build: |_, _, _| {
+            Ok(Box::new(
+                planforge_search::evaluation::heuristic::BlindHeuristic::new(None),
+            ))
+        },
     }])
     .unwrap_err();
     assert!(

@@ -183,13 +183,7 @@ fn initial_evaluation_error_is_not_reported_as_no_solution() {
         global_constraint: ExplicitFact::propositional(0, 0),
     }));
     let registry = StateRegistry::for_task(task.clone());
-    let mut search = AStarSearch::new(
-        &*task,
-        registry,
-        Some(Box::new(FailingHeuristic)),
-        None,
-        None,
-    );
+    let mut search = AStarSearch::new(&*task, registry, Box::new(FailingHeuristic), None, None);
 
     let error = search.search().unwrap_err();
     assert!(
@@ -280,14 +274,8 @@ fn mpd_reevaluates_and_reinserts_a_stale_open_entry() {
     };
     let task = one_step_task();
     let registry = StateRegistry::for_task(task.clone());
-    let mut search = AStarSearch::new_with_mpd(
-        &*task,
-        registry,
-        Some(Box::new(heuristic)),
-        None,
-        None,
-        true,
-    );
+    let mut search =
+        AStarSearch::new_with_mpd(&*task, registry, Box::new(heuristic), None, None, true);
 
     search.initialize().unwrap();
     assert_eq!(calls.get(), 1);
@@ -319,7 +307,7 @@ fn static_astar_does_not_pay_for_revision_checks() {
     };
     let task = one_step_task();
     let registry = StateRegistry::for_task(task.clone());
-    let mut search = AStarSearch::new(&*task, registry, Some(Box::new(heuristic)), None, None);
+    let mut search = AStarSearch::new(&*task, registry, Box::new(heuristic), None, None);
 
     search.initialize().unwrap();
     revision.set(1);
@@ -346,14 +334,8 @@ fn uncached_mpd_reevaluates_every_popped_entry() {
     };
     let task = one_step_task();
     let registry = StateRegistry::for_task(task.clone());
-    let mut search = AStarSearch::new_with_mpd(
-        &*task,
-        registry,
-        Some(Box::new(heuristic)),
-        None,
-        None,
-        true,
-    );
+    let mut search =
+        AStarSearch::new_with_mpd(&*task, registry, Box::new(heuristic), None, None, true);
 
     search.initialize().unwrap();
     let result = loop {

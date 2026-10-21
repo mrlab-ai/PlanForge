@@ -1,4 +1,4 @@
-use super::{BestFirstSearch, SearchBuildContext, SearchDriver};
+use super::{BestFirstSearch, SearchBuildContext, SearchEngine};
 use crate::evaluation::Heuristic;
 use anyhow::{Result, bail};
 
@@ -38,7 +38,7 @@ pub trait SearchAlgorithm {
     /// Shallow extensions inherit the monomorphized best-first loop. A
     /// fundamentally different algorithm can override this method and return
     /// its own driver; type erasure still occurs only once, at this boundary.
-    fn build<'a>(self, ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchDriver + 'a>>
+    fn build<'a>(self, ctx: SearchBuildContext<'a>) -> Result<Box<dyn SearchEngine + 'a>>
     where
         Self: Sized + 'a,
     {

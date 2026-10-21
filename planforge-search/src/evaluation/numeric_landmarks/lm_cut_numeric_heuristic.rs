@@ -161,8 +161,4 @@ impl<'task> Heuristic for LandmarkCutNumericHeuristic<'task> {
     fn heuristic_name(&self) -> &str {
         &self.name
     }
-
-    fn dead_ends_are_reliable(&self) -> bool {
-        true
-    }
 }

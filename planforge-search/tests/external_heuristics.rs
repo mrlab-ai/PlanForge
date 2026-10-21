@@ -24,14 +24,16 @@ fn build_test_heuristic<'a>(
     spec: &HeuristicSpec,
     _: &'a dyn AbstractNumericTask,
     _: TaskRef<'a>,
-) -> Result<Option<Box<dyn Heuristic + 'a>>, HeuristicBuildError> {
+) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
     if !spec.args.is_empty() {
         return Err("`external_test` does not accept arguments"
             .to_string()
             .into());
     }
     BUILD_CALLED.store(true, Ordering::SeqCst);
-    Ok(None)
+    Ok(Box::new(
+        planforge_search::evaluation::heuristic::BlindHeuristic::new(None),
+    ))
 }
 
 #[test]
@@ -72,7 +74,7 @@ fn external_heuristic_is_visible_to_every_registry_path() {
         "/../tests/assets/numeric_sas/example2.sas"
     )));
     let heuristic = build_heuristic_from_spec(&spec, &*task, task.clone()).unwrap();
-    assert!(heuristic.is_none());
+    assert_eq!(heuristic.heuristic_name(), "blind_heuristic");
     assert!(BUILD_CALLED.load(Ordering::SeqCst));
 
     let unknown = parse_heuristic_spec("unknown()").unwrap();

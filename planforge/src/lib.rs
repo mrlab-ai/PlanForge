@@ -28,9 +28,7 @@ use limits::{
     apply_process_limits, format_time_limit, normalize_wrapped_exit, parse_memory_limit,
     parse_time_limit,
 };
-use planforge_sas::numeric_task::{
-    AbstractNumericTask, INF_VALUE, NumericRootTask, NumericValue, ONE_VALUE, TaskRef, ZERO_VALUE,
-};
+use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::{
     ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
@@ -337,38 +335,10 @@ pub fn solve_task(
             ("gbfs", heuristic_override, None, false)
         }
         SearchSpec::AstarFs(fast_spec, slow_spec) => {
-            // A* with two admissible heuristics: a fast one for ordering
-            // and a slow one evaluated lazily on second-pop. Treats the
-            // user's `blind` choice as a placeholder by materializing a
-            // real `BlindHeuristic` with the task's min-action-cost.
-            let task_ref: &dyn AbstractNumericTask = &*task;
-            let min_cost = (0..task_ref.get_operators().len())
-                .map(|op_id| {
-                    planforge_sas::numeric_task::NumericTaskExt::abstract_operator_cost(
-                        task_ref,
-                        planforge_sas::numeric_task::OperatorIndex::from_usize(op_id),
-                    )
-                })
-                .fold(INF_VALUE, NumericValue::min);
-            let min_action_cost = if min_cost.is_finite() {
-                min_cost.max(ZERO_VALUE)
-            } else {
-                ONE_VALUE
-            };
-            let make_blind = || {
-                Box::new(
-                    planforge_search::evaluation::heuristic::BlindHeuristic::with_min_action_cost(
-                        min_action_cost,
-                        None,
-                    ),
-                ) as Box<dyn planforge_search::evaluation::Heuristic + '_>
-            };
-            let fast_h = build_heuristic_from_spec(fast_spec, task_ref, task.clone())?
-                .unwrap_or_else(make_blind);
-            let slow_h = build_heuristic_from_spec(slow_spec, task_ref, task.clone())?
-                .unwrap_or_else(make_blind);
+            let fast_h = build_heuristic_from_spec(fast_spec, &*task, task.clone())?;
+            let slow_h = build_heuristic_from_spec(slow_spec, &*task, task.clone())?;
             info!("Starting A* fast/slow search with fast={fast_spec:?} slow={slow_spec:?}...");
-            ("astar_fs", Some(fast_h), Some(slow_h), false)
+            ("astar_fs", fast_h, Some(slow_h), false)
         }
     };
     let plugin = search_algorithm(algorithm_name)
@@ -384,7 +354,7 @@ pub fn solve_task(
     })
     .map_err(|error| std::io::Error::other(format!("could not build search: {error:#}")))?;
     driver
-        .run()
+        .search()
         .map_err(|error| std::io::Error::other(format!("search failed: {error:#}")))
 }
 
@@ -610,7 +580,7 @@ fn build_heuristic_from_spec<'a>(
     spec: &HeuristicSpec,
     task_ref: &'a dyn AbstractNumericTask,
     sampling_task: TaskRef<'a>,
-) -> std::io::Result<Option<Box<dyn planforge_search::evaluation::Heuristic + 'a>>> {
+) -> std::io::Result<Box<dyn planforge_search::evaluation::Heuristic + 'a>> {
     planforge_search::heuristic_factory::build_heuristic_from_spec(spec, task_ref, sampling_task)
         .map_err(HeuristicBuildError::into_io_error)
 }

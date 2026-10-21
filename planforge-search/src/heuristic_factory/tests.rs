@@ -629,7 +629,11 @@ fn test_external(name: &'static str) -> ExternalHeuristic {
         backend: RequiredBackend::None,
         requirements: |_| Ok(TaskRequirements::ANY),
         nested_heuristics: |_| Ok(Vec::new()),
-        build: |_, _, _| Ok(None::<Box<dyn crate::evaluation::Heuristic>>),
+        build: |_, _, _| {
+            Ok(Box::new(crate::evaluation::heuristic::BlindHeuristic::new(
+                None,
+            )))
+        },
     }
 }
 

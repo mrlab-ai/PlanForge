@@ -98,7 +98,6 @@ pub(crate) fn register_event_handlers() {
     static INIT: Once = Once::new();
 
     // TODO: use signal-hook crate instead.
-    #[allow(function_casts_as_integer)]
     INIT.call_once(|| unsafe {
         libc::signal(libc::SIGABRT, signal_handler as libc::sighandler_t);
         libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
