@@ -13,7 +13,7 @@ fn test_heuristic(
         constraints,
         state_value_cache: RefCell::new(StateValueCache::default()),
         values: RefCell::default(),
-        diagnostics_logged: RefCell::new(false),
+        diagnostics_logged: Cell::new(false),
     }
 }
 

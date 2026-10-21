@@ -12,7 +12,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// for region SCP over a goal-focused collection, its goal-cover order.
     pub(super) fn compute_order_for_state(
         &self,
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         abstract_state_ids: &[Option<usize>],
         components: &[AbstractionComponent<'_>],
     ) -> Vec<usize> {
@@ -38,7 +38,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     /// also a random permutation.
     pub(super) fn diverse_orders_for_sample(
         &self,
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         abstract_state_ids: &[Option<usize>],
     ) -> Vec<Vec<usize>> {
         let greedy = Self::compute_greedy_order_for_state(state, abstract_state_ids);
@@ -51,7 +51,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     }
 
     pub(super) fn compute_greedy_order_for_state(
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         abstract_state_ids: &[Option<usize>],
     ) -> Vec<usize> {
         let total = state.goal_distances_by_abstraction.len();

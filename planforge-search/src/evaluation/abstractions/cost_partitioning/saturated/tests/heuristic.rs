@@ -12,20 +12,14 @@ fn scp_retains_an_order_that_is_weaker_only_at_the_initial_state() {
         }],
         goal_cover_goal_id: None,
     };
-    let mut state = ScpState::new(Some(1));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![5.0, 1.0]));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![4.0, 4.0]));
-    SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partition(vec![4.0, 4.0]));
+    let mut retained = Vec::new();
+    SaturatedCostPartitioningHeuristic::retain_cp(&mut retained, partition(vec![5.0, 1.0]));
+    SaturatedCostPartitioningHeuristic::retain_cp(&mut retained, partition(vec![4.0, 4.0]));
+    SaturatedCostPartitioningHeuristic::retain_cp(&mut retained, partition(vec![4.0, 4.0]));
 
-    assert_eq!(state.cp_heuristics.len(), 2, "duplicates are discarded");
-    assert_eq!(
-        SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(0)]),
-        5.0
-    );
-    assert_eq!(
-        SaturatedCostPartitioningHeuristic::compute_max_h(&state, &[Some(1)]),
-        4.0
-    );
+    assert_eq!(retained.len(), 2, "duplicates are discarded");
+    assert_eq!(compute_max_h(&retained, &[Some(0)]), 5.0);
+    assert_eq!(compute_max_h(&retained, &[Some(1)]), 4.0);
 }
 
 #[test]
@@ -62,19 +56,19 @@ fn offline_scp_releases_cartesian_construction_data_after_first_evaluation() {
     .unwrap();
 
     assert!(
-        heuristic.components.borrow()[0]
+        heuristic.state.borrow().components[0]
             .cegar()
             .unwrap()
             .retains_transitions()
     );
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
     assert!(
-        !heuristic.components.borrow()[0]
+        !heuristic.state.borrow().components[0]
             .cegar()
             .unwrap()
             .retains_transitions()
     );
-    assert!(heuristic.state.borrow().built);
+    assert!(matches!(heuristic.state.borrow().phase, ScpPhase::Built(_)));
     assert_eq!(evaluate_initial(&task, &heuristic).unwrap(), 5.0);
 }
 

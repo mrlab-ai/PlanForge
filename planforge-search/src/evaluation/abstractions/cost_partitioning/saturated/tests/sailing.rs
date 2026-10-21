@@ -198,10 +198,7 @@ fn initial_cartesian_scp_value(
         Default::default(),
     )
     .expect("failed to construct oracle SCP heuristic");
-    let mut state = heuristic.state.borrow_mut();
-    let mut partitions = heuristic
-        .build_cost_partitionings(&mut state, &abstract_state_ids)
-        .expect("oracle SCP construction failed");
+    let mut partitions = build_cost_partitionings(&heuristic, &abstract_state_ids);
     assert_eq!(partitions.len(), 1);
     partitions
         .pop()
@@ -267,22 +264,16 @@ fn sailing_handcrafted_abstractions_region_scp_initial_h_report() {
     )
     .expect("failed to construct SCP heuristic");
     let abstract_state_ids = initial_abstract_state_ids(&heuristic, transformed_task);
-    {
-        let mut state = heuristic.state.borrow_mut();
-        let mut partitions = heuristic
-            .build_cost_partitionings(&mut state, &abstract_state_ids)
-            .expect("initial SCP construction failed");
-        assert_eq!(partitions.len(), 1);
-        SaturatedCostPartitioningHeuristic::retain_cp(&mut state, partitions.pop().unwrap());
-    }
+    let cp_heuristics = build_cost_partitionings(&heuristic, &abstract_state_ids);
+    assert_eq!(cp_heuristics.len(), 1);
 
+    let initial_h = compute_max_h(&cp_heuristics, &abstract_state_ids);
     let state = heuristic.state.borrow();
-    let initial_h = SaturatedCostPartitioningHeuristic::compute_max_h(&state, &abstract_state_ids);
-    let components = heuristic.components.borrow();
+    let components = &state.components;
 
     println!("HANDCRAFTED_FULL_TASK_INITIAL_H {initial_h}");
     let mut contributions = vec![0.0; specs.len()];
-    for cp in &state.cp_heuristics {
+    for cp in &cp_heuristics {
         for table in &cp.lookup_tables {
             let contribution = current_h_for_distances(
                 table.abstraction_id,
@@ -451,8 +442,9 @@ fn initial_abstract_state_ids(
         numeric: task.get_initial_numeric_state_values().to_vec(),
     };
     heuristic
-        .components
+        .state
         .borrow()
+        .components
         .iter()
         .map(|component| {
             component

@@ -50,13 +50,15 @@ impl CostPartitioningHeuristic {
 }
 
 impl<'task> SaturatedCostPartitioningHeuristic<'task> {
+    /// The abstract state of `eval_state` in every component, or in those
+    /// `lookup_mask` selects.
     pub(super) fn compute_abstract_state_ids_into(
         &self,
+        components: &[AbstractionComponent<'_>],
         eval_state: &EvaluationState<'_, '_>,
         lookup_mask: Option<&[bool]>,
         ids: &mut Vec<Option<usize>>,
     ) -> Result<(), EvaluationError> {
-        let components = self.components.borrow();
         if let Some(mask) = lookup_mask {
             assert_eq!(
                 mask.len(),
@@ -77,37 +79,35 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
 
         Ok(())
     }
+}
 
-    /// The heuristic: the maximum over the retained cost partitionings
-    /// (Seipp et al. 2020).
-    pub(super) fn compute_max_h(state: &ScpState, ids: &[Option<usize>]) -> f64 {
-        state
-            .cp_heuristics
-            .iter()
-            .map(|cp| cp.compute_heuristic(ids))
-            .fold(0.0, f64::max)
-    }
+/// The heuristic: the maximum over the retained cost partitionings (Seipp et
+/// al. 2020).
+pub(super) fn compute_max_h(
+    cp_heuristics: &[CostPartitioningHeuristic],
+    ids: &[Option<usize>],
+) -> f64 {
+    cp_heuristics
+        .iter()
+        .map(|cp| cp.compute_heuristic(ids))
+        .fold(0.0, f64::max)
+}
 
-    pub(super) fn compute_lookup_mask(state: &ScpState, component_count: usize) -> Vec<bool> {
-        let mut ids: Vec<usize> = state
-            .cp_heuristics
-            .iter()
-            .flat_map(|cp| cp.lookup_tables.iter().map(|table| table.abstraction_id))
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        let mut mask = vec![false; component_count];
-        for id in ids {
-            *mask
-                .get_mut(id)
-                .expect("retained lookup table must reference an existing component") = true;
-        }
-        mask
+/// Which of the `component_count` components a lookup table of
+/// `cp_heuristics` reads.
+pub(super) fn compute_lookup_mask(
+    cp_heuristics: &[CostPartitioningHeuristic],
+    component_count: usize,
+) -> Vec<bool> {
+    let mut mask = vec![false; component_count];
+    for table in cp_heuristics.iter().flat_map(|cp| &cp.lookup_tables) {
+        mask[table.abstraction_id] = true;
     }
+    mask
 }
 
 pub(super) fn max_abstraction_heuristic(
-    state: &ScpState,
+    state: &OrderSelection<'_>,
     abstract_state_ids: &[Option<usize>],
 ) -> f64 {
     state
@@ -152,7 +152,7 @@ pub(super) fn current_h_for_distances(
 }
 
 pub(super) fn abstraction_heuristic_values(
-    state: &ScpState,
+    state: &OrderSelection<'_>,
     abstract_state_ids: &[Option<usize>],
 ) -> Vec<f64> {
     state

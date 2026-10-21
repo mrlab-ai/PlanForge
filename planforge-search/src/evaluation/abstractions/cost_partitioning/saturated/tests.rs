@@ -202,14 +202,37 @@ pub(super) fn goal_cover_scp<'task>(
     (heuristic, expected_goals)
 }
 
+/// The cost partitionings `heuristic` retained at its first evaluation.
+pub(super) fn retained_cost_partitionings<'a>(
+    heuristic: &'a SaturatedCostPartitioningHeuristic<'_>,
+) -> std::cell::Ref<'a, [CostPartitioningHeuristic]> {
+    std::cell::Ref::map(heuristic.state.borrow(), |state| match &state.phase {
+        ScpPhase::Built(retained) => retained.cp_heuristics.as_slice(),
+        ScpPhase::Unbuilt(_) => panic!("the heuristic has not evaluated a state"),
+    })
+}
+
+/// The cost partitionings `heuristic` builds at the first evaluated state,
+/// whose abstract states are `abstract_state_ids`.
+pub(super) fn build_cost_partitionings(
+    heuristic: &SaturatedCostPartitioningHeuristic<'_>,
+    abstract_state_ids: &[Option<usize>],
+) -> Vec<CostPartitioningHeuristic> {
+    let mut state = heuristic.state.borrow_mut();
+    let ScpState { components, phase } = &mut *state;
+    let ScpPhase::Unbuilt(selection) = phase else {
+        panic!("the heuristic built its cost partitionings already");
+    };
+    heuristic
+        .build_cost_partitionings(components, selection, abstract_state_ids)
+        .expect("SCP construction failed")
+}
+
 pub(super) fn retained_goal_cover_orders_per_goal(
     heuristic: &SaturatedCostPartitioningHeuristic<'_>,
 ) -> HashMap<usize, usize> {
     let mut retained_per_goal = HashMap::<usize, usize>::new();
-    for goal_id in heuristic
-        .state
-        .borrow()
-        .cp_heuristics
+    for goal_id in retained_cost_partitionings(heuristic)
         .iter()
         .filter_map(|cp| cp.goal_cover_goal_id)
     {

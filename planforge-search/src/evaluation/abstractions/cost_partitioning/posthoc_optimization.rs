@@ -30,7 +30,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 
 use planforge_cplex::{
@@ -59,7 +59,7 @@ pub struct PostHocOptimizationHeuristic<'task> {
     lp_model: RefCell<LpModel>,
     state_value_cache: RefCell<StateValueCache>,
     values: RefCell<ExplicitState>,
-    diagnostics_logged: RefCell<bool>,
+    diagnostics_logged: Cell<bool>,
 }
 
 impl<'task> PostHocOptimizationHeuristic<'task> {
@@ -108,7 +108,7 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
             lp_model: RefCell::new(lp_model),
             state_value_cache: RefCell::new(StateValueCache::default()),
             values: RefCell::default(),
-            diagnostics_logged: RefCell::new(false),
+            diagnostics_logged: Cell::new(false),
         })
     }
 
@@ -198,12 +198,8 @@ impl<'task> PostHocOptimizationHeuristic<'task> {
     }
 
     fn log_diagnostics_once(&self, h_values: &[f64]) {
-        {
-            let mut logged = self.diagnostics_logged.borrow_mut();
-            if *logged {
-                return;
-            }
-            *logged = true;
+        if self.diagnostics_logged.replace(true) {
+            return;
         }
 
         let positive: Vec<_> = h_values

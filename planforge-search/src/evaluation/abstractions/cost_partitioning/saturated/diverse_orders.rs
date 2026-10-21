@@ -4,7 +4,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
     pub(super) fn select_diverse_orders(
         &self,
         collection: PartitionedCollection<'_, '_>,
-        state: &mut ScpState,
+        state: &mut OrderSelection<'task>,
         initial_candidates: Vec<CostPartitioningHeuristic>,
         budget: Deadline,
     ) -> Result<Vec<CostPartitioningHeuristic>, EvaluationError> {
@@ -15,22 +15,22 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
 
         let deadline = budget.earliest(deadline_from_now("max_time", self.config.max_time)?);
         let initial_h = initial_candidates[0].compute_heuristic(initial_abstract_state_ids);
-        self.sample_states(state, initial_h, deadline)?;
+        let samples = self.sample_states(collection.components, state, initial_h, deadline)?;
         assert!(
-            !state.sample_abstract_state_ids.is_empty(),
+            !samples.is_empty(),
             "offline diversification must retain at least the initial state sample"
         );
 
         // The heuristic is the maximum over the retained orders, so every
         // sample starts at 0 and the mandatory orders below are part of it:
         // max_orders only bounds the diversified orders added after them.
-        let mut sample_best = vec![0.0; state.sample_abstract_state_ids.len()];
+        let mut sample_best = vec![0.0; samples.len()];
         let mut selected = Vec::new();
         let mut selected_size_kb = 0;
         let mut evaluated_orders = initial_candidates.len();
         let required_indices = best_goal_cover_order_indices(
             &initial_candidates,
-            &state.sample_abstract_state_ids,
+            &samples,
             self.config.goal_cover_orders_per_goal,
         );
         let represented_goal_count = required_indices
@@ -62,7 +62,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         for candidate in required_orders {
             retain_required_order(
                 candidate,
-                &state.sample_abstract_state_ids,
+                &samples,
                 &mut sample_best,
                 &mut selected,
                 &mut selected_size_kb,
@@ -78,7 +78,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             }
             retain_if_improving_some_sample(
                 candidate,
-                &state.sample_abstract_state_ids,
+                &samples,
                 &mut sample_best,
                 &mut selected,
                 &mut selected_size_kb,
@@ -86,20 +86,20 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
         }
         assert!(!selected.is_empty(), "the global best SCP must be retained");
 
-        for sample_index in 1..state.sample_abstract_state_ids.len() {
+        for sample_index in 1..samples.len() {
             if selected.len() >= self.config.max_orders || deadline.passed() {
                 break;
             }
-            let sample_ids = state.sample_abstract_state_ids[sample_index].clone();
-            let abstraction_h = abstraction_heuristic_values(state, &sample_ids);
+            let sample_ids = &samples[sample_index];
+            let abstraction_h = abstraction_heuristic_values(state, sample_ids);
             // The same collection, evaluated at this sample rather than at the
             // state the selected was seeded from.
             let sample_collection = PartitionedCollection {
-                abstract_state_ids: &sample_ids,
+                abstract_state_ids: sample_ids,
                 abstraction_h: &abstraction_h,
                 ..collection
             };
-            for order in self.diverse_orders_for_sample(state, &sample_ids) {
+            for order in self.diverse_orders_for_sample(state, sample_ids) {
                 if selected.len() >= self.config.max_orders || deadline.passed() {
                     break;
                 }
@@ -108,7 +108,7 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
 
                 retain_if_improving_some_sample(
                     candidate,
-                    &state.sample_abstract_state_ids,
+                    &samples,
                     &mut sample_best,
                     &mut selected,
                     &mut selected_size_kb,
@@ -119,16 +119,13 @@ impl<'task> SaturatedCostPartitioningHeuristic<'task> {
             }
         }
 
-        let sample_count = state.sample_abstract_state_ids.len();
         info!(
             "scp: retained {} of {} evaluated orders over {} samples ({} KiB)",
             selected.len(),
             evaluated_orders,
-            sample_count,
+            samples.len(),
             selected_size_kb,
         );
-        state.sample_abstract_state_ids.clear();
-        state.sample_abstract_state_ids.shrink_to_fit();
         Ok(selected)
     }
 }

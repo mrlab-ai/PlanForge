@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashSet};
 
 use planforge_sas::numeric_task::{AbstractNumericTask, OperatorIndex};
@@ -24,7 +24,7 @@ pub struct CanonicalAbstractionHeuristic<'task> {
     component_value_cache: RefCell<Vec<Option<f64>>>,
     state_value_cache: RefCell<StateValueCache>,
     component_state_values: RefCell<ExplicitState>,
-    diagnostics_logged: RefCell<bool>,
+    diagnostics_logged: Cell<bool>,
 }
 
 impl<'task> CanonicalAbstractionHeuristic<'task> {
@@ -94,7 +94,7 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
             component_value_cache: RefCell::new(Vec::new()),
             state_value_cache: RefCell::new(StateValueCache::default()),
             component_state_values: RefCell::default(),
-            diagnostics_logged: RefCell::new(false),
+            diagnostics_logged: Cell::new(false),
         })
     }
 
@@ -169,11 +169,9 @@ impl<'task> CanonicalAbstractionHeuristic<'task> {
     }
 
     fn log_diagnostics_once(&self, values: &[Option<f64>]) {
-        let mut logged = self.diagnostics_logged.borrow_mut();
-        if *logged {
+        if self.diagnostics_logged.replace(true) {
             return;
         }
-        *logged = true;
         info!(
             "canonical abstraction diagnostics: components={}, max_additive_subsets={}",
             self.components.len(),
