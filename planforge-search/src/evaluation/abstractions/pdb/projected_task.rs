@@ -872,17 +872,6 @@ impl<'task> ProjectedTask<'task> {
     pub fn pattern_regular_projected_ids(&self) -> &[usize] {
         &self.pattern_regular_projected_ids
     }
-
-    pub fn state_dependent_numeric_projected_ids(&self) -> Vec<usize> {
-        (0..self.projected_num_var_to_original.len())
-            .filter(|&projected_index| {
-                self.base
-                    .numeric_variables()
-                    .get(self.projected_num_var_to_original[projected_index].index())
-                    .is_some_and(|numeric_var| numeric_var.get_type() != &NumericType::Constant)
-            })
-            .collect()
-    }
 }
 
 fn projected_propositional_packer_from_variables(variables: &[ExplicitVariable]) -> StatePacker {

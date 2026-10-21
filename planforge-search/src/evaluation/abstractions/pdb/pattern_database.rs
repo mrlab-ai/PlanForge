@@ -444,7 +444,6 @@ pub struct PatternDatabase<'task> {
     goal_state_ids: Vec<usize>,
     transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
     pub(super) min_operator_cost: f64,
-    pub(super) reached_goal_states: usize,
     pub(super) truncated: bool,
     exhausted_abstract_state_space: bool,
     pub(super) frontier_states: Vec<usize>,
@@ -453,7 +452,6 @@ pub struct PatternDatabase<'task> {
     compact_prop_distances: Vec<f64>,
     pattern_lookup_packer: StatePacker,
     compact_numeric_registry: CompactNumericDistanceIndex,
-    state_dependent_numeric_projected_ids: Vec<usize>,
     failed_lookup_cache: RefCell<HashMap<u64, f64>>,
     projection_prop_scratch: RefCell<Vec<ExplicitValueIndex>>,
     projection_numeric_scratch: RefCell<Vec<NumericValue>>,
@@ -499,7 +497,6 @@ impl<'task> PatternDatabase<'task> {
             goal_state_ids: Vec::new(),
             transition_predecessors: Vec::new(),
             min_operator_cost,
-            reached_goal_states: 0,
             truncated: false,
             exhausted_abstract_state_space: false,
             frontier_states: Vec::new(),
@@ -511,7 +508,6 @@ impl<'task> PatternDatabase<'task> {
                 compact_numeric_bin_count.saturating_sub(1),
                 max_states,
             ),
-            state_dependent_numeric_projected_ids: Vec::new(),
             failed_lookup_cache: RefCell::new(HashMap::default()),
             projection_prop_scratch: RefCell::new(Vec::with_capacity(projection_prop_capacity)),
             projection_numeric_scratch: RefCell::new(Vec::with_capacity(
@@ -523,8 +519,6 @@ impl<'task> PatternDatabase<'task> {
             failed_lookup_lmcut_task: RefCell::new(None),
         };
         pdb.full_prop_hash_multipliers = build_prop_hash_multipliers(&pdb.task);
-        pdb.state_dependent_numeric_projected_ids =
-            pdb.task.state_dependent_numeric_projected_ids();
         pdb.build(max_states)?;
         Ok(pdb)
     }
@@ -1368,7 +1362,6 @@ impl<'task> PatternDatabase<'task> {
         self.distances = table.distances;
         self.goal_state_ids = table.goal_state_ids;
         self.transition_predecessors = table.transition_predecessors;
-        self.reached_goal_states = table.reached_goal_states;
         self.frontier_states = table.frontier_states;
         self.truncated = table.truncated;
         self.exhausted_abstract_state_space = table.exhausted_abstract_state_space;
@@ -1412,11 +1405,9 @@ impl<'task> PatternDatabase<'task> {
             &mut heap,
         );
 
-        let reached_goal_states = exploration.goal_states.len();
         Ok(PdbDistanceTable {
             states,
             distances,
-            reached_goal_states,
             goal_state_ids: exploration.goal_states,
             frontier_states,
             transition_predecessors: exploration.predecessors,
@@ -1637,7 +1628,6 @@ impl<'task> PatternDatabase<'task> {
 struct PdbDistanceTable {
     states: Vec<PdbState>,
     distances: Vec<f64>,
-    reached_goal_states: usize,
     goal_state_ids: Vec<usize>,
     frontier_states: Vec<usize>,
     transition_predecessors: Vec<Vec<(usize, OperatorIndex)>>,
