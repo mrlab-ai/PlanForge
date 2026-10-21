@@ -136,8 +136,8 @@ impl CegarDriver {
         self.run_from_with_poll_phase::<false>(start, run_iteration)
     }
 
-    /// Runs a backend whose pre-iteration resource poll historically used the
-    /// number of completed refinements, starting at zero.
+    /// Like [`Self::run_from`], but polls the memory limit by the number of
+    /// completed refinements, starting at zero, as the ICAPS26 loop does.
     #[inline]
     pub fn run_from_zero_based(
         self,

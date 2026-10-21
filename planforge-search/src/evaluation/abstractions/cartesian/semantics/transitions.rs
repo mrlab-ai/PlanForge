@@ -1,7 +1,15 @@
 //! Whether a concrete operator may induce an abstract transition, and the
 //! source sets of the transitions it induces.
 
-use super::*;
+use anyhow::Result;
+use planforge_sas::numeric_task::OperatorIndex;
+
+use super::super::working::OperatorBitSet;
+use super::CartesianSemantics;
+use crate::evaluation::abstractions::common::cartesian_set::{
+    CartesianSet, sorted_value_sets_overlap,
+};
+use crate::evaluation::abstractions::common::cegar::split::SplitDimension;
 
 impl CartesianSemantics<'_> {
     pub(in super::super) fn operator_depends_on_split(

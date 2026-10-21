@@ -1,4 +1,8 @@
-use super::*;
+use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue, VariableIndex};
+use planforge_sas::utils::float_tolerance;
+
+use crate::evaluation::abstractions::common::cegar::split::Split;
 
 /// Equal for the same split with the same children; numeric boundaries
 /// compare by their canonical bits.

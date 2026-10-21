@@ -1,9 +1,21 @@
 //! The working abstraction as CEGAR's flaw search sees it.
 
 use std::borrow::Cow;
+use std::collections::HashSet;
 
+use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
+
+use super::distances::{ShortestPaths, update_shortest_paths_after_split};
 use super::refinement::{SplitStates, replacement_transitions};
-use super::*;
+use super::semantics::CartesianSemantics;
+use super::working::WorkingAbstraction;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::cegar::refine::Refinable;
+use crate::evaluation::abstractions::common::cegar::split::{Split, split_child_regions};
+use crate::evaluation::abstractions::common::cegar::view::{
+    AbstractionView, RefinementLimits, TransitionKey,
+};
 use crate::evaluation::abstractions::common::coordinates::coordinate_value;
 use crate::resource_limits::Deadline;
 

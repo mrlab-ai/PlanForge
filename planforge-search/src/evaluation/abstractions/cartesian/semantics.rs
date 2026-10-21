@@ -2,7 +2,14 @@
 //! and for every split dimension the operators whose transitions it can
 //! change, which lets a split update only the transitions it affects.
 
-use super::*;
+use anyhow::{Context, Result, ensure};
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericType, OperatorIndex};
+use planforge_sas::utils::float_tolerance;
+
+use super::config::CartesianAbstractionConfig;
+use super::working::OperatorBitSet;
+use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
+use crate::evaluation::abstractions::common::regions::RegionSemantics;
 
 mod transitions;
 

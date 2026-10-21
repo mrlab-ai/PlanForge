@@ -1,6 +1,17 @@
-use super::*;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use planforge_sas::numeric_task::OperatorIndex;
+
+use super::abstraction::{CartesianAbstraction, CartesianTransitions};
+use super::distances::ShortestPaths;
+use super::semantics::CartesianSemantics;
+use super::working::WorkingAbstraction;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, AbstractionMetadata};
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractTransition, AbstractTransitionSystem,
+};
 
 /// The abstraction CEGAR refined into `working`, with the goal distances of
 /// `shortest_paths`. Its abstract operators are the transitions between

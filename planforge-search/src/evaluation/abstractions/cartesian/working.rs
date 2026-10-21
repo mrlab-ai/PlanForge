@@ -1,4 +1,10 @@
-use super::*;
+use std::collections::HashMap;
+
+use planforge_sas::numeric_task::OperatorIndex;
+
+use super::hierarchy::CartesianRefinementHierarchy;
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::cegar::view::TransitionKey;
 
 #[derive(Debug, Clone)]
 pub(super) struct OperatorBitSet {

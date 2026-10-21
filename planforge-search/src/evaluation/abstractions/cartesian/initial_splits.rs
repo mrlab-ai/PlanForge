@@ -2,7 +2,10 @@
 //! [`initial_splits`] divides each abstract state it divides strictly, as
 //! long as the abstraction stays within `max_states`.
 
-use super::*;
+use anyhow::Result;
+
+use super::semantics::CartesianSemantics;
+use super::working::WorkingAbstraction;
 use crate::evaluation::abstractions::common::cegar::initial_splits::{
     RefinementScope, initial_splits,
 };

@@ -1,7 +1,16 @@
-use super::*;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use planforge_sas::numeric_task::{ExplicitValueIndex, NumericValue};
+
+use super::hierarchy::CartesianRefinementHierarchy;
 use crate::evaluation::abstractions::common::abstraction::{AbstractionCore, CegarAbstraction};
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::coordinates::{AdditiveNumericView, coordinate_value};
-use crate::evaluation::abstractions::common::regions::SOURCE_SETS;
+use crate::evaluation::abstractions::common::regions::{RegionSemantics, SOURCE_SETS};
+use crate::evaluation::abstractions::common::transition_system::{
+    AbstractOperatorSourceSets, AbstractTransitionSystem,
+};
 use crate::evaluation::abstractions::component::AbstractionKind;
 use crate::evaluation::abstractions::cost_partitioning::costs::{
     ExplicitSaturationGraph, RemainingCosts, SourceSetCostAllocation, saturate_labels,

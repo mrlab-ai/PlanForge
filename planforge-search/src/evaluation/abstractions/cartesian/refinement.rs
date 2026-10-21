@@ -1,4 +1,12 @@
-use super::*;
+use anyhow::Result;
+
+use super::semantics::CartesianSemantics;
+use super::working::{OperatorBitSet, WorkingAbstraction};
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
+use crate::evaluation::abstractions::common::cegar::split::{
+    Split, SplitDimension, split_child_regions,
+};
+use crate::evaluation::abstractions::common::cegar::view::TransitionKey;
 
 impl WorkingAbstraction {
     /// Splits a state by `split`: the old state keeps the child with the
