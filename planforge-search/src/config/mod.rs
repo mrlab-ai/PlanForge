@@ -214,11 +214,23 @@ impl std::fmt::Display for ConfigValue {
         match self {
             ConfigValue::Atom(atom) => {
                 // Quote scalar strings so identifiers remain distinct from calls.
-                if atom.parse::<f64>().is_ok() {
-                    f.write_str(atom)
-                } else {
-                    write!(f, "{atom:?}")
+                if atom.parse::<f64>().is_ok()
+                    && atom.starts_with(|ch: char| ch.is_ascii_digit() || ch == '+' || ch == '-')
+                {
+                    return f.write_str(atom);
                 }
+                f.write_str("\"")?;
+                for ch in atom.chars() {
+                    match ch {
+                        '\\' => f.write_str("\\\\")?,
+                        '"' => f.write_str("\\\"")?,
+                        '\n' => f.write_str("\\n")?,
+                        '\r' => f.write_str("\\r")?,
+                        '\t' => f.write_str("\\t")?,
+                        other => write!(f, "{other}")?,
+                    }
+                }
+                f.write_str("\"")
             }
             ConfigValue::Call(call) => write!(f, "{call}"),
             ConfigValue::List(values) => {

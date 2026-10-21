@@ -295,6 +295,27 @@ mod tests {
     }
 
     #[test]
+    fn quoted_scalars_round_trip_without_becoming_identifier_calls() {
+        for value in [
+            "inf",
+            "NaN",
+            "infinity",
+            "123",
+            "a\0b",
+            "a\u{7}b",
+            "a\u{200b}b",
+            "a\n\r\tb",
+            "a\\\"b",
+        ] {
+            let spec = ConfigCall::new(
+                "root",
+                vec![ConfigArg::new(None, ConfigValue::Atom(value.into()))],
+            );
+            assert_eq!(parse_call(&spec.to_string()).unwrap(), spec, "{value:?}");
+        }
+    }
+
+    #[test]
     fn nested_lists_are_values_but_assignments_are_only_call_arguments() {
         let spec = parse_call("root([[child()], [1, 2,],],)").unwrap();
         assert_eq!(parse_call(&spec.to_string()).unwrap(), spec);
