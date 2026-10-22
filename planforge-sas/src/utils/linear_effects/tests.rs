@@ -167,6 +167,7 @@ fn rejects_short_initial_numeric_value_table() {
         &[None],
         &[],
         &mut visiting,
+        &mut [None],
     )
     .expect_err("a missing initial numeric value must not become zero");
 

@@ -214,6 +214,7 @@ pub fn linearize_numeric_var<T: AbstractNumericTask + ?Sized>(
         &assignment_lookup,
         &initial_numeric_values,
         &mut visiting,
+        &mut vec![None; task.numeric_variables().len()],
     )
 }
 
@@ -247,6 +248,7 @@ pub fn linearize_operator_assignment_effects<T: AbstractNumericTask + ?Sized>(
             &assignment_lookup,
             &initial_numeric_values,
             &mut visiting,
+            &mut vec![None; task.numeric_variables().len()],
         )?;
         let affected_var_id = assignment_effect.affected_var_id();
         if affected_var_id.index() >= num_numeric_vars {
@@ -281,6 +283,7 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
     assignment_lookup: &[Option<AxiomIndex>],
     initial_numeric_values: &[NumericValue],
     visiting: &mut [bool],
+    memo: &mut [Option<LinearExpression>],
 ) -> Result<LinearExpression, LinearizationError> {
     let num_numeric_vars = task.numeric_variables().len();
     if numeric_var_id.index() >= num_numeric_vars {
@@ -288,6 +291,9 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
             numeric_var_id: numeric_var_id.index(),
             len: num_numeric_vars,
         });
+    }
+    if let Some(expression) = &memo[numeric_var_id.index()] {
+        return Ok(expression.clone());
     }
     if visiting[numeric_var_id.index()] {
         return Err(LinearizationError::CycleDetected {
@@ -331,6 +337,7 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
                             assignment_lookup,
                             initial_numeric_values,
                             visiting,
+                            memo,
                         )?;
                         result = result.add(&term.scale(coefficient.value()));
                     }
@@ -347,6 +354,7 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
                         assignment_lookup,
                         initial_numeric_values,
                         visiting,
+                        memo,
                     )?;
                     let rhs = linearize_numeric_var_with_lookup(
                         task,
@@ -354,11 +362,15 @@ fn linearize_numeric_var_with_lookup<T: AbstractNumericTask + ?Sized>(
                         assignment_lookup,
                         initial_numeric_values,
                         visiting,
+                        memo,
                     )?;
                     linearize_assignment_axiom_expr(numeric_var_id, operator, &lhs, &rhs)
                 }
             };
             visiting[numeric_var_id.index()] = false;
+            if let Ok(expression) = &result {
+                memo[numeric_var_id.index()] = Some(expression.clone());
+            }
             result
         }
     }

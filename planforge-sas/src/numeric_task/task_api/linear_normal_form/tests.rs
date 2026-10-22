@@ -323,3 +323,27 @@ fn rebuilding_a_normalized_task_preserves_numeric_ids_and_definitions() {
     assert_eq!(rebuilt.assignment_axioms, expected_assignments);
     assert_eq!(rebuilt.comparison_axioms, expected_comparisons);
 }
+
+#[test]
+fn shared_expression_dags_are_not_expanded_as_trees() {
+    // Each definition reads its predecessor twice: expanding as a tree would
+    // visit 2^100 occurrences, although the task has only 100 definitions.
+    let definitions: Vec<_> = (0..100)
+        .map(|id| {
+            let operand = if id == 0 { 0 } else { id + 1 };
+            (CalOperator::Sum, operand, operand)
+        })
+        .collect();
+    let task = task(
+        &[1.0],
+        &[0.0],
+        &definitions,
+        &[(101, 1, ComparisonOperator::GreaterThan)],
+    );
+    assert!(task.assignment_axioms.is_empty());
+    assert_eq!(
+        task.comparison_axioms[0].left_hand_side,
+        VariableIndex::new(0)
+    );
+    assert!(task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
+}
