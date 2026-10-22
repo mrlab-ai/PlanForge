@@ -365,14 +365,17 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
         NumericVariable::new("c5".into(), NumericType::Constant, None),
         NumericVariable::new("d1".into(), NumericType::Derived, None),
         NumericVariable::new("d2".into(), NumericType::Derived, None),
+        NumericVariable::new("one".into(), NumericType::Regular, None),
     ];
 
     let assignment_axioms = vec![
+        // `x + one` over a second regular variable: a view of its own, where
+        // `x + c1` would be a threshold on `x`.
         AssignmentAxiom::new(
             VariableIndex::from_usize(3),
             CalOperator::Sum,
             VariableIndex::from_usize(0),
-            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(5),
         ),
         AssignmentAxiom::new(
             VariableIndex::from_usize(4),
@@ -410,6 +413,7 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
             NumericValue::new(5.0),
             NumericValue::new(4.0),
             NumericValue::new(-1.0),
+            NumericValue::new(1.0),
         ],
         operators: vec![op.clone()],
         axioms: vec![],
@@ -433,6 +437,7 @@ fn additive_derived_numeric_partitions_are_materialized_in_transitions() {
             Interval::singleton(NumericValue::new(-1.0)),
             Interval::singleton(NumericValue::new(0.0)),
         ],
+        vec![Interval::singleton(NumericValue::new(1.0))],
     ]);
 
     let function = identity_function(&task, partitions);
@@ -605,13 +610,15 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
         NumericVariable::new("c0_5".into(), NumericType::Constant, None),
         NumericVariable::new("y".into(), NumericType::Derived, None),
         NumericVariable::new("c1".into(), NumericType::Constant, None),
+        NumericVariable::new("half".into(), NumericType::Regular, None),
     ];
 
+    // `y = x + half` over a second regular variable is a view of its own.
     let assignment_axioms = vec![AssignmentAxiom::new(
         VariableIndex::from_usize(2),
         CalOperator::Sum,
         VariableIndex::from_usize(0),
-        VariableIndex::from_usize(1),
+        VariableIndex::from_usize(4),
     )];
     let comparison_axioms = vec![ComparisonAxiom::new(
         VariableIndex::new(0),
@@ -647,6 +654,7 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
             NumericValue::new(0.5),
             NumericValue::new(0.5),
             NumericValue::new(1.0),
+            NumericValue::new(0.5),
         ],
         operators: vec![op.clone()],
         axioms: vec![],
@@ -666,6 +674,7 @@ fn derived_comparison_transition_is_skipped_when_the_target_cannot_be_decided() 
             Interval::new(NumericValue::new(0.5), NumericValue::new(1.5), false, true),
         ],
         vec![Interval::singleton(NumericValue::new(1.0))],
+        vec![Interval::singleton(NumericValue::new(0.5))],
     ]);
 
     let function = identity_function(&task, partitions);
@@ -719,6 +728,7 @@ fn additive_view_filters_false_equality_precondition() {
         NumericVariable::new("target".into(), NumericType::Constant, None),
         NumericVariable::new("x-minus-target".into(), NumericType::Derived, None),
         NumericVariable::new("zero".into(), NumericType::Constant, None),
+        NumericVariable::new("target".into(), NumericType::Regular, None),
     ];
     let task = NumericRootTask::new(NumericRootTaskParts {
         version: 4,
@@ -733,6 +743,7 @@ fn additive_view_filters_false_equality_precondition() {
             NumericValue::new(10.0),
             NumericValue::new(-10.0),
             NumericValue::new(0.0),
+            NumericValue::new(10.0),
         ],
         operators: vec![Operator::new(
             "save".into(),
@@ -748,11 +759,12 @@ fn additive_view_filters_false_equality_precondition() {
             VariableIndex::new(3),
             ComparisonOperator::Equal,
         )],
+        // `x - target` over a regular target is a view of its own.
         assignment_axioms: vec![AssignmentAxiom::new(
             VariableIndex::from_usize(2),
             CalOperator::Difference,
             VariableIndex::from_usize(0),
-            VariableIndex::from_usize(1),
+            VariableIndex::from_usize(4),
         )],
         global_constraint: ExplicitFact::propositional(0, 0),
     });
@@ -764,6 +776,7 @@ fn additive_view_filters_false_equality_precondition() {
             Interval::new(NumericValue::new(-9.0), INF_VALUE, false, false),
         ],
         vec![Interval::singleton(NumericValue::new(0.0))],
+        vec![Interval::singleton(NumericValue::new(10.0))],
     ]);
     let function = identity_function(&task, partitions);
     let transitions = numeric_partition_transitions(

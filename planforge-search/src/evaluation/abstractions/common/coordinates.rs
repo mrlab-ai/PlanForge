@@ -51,9 +51,11 @@ pub(crate) fn coordinate_value(
 }
 
 /// The additive view of numeric variable `numeric_var_id`, if it is a
-/// derived affine expression of regular variables that every operator
-/// changes by a constant. `definitions` is the assignment axiom of every
-/// derived variable.
+/// derived affine expression of at least two regular variables that every
+/// operator changes by a constant. `definitions` is the assignment axiom of
+/// every derived variable. An affine expression of one variable is no
+/// coordinate of its own: it is an image of that variable, so a comparison
+/// on it is a threshold on the variable, as in the restricted task.
 fn analyze_additive_numeric_view(
     task: &dyn AbstractNumericTask,
     definitions: &[Option<AxiomIndex>],
@@ -75,18 +77,9 @@ fn analyze_additive_numeric_view(
     {
         return None;
     }
-    for dependency in
-        expression
-            .coefficients
-            .iter()
-            .enumerate()
-            .filter_map(|(var_id, coefficient)| {
-                (coefficient.abs() >= float_tolerance::ABS_EPSILON).then_some(var_id)
-            })
-    {
-        if task.numeric_variables()[dependency].get_type() != &NumericType::Regular {
-            return None;
-        }
+    let dependencies = regular_dependencies(task, &expression)?;
+    if dependencies.len() < 2 {
+        return None;
     }
 
     let operator_deltas = task
@@ -98,6 +91,47 @@ fn analyze_additive_numeric_view(
         expression,
         operator_deltas,
     })
+}
+
+/// The variables `expression` depends on, or `None` if one is not regular.
+fn regular_dependencies(
+    task: &dyn AbstractNumericTask,
+    expression: &LinearExpression,
+) -> Option<Vec<VariableIndex>> {
+    expression
+        .coefficients
+        .iter()
+        .enumerate()
+        .filter(|(_, coefficient)| coefficient.abs() >= float_tolerance::ABS_EPSILON)
+        .map(|(var_id, _)| {
+            (task.numeric_variables()[var_id].get_type() == &NumericType::Regular)
+                .then_some(VariableIndex::from_usize(var_id))
+        })
+        .collect()
+}
+
+/// The coordinate numeric variable `numeric_var_id` is refined along: itself
+/// if it is a coordinate, its variable if it is an affine expression of one
+/// regular variable, else none.
+fn operand_coordinate(
+    task: &dyn AbstractNumericTask,
+    definitions: &[Option<AxiomIndex>],
+    views: &[Option<AdditiveNumericView>],
+    numeric_var_id: VariableIndex,
+) -> Option<VariableIndex> {
+    if is_coordinate(task, views, numeric_var_id) {
+        return Some(numeric_var_id);
+    }
+    if task.numeric_variables()[numeric_var_id.index()].get_type() != &NumericType::Derived
+        || !defined_without_cost(task, definitions, numeric_var_id)
+    {
+        return None;
+    }
+    let expression = linear_expression(task, numeric_var_id)?;
+    match regular_dependencies(task, &expression)?.as_slice() {
+        &[variable] => Some(variable),
+        _ => None,
+    }
 }
 
 /// Whether numeric variable `numeric_var_id` has a value without reading a
@@ -270,6 +304,9 @@ fn constant_effect_delta(
 pub(crate) struct Coordinates<'task> {
     task: &'task dyn AbstractNumericTask,
     views: Arc<[Option<AdditiveNumericView>]>,
+    /// Per numeric variable, the coordinate a comparison on it is refined
+    /// along, if any.
+    operand_coordinates: Vec<Option<VariableIndex>>,
     /// Per numeric condition, its requirement on the one coordinate it
     /// constrains when it holds and when it does not, if it constrains one;
     /// indexed by [`ConditionValue`].
@@ -293,6 +330,16 @@ impl<'task> Coordinates<'task> {
                 analyze_additive_numeric_view(task, &definitions, VariableIndex::from_usize(var_id))
             })
             .collect();
+        let operand_coordinates = (0..task.numeric_variables().len())
+            .map(|var_id| {
+                operand_coordinate(
+                    task,
+                    &definitions,
+                    &views,
+                    VariableIndex::from_usize(var_id),
+                )
+            })
+            .collect();
         let is_coordinate = |var_id: VariableIndex| is_coordinate(task, &views, var_id);
         let requirements = task
             .numeric_conditions()
@@ -305,6 +352,7 @@ impl<'task> Coordinates<'task> {
         Self {
             task,
             views,
+            operand_coordinates,
             requirements,
         }
     }
@@ -326,15 +374,15 @@ impl<'task> Coordinates<'task> {
     }
 
     /// The numeric variables a split refines `condition` along: the
-    /// coordinates among its two operands, or its regular leaves if neither
-    /// operand is a coordinate.
+    /// coordinates its two operands are refined along, or its regular leaves
+    /// if neither operand has one.
     pub(crate) fn refinement_dimensions(&self, condition: &NumericCondition) -> Vec<VariableIndex> {
         let mut direct = [
             condition.left_numeric_var_id(),
             condition.right_numeric_var_id(),
         ]
         .into_iter()
-        .filter(|&numeric_var_id| self.is_coordinate(numeric_var_id))
+        .filter_map(|numeric_var_id| self.operand_coordinates[numeric_var_id.index()])
         .collect::<Vec<_>>();
         direct.sort_unstable();
         direct.dedup();

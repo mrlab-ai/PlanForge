@@ -23,6 +23,22 @@ fn affine_sum_task(operation: AssignmentOperation) -> NumericRootTask {
 
 /// `x`, `y` and the derived `x + y`; one operator changes `x` by `step`.
 fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> NumericRootTask {
+    derived_task(
+        operation,
+        step,
+        CalOperator::Sum,
+        VariableIndex::from_usize(1),
+    )
+}
+
+/// `x`, `y`, the constant `one` and the derived `x <definition> right`; one
+/// operator changes `x` by `step`.
+fn derived_task(
+    operation: AssignmentOperation,
+    step: f64,
+    definition: CalOperator,
+    right: VariableIndex,
+) -> NumericRootTask {
     let numeric_variables = vec![
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("y".into(), NumericType::Regular, None),
@@ -61,9 +77,9 @@ fn affine_sum_task_with_step(operation: AssignmentOperation, step: f64) -> Numer
         comparison_axioms: vec![],
         assignment_axioms: vec![AssignmentAxiom::new(
             VariableIndex::from_usize(2),
-            CalOperator::Sum,
+            definition,
             VariableIndex::from_usize(0),
-            VariableIndex::from_usize(1),
+            right,
         )],
         global_constraint: ExplicitFact::propositional(0, 0),
     })
@@ -137,4 +153,23 @@ fn a_coordinate_preimage_lies_on_the_canonical_lattice() {
 
     assert_eq!(preimage, preimage.canonicalized());
     assert!(!preimage.contains(float_tolerance::canonicalize(NumericValue::new(-991.2))));
+}
+
+#[test]
+fn a_one_variable_expression_is_refined_along_its_variable() {
+    // `x - one` is an image of `x` alone.
+    let task = derived_task(
+        AssignmentOperation::Plus,
+        1.0,
+        CalOperator::Difference,
+        VariableIndex::from_usize(3),
+    );
+    let coordinates = Coordinates::new(&task);
+
+    assert!(coordinates.views()[2].is_none());
+    assert!(!coordinates.is_coordinate(VariableIndex::from_usize(2)));
+    assert_eq!(
+        coordinates.operand_coordinates[2],
+        Some(VariableIndex::from_usize(0))
+    );
 }

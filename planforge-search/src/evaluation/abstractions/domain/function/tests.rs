@@ -731,12 +731,14 @@ fn function_numeric_context_keeps_consistent_additive_derived_partition() {
         NumericVariable::new("x".into(), NumericType::Regular, None),
         NumericVariable::new("c2".into(), NumericType::Constant, None),
         NumericVariable::new("d".into(), NumericType::Derived, None),
+        NumericVariable::new("two".into(), NumericType::Regular, None),
     ];
+    // `x + two` over a second regular variable is a view of its own.
     let assignment_axioms = vec![AssignmentAxiom::new(
         VariableIndex::from_usize(2),
         CalOperator::Sum,
         VariableIndex::new(0),
-        VariableIndex::new(1),
+        VariableIndex::new(3),
     )];
     let comparison_axioms = vec![ComparisonAxiom::new(
         VariableIndex::new(0),
@@ -756,6 +758,7 @@ fn function_numeric_context_keeps_consistent_additive_derived_partition() {
             NumericValue::new(0.0),
             NumericValue::new(2.0),
             NumericValue::new(0.0),
+            NumericValue::new(2.0),
         ],
         operators: vec![Operator::new(
             "noop".into(),
@@ -780,6 +783,7 @@ fn function_numeric_context_keeps_consistent_additive_derived_partition() {
             Interval::singleton(NumericValue::new(2.0)),
             Interval::singleton(NumericValue::new(100.0)),
         ],
+        vec![Interval::singleton(NumericValue::new(2.0))],
     ]);
     let (domain_mapping, domain_sizes) = identity_domain_mapping_and_sizes(&task);
     let function = DomainAbstractionFunction::new(
