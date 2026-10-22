@@ -71,8 +71,7 @@ Single-call PDDL pipeline:
 
 A* accepts an optional lazy heuristic: `astar(blind(),lazy=lmcutnumeric())`.
 This is Lazy A*: a state is evaluated by the second heuristic when popped and
-reinserted with the combined priority before expansion. The spelling
-`astar_fs(fast=blind(),slow=lmcutnumeric())` remains an alias. Evaluation
+reinserted with the combined priority before expansion. Evaluation
 statistics include calls to both heuristics. Dynamic heuristic re-evaluation
 is enabled separately with `mpd=true` on A*.
 
@@ -106,8 +105,7 @@ double-quoted strings; anything else, such as a path, must be quoted, for exampl
 `ray_certificate_file="Results/Run 1,certificate.txt"`. String case is preserved;
 option names, heuristic names and enum values match without regard to case.
 Configuration errors are reported before PDDL translation, with the nested
-option path. The `search(astar(...))` wrapper and trailing `.` or `;` remain
-accepted for compatibility.
+option path.
 
 Domain and Cartesian abstractions take the same CEGAR options, by name:
 `max_states`, `max_iterations`, `max_time` (seconds, or `infinity`),

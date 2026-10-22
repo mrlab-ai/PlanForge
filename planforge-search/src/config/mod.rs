@@ -189,7 +189,7 @@ impl ConfigCall {
     }
 
     /// Read a nested heuristic out of an option value, as in
-    /// `check_admissible(<inner>)` or `astar_fs(fast=<inner>, ...)`.
+    /// `check_admissible(<inner>)` or `astar(lazy=<inner>)`.
     ///
     /// Named/positional/duplicate validation is deferred to the heuristic's own
     /// config, which owns the canonical option order.

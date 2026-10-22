@@ -1,4 +1,4 @@
-use super::{ConfigCall, ConfigValue, FromOptionValue, HeuristicConfig, parse_call};
+use super::{ConfigCall, FromOptionValue, HeuristicConfig, parse_call};
 use std::fmt;
 
 // =============================================================================
@@ -88,46 +88,13 @@ pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
 // =============================================================================
 
 fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
-    if call.name.eq_ignore_ascii_case("search") {
-        if call.args.len() != 1 {
-            return Err("`search(...)` expects exactly one search engine".to_string());
-        }
-        let nested = call_from_value(&call.args[0].value)?;
-        return build_search_spec(&nested);
-    }
-
-    match call.name.to_ascii_lowercase().as_str() {
+    match call.name.as_str() {
         "astar" => extract_astar_options(call),
         "gbfs" => Ok(SearchConfig::Gbfs {
             heuristic: extract_heuristic_for_search(call)?,
         }),
-        "astar_fs" => {
-            let mut fast = None;
-            let mut slow = None;
-            for arg in &call.args {
-                let key = arg.key.as_deref().ok_or_else(|| {
-                    "`astar_fs(...)` expects named `fast=...` and `slow=...` arguments".to_string()
-                })?;
-                match key {
-                    "fast" => fast = Some(super::ConfigCall::from_value(&arg.value)?),
-                    "slow" => slow = Some(super::ConfigCall::from_value(&arg.value)?),
-                    other => return Err(format!("unknown option `{other}` for `astar_fs`")),
-                }
-            }
-            let fast = fast.ok_or_else(|| "`astar_fs(...)` requires `fast=...`".to_string())?;
-            let slow = slow.ok_or_else(|| "`astar_fs(...)` requires `slow=...`".to_string())?;
-            Ok(SearchConfig::AStar {
-                heuristic: HeuristicConfig::from_spec(&fast)
-                    .map_err(|error| error.at_option("fast").at("astar_fs"))?,
-                lazy: Some(
-                    HeuristicConfig::from_spec(&slow)
-                        .map_err(|error| error.at_option("slow").at("astar_fs"))?,
-                ),
-                mpd: false,
-            })
-        }
         other => Err(format!(
-            "unknown search engine `{other}`; expected one of: astar, gbfs, astar_fs"
+            "unknown search engine `{other}`; expected one of: astar, gbfs"
         )),
     }
 }
@@ -196,17 +163,6 @@ fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicConfig, St
     }
     Ok(HeuristicConfig::from_value(&arg.value)
         .map_err(|error| error.at_option("heuristic").at(&call.name))?)
-}
-
-fn call_from_value(value: &ConfigValue) -> Result<ConfigCall, String> {
-    match value {
-        ConfigValue::Call(call) => Ok(call.clone()),
-        ConfigValue::Atom(name) => Ok(ConfigCall {
-            name: name.clone(),
-            args: Vec::new(),
-        }),
-        ConfigValue::List(_) => Err("expected call, got a list".to_string()),
-    }
 }
 
 #[cfg(test)]

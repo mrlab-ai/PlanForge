@@ -217,37 +217,8 @@ fn display_round_trips_lmcutnumeric() {
 }
 
 #[test]
-fn trims_trailing_punctuation() {
-    assert_eq!(astar_heuristic("astar(blind()).").name, "blind");
-    assert_eq!(
-        astar_heuristic("astar(domain_abstraction());").name,
-        "domain_abstraction"
-    );
-    assert_eq!(
-        astar_heuristic("astar(greedy_numeric_pdb());").name,
-        "greedy_numeric_pdb"
-    );
-    assert_eq!(
-        astar_heuristic("astar(canonical_numeric_pdb());").name,
-        "canonical_numeric_pdb"
-    );
-    assert_eq!(
-        astar_heuristic("astar(lmcutnumeric());").name,
-        "lmcutnumeric"
-    );
-    assert_eq!(
-        astar_heuristic("astar(max(domain_collection()));").name,
-        "max"
-    );
-    assert_eq!(
-        astar_heuristic("astar(canonical(domain_collection()));").name,
-        "canonical"
-    );
-}
-
-#[test]
 fn parses_check_admissible_around_a_nested_heuristic() {
-    let spec = astar_heuristic("astar(check_admissible(domain_abstraction()));");
+    let spec = astar_heuristic("astar(check_admissible(domain_abstraction()))");
     assert_eq!(spec.name, "check_admissible");
     assert_eq!(spec.args.len(), 1);
     let inner = ConfigCall::from_value(spec.args[0].value()).unwrap();
@@ -331,31 +302,25 @@ fn display_round_trips_enum_valued_options() {
 }
 
 #[test]
-fn parses_registry_style_search_with_keyed_heuristic() {
-    let spec = parse_search_spec("search(astar(heuristic=greedy_numeric_pdb(max_pdb_states=321)))")
-        .unwrap();
-    let SearchConfig::AStar {
-        heuristic,
-        mpd: false,
-        ..
-    } = &spec
-    else {
-        panic!("expected astar(...), got {spec:?}");
-    };
-    assert_eq!(heuristic.name, "greedy_numeric_pdb");
-    assert_eq!(heuristic.args.len(), 1);
-}
-
-#[test]
-fn astar_fs_is_an_alias_for_astar_with_a_lazy_evaluator() {
-    let alias = parse_search_spec("astar_fs(fast=blind(), slow=lmcutnumeric())").unwrap();
+fn lazy_astar_round_trips_and_none_disables_it() {
     let astar = parse_search_spec("astar(blind(), lazy=lmcutnumeric())").unwrap();
-    assert_eq!(alias, astar);
-    assert_eq!(parse_search_spec(&alias.to_string()).unwrap(), astar);
+    assert_eq!(parse_search_spec(&astar.to_string()).unwrap(), astar);
     assert_eq!(
         parse_search_spec("astar(blind(), lazy=none)").unwrap(),
         parse_search_spec("astar(blind())").unwrap()
     );
+}
+
+#[test]
+fn legacy_search_spellings_are_rejected() {
+    for spec in [
+        "search(astar(blind()))",
+        "astar_fs(fast=blind(),slow=lmcutnumeric())",
+        "astar(blind()).",
+        "astar(blind());",
+    ] {
+        assert!(parse_search_spec(spec).is_err(), "{spec}");
+    }
 }
 
 #[test]
@@ -377,14 +342,6 @@ fn task_requirements_follow_typed_sources_and_wrappers() {
     let requirements = spec.requirements();
     assert!(requirements.restricted);
     assert!(requirements.icaps26_restriction);
-}
-
-#[test]
-fn fast_slow_keeps_its_existing_last_value_wins_semantics() {
-    let repeated =
-        parse_search_spec("astar_fs(fast=scp(domian()),fast=blind(),slow=lmcutnumeric())").unwrap();
-    let final_only = parse_search_spec("astar_fs(fast=blind(),slow=lmcutnumeric())").unwrap();
-    assert_eq!(repeated, final_only);
 }
 
 #[test]

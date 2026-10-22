@@ -8,16 +8,9 @@
 
 use super::{ConfigArg, ConfigCall, ConfigValue};
 
-/// Parse one call, rejecting anything left over. A trailing `.` or `;` is
-/// tolerated because shells and papers both like to put one there.
+/// Parse one call, rejecting anything left over.
 pub fn parse_call(raw: &str) -> Result<ConfigCall, String> {
-    let trimmed = raw.trim();
-    let input = trimmed
-        .strip_suffix('.')
-        .or_else(|| trimmed.strip_suffix(';'))
-        .unwrap_or(trimmed)
-        .trim();
-    ConfigParser::new(input).parse_all()
+    ConfigParser::new(raw.trim()).parse_all()
 }
 
 struct ConfigParser<'a> {
