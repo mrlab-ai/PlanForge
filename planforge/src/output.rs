@@ -72,7 +72,29 @@ pub fn print_search_result(result: &SearchResult) {
     );
     info!("Number of registered states: {}", result.registered_states);
     info!("Search time: {:.6}s", result.search_time.as_secs_f64());
+    print_peak_memory();
 }
+
+/// Peak address space (`VmPeak`, what `--max-memory` limits; the out-of-memory
+/// and signal handlers print the same line) and peak resident memory
+/// (`VmHWM`) of the process that searched.
+#[cfg(target_os = "linux")]
+fn print_peak_memory() {
+    let status = fs::read_to_string("/proc/self/status").expect("/proc/self/status is readable");
+    let kb = |field: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(field))
+            .and_then(|value| value.split_whitespace().next())
+            .unwrap_or_else(|| panic!("/proc/self/status reports {field} in KB"))
+            .to_owned()
+    };
+    info!("Peak memory: {} KB", kb("VmPeak:"));
+    info!("Peak resident memory: {} KB", kb("VmHWM:"));
+}
+
+#[cfg(not(target_os = "linux"))]
+fn print_peak_memory() {}
 
 /// Print the outcome and write a found plan without claiming search statistics.
 ///
