@@ -75,6 +75,7 @@ pub enum NumericExpression {
         left: VariableIndex,
         right: VariableIndex,
     },
+    /// A constant-free sum over regular numeric variables.
     Linear(Vec<(VariableIndex, NumericValue)>),
 }
 

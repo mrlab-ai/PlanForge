@@ -751,6 +751,22 @@ impl NumericRootTask {
             self.numeric_variables.len()
         );
 
+        for axiom in &self.assignment_axioms {
+            if let crate::axioms::NumericExpression::Linear(terms) = &axiom.expression {
+                for &(variable, _) in terms {
+                    assert!(
+                        self.numeric_variables
+                            .get(variable.index())
+                            .is_some_and(
+                                |definition| definition.get_type() == &NumericType::Regular
+                            ),
+                        "linear sum {} reads non-regular numeric variable {variable}",
+                        axiom.get_affected_var_id()
+                    );
+                }
+            }
+        }
+
         if let Some(metric_var_id) = self.metric.var_id() {
             let metric_var = self
                 .numeric_variables
