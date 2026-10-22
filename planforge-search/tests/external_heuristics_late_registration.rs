@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
 use planforge_search::config::parse_call;
+use planforge_search::evaluation::Heuristic;
+use planforge_search::evaluation::heuristic::BlindHeuristic;
 use planforge_search::heuristic_factory::{
-    BuildContext, HeuristicConfig, entry, register_external_heuristics,
+    BuildContext, EmptyConfig, HeuristicBuildError, HeuristicConfig, HeuristicFeature, entry,
+    register_external_heuristics,
 };
 
 #[test]
@@ -18,12 +21,21 @@ fn external_registration_after_heuristic_construction_is_rejected() {
         .build(&BuildContext::new(&task))
         .unwrap();
 
-    let error = register_external_heuristics(vec![
-        entry::<planforge_search::evaluation::heuristic::BlindFeature>().with_name("too_late"),
-    ])
-    .unwrap_err();
+    let error = register_external_heuristics(vec![entry::<TooLate>()]).unwrap_err();
     assert!(
         error.contains("already been registered or used"),
         "got `{error}`"
     );
+}
+
+struct TooLate;
+impl HeuristicFeature for TooLate {
+    const NAME: &'static str = "too_late";
+    type Config = EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        context: &BuildContext<'a>,
+    ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
+        Ok(Box::new(BlindHeuristic::for_task(&**context.task)))
+    }
 }

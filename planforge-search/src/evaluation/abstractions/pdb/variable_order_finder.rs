@@ -4,16 +4,13 @@ mod tests;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
-use serde::{Deserialize, Serialize};
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
 
 use crate::causal_graph::{CausalGraphVariable, RestrictedCausalGraph};
 use crate::config::option_enum;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GreedyVariableOrderType {
     CgGoalLevel,
     CgGoalRandom,

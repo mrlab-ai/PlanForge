@@ -74,14 +74,12 @@ impl TaskRequirements {
 /// Shared task and construction deadline. Each feature receives the task once.
 pub struct BuildContext<'a> {
     pub task: &'a TaskRef<'a>,
-    pub deadline: Deadline,
     pub name: String,
 }
 impl<'a> BuildContext<'a> {
     pub fn new(task: &'a TaskRef<'a>) -> Self {
         Self {
             task,
-            deadline: Deadline::NONE,
             name: String::new(),
         }
     }
@@ -161,7 +159,6 @@ impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
         let context = BuildContext {
             task: context.task,
-            deadline: context.deadline,
             name: self.spec.name.clone(),
         };
         F::build(&self.config, &context)
@@ -248,10 +245,6 @@ pub struct HeuristicEntry {
 impl HeuristicEntry {
     pub fn name(&self) -> &'static str {
         self.name
-    }
-    pub const fn with_name(mut self, name: &'static str) -> Self {
-        self.name = name;
-        self
     }
     fn matches(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name)
@@ -462,7 +455,7 @@ pub(crate) fn build_scp_from_sources<'a>(
     context: &BuildContext<'a>,
     config: &ScpHeuristicConfig,
 ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-    let deadline = context.deadline.earliest(config.sources.deadline()?);
+    let deadline = config.sources.deadline()?;
     let purpose = if config.scp.partitioning.uses_regions() {
         AbstractionPurpose::RegionalCostPartitioning
     } else {

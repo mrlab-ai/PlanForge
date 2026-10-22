@@ -68,14 +68,3 @@ impl fmt::Display for ConfigError {
     }
 }
 impl std::error::Error for ConfigError {}
-impl std::ops::Deref for ConfigError {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.rendered
-    }
-}
-impl PartialEq<&str> for ConfigError {
-    fn eq(&self, other: &&str) -> bool {
-        self.rendered == *other
-    }
-}

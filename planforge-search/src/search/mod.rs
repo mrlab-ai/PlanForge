@@ -14,14 +14,12 @@ mod config;
 mod engine;
 mod open_list;
 mod policy;
-mod registry;
 mod space;
 mod stats;
 
 pub use engine::{AStarSearch, BestFirstSearch, GreedyBestFirstSearch, SearchParams};
 pub use open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
 pub use policy::{G, GPlusH, H, Priority};
-pub use registry::search_algorithm_help;
 
 use anyhow::Result;
 use planforge_sas::numeric_task::Operator;

@@ -184,7 +184,6 @@ fn parses_check_admissible_around_a_nested_heuristic() {
     assert_eq!(spec.args.len(), 1);
     let inner = ConfigCall::from_value(spec.args[0].value()).unwrap();
     assert_eq!(inner.name, "domain");
-    assert!(spec.contains_call("domain"));
 }
 
 #[test]
@@ -226,22 +225,6 @@ fn unknown_heuristic_name_is_rejected_from_the_registry() {
     assert!(error.contains("unknown heuristic `does_not_exist`"));
     assert!(error.contains("blind"));
     assert!(error.contains("lmcutnumeric"));
-}
-
-#[test]
-fn contains_call_finds_only_nested_icaps_cartesian_sources() {
-    let icaps = parse_search_spec("astar(scp(icaps26_cartesian(pick=min_unwanted)))").unwrap();
-    assert!(icaps.contains_call("icaps26_cartesian"));
-
-    let native = parse_search_spec("astar(scp(cartesian_collection(max_states=1000)))").unwrap();
-    assert!(!native.contains_call("icaps26_cartesian"));
-}
-
-#[test]
-fn contains_call_recurses_into_source_lists() {
-    let spec = parse_search_spec("astar(scp([domain_collection(), pdb()]))").unwrap();
-    assert!(spec.contains_call("pdb"));
-    assert!(!spec.contains_call("numeric_pdb"));
 }
 
 #[test]

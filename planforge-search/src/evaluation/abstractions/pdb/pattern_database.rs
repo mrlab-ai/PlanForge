@@ -14,7 +14,6 @@ use planforge_sas::state_registry::{ConcreteState, ExpansionContext, StateRegist
 use planforge_sas::utils::float_tolerance;
 use planforge_sas::utils::state_packer::StatePacker;
 use rustc_hash::FxBuildHasher;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::info;
 
@@ -304,8 +303,7 @@ pub(super) struct PdbState {
     numeric: Vec<NumericValue>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PdbInternalHeuristic {
     Zero,
     #[default]
@@ -319,7 +317,7 @@ option_enum!("PDB internal heuristic", PdbInternalHeuristic {
     Lmcut => "lmcut",
 });
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PdbHeuristicConfig {
     pub exploration_heuristic: PdbInternalHeuristic,
     pub frontier_heuristic: PdbInternalHeuristic,

@@ -4,7 +4,6 @@ mod tests;
 use std::fmt;
 
 use planforge_sas::numeric_task::AbstractNumericTask;
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use super::numeric_size_estimator::NumericSizeEstimator;
@@ -15,16 +14,7 @@ use crate::evaluation::seed::DEFAULT_RANDOM_SEED;
 pub const DEFAULT_MAX_PDB_STATES: usize = 100_000;
 pub const DEFAULT_NUMERIC_FIRST: bool = true;
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    PartialEq,
-    Eq,
-    planforge_search::config::ApplyOptions,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, planforge_search::config::ApplyOptions)]
 pub struct GreedyPatternGeneratorConfig {
     #[option(positional)]
     pub max_pdb_states: usize,

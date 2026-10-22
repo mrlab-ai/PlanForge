@@ -15,7 +15,7 @@
 //! Field attributes:
 //! - `#[option(positional)]` — accepts the field in positional order.
 //! - `#[option(skip)]` — not exposed as a CLI option.
-//! - `#[option(rename = "alias")]` — CLI key differs from field name.
+//! - `#[option(rename = "key")]` — CLI key differs from field name.
 //! - `#[option(flatten)]` — catch-all: unknown keys delegate to this field's
 //!   `apply_options` (the field's type must impl `ApplyOptions`). Only one
 //!   `flatten` per struct, and a struct with one takes named options only.
@@ -234,7 +234,6 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
     let mut names = Vec::new();
     for variant in &data.variants {
         let mut name = None;
-        let mut aliases = Vec::new();
         for attr in &variant.attrs {
             if !attr.path().is_ident("option") {
                 continue;
@@ -247,10 +246,7 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                         }
                         name = Some(string_value(&nv)?);
                     }
-                    Meta::NameValue(nv) if nv.path.is_ident("alias") => {
-                        aliases.push(string_value(&nv)?)
-                    }
-                    other => return Err(Error::new_spanned(other, "expected rename or alias")),
+                    other => return Err(Error::new_spanned(other, "expected rename")),
                 }
             }
         }
@@ -280,15 +276,15 @@ fn build_enum_impl(input: &DeriveInput) -> Result<TokenStream2, Error> {
                 ));
             }
         };
-        arms.push(quote! { #name #( | #aliases )* => { #body } });
+        arms.push(quote! { #name => { #body } });
     }
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
     Ok(quote! {
         impl #impl_generics ::planforge_search::config::FromOptionValue for #ty #type_generics #where_clause {
             fn from_option_value(value: &::planforge_search::config::ConfigValue) -> Result<Self, ::planforge_search::config::ConfigError> {
                 let (name, args) = match value {
-                    ::planforge_search::config::ConfigValue::Atom(name) => (name.as_str(), &[][..]),
                     ::planforge_search::config::ConfigValue::Call(call) => (call.name(), call.args()),
+                    ::planforge_search::config::ConfigValue::Atom(atom) => return Err(format!("expected {}, got `{atom}`", stringify!(#ty)).into()),
                     ::planforge_search::config::ConfigValue::List(_) => return Err(format!("expected {}, got a list", stringify!(#ty)).into()),
                 };
                 match name.to_ascii_lowercase().as_str() {

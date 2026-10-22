@@ -1,12 +1,9 @@
 //! How a collection chooses its members.
 
-use serde::{Deserialize, Serialize};
-
 use crate::config::option_enum;
 
 /// How a collection chooses its members.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollectionStrategy {
     /// Full-task members by random restarts until the budget, stagnation,
     /// or a member that settles the task (SoCS 2026): each restart varies its

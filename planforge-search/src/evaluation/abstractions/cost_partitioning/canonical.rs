@@ -207,7 +207,7 @@ mod registry_feature {
                 &**context.task,
                 &config.sources,
                 &context.name,
-                context.deadline.earliest(config.deadline()?),
+                config.deadline()?,
             )
         }
     }

@@ -1,13 +1,10 @@
 use crate::config::TimeLimit;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use crate::config::option_enum;
 use crate::evaluation::seed::RANDOM_SPLIT_SEED;
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderGenerator {
     /// The greedy order of the evaluated state (Seipp 2017): abstractions by
     /// h / max(1, stolen costs).
@@ -18,12 +15,11 @@ pub enum OrderGenerator {
 }
 
 option_enum!("orders", OrderGenerator {
-    Greedy => "greedy_orders" | "greedy_orders()",
-    Diverse => "diverse_orders" | "diverse_orders()",
+    Greedy => "greedy_orders",
+    Diverse => "diverse_orders",
 });
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Saturator {
     All,
     Perim,
@@ -74,8 +70,7 @@ impl Saturator {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CostPartitioningMethod {
     /// One cost per operator.
     Label,
@@ -107,52 +102,35 @@ option_enum!("partitioning", CostPartitioningMethod {
 /// [`Self::max_time`] end at the budget's end at the latest. A cost
 /// partitioning the budget cuts short keeps the components saturated so far.
 /// Time limits are in seconds, `infinity` for none.
-#[derive(
-    Debug, Clone, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
-)]
+#[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct ScpConfig {
     /// Time for diversification, from its start: sampling and the orders
     /// built for the samples (Seipp et al. 2020).
-    #[option(positional)]
-    #[serde(with = "crate::config::time_limit::duration")]
     pub max_time: TimeLimit,
     /// Time for building every cost partitioning, from the first evaluated
     /// state on.
-    #[option(positional)]
-    #[serde(with = "crate::config::time_limit::duration")]
     pub table_construction_max_time: TimeLimit,
     /// Choose orders over random-walk samples (Seipp et al. 2020).
-    #[option(positional)]
     pub diversify: bool,
     /// Number of sampled states that judge whether an order adds value.
-    #[option(positional)]
     pub samples: usize,
     /// Maximum number of diverse orders retained.
-    #[option(positional)]
     pub max_orders: usize,
     #[option(rename = "orders")]
-    #[option(positional)]
     pub order_generator: OrderGenerator,
     /// Time for the candidate orders of the evaluated state, from their
     /// start.
-    #[option(positional)]
-    #[serde(with = "crate::config::time_limit::duration")]
     pub initial_order_generation_max_time: TimeLimit,
     /// Goal-cover orders per goal that every diversified collection keeps
     /// (AAMAS 2027), in addition to the best order.
-    #[option(positional)]
     pub goal_cover_orders_per_goal: usize,
     /// Seeded random orders among the candidate orders of the evaluated
     /// state.
-    #[option(positional)]
     pub random_orders: usize,
-    #[option(positional)]
     pub saturator: Saturator,
     /// Seeds order selection and sampling; by default the seed CEGAR's
     /// random split selection starts from.
-    #[option(positional)]
     pub random_seed: u64,
-    #[option(positional)]
     pub partitioning: CostPartitioningMethod,
 }
 

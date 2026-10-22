@@ -6,7 +6,6 @@ use std::fmt;
 
 use planforge_sas::explicit_state::ExplicitState;
 use planforge_sas::numeric_task::AbstractNumericTask;
-use serde::{Deserialize, Serialize};
 
 use crate::evaluation::evaluator::{EvaluationError, EvaluationState};
 use crate::evaluation::heuristic::Heuristic;
@@ -28,9 +27,7 @@ pub const DEFAULT_BOUND_ITERATIONS: usize = 0;
 pub const DEFAULT_PRECISION: f64 = 0.000001;
 pub const DEFAULT_EPSILON: f64 = 0.0;
 
-#[derive(
-    Debug, Clone, Copy, Deserialize, Serialize, PartialEq, planforge_search::config::ApplyOptions,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct LmCutNumericConfig {
     #[option(positional)]
     pub ceiling_less_than_one: bool,

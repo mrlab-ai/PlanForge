@@ -1,9 +1,8 @@
 use crate::config::TimeLimit;
-use serde::{Deserialize, Serialize};
 
 use crate::config::option_enum;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizeFor {
     InitialState,
     AllStates,
@@ -11,13 +10,13 @@ pub enum OptimizeFor {
     DiverseSamples,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiverseFallback {
     LargestGap,
     Random,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundsProvider {
     None,
     Monotone,
@@ -42,9 +41,7 @@ option_enum!("bounds", BoundsProvider {
     All => "all",
 });
 
-#[derive(
-    Debug, Clone, PartialEq, Deserialize, Serialize, planforge_search::config::ApplyOptions,
-)]
+#[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct NumericPotentialConfig {
     #[option(positional)]
     pub opt: OptimizeFor,

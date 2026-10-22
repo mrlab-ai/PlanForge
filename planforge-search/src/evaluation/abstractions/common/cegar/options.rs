@@ -9,40 +9,29 @@ use crate::evaluation::seed::RANDOM_SPLIT_SEED;
 #[derive(Debug, Clone, PartialEq, planforge_search::config::ApplyOptions)]
 pub struct CegarOptions {
     /// The most abstract states the abstraction may have.
-    #[option(positional)]
     pub max_states: usize,
     /// The most refinements.
-    #[option(positional)]
     pub max_iterations: usize,
     /// How long refinement may take; unbounded for `infinity`.
-    #[option(positional)]
     pub max_time: TimeLimit,
     /// Merge the operators that induce the same abstract transitions into one
     /// label.
-    #[option(positional)]
     pub combine_labels: bool,
     /// Seeds split selection. Without a seed, split selection is unseeded:
     /// ties go to the first candidate, and random split selection draws from
     /// the fixed [`RANDOM_SPLIT_SEED`]. In a collection, the seed of the
     /// collection.
-    #[option(positional)]
     pub random_seed: Option<u64>,
-    #[option(positional)]
     pub flaw_kind: FlawKind,
-    #[option(positional)]
     pub flaw_scope: FlawScope,
-    #[option(positional)]
     pub split_kind: SplitKind,
-    #[option(positional)]
     pub split_selection: SplitSelection,
     /// Which of the tied best splits to take: `split_selection` scores the
     /// candidates, the best-scoring ones are sorted by a deterministic key,
     /// and the one at `rank % ties` is taken. `None` breaks ties with the
     /// random seed.
-    #[option(positional)]
     pub split_selection_rank: Option<usize>,
     /// Log the refined abstraction.
-    #[option(positional)]
     pub debug: bool,
     /// Keep the transition system after refinement, which cost partitioning
     /// reads; the distances alone answer lookups.

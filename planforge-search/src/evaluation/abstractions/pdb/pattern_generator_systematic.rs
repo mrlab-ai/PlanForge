@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericType, VariableIndex};
-use serde::{Deserialize, Serialize};
 
 use super::pattern_collection::PatternCollection;
 use super::projected_task::Pattern;
@@ -14,16 +13,7 @@ use crate::causal_graph::{CausalGraph, CausalGraphVariable, RestrictedCausalGrap
 pub const DEFAULT_SYSTEMATIC_MAX_PDB_STATES: usize = 50_000;
 pub const DEFAULT_MAX_PATTERN_SIZE: usize = 2;
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Deserialize,
-    Serialize,
-    PartialEq,
-    Eq,
-    planforge_search::config::ApplyOptions,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, planforge_search::config::ApplyOptions)]
 pub struct SystematicPatternGeneratorConfig {
     #[option(positional)]
     pub max_pdb_states: usize,

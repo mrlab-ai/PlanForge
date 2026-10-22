@@ -1,14 +1,13 @@
 use super::*;
 
+/// The configuration of a heuristic without options.
 #[derive(Debug, Clone, Default)]
-pub struct EmptyConfig;
+pub struct EmptyConfig {}
 impl ApplyOptions for EmptyConfig {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), ConfigError> {
-        if args.is_empty() {
-            Ok(())
-        } else {
-            Err("does not accept arguments".into())
-        }
+        crate::config::for_each_option(args, &[], |key, _| {
+            Err(format!("unknown option `{key}`").into())
+        })
     }
 }
 

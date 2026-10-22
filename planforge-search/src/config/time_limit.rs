@@ -4,8 +4,7 @@ use std::time::Duration;
 /// A time budget in seconds; positive infinity means unlimited.
 /// Keeping seconds also preserves budgets beyond the platform clock range for
 /// algorithms that compare elapsed seconds directly.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimeLimit(pub f64);
 
 impl Default for TimeLimit {
@@ -56,26 +55,6 @@ impl From<Duration> for TimeLimit {
 impl FromOptionValue for TimeLimit {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         Ok(Self::from_seconds(f64::from_option_value(value)?)?)
-    }
-}
-
-/// Preserve the existing serde representation of SCP's duration fields.
-pub(crate) mod duration {
-    use super::*;
-    use serde::{Deserialize, Serialize};
-    pub fn serialize<S: serde::Serializer>(
-        limit: &TimeLimit,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        limit
-            .duration()
-            .map_err(serde::ser::Error::custom)?
-            .serialize(serializer)
-    }
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<TimeLimit, D::Error> {
-        Option::<Duration>::deserialize(deserializer).map(TimeLimit::from)
     }
 }
 

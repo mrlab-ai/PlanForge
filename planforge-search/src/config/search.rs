@@ -41,11 +41,6 @@ impl SearchConfig {
     pub fn preflight(&self) -> std::io::Result<()> {
         self.heuristics().try_for_each(HeuristicConfig::preflight)
     }
-
-    pub fn contains_call(&self, name: &str) -> bool {
-        self.heuristics()
-            .any(|heuristic| heuristic.contains_call(name))
-    }
 }
 
 // =============================================================================
@@ -77,6 +72,14 @@ impl fmt::Display for SearchConfig {
 // =============================================================================
 // Parser entry
 // =============================================================================
+
+/// The `--search` help text: the engines and every registered heuristic.
+pub fn search_algorithm_help() -> String {
+    format!(
+        "Search specification. Available algorithms: astar([heuristic], mpd=false, lazy=none), gbfs([heuristic])\n\n{}",
+        crate::heuristic_factory::heuristic_help()
+    )
+}
 
 pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
     let spec = build_search_spec(&parse_call(raw)?)?;

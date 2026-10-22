@@ -5,7 +5,7 @@
 //! stay private.
 
 use super::{AbstractionSource, SourcesConfig};
-use super::{HeuristicEntry, abstraction_config, heuristic_names, register_external_heuristics};
+use super::{abstraction_config, heuristic_names, register_external_heuristics};
 use crate::config::{ApplyOptions, ConfigArg, ConfigCall, configure, parse_call};
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionConfig;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
@@ -95,7 +95,8 @@ fn hierarchical_scp_rejects_legacy_pdb_switches() {
         abstraction_config::ScpHeuristicConfig::default(),
         &h.args,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert_eq!(
         error,
         "scp.use_numeric_pdbs: unknown option `use_numeric_pdbs`"
@@ -126,7 +127,8 @@ fn hierarchical_scp_rejects_positional_options() {
         abstraction_config::ScpHeuristicConfig::default(),
         &h.args,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(error.contains("abstraction source"), "got `{error}`");
 }
 
@@ -138,7 +140,8 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
         abstraction_config::ScpHeuristicConfig::default(),
         &h.args,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert_eq!(error, "scp.max_time: expected scalar value, got a list");
 
     let wrapper = astar_heuristic("astar(check_admissible([domain_collection()]))");
@@ -257,7 +260,8 @@ fn positional_then_named_for_same_slot_errors() {
     // Positional 321 → max_pdb_states, then max_pdb_states=999 collides.
     let h = parse_call("greedy(321, max_pdb_states=999)").unwrap();
     let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("duplicate option `max_pdb_states`"),
         "got `{err}`"
@@ -269,7 +273,8 @@ fn too_many_positional_args_errors() {
     // greedy has 4 positional slots; 5 should error.
     let h = parse_call("greedy(1, false, 2, cg_goal_level, extra)").unwrap();
     let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("too many positional"), "got `{err}`");
 }
 
@@ -370,15 +375,20 @@ fn heuristic_registry_names_are_unique_and_complete() {
 
 #[test]
 fn external_registration_rejects_builtin_name_collision() {
-    let error = register_external_heuristics(vec![test_external("blind")]).unwrap_err();
+    let error = register_external_heuristics(vec![super::entry::<
+        crate::evaluation::heuristic::BlindFeature,
+    >()])
+    .unwrap_err();
     assert!(error.contains("collides with a built-in"), "got `{error}`");
 }
 
 #[test]
 fn external_registration_rejects_duplicate_external_names() {
-    let error =
-        register_external_heuristics(vec![test_external("duplicate"), test_external("duplicate")])
-            .unwrap_err();
+    let error = register_external_heuristics(vec![
+        super::entry::<Duplicate>(),
+        super::entry::<Duplicate>(),
+    ])
+    .unwrap_err();
     assert!(error.contains("registered more than once"), "got `{error}`");
 }
 
@@ -390,7 +400,8 @@ fn rejects_unknown_options_inside_known_heuristics() {
         abstraction_config::ScpHeuristicConfig::default(),
         &h.args,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("deviation_flaws"), "got `{err}`");
 
     let err = domain_collection_source_error(
@@ -420,8 +431,18 @@ fn collection_seeds_split_kinds_and_stagnation_limits_parse_once() {
     assert!(error.contains("non-negative"), "{error}");
 }
 
-fn test_external(name: &'static str) -> HeuristicEntry {
-    super::entry::<crate::evaluation::heuristic::BlindFeature>().with_name(name)
+struct Duplicate;
+impl super::HeuristicFeature for Duplicate {
+    const NAME: &'static str = "duplicate";
+    type Config = super::EmptyConfig;
+    fn build<'a>(
+        _: &Self::Config,
+        context: &super::BuildContext<'a>,
+    ) -> Result<Box<dyn crate::evaluation::Heuristic + 'a>, super::HeuristicBuildError> {
+        Ok(Box::new(
+            crate::evaluation::heuristic::BlindHeuristic::for_task(&**context.task),
+        ))
+    }
 }
 
 #[test]
@@ -492,7 +513,10 @@ fn shared_construction_limits_remain_positive_and_finite() {
             } else {
                 configure(combinator, SourcesConfig::default(), &spec.args).unwrap_err()
             };
-            assert!(error.contains("construction_max_time"), "{error}");
+            assert!(
+                error.to_string().contains("construction_max_time"),
+                "{error}"
+            );
         }
     }
     let sources = source_config("astar(canonical(cartesian(),construction_max_time=900))").unwrap();

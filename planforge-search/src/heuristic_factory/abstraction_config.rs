@@ -241,15 +241,6 @@ pub struct SourcesConfig {
     pub construction_max_time: TimeLimit,
 }
 
-struct NoOptions {}
-impl ApplyOptions for NoOptions {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
-        for_each_option(args, &[], |key, _| {
-            Err(format!("unknown option `{key}`").into())
-        })
-    }
-}
-
 impl SourcesConfig {
     fn apply_with(
         &mut self,
@@ -295,7 +286,7 @@ impl SourcesConfig {
 
 impl ApplyOptions for SourcesConfig {
     fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
-        self.apply_with(args, &mut NoOptions {})
+        self.apply_with(args, &mut super::EmptyConfig {})
     }
 }
 

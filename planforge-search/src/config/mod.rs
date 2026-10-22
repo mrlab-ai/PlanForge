@@ -23,49 +23,15 @@ pub use error::ConfigError;
 mod search;
 pub(crate) mod time_limit;
 pub use crate::heuristic_factory::HeuristicConfig;
-pub use search::{SearchConfig, parse_search_spec};
+pub use search::{SearchConfig, parse_search_spec, search_algorithm_help};
 pub use time_limit::TimeLimit;
 
-/// Declares a name-indexed static plugin table and its lookup function.
-///
-/// The descriptor type decides what a plugin must declare. Registry users add
-/// one entry containing every required field; omitted fields are therefore a
-/// compile error. Other name-indexed registries can reuse this mechanism.
-#[macro_export]
-macro_rules! plugin_registry {
-    (
-        $registry_vis:vis static $registry:ident: $descriptor:ty;
-        $lookup_vis:vis fn $lookup:ident;
-        entries {
-            $(
-                $(#[$entry_meta:meta])*
-                $name:expr => $value:expr
-            ),+ $(,)?
-        }
-    ) => {
-        $registry_vis static $registry: &[(&str, $descriptor)] = &[
-            $(
-                $(#[$entry_meta])*
-                ($name, $value),
-            )+
-        ];
-
-        $lookup_vis fn $lookup(name: &str) -> Option<&'static $descriptor> {
-            $registry
-                .iter()
-                .find_map(|(registered, descriptor)| (*registered == name).then_some(descriptor))
-        }
-    };
-}
-
 /// Implements `Display` and [`FromOptionValue`] for a fieldless option enum
-/// from its `Variant => "name"` pairs; `option` names the option in errors. A
-/// variant may accept further spellings, as in
-/// `Greedy => "greedy_orders" | "greedy_orders()"`, and displays as the first.
+/// from its `Variant => "name"` pairs; `option` names the option in errors.
 macro_rules! option_enum {
     (
         $option:literal,
-        $type:ident { $($variant:ident => $name:literal $(| $alias:literal)*),+ $(,)? }
+        $type:ident { $($variant:ident => $name:literal),+ $(,)? }
     ) => {
         impl ::std::fmt::Display for $type {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -80,7 +46,7 @@ macro_rules! option_enum {
                 value: &$crate::config::ConfigValue,
             ) -> ::std::result::Result<Self, crate::config::ConfigError> {
                 match value.as_atom()?.to_ascii_lowercase().as_str() {
-                    $($name $(| $alias)* => Ok(Self::$variant),)+
+                    $($name => Ok(Self::$variant),)+
                     other => Err(format!(
                         "invalid {} `{other}`; expected one of {}",
                         $option,
@@ -113,10 +79,6 @@ impl ConfigCall {
 
     pub fn args(&self) -> &[ConfigArg] {
         &self.args
-    }
-
-    pub fn into_parts(self) -> (String, Vec<ConfigArg>) {
-        (self.name, self.args)
     }
 }
 
@@ -166,21 +128,6 @@ impl ConfigValue {
             ConfigValue::List(_) => Err("expected call, got a list".to_string().into()),
         }
     }
-
-    /// Whether this value is, or nests, a call to `name`.
-    pub fn contains_call(&self, name: &str) -> bool {
-        match self {
-            ConfigValue::Atom(_) => false,
-            ConfigValue::Call(call) => {
-                call.name().eq_ignore_ascii_case(name)
-                    || call
-                        .args()
-                        .iter()
-                        .any(|arg| arg.value().contains_call(name))
-            }
-            ConfigValue::List(values) => values.iter().any(|value| value.contains_call(name)),
-        }
-    }
 }
 
 impl ConfigCall {
@@ -199,11 +146,6 @@ impl ConfigCall {
             ConfigValue::Atom(atom) => Err(format!("expected heuristic, got `{atom}`")),
             ConfigValue::List(_) => Err("expected heuristic, got a list".to_string()),
         }
-    }
-
-    pub fn contains_call(&self, name: &str) -> bool {
-        self.name.eq_ignore_ascii_case(name)
-            || self.args.iter().any(|arg| arg.value().contains_call(name))
     }
 }
 impl std::fmt::Display for ConfigValue {
@@ -428,7 +370,7 @@ mod tests {
 
     #[derive(Debug, PartialEq, FromOptionValue)]
     enum Example {
-        #[option(rename = "example", alias = "legacy_example")]
+        #[option(rename = "example")]
         Config(ExampleConfig),
         #[option(rename = "unit")]
         Unit,
@@ -450,7 +392,7 @@ mod tests {
             })
         );
         assert_eq!(
-            decode("legacy_example(count=7)").unwrap(),
+            decode("example(count=7)").unwrap(),
             decode("example(7)").unwrap()
         );
         assert_eq!(decode("unit()").unwrap(), Example::Unit);

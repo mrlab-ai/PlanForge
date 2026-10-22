@@ -20,7 +20,7 @@ impl HeuristicFeature for PostHocFeature {
     ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
         #[cfg(feature = "cplex")]
         {
-            let deadline = context.deadline.earliest(config.deadline()?);
+            let deadline = config.deadline()?;
             let components = build_components(
                 &**context.task,
                 &config.sources,
