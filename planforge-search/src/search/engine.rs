@@ -3,7 +3,10 @@ use super::open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingO
 use super::policy::{GPlusH, H, Priority};
 use super::space::{SearchNodeInfo, SearchSpace};
 use super::stats::{ProgressSnapshot, SearchCounters, SearchStats};
-use super::{SearchEngine, SearchResult, SearchStatus, current_memory_kb, format_progress_value};
+use super::{
+    SearchEngine, SearchResult, SearchStatus, current_memory_kb, format_progress_value,
+    memory_report,
+};
 use crate::{
     evaluation::{EvaluationError, EvaluationState, Heuristic, heuristic::minimum_action_cost},
     successor_generator::SuccessorTree,
@@ -143,6 +146,10 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             time_limit,
             max_memory_bytes,
         } = params;
+        assert!(
+            max_memory_bytes.is_none() || current_memory_kb().is_some(),
+            "a search memory limit needs resident-memory measurement, which only Linux provides"
+        );
         let successor_generator = SuccessorTree::new(task);
 
         // Build initial state early so numeric constants are initialized in the registry.
@@ -207,7 +214,9 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             }
             self.next_memory_check_expanded =
                 self.stats.nodes_expanded + MEMORY_CHECK_EXPANSION_INTERVAL;
-            let current_memory_bytes = current_memory_kb().saturating_mul(1024);
+            let current_memory_bytes = current_memory_kb()
+                .expect("a memory limit is only accepted where memory is measured")
+                .saturating_mul(1024);
             if current_memory_bytes >= max_memory_bytes {
                 return Some(SearchStatus::MemoryLimitReached);
             }
@@ -246,7 +255,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
         };
 
         info!(
-            "{} = {} [{} evaluated, {} expanded, {} states, {} open, t={:.6}s, {} KB]",
+            "{} = {} [{} evaluated, {} expanded, {} states, {} open, t={:.6}s{}]",
             P::LABEL,
             f_layer,
             self.stats.nodes_evaluated,
@@ -254,7 +263,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             self.state_registry.num_registered_states(),
             self.open_list.len(),
             start_time.elapsed().as_secs_f64(),
-            current_memory_kb(),
+            memory_report(),
         );
     }
 
@@ -288,12 +297,12 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
 
     fn print_checkpoint_line(&self, g_value: f64, start_time: &Instant) {
         info!(
-            "[g={}, {} evaluated, {} expanded, t={:.6}s, {} KB]",
+            "[g={}, {} evaluated, {} expanded, t={:.6}s{}]",
             format_progress_value(g_value),
             self.stats.nodes_evaluated,
             self.stats.nodes_expanded,
             start_time.elapsed().as_secs_f64(),
-            current_memory_kb(),
+            memory_report(),
         );
     }
 

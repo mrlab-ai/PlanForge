@@ -93,34 +93,27 @@ pub(crate) fn format_progress_value(value: f64) -> String {
     }
 }
 
+/// Resident memory in KB from `/proc/self/status`; `None` on platforms
+/// without that measurement.
 #[cfg(target_os = "linux")]
-pub(crate) fn current_memory_kb() -> u64 {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        for line in status.lines() {
-            if let Some(value) = line.strip_prefix("VmRSS:")
-                && let Some(kb) = value
-                    .split_whitespace()
-                    .next()
-                    .and_then(|part| part.parse::<u64>().ok())
-            {
-                return kb;
-            }
-        }
-    }
-
-    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
-    let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-    assert_eq!(
-        result,
-        0,
-        "getrusage failed: {}",
-        std::io::Error::last_os_error()
-    );
-    let usage = unsafe { usage.assume_init() };
-    u64::try_from(usage.ru_maxrss).expect("getrusage returned negative resident memory")
+pub(crate) fn current_memory_kb() -> Option<u64> {
+    let status =
+        std::fs::read_to_string("/proc/self/status").expect("/proc/self/status is readable");
+    let kb = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|kb| kb.parse().ok())
+        .expect("/proc/self/status reports VmRSS in KB");
+    Some(kb)
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn current_memory_kb() -> u64 {
-    panic!("resident-memory measurement is unsupported on this platform")
+pub(crate) fn current_memory_kb() -> Option<u64> {
+    None
+}
+
+/// The progress-line suffix for resident memory, empty where it is not measured.
+pub(crate) fn memory_report() -> String {
+    current_memory_kb().map_or_else(String::new, |kb| format!(", {kb} KB"))
 }
