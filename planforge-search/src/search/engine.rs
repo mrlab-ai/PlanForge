@@ -1,4 +1,4 @@
-use super::config::{ExpansionScratch, SearchConfig};
+use super::config::{EngineSettings, ExpansionScratch};
 use super::open_list::{OpenEntry, OpenList, PreferredFirstOpenList, TieBreakingOpenList};
 use super::policy::{GPlusH, H, Priority};
 use super::space::{SearchNodeInfo, SearchSpace};
@@ -82,17 +82,10 @@ impl<'a> SearchParams<'a> {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct HeuristicRecord {
     revision: u64,
     h: f64,
-}
-
-enum PopAction {
-    Expand,
-    Requeue(OpenEntry),
-    Prune,
-    Skip,
 }
 
 pub struct BestFirstSearch<'a, P: Priority, Q: OpenList> {
@@ -114,7 +107,7 @@ pub struct BestFirstSearch<'a, P: Priority, Q: OpenList> {
     priority: std::marker::PhantomData<P>,
     next_insertion_order: u32,
 
-    config: SearchConfig<'a>,
+    config: EngineSettings<'a>,
     stats: SearchStats,
     scratch: ExpansionScratch,
     start_time: Option<Instant>,
@@ -127,7 +120,7 @@ pub struct BestFirstSearch<'a, P: Priority, Q: OpenList> {
     /// Per-state heuristic revision at the most recent evaluation. Allocated
     /// only for A* with `mpd=true`; ordinary static searches pay no per-state
     /// memory cost.
-    heuristic_revisions: Option<Vec<HeuristicRecord>>,
+    heuristic_revisions: Option<Vec<Option<HeuristicRecord>>>,
 }
 
 pub type AStarSearch<'a> = BestFirstSearch<'a, GPlusH, TieBreakingOpenList>;
@@ -183,7 +176,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             lazy,
             priority: std::marker::PhantomData,
             next_insertion_order: 0,
-            config: SearchConfig {
+            config: EngineSettings {
                 operator_costs,
                 min_action_cost: min_action_cost.value(),
                 use_metric,
@@ -384,9 +377,9 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             return;
         };
         if revisions.len() <= state_id {
-            revisions.resize(state_id + 1, HeuristicRecord::default());
+            revisions.resize(state_id + 1, None);
         }
-        revisions[state_id] = HeuristicRecord { revision, h };
+        revisions[state_id] = Some(HeuristicRecord { revision, h });
     }
 
     fn recorded_heuristic_revision(&self, state_id: usize) -> HeuristicRecord {
@@ -395,19 +388,20 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             .expect("revision tracking is enabled for mpd")
             .get(state_id)
             .copied()
+            .flatten()
             .expect("every queued state has a recorded heuristic revision")
     }
 
     /// Closed and superseded paths, MPD and lazy evaluation all consume a pop
-    /// here. Queue insertion and dead-end bookkeeping are handled by the caller.
-    fn on_pop(&mut self, entry: OpenEntry, state: &ConcreteState) -> Result<PopAction> {
+    /// here; only an entry that survives them is expanded.
+    fn on_pop(&mut self, entry: OpenEntry, state: ConcreteState) -> Result<PoppedNode> {
         let state_id = entry.state_id();
         let info = self
             .space
             .node(state_id)
             .expect("open-list entry must have a search node");
         if info.is_closed || info.g_value < entry.g_value {
-            return Ok(PopAction::Skip);
+            return Ok(PoppedNode::Skipped);
         }
         let is_goal = self.space.is_goal(state_id);
         if self.heuristic_revisions.is_some() {
@@ -416,7 +410,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
                 || previous.revision < self.heuristic.revision()
             {
                 let evaluation = self
-                    .evaluate_state(&*self.heuristic, state, entry.g_value, is_goal)
+                    .evaluate_state(&*self.heuristic, &state, entry.g_value, is_goal)
                     .with_context(|| {
                         format!("pop-time heuristic re-evaluation failed for state {state_id}")
                     })?;
@@ -434,12 +428,12 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
                     evaluation.h_value
                 );
                 if evaluation.is_dead_end {
-                    return Ok(PopAction::Prune);
+                    return Ok(self.prune(state_id));
                 }
                 if evaluation.h_value > entry.h_value.into_inner() {
-                    return Ok(PopAction::Requeue(
-                        entry.with_estimate(evaluation.h_value, evaluation.f_value),
-                    ));
+                    return Ok(
+                        self.requeue(entry.with_estimate(evaluation.h_value, evaluation.f_value))
+                    );
                 }
             }
         }
@@ -447,20 +441,31 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             && !entry.is_lazy_evaluated()
         {
             let evaluation = self
-                .evaluate_state(&**lazy, state, entry.g_value, is_goal)
+                .evaluate_state(&**lazy, &state, entry.g_value, is_goal)
                 .with_context(|| {
                     format!("slow heuristic evaluation failed for state {state_id}")
                 })?;
             self.stats.evaluations += 1;
             if evaluation.is_dead_end {
-                return Ok(PopAction::Prune);
+                return Ok(self.prune(state_id));
             }
             let combined = entry.h_value.into_inner().max(evaluation.h_value);
             let mut entry = entry.with_estimate(combined, P::key(entry.g_value, combined));
             entry.mark_lazy_evaluated();
-            return Ok(PopAction::Requeue(entry));
+            return Ok(self.requeue(entry));
         }
-        Ok(PopAction::Expand)
+        Ok(PoppedNode::Expand(entry, state))
+    }
+
+    fn requeue(&mut self, entry: OpenEntry) -> PoppedNode {
+        self.push_entry(entry);
+        PoppedNode::Skipped
+    }
+
+    fn prune(&mut self, state_id: StateID) -> PoppedNode {
+        self.stats.dead_ends += 1;
+        self.space.mark_dead_end(state_id);
+        PoppedNode::Skipped
     }
 
     fn push_entry(&mut self, mut entry: OpenEntry) {
@@ -594,19 +599,7 @@ impl<'a, P: Priority, Q: OpenList> BestFirstSearch<'a, P, Q> {
             .lookup_state(state_id)
             .map_err(|error| anyhow!("open list references missing state {state_id}: {error:?}"))?;
 
-        match self.on_pop(entry, &state)? {
-            PopAction::Expand => Ok(PoppedNode::Expand(entry, state)),
-            PopAction::Requeue(entry) => {
-                self.push_entry(entry);
-                Ok(PoppedNode::Skipped)
-            }
-            PopAction::Prune => {
-                self.stats.dead_ends += 1;
-                self.space.mark_dead_end(state_id);
-                Ok(PoppedNode::Skipped)
-            }
-            PopAction::Skip => Ok(PoppedNode::Skipped),
-        }
+        self.on_pop(entry, state)
     }
 
     /// Close the node the search is about to expand and count the expansion.

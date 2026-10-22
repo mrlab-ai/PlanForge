@@ -4,7 +4,8 @@ use planforge_sas::{
 };
 use std::time::Duration;
 
-pub(crate) struct SearchConfig<'a> {
+/// Per-search costs and resource limits, fixed when the engine is built.
+pub(crate) struct EngineSettings<'a> {
     pub(crate) operator_costs: std::borrow::Cow<'a, [NumericValue]>,
     /// The cheapest operator cost, every non-goal state's lower bound.
     pub(crate) min_action_cost: f64,

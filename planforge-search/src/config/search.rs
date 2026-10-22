@@ -1,4 +1,4 @@
-use super::{ConfigCall, FromOptionValue, HeuristicConfig, parse_call};
+use super::{ConfigCall, HeuristicConfig, configure, parse_call};
 use std::fmt;
 
 // =============================================================================
@@ -90,82 +90,46 @@ pub fn parse_search_spec(raw: &str) -> Result<SearchConfig, String> {
 // Search-engine dispatch
 // =============================================================================
 
+/// `astar(heuristic, lazy=none, mpd=false)`; the heuristic defaults to blind.
+#[derive(Default, super::ApplyOptions)]
+struct AStarOptions {
+    #[option(positional)]
+    heuristic: HeuristicConfig,
+    lazy: Option<HeuristicConfig>,
+    mpd: bool,
+}
+
+/// `gbfs(heuristic)`; the heuristic defaults to blind.
+#[derive(Default, super::ApplyOptions)]
+struct GbfsOptions {
+    #[option(positional)]
+    heuristic: HeuristicConfig,
+}
+
 fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
-    match call.name.as_str() {
-        "astar" => extract_astar_options(call),
-        "gbfs" => Ok(SearchConfig::Gbfs {
-            heuristic: extract_heuristic_for_search(call)?,
-        }),
-        other => Err(format!(
-            "unknown search engine `{other}`; expected one of: astar, gbfs"
-        )),
-    }
-}
-
-fn extract_astar_options(call: &ConfigCall) -> Result<SearchConfig, String> {
-    let mut heuristic = None;
-    let mut mpd = false;
-    let mut saw_mpd = false;
-    let mut lazy = None;
-    let mut saw_lazy = false;
-    for arg in &call.args {
-        match arg.key.as_deref() {
-            None | Some("heuristic") => {
-                if heuristic.is_some() {
-                    return Err("`astar(...)` received more than one heuristic".to_string());
-                }
-                heuristic = Some(
-                    HeuristicConfig::from_value(&arg.value)
-                        .map_err(|error| error.at_option("heuristic").at("astar"))?,
-                );
+    Ok(match call.name.as_str() {
+        "astar" => {
+            let AStarOptions {
+                heuristic,
+                lazy,
+                mpd,
+            } = configure("astar", AStarOptions::default(), &call.args)?;
+            SearchConfig::AStar {
+                heuristic,
+                lazy,
+                mpd,
             }
-            Some("lazy") => {
-                if saw_lazy {
-                    return Err("duplicate option `lazy` for `astar`".to_string());
-                }
-                saw_lazy = true;
-                lazy = Option::<HeuristicConfig>::from_option_value(&arg.value)
-                    .map_err(|error| error.at_option("lazy").at("astar"))?;
-            }
-            Some("mpd") => {
-                if saw_mpd {
-                    return Err("duplicate option `mpd` for `astar`".to_string());
-                }
-                saw_mpd = true;
-                mpd = bool::from_option_value(&arg.value)
-                    .map_err(|error| error.at_option("mpd").at("astar"))?;
-            }
-            Some(other) => return Err(format!("unknown option `{other}` for `astar`")),
         }
-    }
-    Ok(SearchConfig::AStar {
-        heuristic: heuristic.unwrap_or_else(HeuristicConfig::blind),
-        lazy,
-        mpd,
+        "gbfs" => {
+            let GbfsOptions { heuristic } = configure("gbfs", GbfsOptions::default(), &call.args)?;
+            SearchConfig::Gbfs { heuristic }
+        }
+        other => {
+            return Err(format!(
+                "unknown search engine `{other}`; expected one of: astar, gbfs"
+            ));
+        }
     })
-}
-
-fn extract_heuristic_for_search(call: &ConfigCall) -> Result<HeuristicConfig, String> {
-    if call.args.is_empty() {
-        return Ok(HeuristicConfig::blind());
-    }
-    if call.args.len() != 1 {
-        return Err(format!(
-            "`{}(...)` expects a single heuristic argument",
-            call.name
-        ));
-    }
-    let arg = &call.args[0];
-    if let Some(key) = &arg.key
-        && key != "heuristic"
-    {
-        return Err(format!(
-            "`{}(...)` expects `heuristic=...`, got `{key}=...`",
-            call.name
-        ));
-    }
-    Ok(HeuristicConfig::from_value(&arg.value)
-        .map_err(|error| error.at_option("heuristic").at(&call.name))?)
 }
 
 #[cfg(test)]
