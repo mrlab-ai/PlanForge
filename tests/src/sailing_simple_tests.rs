@@ -50,7 +50,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, VariableIndex};
+use planforge_sas::numeric_task::{
+    AbstractNumericTask, NumericRootTask, NumericType, VariableIndex,
+};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::evaluation::abstractions::cartesian::CartesianAbstraction;
 use planforge_search::evaluation::abstractions::cartesian::{
@@ -434,15 +436,6 @@ fn scp_initial_h(instance: &str) -> f64 {
     scp_initial_h_with_config(instance, goal_focused_collection_config(1))
 }
 
-fn numeric_var_id_by_name_parts(
-    task: &dyn AbstractNumericTask,
-    required_parts: &[&str],
-) -> Option<usize> {
-    task.numeric_variables()
-        .iter()
-        .position(|var| required_parts.iter().all(|part| var.name().contains(part)))
-}
-
 /// Under abstract-operator saturation one per-person abstraction contributes its
 /// 10-move route plus save (11), and the other keeps only one distinct save cost
 /// because rival-achiever route operator regions consume overlapping move residuals.
@@ -478,6 +471,13 @@ fn sailing_simple_assignment_gap() {
     assert_eq!(h, 12.0);
 }
 
+/// The regular numeric variable whose name ends in `suffix`.
+fn regular_numeric_var_id(task: &NumericRootTask, suffix: &str) -> Option<usize> {
+    task.numeric_variables()
+        .iter()
+        .position(|var| var.get_type() == &NumericType::Regular && var.name().ends_with(suffix))
+}
+
 #[test]
 fn sailing_simple_ratchet_equilibrium() {
     let (task, _scratch) = sailing_task("prob_2b1p");
@@ -492,14 +492,10 @@ fn sailing_simple_ratchet_equilibrium() {
         .filter_map(|abstraction| {
             abstraction.metadata().collection_membership()?;
             let factory_task = &task;
-            let near_x = numeric_var_id_by_name_parts(
-                factory_task,
-                &["difference", "x(?boat_0)", "(b0, p0)"],
-            )?;
-            let far_x = numeric_var_id_by_name_parts(
-                factory_task,
-                &["difference", "x(?boat_0)", "(b1, p0)"],
-            )?;
+            // The save precondition compares each boat's x with p0's, a
+            // threshold on the boat's own x.
+            let near_x = regular_numeric_var_id(factory_task, "x(b0)")?;
+            let far_x = regular_numeric_var_id(factory_task, "x(b1)")?;
             let near_count = abstraction
                 .function()
                 .partitions()
@@ -514,7 +510,7 @@ fn sailing_simple_ratchet_equilibrium() {
         })
         .collect::<Vec<_>>();
     // Teleport-trap invariant: any saved(p0) abstraction must refine BOTH
-    // boats' x roots (near b0 and far b1). If it refined only one boat while
+    // boats' x (near b0 and far b1). If it refined only one boat while
     // keeping saved(p0), the other boat's save precondition would evaluate
     // `unknown` over its unrefined interval and fire optimistically, letting
     // that boat teleport onto p0 for cost ~1 (see the teleport-theorem
@@ -525,7 +521,7 @@ fn sailing_simple_ratchet_equilibrium() {
     // layers here; the far boat is sized by its own distance to the target.
     assert!(
         !saved_p0_group_counts.is_empty(),
-        "expected at least one saved(p0) abstraction refining both boat x roots"
+        "expected at least one saved(p0) abstraction refining both boats' x"
     );
 
     let h = scp_initial_h_for_collection(&task, abstractions);

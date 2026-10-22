@@ -189,13 +189,14 @@ fn enumerate_partition_combos(
     }
     if pos == per_var.len() {
         if has_comparison_preconditions {
-            fill_source_intervals(
+            // A combination no state lies in has no transition.
+            if !fill_source_intervals(
                 task,
                 function,
                 &scratch.source_partitions,
                 &mut scratch.source_intervals,
-            );
-            if !comparison_preconditions_admit(task, preconditions, &scratch.source_intervals) {
+            ) || !comparison_preconditions_admit(task, preconditions, &scratch.source_intervals)
+            {
                 return Ok(());
             }
         }
@@ -234,14 +235,15 @@ fn enumerate_partition_combos(
 }
 
 /// Fills `out` with the interval of every numeric variable over these source
-/// partitions of a combination, the refined coordinates; see
-/// [`fill_condition_intervals`].
+/// partitions of a combination, the refined coordinates, and returns whether
+/// a state may lie in them; see [`fill_condition_intervals`].
+#[must_use]
 pub(super) fn fill_source_intervals(
     task: &dyn AbstractNumericTask,
     function: &DomainAbstractionFunction,
     source_partitions: &[(VariableIndex, usize)],
     out: &mut Vec<Interval>,
-) {
+) -> bool {
     let partitions = function.partitions();
     fill_condition_intervals(
         task,
@@ -252,7 +254,7 @@ pub(super) fn fill_source_intervals(
                 .map(|&(_, source)| partitions.partition_interval(var_id, source))
         },
         out,
-    );
+    )
 }
 
 /// Whether the comparison preconditions of an operator may hold over these

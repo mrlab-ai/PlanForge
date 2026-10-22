@@ -31,11 +31,16 @@ pub fn fill_derived_numeric_intervals_from_comparison_trees(
 /// trees defining it, and every other variable at its trivial interval. A
 /// derived variable no tree defines, or one its operands leave undefined, is
 /// unbounded.
+///
+/// Returns whether the box may contain a state: a refined view and the
+/// refined variables it reads can have partitions no state lies in, and the
+/// trees then narrow the view to nothing.
+#[must_use]
 pub(super) fn fill_condition_intervals(
     task: &dyn AbstractNumericTask,
     refined: impl Fn(VariableIndex) -> Option<Interval>,
     out: &mut Vec<Interval>,
-) {
+) -> bool {
     let is_unrefined_derived = |var_id: VariableIndex| {
         task.numeric_variables()[var_id.index()].get_type() == &NumericType::Derived
             && refined(var_id).is_none()
@@ -56,24 +61,26 @@ pub(super) fn fill_condition_intervals(
     fill_derived_numeric_intervals_from_comparison_trees(task.numeric_conditions().all(), out);
     for (var_id, interval) in out.iter_mut().enumerate() {
         if interval.is_empty() {
-            assert!(
-                is_unrefined_derived(VariableIndex::from_usize(var_id)),
-                "numeric variable {var_id} has an empty interval"
-            );
+            if !is_unrefined_derived(VariableIndex::from_usize(var_id)) {
+                return false;
+            }
             *interval = Interval::unbounded();
         }
     }
+    true
 }
 
 /// Fills `out` with the interval of every numeric variable over abstract
-/// state `state`; see [`fill_condition_intervals`].
+/// state `state` and returns whether it may contain a state; see
+/// [`fill_condition_intervals`].
+#[must_use]
 pub(super) fn fill_state_intervals(
     task: &dyn AbstractNumericTask,
     partitions: &NumericPartitions,
     layout: &StateLayout,
     state: usize,
     out: &mut Vec<Interval>,
-) {
+) -> bool {
     fill_condition_intervals(
         task,
         |var_id| {
@@ -82,5 +89,5 @@ pub(super) fn fill_state_intervals(
                 .then(|| partitions.partition_interval(var_id, layout.partition(state, var_id)))
         },
         out,
-    );
+    )
 }
