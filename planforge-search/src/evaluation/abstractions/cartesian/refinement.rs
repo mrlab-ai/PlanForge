@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::semantics::CartesianSemantics;
+use super::semantics::{CartesianSemantics, SplitEnd};
 use super::working::{OperatorBitSet, WorkingAbstraction};
 use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::cegar::split::{
@@ -122,15 +122,22 @@ pub(super) fn replacement_transitions<'a>(
         } else {
             std::slice::from_ref(&transition.target)
         };
+        let split_end = if transition.source == split_state_id {
+            SplitEnd::Source
+        } else {
+            SplitEnd::Target
+        };
         for &source in sources {
             for &target in targets {
                 let may_transition = if semantics
                     .operator_depends_on_split(transition.concrete_op_id, split_dimension)
                 {
-                    semantics.regions().may_transition(
+                    semantics.may_transition_after_dependent_split(
                         region(source),
                         transition.concrete_op_id,
                         region(target),
+                        split_dimension,
+                        split_end,
                     )?
                 } else {
                     semantics.may_transition_after_independent_split(

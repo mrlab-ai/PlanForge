@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use planforge_sas::numeric_task::OperatorIndex;
 
@@ -120,7 +120,7 @@ pub(super) struct WorkingAbstraction {
     pub(super) outgoing: Vec<Vec<usize>>,
     pub(super) incoming: Vec<Vec<usize>>,
     pub(super) self_loop_operator_ids: Vec<OperatorBitSet>,
-    pub(super) transition_ids_by_key: HashMap<TransitionKey, usize>,
+    pub(super) transition_ids_by_key: FxHashMap<TransitionKey, usize>,
 }
 
 impl WorkingAbstraction {
@@ -154,7 +154,7 @@ impl WorkingAbstraction {
             outgoing: vec![Vec::new()],
             incoming: vec![Vec::new()],
             self_loop_operator_ids: vec![OperatorBitSet::empty(operator_count)],
-            transition_ids_by_key: HashMap::new(),
+            transition_ids_by_key: FxHashMap::default(),
         }
     }
 

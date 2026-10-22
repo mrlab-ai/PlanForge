@@ -11,6 +11,13 @@ use crate::evaluation::abstractions::common::cartesian_set::{
 };
 use crate::evaluation::abstractions::common::cegar::split::SplitDimension;
 
+/// Which end of a transition a split state was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in super::super) enum SplitEnd {
+    Source,
+    Target,
+}
+
 impl CartesianSemantics<'_> {
     pub(in super::super) fn operator_depends_on_split(
         &self,
@@ -69,6 +76,55 @@ impl CartesianSemantics<'_> {
         Ok(result)
     }
 
+    /// Whether `op_id` may apply in `child`, a child of a state it may apply
+    /// in that was split along `dimension`: a region admits preconditions one
+    /// at a time, and the child equals its parent on every other dimension,
+    /// so only the preconditions that depend on `dimension` are tested.
+    pub(in super::super) fn may_apply_after_split(
+        &self,
+        child: &CartesianSet,
+        op_id: OperatorIndex,
+        dimension: SplitDimension,
+    ) -> Result<bool> {
+        let regions = self.cegar.regions();
+        for precondition in self.task().get_operators()[op_id.index()].preconditions() {
+            if self.variable_dimensions[precondition.var_index().index()]
+                .binary_search(&dimension)
+                .is_ok()
+                && !regions.admits(child, precondition)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Whether `op_id` may lead from `source` to `target`, where one of the
+    /// two, at `split_end`, is a child of a state an `op_id` transition left
+    /// or entered before it was split along `dimension`. The child equals its
+    /// parent on every other dimension, so only the split dimension, and the
+    /// operator's applicability in a split source, can have changed.
+    pub(in super::super) fn may_transition_after_dependent_split(
+        &self,
+        source: &CartesianSet,
+        op_id: OperatorIndex,
+        target: &CartesianSet,
+        dimension: SplitDimension,
+        split_end: SplitEnd,
+    ) -> Result<bool> {
+        debug_assert!(self.operator_depends_on_split(op_id, dimension));
+        let result = (split_end == SplitEnd::Target
+            || self.may_apply_after_split(source, op_id, dimension)?)
+            && self.split_dimension_may_transition(source, op_id, target, dimension)?;
+        #[cfg(debug_assertions)]
+        assert_eq!(
+            result,
+            self.cegar.regions().may_transition(source, op_id, target)?,
+            "split-dimension routing disagrees with full transition semantics for operator {op_id} and dimension {dimension:?}"
+        );
+        Ok(result)
+    }
+
     pub(in super::super) fn split_dimension_may_transition(
         &self,
         source: &CartesianSet,
@@ -97,7 +153,7 @@ impl CartesianSemantics<'_> {
         targets: [&CartesianSet; 2],
         dimension: SplitDimension,
     ) -> Result<[bool; 2]> {
-        let may_apply = self.cegar.regions().operator_may_apply(source, op_id)?;
+        let may_apply = self.may_apply_after_split(source, op_id, dimension)?;
         let mut result = [false; 2];
         if may_apply {
             for (index, target) in targets.into_iter().enumerate() {

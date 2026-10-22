@@ -1,6 +1,9 @@
+use planforge_sas::utils::interval::Interval;
+
 use super::*;
 use crate::evaluation::abstractions::common::cegar::options::CegarOptions;
 use crate::evaluation::abstractions::common::cegar::semantics::CegarSemantics;
+use crate::evaluation::abstractions::domain::comparison_inputs::fill_state_intervals;
 use ordered_float::NotNan;
 
 use std::collections::{BTreeSet, HashSet};

@@ -1,7 +1,20 @@
-use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
+use std::sync::Arc;
 
-use super::*;
+use anyhow::{Result, ensure};
+use planforge_sas::numeric_conditions::ConditionValue;
+use planforge_sas::numeric_task::{AbstractNumericTask, ExplicitFact, NumericValue};
+use planforge_sas::numeric_task::{ExplicitValueIndex, VariableIndex};
+use planforge_sas::utils::interval::Interval;
+
+use super::{DISTANCE_TABLE, DomainAbstractionFunction};
+use crate::evaluation::abstractions::common::cartesian_set::CartesianSet;
 use crate::evaluation::abstractions::common::coordinates::coordinate_value;
+use crate::evaluation::abstractions::domain::abstract_operators::AbstractOperator;
+use crate::evaluation::abstractions::domain::abstraction_numeric_var;
+use crate::evaluation::abstractions::domain::comparison_inputs::fill_state_intervals;
+use crate::evaluation::abstractions::domain::layout::StateLayout;
+use crate::evaluation::abstractions::domain::partitions::partition_for_value;
+use crate::resource_limits::Deadline;
 
 #[derive(Debug, Clone, Default)]
 struct MatchTreeNode {
