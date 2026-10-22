@@ -592,9 +592,9 @@ impl AssignmentOperation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignmentEffect {
-    affected_var_id: VariableIndex,
+    pub(super) affected_var_id: VariableIndex,
     operation: AssignmentOperation,
-    var_id: VariableIndex,
+    pub(super) var_id: VariableIndex,
     is_conditional: bool,
     pub(super) conditions: Vec<ExplicitFact>,
 }

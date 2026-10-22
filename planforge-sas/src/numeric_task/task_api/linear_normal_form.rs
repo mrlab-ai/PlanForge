@@ -320,31 +320,12 @@ impl NumericRootTask {
             comparison.left_hand_side = mapped(comparison.left_hand_side);
             comparison.right_hand_side = mapped(comparison.right_hand_side);
         }
-        self.operators = self
-            .operators
-            .iter()
-            .map(|operator| {
-                Operator::new(
-                    operator.name().to_string(),
-                    operator.preconditions().clone(),
-                    operator.effects().clone(),
-                    operator
-                        .assignment_effects()
-                        .iter()
-                        .map(|effect| {
-                            AssignmentEffect::new(
-                                mapped(effect.affected_var_id()),
-                                effect.operation().clone(),
-                                mapped(effect.var_id()),
-                                effect.is_conditional(),
-                                effect.conditions().clone(),
-                            )
-                        })
-                        .collect(),
-                    operator.cost(),
-                )
-            })
-            .collect();
+        for operator in &mut self.operators {
+            for effect in &mut operator.assignment_effects {
+                effect.affected_var_id = mapped(effect.affected_var_id);
+                effect.var_id = mapped(effect.var_id);
+            }
+        }
         // Rebuild arithmetic layers, preserving propositional layer distances.
         let definitions = self
             .assignment_axiom_lookup()
