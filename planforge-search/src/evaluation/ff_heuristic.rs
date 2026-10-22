@@ -100,11 +100,7 @@ impl NumericRange {
         } else {
             self.min
         };
-        // Use bit-pattern inequality rather than `> self.max + EPSILON` so
-        // `+∞ vs finite max` reads as "widened" without an arithmetic-on-
-        // infinity ambiguity.
-        let changed =
-            new_max.to_bits() != self.max.to_bits() || new_min.to_bits() != self.min.to_bits();
+        let changed = other.max > self.max || other.min < self.min;
         self.max = new_max;
         self.min = new_min;
         changed

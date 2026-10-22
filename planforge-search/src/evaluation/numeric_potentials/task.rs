@@ -7,6 +7,7 @@ use planforge_sas::numeric_task::{
     NumericType, NumericValue, OperatorIndex, VariableIndex, ZERO_VALUE,
 };
 use planforge_sas::state_registry::ConcreteStateView;
+use planforge_sas::utils::float_tolerance;
 
 use super::BoundsProvider;
 use crate::evaluation::numeric_landmarks::numeric_helper::{
@@ -1098,7 +1099,12 @@ fn canonical_dense_feature(coefficients: &[f64]) -> Option<(Vec<(VariableIndex, 
 fn feature_key(coefficients: &[(VariableIndex, f64)]) -> Vec<(VariableIndex, u64)> {
     coefficients
         .iter()
-        .map(|&(variable_id, value)| (variable_id, value.to_bits()))
+        .map(|&(variable_id, value)| {
+            (
+                variable_id,
+                float_tolerance::canonical_bits(NumericValue::new(value)),
+            )
+        })
         .collect()
 }
 
