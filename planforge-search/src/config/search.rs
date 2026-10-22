@@ -103,8 +103,8 @@ fn build_search_spec(call: &ConfigCall) -> Result<SearchConfig, String> {
                     "`astar_fs(...)` expects named `fast=...` and `slow=...` arguments".to_string()
                 })?;
                 match key {
-                    "fast" => fast = Some(super::HeuristicSpec::from_value(&arg.value)?),
-                    "slow" => slow = Some(super::HeuristicSpec::from_value(&arg.value)?),
+                    "fast" => fast = Some(super::ConfigCall::from_value(&arg.value)?),
+                    "slow" => slow = Some(super::ConfigCall::from_value(&arg.value)?),
                     other => return Err(format!("unknown option `{other}` for `astar_fs`")),
                 }
             }

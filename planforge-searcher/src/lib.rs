@@ -18,8 +18,8 @@
 
 pub mod recursive_config;
 
-pub use planforge_search::config::HeuristicSpec;
-pub use recursive_config::{SearchConfig, parse_heuristic_spec, parse_search_spec};
+pub use planforge_search::config::ConfigCall;
+pub use recursive_config::{SearchConfig, parse_call, parse_search_spec};
 
 /// Fail before translation if any heuristic in `spec` needs a solver backend
 /// this build does not have. The per-heuristic knowledge belongs to

@@ -17,7 +17,7 @@
 //! built-in heuristic specification can be parsed directly:
 //!
 //! ```
-//! let spec = planforge_search::config::parse_heuristic_spec("blind()")
+//! let spec = planforge_search::config::parse_call("blind()")
 //!     .expect("blind is a built-in heuristic");
 //! assert_eq!(spec.name, "blind");
 //! ```

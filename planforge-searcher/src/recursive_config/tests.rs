@@ -1,6 +1,6 @@
 use super::*;
 
-fn astar_heuristic(input: &str) -> HeuristicSpec {
+fn astar_heuristic(input: &str) -> ConfigCall {
     match parse_search_spec(input).unwrap() {
         SearchConfig::AStar { heuristic, .. } => (*heuristic).clone(),
         other => panic!("expected astar(...), got {other:?}"),
@@ -9,14 +9,14 @@ fn astar_heuristic(input: &str) -> HeuristicSpec {
 
 #[test]
 fn parses_heuristic_spec_ff_call() {
-    let h = parse_heuristic_spec("ff()").unwrap();
+    let h = parse_call("ff()").unwrap();
     assert_eq!(h.name, "ff");
     assert!(h.args.is_empty());
 }
 
 #[test]
 fn parses_heuristic_spec_blind_bare_identifier() {
-    let h = parse_heuristic_spec("blind").unwrap();
+    let h = parse_call("blind").unwrap();
     assert_eq!(h.name, "blind");
     assert!(h.args.is_empty());
 }
@@ -250,7 +250,7 @@ fn parses_check_admissible_around_a_nested_heuristic() {
     let spec = astar_heuristic("astar(check_admissible(domain_abstraction()));");
     assert_eq!(spec.name, "check_admissible");
     assert_eq!(spec.args.len(), 1);
-    let inner = HeuristicSpec::from_value(spec.args[0].value()).unwrap();
+    let inner = ConfigCall::from_value(spec.args[0].value()).unwrap();
     assert_eq!(inner.name, "domain_abstraction");
     assert!(spec.contains_call("domain_abstraction"));
 }

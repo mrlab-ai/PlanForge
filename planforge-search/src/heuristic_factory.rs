@@ -1,5 +1,5 @@
 //! Typed heuristic features and the explicit, deterministic registry.
-use crate::config::{ApplyOptions, ConfigArg, ConfigError, ConfigValue, HeuristicSpec, configure};
+use crate::config::{ApplyOptions, ConfigArg, ConfigCall, ConfigError, ConfigValue, configure};
 use crate::evaluation::Heuristic;
 use crate::evaluation::abstractions::collections::config::MemberConfig;
 use crate::evaluation::abstractions::collections::generator::AbstractionGenerator;
@@ -100,7 +100,7 @@ pub trait HeuristicFeature: 'static {
     fn nested(_: &Self::Config) -> Vec<&HeuristicConfig> {
         Vec::new()
     }
-    fn nested_specs(_: &HeuristicSpec) -> Result<Vec<HeuristicSpec>, String> {
+    fn nested_specs(_: &ConfigCall) -> Result<Vec<ConfigCall>, String> {
         Ok(Vec::new())
     }
     fn source(_: &Self::Config) -> Option<AbstractionSource> {
@@ -113,7 +113,7 @@ pub trait HeuristicFeature: 'static {
 }
 
 trait ErasedHeuristicConfig: Debug + Send + Sync {
-    fn spec(&self) -> &HeuristicSpec;
+    fn spec(&self) -> &ConfigCall;
     fn requirements(&self) -> TaskRequirements;
     fn backend(&self) -> RequiredBackend;
     fn source(&self) -> Option<AbstractionSource>;
@@ -124,7 +124,7 @@ trait ErasedHeuristicConfig: Debug + Send + Sync {
 }
 struct Configured<F: HeuristicFeature> {
     config: F::Config,
-    spec: HeuristicSpec,
+    spec: ConfigCall,
 }
 impl<F: HeuristicFeature> Debug for Configured<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -134,7 +134,7 @@ impl<F: HeuristicFeature> Debug for Configured<F> {
     }
 }
 impl<F: HeuristicFeature> ErasedHeuristicConfig for Configured<F> {
-    fn spec(&self) -> &HeuristicSpec {
+    fn spec(&self) -> &ConfigCall {
         &self.spec
     }
     fn requirements(&self) -> TaskRequirements {
@@ -184,7 +184,7 @@ impl HeuristicConfig {
         check_backend(self.required_backend())
     }
 
-    pub fn from_spec(spec: &HeuristicSpec) -> Result<Self, ConfigError> {
+    pub fn from_spec(spec: &ConfigCall) -> Result<Self, ConfigError> {
         let entry = lookup(&spec.name).ok_or_else(|| {
             ConfigError::from(format!(
                 "unknown heuristic `{}`; expected one of {}",
@@ -215,14 +215,14 @@ impl HeuristicConfig {
     }
 }
 impl std::ops::Deref for HeuristicConfig {
-    type Target = HeuristicSpec;
-    fn deref(&self) -> &HeuristicSpec {
+    type Target = ConfigCall;
+    fn deref(&self) -> &ConfigCall {
         self.0.spec()
     }
 }
 impl Default for HeuristicConfig {
     fn default() -> Self {
-        Self::from_spec(&HeuristicSpec::blind()).expect("the built-in blind configuration is valid")
+        Self::from_spec(&ConfigCall::blind()).expect("the built-in blind configuration is valid")
     }
 }
 impl PartialEq for HeuristicConfig {
@@ -237,17 +237,19 @@ impl fmt::Display for HeuristicConfig {
 }
 impl crate::config::FromOptionValue for HeuristicConfig {
     fn from_option_value(value: &ConfigValue) -> Result<Self, ConfigError> {
-        Self::from_spec(&HeuristicSpec::from_value(value).map_err(ConfigError::from)?)
+        Self::from_spec(&ConfigCall::from_value(value).map_err(ConfigError::from)?)
     }
 }
 
+/// A registered heuristic feature. External features use the same entries as
+/// the built-ins.
 #[derive(Clone, Copy)]
 pub struct HeuristicEntry {
     name: &'static str,
     aliases: &'static [&'static str],
     backend: RequiredBackend,
-    parse: fn(&HeuristicSpec) -> Result<HeuristicConfig, ConfigError>,
-    nested_specs: fn(&HeuristicSpec) -> Result<Vec<HeuristicSpec>, String>,
+    parse: fn(&ConfigCall) -> Result<HeuristicConfig, ConfigError>,
+    nested_specs: fn(&ConfigCall) -> Result<Vec<ConfigCall>, String>,
 }
 impl HeuristicEntry {
     pub fn name(&self) -> &'static str {
@@ -278,9 +280,7 @@ pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
         nested_specs: F::nested_specs,
     }
 }
-fn parse_feature<F: HeuristicFeature>(
-    spec: &HeuristicSpec,
-) -> Result<HeuristicConfig, ConfigError> {
+fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConfig, ConfigError> {
     let mut spec = spec.clone();
     spec.name.make_ascii_lowercase();
     let config = configure(&spec.name, F::Config::default(), &spec.args)?;
@@ -322,8 +322,6 @@ static BUILTIN: &[HeuristicEntry] = &[
     entry::<crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericFeature>(),
 ];
 
-/// External features use exactly the same entries as the built-ins.
-pub type ExternalHeuristic = HeuristicEntry;
 static EXTERNAL: OnceLock<Vec<HeuristicEntry>> = OnceLock::new();
 fn external_heuristics() -> &'static [HeuristicEntry] {
     EXTERNAL.get_or_init(Vec::new)
@@ -373,7 +371,7 @@ pub fn heuristic_help() -> String {
         heuristic_names().collect::<Vec<_>>().join(", ")
     )
 }
-pub fn validate_heuristic_spec(spec: &HeuristicSpec) -> Result<(), String> {
+pub fn validate_heuristic_spec(spec: &ConfigCall) -> Result<(), String> {
     let entry = lookup(&spec.name).ok_or_else(|| {
         format!(
             "unknown heuristic `{}`; expected one of {}",
@@ -386,7 +384,7 @@ pub fn validate_heuristic_spec(spec: &HeuristicSpec) -> Result<(), String> {
     }
     Ok(())
 }
-pub fn heuristic_requirements(spec: &HeuristicSpec) -> Result<TaskRequirements, String> {
+pub fn heuristic_requirements(spec: &ConfigCall) -> Result<TaskRequirements, String> {
     Ok(HeuristicConfig::from_spec(spec)?.requirements())
 }
 fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {
@@ -404,8 +402,8 @@ fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {
         ))
     }
 }
-pub fn preflight_required_backends(spec: &HeuristicSpec) -> std::io::Result<()> {
-    fn backend(spec: &HeuristicSpec) -> Result<RequiredBackend, String> {
+pub fn preflight_required_backends(spec: &ConfigCall) -> std::io::Result<()> {
+    fn backend(spec: &ConfigCall) -> Result<RequiredBackend, String> {
         let entry =
             lookup(&spec.name).ok_or_else(|| format!("unknown heuristic `{}`", spec.name))?;
         if entry.backend == RequiredBackend::Cplex {
@@ -558,7 +556,7 @@ where
 pub(crate) fn single_wrapped_heuristic_spec(
     wrapper: &str,
     args: &[ConfigArg],
-) -> Result<HeuristicSpec, String> {
+) -> Result<ConfigCall, String> {
     let [arg] = args else {
         return Err(format!(
             "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain_abstraction())`, \
@@ -571,7 +569,7 @@ pub(crate) fn single_wrapped_heuristic_spec(
             "`{wrapper}` takes its heuristic positionally, not as `{key}=...`"
         ));
     }
-    HeuristicSpec::from_value(arg.value())
+    ConfigCall::from_value(arg.value())
 }
 
 impl From<ConfigError> for HeuristicBuildError {
@@ -581,7 +579,7 @@ impl From<ConfigError> for HeuristicBuildError {
 }
 
 pub fn build_heuristic_from_spec<'a>(
-    spec: &HeuristicSpec,
+    spec: &ConfigCall,
     context: &BuildContext<'a>,
 ) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
     HeuristicConfig::from_spec(spec)?.build(context)

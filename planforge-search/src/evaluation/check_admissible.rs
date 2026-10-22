@@ -335,8 +335,8 @@ impl crate::heuristic_factory::HeuristicFeature for CheckAdmissibleFeature {
         vec![&config.inner]
     }
     fn nested_specs(
-        spec: &crate::config::HeuristicSpec,
-    ) -> Result<Vec<crate::config::HeuristicSpec>, String> {
+        spec: &crate::config::ConfigCall,
+    ) -> Result<Vec<crate::config::ConfigCall>, String> {
         Ok(vec![
             crate::heuristic_factory::single_wrapped_heuristic_spec(
                 "check_admissible",

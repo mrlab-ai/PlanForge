@@ -31,7 +31,7 @@ use limits::{
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
 use planforge_search::heuristic_factory::{
-    BuildContext, ExternalHeuristic, HeuristicBuildError, register_external_heuristics,
+    BuildContext, HeuristicBuildError, HeuristicEntry, register_external_heuristics,
 };
 use planforge_search::search::{
     AStarSearch, GreedyBestFirstSearch, SearchEngine, SearchParams, SearchResult,
@@ -89,7 +89,7 @@ pub fn init_logger(level: LevelFilter) {
 
 /// Run the standard PlanForge CLI, with extra heuristics registered first.
 /// This is the supported way to ship your own heuristic inside the real binary.
-pub fn run_with_heuristics(extra: Vec<ExternalHeuristic>) -> std::io::Result<()> {
+pub fn run_with_heuristics(extra: Vec<HeuristicEntry>) -> std::io::Result<()> {
     register_external_heuristics(extra).map_err(std::io::Error::other)?;
 
     let cli = PlannersCli::parse();

@@ -65,8 +65,8 @@ mod registry_feature {
             config.heuristics.iter().collect()
         }
         fn nested_specs(
-            spec: &crate::config::HeuristicSpec,
-        ) -> Result<Vec<crate::config::HeuristicSpec>, String> {
+            spec: &crate::config::ConfigCall,
+        ) -> Result<Vec<crate::config::ConfigCall>, String> {
             let config = configure(&spec.name, MaxConfig::default(), &spec.args)?;
             Ok(config
                 .heuristics

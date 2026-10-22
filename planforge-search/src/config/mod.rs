@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-pub use parser::{parse_call, parse_heuristic_spec};
+pub use parser::parse_call;
 pub use planforge_config_derive::{ApplyOptions, FromOptionValue};
 
 mod error;
@@ -182,9 +182,6 @@ impl ConfigValue {
         }
     }
 }
-
-/// A heuristic specification is a call in the shared configuration AST.
-pub type HeuristicSpec = ConfigCall;
 
 impl ConfigCall {
     pub fn blind() -> Self {

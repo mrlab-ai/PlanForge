@@ -5,8 +5,8 @@
 //! from `planforge-searcher` and the factory's internals stay private.
 
 use super::{AbstractionSource, SourcesConfig};
-use super::{ExternalHeuristic, abstraction_config, heuristic_names, register_external_heuristics};
-use crate::config::{ApplyOptions, ConfigArg, HeuristicSpec, configure, parse_heuristic_spec};
+use super::{HeuristicEntry, abstraction_config, heuristic_names, register_external_heuristics};
+use crate::config::{ApplyOptions, ConfigArg, ConfigCall, configure, parse_call};
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionConfig;
 use crate::evaluation::abstractions::collections::strategy::CollectionStrategy;
 use crate::evaluation::abstractions::common::cegar::FlawKind;
@@ -19,8 +19,8 @@ use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatter
 use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
 
-fn astar_heuristic(input: &str) -> HeuristicSpec {
-    parse_heuristic_spec(
+fn astar_heuristic(input: &str) -> ConfigCall {
+    parse_call(
         input
             .strip_prefix("astar(")
             .unwrap()
@@ -443,15 +443,15 @@ fn collection_seeds_split_kinds_and_stagnation_limits_parse_once() {
     assert!(error.contains("non-negative"), "{error}");
 }
 
-fn test_external(name: &'static str) -> ExternalHeuristic {
+fn test_external(name: &'static str) -> HeuristicEntry {
     super::entry::<crate::evaluation::heuristic::BlindFeature>().with_name(name)
 }
 
 #[test]
 fn typed_sources_preserve_flat_lists_aliases_and_scp_options() {
-    let flat = parse_heuristic_spec("scp(domain(max_states=7), numeric_pdb(patterns=greedy(321)), random_orders=5, goal_cover_orders_per_goal=2)").unwrap();
-    let listed = parse_heuristic_spec("scp([domain(max_states=7), pdb(patterns=greedy(321))], random_orders=5, goal_cover_orders_per_goal=2)").unwrap();
-    let parse = |spec: &HeuristicSpec| {
+    let flat = parse_call("scp(domain(max_states=7), numeric_pdb(patterns=greedy(321)), random_orders=5, goal_cover_orders_per_goal=2)").unwrap();
+    let listed = parse_call("scp([domain(max_states=7), pdb(patterns=greedy(321))], random_orders=5, goal_cover_orders_per_goal=2)").unwrap();
+    let parse = |spec: &ConfigCall| {
         configure(
             "scp",
             abstraction_config::ScpHeuristicConfig::default(),
@@ -533,8 +533,7 @@ fn strict_icaps26_options_and_requirements_are_typed() {
 #[test]
 fn numeric_pdb_sugars_preserve_explicit_pattern_strategies() {
     for name in ["canonical_numeric_pdb", "max_numeric_pdb"] {
-        let spec =
-            parse_heuristic_spec(&format!("{name}(patterns=greedy(max_pdb_states=321))")).unwrap();
+        let spec = parse_call(&format!("{name}(patterns=greedy(max_pdb_states=321))")).unwrap();
         configure(name, super::PdbSourceConfig::default(), &spec.args).unwrap();
     }
     // Positive values below Duration precision were already accepted.
@@ -543,7 +542,7 @@ fn numeric_pdb_sugars_preserve_explicit_pattern_strategies() {
 
 #[test]
 fn config_errors_keep_the_nested_option_path() {
-    let spec = parse_heuristic_spec("scp([domain(max_states=bogus)])").unwrap();
+    let spec = parse_call("scp([domain(max_states=bogus)])").unwrap();
     let error = configure(
         "scp",
         abstraction_config::ScpHeuristicConfig::default(),

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
-use planforge_search::config::parse_heuristic_spec;
+use planforge_search::config::parse_call;
 use planforge_search::heuristic_factory::{
     BuildContext, build_heuristic_from_spec, entry, register_external_heuristics,
 };
 
 #[test]
 fn external_registration_after_heuristic_construction_is_rejected() {
-    let spec = parse_heuristic_spec("blind()").unwrap();
+    let spec = parse_call("blind()").unwrap();
     let task: TaskRef<'static> = Arc::new(NumericRootTask::from_file(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"

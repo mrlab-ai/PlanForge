@@ -6,7 +6,7 @@
 //! without whitespace or delimiters remain accepted as unquoted scalars for
 //! compatibility. Search engine options are decoded by [`super::SearchConfig`].
 
-use super::{ConfigArg, ConfigCall, ConfigValue, HeuristicSpec};
+use super::{ConfigArg, ConfigCall, ConfigValue};
 
 /// Parse one call, rejecting anything left over. A trailing `.` or `;` is
 /// tolerated because shells and papers both like to put one there.
@@ -18,12 +18,6 @@ pub fn parse_call(raw: &str) -> Result<ConfigCall, String> {
         .unwrap_or(trimmed)
         .trim();
     ConfigParser::new(input).parse_all()
-}
-
-/// Parse a heuristic configuration such as `scp(domain(max_states=100),
-/// online=false)`.
-pub fn parse_heuristic_spec(raw: &str) -> Result<HeuristicSpec, String> {
-    parse_call(raw)
 }
 
 struct ConfigParser<'a> {
