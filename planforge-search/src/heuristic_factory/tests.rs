@@ -13,8 +13,6 @@ use crate::evaluation::abstractions::common::cegar::FlawKind;
 use crate::evaluation::abstractions::common::cegar::{FlawScope, SplitKind};
 use crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig;
 use crate::evaluation::abstractions::domain::config::DomainAbstractionConfig;
-use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
-use crate::evaluation::abstractions::pdb::pattern_database::PdbInternalHeuristic;
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::GreedyPatternGeneratorConfig;
 use crate::evaluation::abstractions::pdb::variable_order_finder::GreedyVariableOrderType;
 use crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericConfig;
@@ -58,11 +56,11 @@ fn cartesian_source_config(
 }
 
 #[test]
-fn parses_astar_domain_abstraction_with_named_options() {
+fn parses_astar_domain_with_named_options() {
     let h = astar_heuristic(
-        "astar(domain_abstraction(max_states=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
+        "astar(domain(max_states=10000, use_wildcard_plans=false, combine_labels=true, random_seed=7))",
     );
-    assert_eq!(h.name, "domain_abstraction");
+    assert_eq!(h.name, "domain");
 
     let mut cfg = DomainAbstractionConfig::default();
     cfg.apply_options(&h.args).unwrap();
@@ -150,8 +148,8 @@ fn list_is_a_typed_error_for_scalar_and_wrapped_heuristic_options() {
 }
 
 #[test]
-fn cartesian_abstraction_rejects_domain_abstraction_options() {
-    let h = astar_heuristic("astar(cartesian_abstraction(use_wildcard_plans=true))");
+fn cartesian_rejects_domain_only_options() {
+    let h = astar_heuristic("astar(cartesian(use_wildcard_plans=true))");
     let error =
         cartesian_source_config(&h.args, super::AbstractionPurpose::Standalone).unwrap_err();
     assert_eq!(
@@ -165,9 +163,9 @@ fn both_representations_take_the_same_cegar_options() {
     let options = "max_states=7, max_iterations=3, max_time=2, combine_labels=true, \
                    random_seed=5, flaw_kind=regression, flaw_scope=whole_plan, split_kind=wanted, \
                    split_selection=random, split_selection_rank=1, debug=true";
-    let domain = astar_heuristic(&format!("astar(domain_abstraction({options}))"));
+    let domain = astar_heuristic(&format!("astar(domain({options}))"));
     let domain = configure("domain", DomainAbstractionConfig::default(), &domain.args).unwrap();
-    let cartesian = astar_heuristic(&format!("astar(cartesian_abstraction({options}))"));
+    let cartesian = astar_heuristic(&format!("astar(cartesian({options}))"));
     let cartesian = configure(
         "cartesian",
         CartesianAbstractionConfig::default(),
@@ -183,7 +181,7 @@ fn both_representations_take_the_same_cegar_options() {
 
 #[test]
 fn configs_with_shared_options_take_named_options_only() {
-    let h = astar_heuristic("astar(cartesian_abstraction(10))");
+    let h = astar_heuristic("astar(cartesian(10))");
     let error =
         cartesian_source_config(&h.args, super::AbstractionPurpose::Standalone).unwrap_err();
     assert_eq!(error, "cartesian: options must be named, as in `key=value`");
@@ -199,10 +197,8 @@ fn parses_whole_plan_regression_flaws() {
 }
 
 #[test]
-fn parses_single_domain_abstraction_time_limit() {
-    let h = astar_heuristic(
-        "astar(domain_abstraction(max_states=1000,max_time=900,flaw_scope=whole_plan))",
-    );
+fn parses_single_domain_time_limit() {
+    let h = astar_heuristic("astar(domain(max_states=1000,max_time=900,flaw_scope=whole_plan))");
     let mut cfg = DomainAbstractionConfig::default();
     cfg.apply_options(&h.args).unwrap();
     assert_eq!(cfg.cegar.max_states, 1000);
@@ -212,16 +208,17 @@ fn parses_single_domain_abstraction_time_limit() {
     );
     assert_eq!(cfg.cegar.flaw_scope, FlawScope::WholePlan);
 
-    let h = astar_heuristic("astar(domain_abstraction(max_time=infinity))");
+    let h = astar_heuristic("astar(domain(max_time=infinity))");
     cfg.apply_options(&h.args).unwrap();
     assert_eq!(cfg.cegar.max_time, None.into());
 }
 
 #[test]
-fn parses_astar_greedy_numeric_pdb_with_named_options() {
-    let h = astar_heuristic(
-        "astar(greedy_numeric_pdb(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
-    );
+fn parses_greedy_pattern_options() {
+    let h = parse_call(
+        "greedy(max_pdb_states=321, numeric_first=false, random_seed=7, variable_order_type=cg_goal_random)",
+    )
+    .unwrap();
     let mut cfg = GreedyPatternGeneratorConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
@@ -231,15 +228,12 @@ fn parses_astar_greedy_numeric_pdb_with_named_options() {
         cfg.variable_order_type,
         GreedyVariableOrderType::CgGoalRandom
     );
-    assert_eq!(cfg.exploration_heuristic, PdbInternalHeuristic::Lmcut);
-    assert_eq!(cfg.frontier_heuristic, PdbInternalHeuristic::Blind);
-    assert_eq!(cfg.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
 }
 
 #[test]
 fn positional_args_map_to_canonical_order() {
-    // greedy_numeric_pdb's ORDER starts with max_pdb_states, numeric_first, random_seed
-    let h = astar_heuristic("astar(greedy_numeric_pdb(321, false, 7))");
+    // greedy's positional order starts with max_pdb_states, numeric_first, random_seed
+    let h = parse_call("greedy(321, false, 7)").unwrap();
     let mut cfg = GreedyPatternGeneratorConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
@@ -250,7 +244,7 @@ fn positional_args_map_to_canonical_order() {
 #[test]
 fn mixed_positional_and_named_args_work() {
     // First positional → max_pdb_states; the named ones are explicit.
-    let h = astar_heuristic("astar(greedy_numeric_pdb(321, numeric_first=false, random_seed=7))");
+    let h = parse_call("greedy(321, numeric_first=false, random_seed=7)").unwrap();
     let mut cfg = GreedyPatternGeneratorConfig::default();
     ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
     assert_eq!(cfg.max_pdb_states, 321);
@@ -261,7 +255,7 @@ fn mixed_positional_and_named_args_work() {
 #[test]
 fn positional_then_named_for_same_slot_errors() {
     // Positional 321 → max_pdb_states, then max_pdb_states=999 collides.
-    let h = astar_heuristic("astar(greedy_numeric_pdb(321, max_pdb_states=999))");
+    let h = parse_call("greedy(321, max_pdb_states=999)").unwrap();
     let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
         .unwrap_err();
     assert!(
@@ -272,28 +266,11 @@ fn positional_then_named_for_same_slot_errors() {
 
 #[test]
 fn too_many_positional_args_errors() {
-    // greedy_numeric_pdb has 7 positional slots; 8 should error.
-    let h = astar_heuristic(
-        "astar(greedy_numeric_pdb(1, false, 2, cg_goal_level, blind, blind, blind, EXTRA))",
-    );
+    // greedy has 4 positional slots; 5 should error.
+    let h = parse_call("greedy(1, false, 2, cg_goal_level, extra)").unwrap();
     let err = ApplyOptions::apply_options(&mut GreedyPatternGeneratorConfig::default(), &h.args)
         .unwrap_err();
     assert!(err.contains("too many positional"), "got `{err}`");
-}
-
-#[test]
-fn parses_astar_canonical_numeric_pdb_with_named_options() {
-    let h = astar_heuristic(
-        "astar(canonical_numeric_pdb(max_pdb_states=321, max_pattern_size=3, only_interesting_patterns=false, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
-    );
-    let mut cfg = CanonicalNumericPdbConfig::default();
-    ApplyOptions::apply_options(&mut cfg, &h.args).unwrap();
-    assert_eq!(cfg.max_pdb_states, 321);
-    assert_eq!(cfg.max_pattern_size, 3);
-    assert!(!cfg.only_interesting_patterns);
-    assert_eq!(cfg.exploration_heuristic, PdbInternalHeuristic::Blind);
-    assert_eq!(cfg.frontier_heuristic, PdbInternalHeuristic::Lmcut);
-    assert_eq!(cfg.failed_lookup_heuristic, PdbInternalHeuristic::Lmcut);
 }
 
 #[test]
@@ -377,10 +354,10 @@ fn heuristic_registry_names_are_unique_and_complete() {
     for required in [
         "blind",
         "ff",
-        "domain_abstraction",
-        "cartesian_abstraction",
+        "domain",
+        "cartesian",
         "scp",
-        "greedy_numeric_pdb",
+        "pdb",
         "lmcutnumeric",
         "numeric_potential",
     ] {
@@ -448,9 +425,11 @@ fn test_external(name: &'static str) -> HeuristicEntry {
 }
 
 #[test]
-fn typed_sources_preserve_flat_lists_aliases_and_scp_options() {
-    let flat = parse_call("scp(domain(max_states=7), numeric_pdb(patterns=greedy(321)), random_orders=5, goal_cover_orders_per_goal=2)").unwrap();
+fn typed_sources_take_one_list_or_a_single_source() {
     let listed = parse_call("scp([domain(max_states=7), pdb(patterns=greedy(321))], random_orders=5, goal_cover_orders_per_goal=2)").unwrap();
+    let single =
+        parse_call("scp(domain(max_states=7), random_orders=5, goal_cover_orders_per_goal=2)")
+            .unwrap();
     let parse = |spec: &ConfigCall| {
         configure(
             "scp",
@@ -459,24 +438,25 @@ fn typed_sources_preserve_flat_lists_aliases_and_scp_options() {
         )
         .unwrap()
     };
-    let flat = parse(&flat);
     let listed = parse(&listed);
+    let single = parse(&single);
     assert_eq!(
-        flat.sources
+        listed
+            .sources
             .sources
             .iter()
             .map(AbstractionSource::name)
             .collect::<Vec<_>>(),
         ["domain", "pdb"]
     );
-    assert_eq!(flat.scp, listed.scp);
-    assert_eq!(flat.scp.random_orders, 5);
-    assert_eq!(flat.scp.goal_cover_orders_per_goal, 2);
-    let AbstractionSource::Domain(config) = &flat.sources.sources[0] else {
+    assert_eq!(listed.scp, single.scp);
+    assert_eq!(listed.scp.random_orders, 5);
+    assert_eq!(listed.scp.goal_cover_orders_per_goal, 2);
+    let AbstractionSource::Domain(config) = &single.sources.sources[0] else {
         panic!("domain source");
     };
     assert_eq!(config.cegar.max_states, 7);
-    assert!(flat.sources.sources[1].requirements().restricted);
+    assert!(listed.sources.sources[1].requirements().restricted);
 }
 
 #[test]
@@ -488,6 +468,8 @@ fn typed_sources_reject_misspellings_unknown_options_and_mixed_lists() {
         "astar(scp([domain()], [cartesian()]))",
         "astar(scp([]))",
         "astar(scp(domain(), [cartesian()]))",
+        "astar(scp(domain(), cartesian()))",
+        "astar(scp(numeric_pdb()))",
     ] {
         assert!(source_config(spec).is_err(), "{spec}");
     }
@@ -531,10 +513,21 @@ fn strict_icaps26_options_and_requirements_are_typed() {
 }
 
 #[test]
-fn numeric_pdb_sugars_preserve_explicit_pattern_strategies() {
-    for name in ["canonical_numeric_pdb", "max_numeric_pdb"] {
-        let spec = parse_call(&format!("{name}(patterns=greedy(max_pdb_states=321))")).unwrap();
-        configure(name, super::PdbSourceConfig::default(), &spec.args).unwrap();
+fn pdb_sources_take_patterns_and_heuristics_as_separate_options() {
+    for spec in [
+        "pdb(patterns=greedy(max_pdb_states=321), exploration_heuristic=lmcut)",
+        "pdb(patterns=systematic(max_pdb_states=321, max_pattern_size=2), failed_lookup_heuristic=lmcut)",
+        "pdb()",
+    ] {
+        let spec = parse_call(spec).unwrap();
+        configure("pdb", super::PdbSourceConfig::default(), &spec.args).unwrap();
+    }
+    for spec in [
+        "pdb(max_pdb_states=321)",
+        "pdb(patterns=greedy(exploration_heuristic=lmcut))",
+    ] {
+        let spec = parse_call(spec).unwrap();
+        configure("pdb", super::PdbSourceConfig::default(), &spec.args).unwrap_err();
     }
     // Positive values below Duration precision were already accepted.
     source_config("astar(canonical(domain(),construction_max_time=1e-100))").unwrap();

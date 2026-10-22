@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use crate::resource_limits::{Deadline, min_time_limit};
 
 use crate::config::{
-    ApplyOptions, ConfigArg, ConfigError, ConfigValue, FromOptionValue, TimeLimit, for_each_option,
+    ApplyOptions, ConfigArg, ConfigError, FromOptionValue, TimeLimit, for_each_option,
 };
 use crate::evaluation::abstractions::cartesian::CartesianAbstractionGenerator;
 use crate::evaluation::abstractions::collections::config::{CollectionConfig, MemberConfig};
@@ -15,7 +15,6 @@ use crate::evaluation::abstractions::component::AbstractionComponent;
 use crate::evaluation::abstractions::cost_partitioning::saturated::ScpConfig;
 use crate::evaluation::abstractions::domain::generator::DomainAbstractionGenerator;
 use crate::evaluation::abstractions::icaps26::{Icaps26CartesianConfig, Icaps26CartesianGenerator};
-use crate::evaluation::abstractions::pdb::canonical_pdb_heuristic::CanonicalNumericPdbConfig;
 use crate::evaluation::abstractions::pdb::pattern_collection::PatternCollection;
 use crate::evaluation::abstractions::pdb::pattern_database::PdbHeuristicConfig;
 use crate::evaluation::abstractions::pdb::pattern_generator_greedy::{
@@ -65,7 +64,7 @@ pub enum AbstractionSource {
     Cartesian(CartesianAbstractionConfig),
     #[option(rename = "cartesian_collection")]
     CartesianCollection(CartesianAbstractionCollectionConfig),
-    #[option(rename = "pdb", alias = "numeric_pdb")]
+    #[option(rename = "pdb")]
     Pdb(PdbSourceConfig),
     #[option(rename = "icaps26_cartesian")]
     Icaps26Cartesian(Icaps26CartesianConfig),
@@ -200,78 +199,37 @@ impl Default for PdbPatternsConfig {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+/// A pattern collection and the heuristics its pattern databases use inside
+/// their projections.
+#[derive(Debug, Clone, Default, crate::config::ApplyOptions)]
 pub struct PdbSourceConfig {
-    patterns: PdbPatternsConfig,
-    systematic_heuristic: PdbHeuristicConfig,
-}
-
-#[derive(Default, crate::config::ApplyOptions)]
-struct ExplicitPdbSourceConfig {
     patterns: PdbPatternsConfig,
     exploration_heuristic: PdbInternalHeuristic,
     frontier_heuristic: PdbInternalHeuristic,
     failed_lookup_heuristic: PdbInternalHeuristic,
 }
 
-impl ApplyOptions for PdbSourceConfig {
-    fn apply_options(&mut self, args: &[ConfigArg]) -> Result<(), crate::config::ConfigError> {
-        // The old flat PDB form is a typed alias for systematic patterns.
-        if !args.iter().any(|arg| arg.key() == Some("patterns")) {
-            let mut config = CanonicalNumericPdbConfig::default();
-            config.apply_options(args)?;
-            *self = Self::systematic(config);
-        } else {
-            let mut config = ExplicitPdbSourceConfig::default();
-            config.apply_options(args)?;
-            self.patterns = config.patterns;
-            self.systematic_heuristic = PdbHeuristicConfig {
-                exploration_heuristic: config.exploration_heuristic,
-                frontier_heuristic: config.frontier_heuristic,
-                failed_lookup_heuristic: config.failed_lookup_heuristic,
-            };
-        }
-        Ok(())
-    }
-}
-
 impl PdbSourceConfig {
-    pub(crate) fn systematic(config: CanonicalNumericPdbConfig) -> Self {
-        Self {
-            patterns: PdbPatternsConfig::Systematic(SystematicPatternGeneratorConfig {
-                max_pdb_states: config.max_pdb_states,
-                max_pattern_size: config.max_pattern_size,
-                only_interesting_patterns: config.only_interesting_patterns,
-            }),
-            systematic_heuristic: config.pdb_heuristic_config(),
-        }
-    }
-    pub(crate) fn greedy(config: GreedyPatternGeneratorConfig) -> Self {
-        Self {
-            patterns: PdbPatternsConfig::Greedy(config),
-            systematic_heuristic: config.pdb_heuristic_config(),
-        }
-    }
     fn build_patterns(
         self,
         task: &dyn AbstractNumericTask,
     ) -> (PatternCollection, usize, PdbHeuristicConfig) {
+        let heuristic = PdbHeuristicConfig {
+            exploration_heuristic: self.exploration_heuristic,
+            frontier_heuristic: self.frontier_heuristic,
+            failed_lookup_heuristic: self.failed_lookup_heuristic,
+        };
         match self.patterns {
             PdbPatternsConfig::Systematic(config) => (
                 generate_systematic_patterns(task, config),
                 config.max_pdb_states,
-                self.systematic_heuristic,
+                heuristic,
             ),
-            PdbPatternsConfig::Greedy(config) => {
-                let max_pdb_states = config.max_pdb_states;
-                let heuristic = config.pdb_heuristic_config();
-                let pattern = generate_greedy_pattern(task, config);
-                (
-                    PatternCollection::new(vec![pattern]),
-                    max_pdb_states,
-                    heuristic,
-                )
-            }
+            PdbPatternsConfig::Greedy(config) => (
+                PatternCollection::new(vec![generate_greedy_pattern(task, config)]),
+                config.max_pdb_states,
+                heuristic,
+            ),
         }
     }
 }
@@ -298,42 +256,23 @@ impl SourcesConfig {
         args: &[ConfigArg],
         options: &mut impl ApplyOptions,
     ) -> Result<(), ConfigError> {
-        let mut named = Vec::new();
-        let mut listed = false;
-        for (index, arg) in args.iter().enumerate() {
-            if arg.key().is_some() {
-                named.push(arg.clone());
-                continue;
-            }
-            match arg.value() {
-                ConfigValue::List(_) => {
-                    if listed {
-                        return Err("duplicate abstraction source list".into());
-                    }
-                    if index != 0 {
-                        return Err("the abstraction source list must be the first argument".into());
-                    }
-                    listed = true;
-                    self.sources = Vec::from_option_value(arg.value())
-                        .map_err(|error| error.at_option("sources"))?;
-                }
-                value => {
-                    if listed {
-                        return Err("all abstraction sources must appear inside the list".into());
-                    }
-                    self.sources
-                        .push(
-                            AbstractionSource::from_option_value(value).map_err(|error| {
-                                error
-                                    .at(format!("[{}]", self.sources.len()))
-                                    .at_option("sources")
-                            })?,
-                        );
-                }
-            }
+        let Some((sources, named)) = args
+            .split_first()
+            .filter(|(first, _)| first.key().is_none())
+        else {
+            return Err("the abstraction sources must be the first argument".into());
+        };
+        if let Some(extra) = named.iter().find(|arg| arg.key().is_none()) {
+            return Err(format!(
+                "unexpected positional argument `{}`; list several abstraction sources as `[a, b]`",
+                extra.value()
+            )
+            .into());
         }
+        self.sources =
+            Vec::from_option_value(sources.value()).map_err(|error| error.at_option("sources"))?;
         let mut other = Vec::new();
-        for_each_option(&named, &[], |key, value| {
+        for_each_option(named, &[], |key, value| {
             if key == "construction_max_time" {
                 self.construction_max_time = TimeLimit::positive_bounded(value)
                     .map_err(|error| format!("construction_max_time: {error}"))?;

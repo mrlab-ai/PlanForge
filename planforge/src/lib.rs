@@ -153,8 +153,8 @@ pub struct PlannersCli {
     pub grounding: GroundingOptions,
 
     /// Recursive search configuration.
-    /// Examples: `astar(blind())`, `astar(domain_abstraction())`,
-    /// `astar(check_admissible(domain_abstraction()))`.
+    /// Examples: `astar(blind())`, `astar(domain())`,
+    /// `astar(check_admissible(domain()))`.
     #[arg(
         long,
         value_name = "SPEC",

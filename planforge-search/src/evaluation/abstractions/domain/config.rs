@@ -34,7 +34,7 @@ mod registry_feature {
     use crate::heuristic_factory::*;
     pub struct DomainFeature;
     impl HeuristicFeature for DomainFeature {
-        const NAME: &'static str = "domain_abstraction";
+        const NAME: &'static str = "domain";
         type Config = DomainAbstractionConfig;
         fn requirements(_: &Self::Config) -> TaskRequirements {
             TaskRequirements::ABSTRACTABLE_GOAL

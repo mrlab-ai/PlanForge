@@ -243,33 +243,23 @@ impl crate::config::FromOptionValue for HeuristicConfig {
 #[derive(Clone, Copy)]
 pub struct HeuristicEntry {
     name: &'static str,
-    aliases: &'static [&'static str],
     parse: fn(&ConfigCall) -> Result<HeuristicConfig, ConfigError>,
 }
 impl HeuristicEntry {
     pub fn name(&self) -> &'static str {
         self.name
     }
-    pub const fn with_aliases(mut self, aliases: &'static [&'static str]) -> Self {
-        self.aliases = aliases;
-        self
-    }
     pub const fn with_name(mut self, name: &'static str) -> Self {
         self.name = name;
         self
     }
-    fn names(&self) -> impl Iterator<Item = &'static str> {
-        std::iter::once(self.name).chain(self.aliases.iter().copied())
-    }
     fn matches(&self, name: &str) -> bool {
-        self.names()
-            .any(|registered| registered.eq_ignore_ascii_case(name))
+        self.name.eq_ignore_ascii_case(name)
     }
 }
 pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
     HeuristicEntry {
         name: F::NAME,
-        aliases: &[],
         parse: parse_feature::<F>,
     }
 }
@@ -290,9 +280,9 @@ static BUILTIN: &[HeuristicEntry] = &[
     entry::<crate::evaluation::ff_heuristic::FfFeature>(),
     entry::<features::MaxFeature>(),
     entry::<features::CanonicalFeature>(),
-    entry::<features::ScpFeature>().with_aliases(&["cost_partitioning"]),
-    entry::<features::DomainFeature>().with_aliases(&["domain"]),
-    entry::<features::CartesianFeature>().with_aliases(&["cartesian"]),
+    entry::<features::ScpFeature>(),
+    entry::<features::DomainFeature>(),
+    entry::<features::CartesianFeature>(),
     entry::<
         features::SourceFeature<
             crate::evaluation::abstractions::domain::config::DomainAbstractionCollectionConfig,
@@ -303,15 +293,12 @@ static BUILTIN: &[HeuristicEntry] = &[
             crate::evaluation::abstractions::cartesian::CartesianAbstractionCollectionConfig,
         >,
     >(),
-    entry::<features::SourceFeature<PdbSourceConfig>>().with_aliases(&["numeric_pdb"]),
+    entry::<features::SourceFeature<PdbSourceConfig>>(),
     entry::<
         features::SourceFeature<crate::evaluation::abstractions::icaps26::Icaps26CartesianConfig>,
     >(),
-    entry::<features::PostHocFeature>().with_aliases(&["pho"]),
+    entry::<features::PostHocFeature>(),
     entry::<crate::evaluation::numeric_potential_config::NumericPotentialFeature>(),
-    entry::<features::GreedyPdbFeature>(),
-    entry::<features::CanonicalPdbFeature>(),
-    entry::<features::MaxPdbFeature>(),
     entry::<crate::evaluation::numeric_landmarks::lm_cut_numeric_heuristic::LmCutNumericFeature>(),
 ];
 
@@ -331,21 +318,19 @@ fn lookup(name: &str) -> Option<&'static HeuristicEntry> {
 }
 pub fn register_external_heuristics(entries: Vec<HeuristicEntry>) -> Result<(), String> {
     let mut names = std::collections::HashSet::new();
-    for entry in &entries {
-        for name in entry.names() {
-            if name.is_empty() {
-                return Err("external heuristic names must not be empty".into());
-            }
-            if BUILTIN.iter().any(|builtin| builtin.matches(name)) {
-                return Err(format!(
-                    "external heuristic `{name}` collides with a built-in heuristic"
-                ));
-            }
-            if !names.insert(name.to_ascii_lowercase()) {
-                return Err(format!(
-                    "external heuristic `{name}` is registered more than once"
-                ));
-            }
+    for HeuristicEntry { name, .. } in &entries {
+        if name.is_empty() {
+            return Err("external heuristic names must not be empty".into());
+        }
+        if BUILTIN.iter().any(|builtin| builtin.matches(name)) {
+            return Err(format!(
+                "external heuristic `{name}` collides with a built-in heuristic"
+            ));
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(format!(
+                "external heuristic `{name}` is registered more than once"
+            ));
         }
     }
     EXTERNAL
@@ -356,7 +341,7 @@ pub fn heuristic_names() -> impl Iterator<Item = &'static str> {
     BUILTIN
         .iter()
         .chain(external_heuristics())
-        .flat_map(HeuristicEntry::names)
+        .map(HeuristicEntry::name)
 }
 pub fn heuristic_help() -> String {
     format!(
@@ -520,7 +505,7 @@ pub(crate) fn single_wrapped_heuristic_spec(
 ) -> Result<ConfigCall, String> {
     let [arg] = args else {
         return Err(format!(
-            "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain_abstraction())`, \
+            "`{wrapper}` expects exactly one heuristic, e.g. `{wrapper}(domain())`, \
              but got {} arguments",
             args.len()
         ));

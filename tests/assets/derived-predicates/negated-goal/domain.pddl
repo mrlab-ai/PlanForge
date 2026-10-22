@@ -32,7 +32,7 @@
 ;; No action reads `(alarm ?v)` as a precondition, which is what `goal-condition`
 ;; covers and what this fixture deliberately does without: a domain abstraction
 ;; has no propositional axioms, so a derived precondition makes the whole
-;; `domain_abstraction` / `canonical(domain())` family refuse to build - that is
+;; `domain()` / `canonical(domain())` family refuse to build - that is
 ;; why the other eight fixtures are unsolvable under it. This fixture has to be
 ;; *solvable* there, because that is where the goal substitution happens.
 ;;

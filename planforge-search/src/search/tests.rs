@@ -667,7 +667,7 @@ fn configured_maximum_builds_arbitrary_and_mixed_children() {
         "astar(max([domain(), ff(), cartesian()]))",
         "astar(max([max(blind()), ff()]))",
         "astar(max([domain()]))",
-        "astar(max(domain(),cartesian()))",
+        "astar(max([domain(),cartesian()]))",
     ] {
         let config = parse_search_spec(text).unwrap();
         let heuristic = config.heuristics().next().unwrap().build(&context).unwrap();

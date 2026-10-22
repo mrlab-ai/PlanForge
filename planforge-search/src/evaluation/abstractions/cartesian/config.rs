@@ -31,7 +31,7 @@ mod registry_feature {
     use crate::heuristic_factory::*;
     pub struct CartesianFeature;
     impl HeuristicFeature for CartesianFeature {
-        const NAME: &'static str = "cartesian_abstraction";
+        const NAME: &'static str = "cartesian";
         type Config = CartesianAbstractionConfig;
         fn requirements(_: &Self::Config) -> TaskRequirements {
             TaskRequirements::ABSTRACTABLE_GOAL

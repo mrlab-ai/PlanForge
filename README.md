@@ -77,8 +77,7 @@ is enabled separately with `mpd=true` on A*.
 
 `max([ff(),lmcutnumeric(),domain(max_states=1000)])` takes the maximum over
 any heuristics. Abstraction sources among its children share one abstraction
-evaluator; other heuristics are evaluated alongside it. This also works with
-the flat form, for example `max(ff(),blind())`.
+evaluator; other heuristics are evaluated alongside it.
 
 Hierarchical abstraction sources make collection generation and combination
 independent. For example:
@@ -95,10 +94,13 @@ independent. For example:
       'astar(canonical([icaps26_cartesian(pick=min_unwanted,max_time=900)]))' \
       domain.pddl problem.pddl
 
-The `[...]` source-list form is canonical for `max`, `canonical` and `scp`; the
-older flat positional source form remains accepted. PDB sources
-select their generator explicitly with `patterns=systematic(...)` or
-`patterns=greedy(...)`.
+`max`, `canonical`, `scp` and `posthoc_optimization` take their children as
+their first argument: one list `[a, b]`, or a single child without brackets.
+Every abstraction source is also a heuristic on its own, the maximum over its
+abstractions: `astar(domain(...))`, `astar(pdb(...))`. A PDB source selects its
+pattern generator with `patterns=systematic(...)` (the default) or
+`patterns=greedy(...)`; `exploration_heuristic`, `frontier_heuristic` and
+`failed_lookup_heuristic` are options of `pdb(...)` itself and apply to both.
 
 Configuration values are calls, identifiers, nested lists, numbers or single- or
 double-quoted strings; anything else, such as a path, must be quoted, for example
@@ -145,7 +147,7 @@ Common options:
   - `astar(canonical(domain(...)))`
   - `astar(numeric_potential(opt=initial_state,max_potential=1e8))`
   - `astar(numeric_potential(opt=diverse_samples,num_heuristics=4,num_samples=100,max_potential=1e8,cache_estimates=true,invalidate_online_cache_on_growth=true),mpd=true)`
-  - `astar(posthoc_optimization(domain_collection(...)))` — LP-based dominator of canonical over the same abstraction sources; `pho(...)` is accepted as an alias
+  - `astar(posthoc_optimization(domain_collection(...)))` — LP-based dominator of canonical over the same abstraction sources
   - `astar(ff())`
   - `gbfs(ff())` — fast non-admissible search
   - `gbfs(lmcutnumeric())`

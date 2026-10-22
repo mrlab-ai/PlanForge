@@ -53,26 +53,20 @@ fn rejects_invalid_or_duplicate_astar_mpd() {
 }
 
 #[test]
-fn parses_astar_domain_abstraction_with_or_without_unit_parens() {
-    let h = astar_heuristic("astar(domain_abstraction)");
-    assert_eq!(h.name, "domain_abstraction");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(domain_abstraction())");
-    assert_eq!(h.name, "domain_abstraction");
-    assert!(h.args.is_empty());
-}
-
-#[test]
 fn parses_hierarchical_canonical_abstraction_sources() {
     let h = astar_heuristic(
-        "astar(canonical(domain_collection(max_states=100), cartesian(max_states=100), pdb(max_pdb_states=100)))",
+        "astar(canonical([domain_collection(max_states=100), cartesian(max_states=100), pdb(patterns=systematic(max_pdb_states=100))]))",
     );
     assert_eq!(h.name, "canonical");
-    let source_names: Vec<_> = h
-        .args
+    let [arg] = &h.args[..] else {
+        panic!("one source list");
+    };
+    let ConfigValue::List(sources) = arg.value() else {
+        panic!("a source list");
+    };
+    let source_names: Vec<_> = sources
         .iter()
-        .map(|arg| arg.value().as_call().unwrap().name())
+        .map(|source| source.as_call().unwrap().name())
         .collect();
     assert_eq!(source_names, ["domain_collection", "cartesian", "pdb"]);
 }
@@ -102,39 +96,6 @@ fn rejects_scp_without_abstraction_sources() {
 }
 
 #[test]
-fn parses_astar_greedy_numeric_pdb_with_or_without_unit_parens() {
-    let h = astar_heuristic("astar(greedy_numeric_pdb)");
-    assert_eq!(h.name, "greedy_numeric_pdb");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(greedy_numeric_pdb())");
-    assert_eq!(h.name, "greedy_numeric_pdb");
-    assert!(h.args.is_empty());
-}
-
-#[test]
-fn parses_astar_canonical_numeric_pdb_with_or_without_unit_parens() {
-    let h = astar_heuristic("astar(canonical_numeric_pdb)");
-    assert_eq!(h.name, "canonical_numeric_pdb");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(canonical_numeric_pdb())");
-    assert_eq!(h.name, "canonical_numeric_pdb");
-    assert!(h.args.is_empty());
-}
-
-#[test]
-fn parses_astar_lmcutnumeric_with_or_without_unit_parens() {
-    let h = astar_heuristic("astar(lmcutnumeric)");
-    assert_eq!(h.name, "lmcutnumeric");
-    assert!(h.args.is_empty());
-
-    let h = astar_heuristic("astar(lmcutnumeric())");
-    assert_eq!(h.name, "lmcutnumeric");
-    assert!(h.args.is_empty());
-}
-
-#[test]
 fn display_round_trips_max_domain_collection() {
     let parsed =
         parse_search_spec("astar(max(domain_collection(max_states=42, max_time=infinity)))")
@@ -155,7 +116,7 @@ fn display_round_trips_canonical_domain_collection() {
 #[test]
 fn display_round_trips_hierarchical_abstraction_collection() {
     let parsed = parse_search_spec(
-        "astar(canonical(domain_collection(max_states=42), cartesian(max_states=42), pdb(max_pdb_states=42)))",
+        "astar(canonical([domain_collection(max_states=42), cartesian(max_states=42), pdb(patterns=systematic(max_pdb_states=42))]))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -181,15 +142,15 @@ fn rejects_heuristic_combinators_in_abstraction_source_positions() {
 
 #[test]
 fn display_round_trips_positional_args() {
-    let parsed = parse_search_spec("astar(greedy_numeric_pdb(321, false, 7))").unwrap();
+    let parsed = parse_search_spec("astar(pdb(patterns=greedy(321, false, 7)))").unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
     assert_eq!(parsed, reparsed);
 }
 
 #[test]
-fn display_round_trips_greedy_numeric_pdb() {
+fn display_round_trips_greedy_pdb() {
     let parsed = parse_search_spec(
-        "astar(greedy_numeric_pdb(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random, exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
+        "astar(pdb(patterns=greedy(max_pdb_states=42, numeric_first=false, random_seed=9, variable_order_type=cg_goal_random), exploration_heuristic=lmcut, frontier_heuristic=blind, failed_lookup_heuristic=lmcut))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -197,9 +158,9 @@ fn display_round_trips_greedy_numeric_pdb() {
 }
 
 #[test]
-fn display_round_trips_canonical_numeric_pdb() {
+fn display_round_trips_canonical_systematic_pdb() {
     let parsed = parse_search_spec(
-        "astar(canonical_numeric_pdb(max_pdb_states=42, max_pattern_size=3, only_interesting_patterns=false, exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut))",
+        "astar(canonical(pdb(patterns=systematic(max_pdb_states=42, max_pattern_size=3), exploration_heuristic=blind, frontier_heuristic=lmcut, failed_lookup_heuristic=lmcut)))",
     )
     .unwrap();
     let reparsed = parse_search_spec(&parsed.to_string()).unwrap();
@@ -218,12 +179,12 @@ fn display_round_trips_lmcutnumeric() {
 
 #[test]
 fn parses_check_admissible_around_a_nested_heuristic() {
-    let spec = astar_heuristic("astar(check_admissible(domain_abstraction()))");
+    let spec = astar_heuristic("astar(check_admissible(domain()))");
     assert_eq!(spec.name, "check_admissible");
     assert_eq!(spec.args.len(), 1);
     let inner = ConfigCall::from_value(spec.args[0].value()).unwrap();
-    assert_eq!(inner.name, "domain_abstraction");
-    assert!(spec.contains_call("domain_abstraction"));
+    assert_eq!(inner.name, "domain");
+    assert!(spec.contains_call("domain"));
 }
 
 #[test]
@@ -234,11 +195,10 @@ fn check_admissible_round_trips_through_display() {
     assert_eq!(spec.to_string(), "astar(check_admissible(blind()))");
     assert_eq!(parse_search_spec(&spec.to_string()).unwrap(), spec);
 
-    let with_options =
-        parse_search_spec("astar(check_admissible(domain_abstraction(max_time=1.5)))").unwrap();
+    let with_options = parse_search_spec("astar(check_admissible(domain(max_time=1.5)))").unwrap();
     assert_eq!(
         with_options.to_string(),
-        "astar(check_admissible(domain_abstraction(max_time=1.5)))"
+        "astar(check_admissible(domain(max_time=1.5)))"
     );
     assert_eq!(
         parse_search_spec(&with_options.to_string()).unwrap(),
@@ -354,7 +314,7 @@ fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
     for text in [
         "astar(max(ff()))",
         "astar(max([blind(),ff()]))",
-        "astar(max(domain(),lmcutnumeric()))",
+        "astar(max([domain(),lmcutnumeric()]))",
     ] {
         let config = parse_search_spec(text).unwrap();
         assert_eq!(parse_search_spec(&config.to_string()).unwrap(), config);
@@ -368,11 +328,12 @@ fn maximum_accepts_any_heuristic_and_unions_nested_requirements() {
     );
     let error = parse_search_spec("astar(max([ff(),scp(domian())]))").unwrap_err();
     assert!(
-        error.contains("max.heuristics[1].scp.sources[0]"),
+        error.contains("max.heuristics[1].scp.sources: unknown AbstractionSource `domian`"),
         "{error}"
     );
     assert!(parse_search_spec("astar(max([]))").is_err());
     assert!(parse_search_spec("astar(max([ff()],blind()))").is_err());
+    assert!(parse_search_spec("astar(max(ff(),blind()))").is_err());
 }
 
 #[test]
