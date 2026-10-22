@@ -12,7 +12,9 @@ impl NumericRootTask {
     /// unchanged. Nonlinear comparisons keep their expression definitions.
     /// Terms are ordered by variable. A multivariate part is divided by the
     /// magnitude of its leading coefficient, leaving that coefficient +1 or
-    /// -1; its orientation is retained. A unary part instead becomes its
+    /// -1; its orientation is retained. If that scale cannot retain all terms
+    /// as finite nonzero canonical coefficients, use the smallest coefficient
+    /// magnitude as the unit instead. A unary part becomes its
     /// regular variable, reversing the comparison for a negative coefficient.
     pub(super) fn normalize_linear_comparisons(&mut self) {
         self.fold_arithmetic_constants();
@@ -106,11 +108,23 @@ impl NumericRootTask {
             let leading = terms
                 .first()
                 .map_or(ONE_VALUE, |(_, coefficient)| *coefficient);
-            let scale = if terms.len() == 1 {
+            let mut scale = if terms.len() == 1 {
                 leading
             } else {
                 leading.abs()
             };
+            if terms.len() > 1
+                && terms.iter().any(|(_, coefficient)| {
+                    let normalized = float_tolerance::canonicalize(*coefficient / scale);
+                    normalized == ZERO_VALUE || !normalized.is_finite()
+                })
+            {
+                scale = terms
+                    .iter()
+                    .map(|(_, coefficient)| coefficient.abs())
+                    .min_by(NumericValue::total_cmp)
+                    .expect("a multivariate part has terms");
+            }
             if scale < ZERO_VALUE {
                 operator = match operator {
                     ComparisonOperator::LessThan => ComparisonOperator::GreaterThan,

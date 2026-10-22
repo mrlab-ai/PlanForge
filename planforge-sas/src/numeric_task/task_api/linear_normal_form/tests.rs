@@ -347,3 +347,25 @@ fn shared_expression_dags_are_not_expanded_as_trees() {
     );
     assert!(task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
 }
+
+#[test]
+fn scaling_preserves_small_terms_in_a_multivariate_comparison() {
+    use CalOperator::*;
+    // Leading-coefficient scaling would round y's nonzero coefficient away.
+    let task = task(
+        &[0.0, 1.0],
+        &[1e6, 1e-7, 0.0],
+        &[(Product, 0, 2), (Product, 1, 3), (Sum, 5, 6)],
+        &[(7, 4, ComparisonOperator::GreaterThan)],
+    );
+    let NumericExpression::Linear(terms) = &task.assignment_axioms[0].expression else {
+        panic!("expected a linear sum");
+    };
+    assert_eq!(terms.len(), 2);
+    assert!(
+        terms
+            .iter()
+            .all(|(_, coefficient)| *coefficient != ZERO_VALUE)
+    );
+    assert!(task.numeric_conditions.all()[0].evaluate_point(&task.numeric_state));
+}
