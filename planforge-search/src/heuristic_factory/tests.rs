@@ -1,8 +1,8 @@
 //! What each `--search` option name means, tested through the text a user
 //! actually types.
 //!
-//! The option language is parsed in this crate too, so these tests need nothing
-//! from `planforge-searcher` and the factory's internals stay private.
+//! The option language is parsed in this crate too, so the factory's internals
+//! stay private.
 
 use super::{AbstractionSource, SourcesConfig};
 use super::{HeuristicEntry, abstraction_config, heuristic_names, register_external_heuristics};

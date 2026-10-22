@@ -1021,7 +1021,7 @@ unsafe impl Send for GilReleasedTask {}
 impl GilReleasedTask {
     fn solve(
         self,
-        spec: &planforge_searcher::SearchConfig,
+        spec: &planforge_search::config::SearchConfig,
         time_limit: Option<Duration>,
         max_memory: Option<u64>,
     ) -> std::io::Result<SearchResult> {
@@ -1487,7 +1487,7 @@ impl Task {
         max_memory: Option<u64>,
     ) -> PyResult<PySearchResult> {
         let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-        let spec = planforge_searcher::parse_search_spec(&search).map_err(SpecError::new_err)?;
+        let spec = planforge_search::config::parse_search_spec(&search).map_err(SpecError::new_err)?;
         let time_limit = max_time.map(Duration::from_secs_f64);
         let task = GilReleasedTask(self.task.clone());
         let result = py
@@ -1684,7 +1684,7 @@ fn solve(
     }
 
     let search = search.unwrap_or_else(|| "astar(blind())".to_string());
-    let spec = planforge_searcher::parse_search_spec(&search).map_err(SpecError::new_err)?;
+    let spec = planforge_search::config::parse_search_spec(&search).map_err(SpecError::new_err)?;
 
     let time_limit = max_time.map(Duration::from_secs_f64);
     let memory_limit = max_memory;

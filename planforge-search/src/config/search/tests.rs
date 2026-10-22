@@ -1,4 +1,4 @@
-use super::*;
+use crate::config::*;
 
 fn astar_heuristic(input: &str) -> ConfigCall {
     match parse_search_spec(input).unwrap() {

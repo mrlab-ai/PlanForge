@@ -4,7 +4,7 @@
 //! The crate owns the process-level concerns -- argument parsing, resource
 //! limits and the wrapped child process, logging, the plan file and the exit
 //! code -- and delegates the planning itself to `planforge-translate` and
-//! `planforge-searcher`/`planforge-search`.
+//! `planforge-search`.
 //! It therefore orchestrates the complete PDDL translation → SAS+ task →
 //! search pipeline. Embedders that need the standard CLI with an additional
 //! native heuristic should use [`run_with_heuristics`].
@@ -30,6 +30,7 @@ use limits::{
 };
 use planforge_sas::numeric_task::{AbstractNumericTask, NumericRootTask, TaskRef};
 use planforge_sas::state_registry::StateRegistry;
+use planforge_search::config::SearchConfig;
 use planforge_search::heuristic_factory::{
     BuildContext, HeuristicBuildError, HeuristicEntry, register_external_heuristics,
 };
@@ -38,7 +39,6 @@ use planforge_search::search::{
 };
 use planforge_search::state_space::{EnumerationLimits, OwnedStateSpace, enumerate_state_space};
 use planforge_search::task_restriction::{build_icaps26_restricted_task, build_restricted_task};
-use planforge_searcher::SearchConfig;
 use std::ffi::OsString;
 use std::io::{BufWriter, Write};
 use std::num::NonZero;
@@ -159,7 +159,7 @@ pub struct PlannersCli {
         long,
         value_name = "SPEC",
         default_value = "astar(blind())",
-        value_parser = planforge_searcher::parse_search_spec,
+        value_parser = planforge_search::config::parse_search_spec,
         long_help = planforge_search::search::search_algorithm_help()
     )]
     pub search: SearchConfig,
@@ -532,7 +532,7 @@ pub fn run_internal(cli: &PlannersCli) -> std::io::Result<SearchResult> {
         "subcommands are dispatched before the search pipeline"
     );
     register_event_handlers();
-    planforge_searcher::preflight_required_backends(&cli.search)?;
+    cli.search.preflight()?;
 
     let start_time = std::time::Instant::now();
     let (mut task, sas_label) = if cli.inputs.len() == 2 {

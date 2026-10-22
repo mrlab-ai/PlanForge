@@ -378,7 +378,6 @@ dependencies = [
  "mimalloc",
  "planforge-sas",
  "planforge-search",
- "planforge-searcher",
  "planforge-translate",
  "time",
  "tracing",
@@ -405,7 +404,6 @@ dependencies = [
  "planforge",
  "planforge-sas",
  "planforge-search",
- "planforge-searcher",
  "planforge-translate",
  "pyo3",
 ]
@@ -435,15 +433,6 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "planforge-searcher"
-version = "0.1.0"
-dependencies = [
- "planforge-sas",
- "planforge-search",
  "tracing",
 ]
 

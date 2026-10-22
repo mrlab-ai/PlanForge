@@ -176,10 +176,10 @@ Workspace crates:
 - `planforge` — both binaries: the planner (`planforge`) and the translate-only
   staging tool (`planforge-translator`), plus the CLI, the reporting allocator,
   the resource limits, the portfolio and the plan output.
-- `planforge-searcher` — which search engine a `--search` spec names.
 - `planforge-translate`, `planforge-search`, `planforge-sas` — translation, search and task libraries.
-  Adding a heuristic is a change to `planforge-search` alone: the heuristic's own
-  module, and one arm of `heuristic_factory::build_heuristic_from_spec`.
+  `planforge-search` also parses the `--search` language. Adding a heuristic is a
+  change to `planforge-search` alone: the heuristic's own module, and one entry
+  in the `heuristic_factory` registry.
 - `planforge-config-derive` — `#[derive(ApplyOptions)]`, which cannot be merged: a
   `proc-macro` crate is its own compilation unit. It derives each config's
   positional-argument order from its field order; a config that flattens shared

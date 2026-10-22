@@ -36,6 +36,12 @@ impl SearchConfig {
         )
     }
 
+    /// Fail before translation if a heuristic needs a solver backend this
+    /// build does not have.
+    pub fn preflight(&self) -> std::io::Result<()> {
+        self.heuristics().try_for_each(HeuristicConfig::preflight)
+    }
+
     pub fn contains_call(&self, name: &str) -> bool {
         self.heuristics()
             .any(|heuristic| heuristic.contains_call(name))
@@ -202,3 +208,6 @@ fn call_from_value(value: &ConfigValue) -> Result<ConfigCall, String> {
         ConfigValue::List(_) => Err("expected call, got a list".to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests;

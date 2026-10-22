@@ -116,17 +116,10 @@ jobs:
             --config "patch.crates-io.planforge-translate.path='$GITHUB_WORKSPACE/planforge-translate'" \
             --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
 
-          cargo package -p planforge-searcher \
-            --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'" \
-            --config "patch.crates-io.planforge-search.path='$GITHUB_WORKSPACE/planforge-search'" \
-            --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
-            --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
-
           cargo package -p planforge \
             --config "patch.crates-io.planforge-sas.path='$GITHUB_WORKSPACE/planforge-sas'" \
             --config "patch.crates-io.planforge-translate.path='$GITHUB_WORKSPACE/planforge-translate'" \
             --config "patch.crates-io.planforge-search.path='$GITHUB_WORKSPACE/planforge-search'" \
-            --config "patch.crates-io.planforge-searcher.path='$GITHUB_WORKSPACE/planforge-searcher'" \
             --config "patch.crates-io.planforge-config-derive.path='$GITHUB_WORKSPACE/planforge-config-derive'" \
             --config "patch.crates-io.planforge-cplex.path='$GITHUB_WORKSPACE/planforge-cplex'"
 
