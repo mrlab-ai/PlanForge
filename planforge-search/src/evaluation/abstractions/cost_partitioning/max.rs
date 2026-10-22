@@ -53,7 +53,7 @@ impl Heuristic for MaxAbstractionHeuristic<'_> {
 
 pub use registry_feature::MaxFeature;
 mod registry_feature {
-    use crate::config::{ConfigError, configure};
+    use crate::config::ConfigError;
     use crate::evaluation::{Heuristic, maximum::MaximumHeuristic};
     use crate::heuristic_factory::*;
 
@@ -63,16 +63,6 @@ mod registry_feature {
         type Config = MaxConfig;
         fn nested(config: &Self::Config) -> Vec<&HeuristicConfig> {
             config.heuristics.iter().collect()
-        }
-        fn nested_specs(
-            spec: &crate::config::ConfigCall,
-        ) -> Result<Vec<crate::config::ConfigCall>, String> {
-            let config = configure(&spec.name, MaxConfig::default(), &spec.args)?;
-            Ok(config
-                .heuristics
-                .iter()
-                .map(|child| (**child).clone())
-                .collect())
         }
         fn validate(config: &Self::Config) -> Result<(), ConfigError> {
             if config.heuristics.is_empty() {

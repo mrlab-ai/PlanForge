@@ -3,7 +3,7 @@ use std::sync::Arc;
 use planforge_sas::numeric_task::{NumericRootTask, TaskRef};
 use planforge_search::config::parse_call;
 use planforge_search::heuristic_factory::{
-    BuildContext, build_heuristic_from_spec, entry, register_external_heuristics,
+    BuildContext, HeuristicConfig, entry, register_external_heuristics,
 };
 
 #[test]
@@ -13,7 +13,10 @@ fn external_registration_after_heuristic_construction_is_rejected() {
         env!("CARGO_MANIFEST_DIR"),
         "/../tests/assets/numeric_sas/example2.sas"
     )));
-    build_heuristic_from_spec(&spec, &BuildContext::new(&task)).unwrap();
+    HeuristicConfig::from_spec(&spec)
+        .unwrap()
+        .build(&BuildContext::new(&task))
+        .unwrap();
 
     let error = register_external_heuristics(vec![
         entry::<planforge_search::evaluation::heuristic::BlindFeature>().with_name("too_late"),

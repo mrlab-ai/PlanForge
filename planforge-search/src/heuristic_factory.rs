@@ -100,9 +100,6 @@ pub trait HeuristicFeature: 'static {
     fn nested(_: &Self::Config) -> Vec<&HeuristicConfig> {
         Vec::new()
     }
-    fn nested_specs(_: &ConfigCall) -> Result<Vec<ConfigCall>, String> {
-        Ok(Vec::new())
-    }
     fn source(_: &Self::Config) -> Option<AbstractionSource> {
         None
     }
@@ -247,9 +244,7 @@ impl crate::config::FromOptionValue for HeuristicConfig {
 pub struct HeuristicEntry {
     name: &'static str,
     aliases: &'static [&'static str],
-    backend: RequiredBackend,
     parse: fn(&ConfigCall) -> Result<HeuristicConfig, ConfigError>,
-    nested_specs: fn(&ConfigCall) -> Result<Vec<ConfigCall>, String>,
 }
 impl HeuristicEntry {
     pub fn name(&self) -> &'static str {
@@ -275,9 +270,7 @@ pub const fn entry<F: HeuristicFeature>() -> HeuristicEntry {
     HeuristicEntry {
         name: F::NAME,
         aliases: &[],
-        backend: F::BACKEND,
         parse: parse_feature::<F>,
-        nested_specs: F::nested_specs,
     }
 }
 fn parse_feature<F: HeuristicFeature>(spec: &ConfigCall) -> Result<HeuristicConfig, ConfigError> {
@@ -371,22 +364,6 @@ pub fn heuristic_help() -> String {
         heuristic_names().collect::<Vec<_>>().join(", ")
     )
 }
-pub fn validate_heuristic_spec(spec: &ConfigCall) -> Result<(), String> {
-    let entry = lookup(&spec.name).ok_or_else(|| {
-        format!(
-            "unknown heuristic `{}`; expected one of {}",
-            spec.name,
-            heuristic_names().collect::<Vec<_>>().join(", ")
-        )
-    })?;
-    for child in (entry.nested_specs)(spec)? {
-        validate_heuristic_spec(&child)?;
-    }
-    Ok(())
-}
-pub fn heuristic_requirements(spec: &ConfigCall) -> Result<TaskRequirements, String> {
-    Ok(HeuristicConfig::from_spec(spec)?.requirements())
-}
 fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {
     if backend == RequiredBackend::None {
         return Ok(());
@@ -401,22 +378,6 @@ fn check_backend(backend: RequiredBackend) -> std::io::Result<()> {
             "the requested LP-backed heuristic requires unrestricted CPLEX, which is not compiled into this build; rebuild with `--features cplex` and set CPLEX_ROOT",
         ))
     }
-}
-pub fn preflight_required_backends(spec: &ConfigCall) -> std::io::Result<()> {
-    fn backend(spec: &ConfigCall) -> Result<RequiredBackend, String> {
-        let entry =
-            lookup(&spec.name).ok_or_else(|| format!("unknown heuristic `{}`", spec.name))?;
-        if entry.backend == RequiredBackend::Cplex {
-            return Ok(RequiredBackend::Cplex);
-        }
-        for child in (entry.nested_specs)(spec)? {
-            if backend(&child)? == RequiredBackend::Cplex {
-                return Ok(RequiredBackend::Cplex);
-            }
-        }
-        Ok(RequiredBackend::None)
-    }
-    check_backend(backend(spec).map_err(std::io::Error::other)?)
 }
 #[derive(Debug)]
 pub enum HeuristicBuildError {
@@ -576,11 +537,4 @@ impl From<ConfigError> for HeuristicBuildError {
     fn from(error: ConfigError) -> Self {
         Self::Config(error)
     }
-}
-
-pub fn build_heuristic_from_spec<'a>(
-    spec: &ConfigCall,
-    context: &BuildContext<'a>,
-) -> Result<Box<dyn Heuristic + 'a>, HeuristicBuildError> {
-    HeuristicConfig::from_spec(spec)?.build(context)
 }
