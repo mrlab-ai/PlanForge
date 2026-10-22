@@ -99,20 +99,32 @@ pub struct LandmarkCutNumericHeuristic<'task> {
     state_value_cache: RefCell<StateValueCache>,
 }
 
+impl LmCutNumericConfig {
+    fn validate(&self) -> Result<(), crate::config::ConfigError> {
+        for (name, value) in [("precision", self.precision), ("epsilon", self.epsilon)] {
+            if value.is_nan() || value < 0.0 {
+                return Err(crate::config::ConfigError::from(format!(
+                    "lmcutnumeric {name} must be non-negative, got {value}"
+                ))
+                .at_option(name));
+            }
+        }
+        if self.random_pcf {
+            return Err(crate::config::ConfigError::from(
+                "lmcutnumeric random_pcf=true is not implemented yet",
+            )
+            .at_option("random_pcf"));
+        }
+        Ok(())
+    }
+}
+
 impl<'task> LandmarkCutNumericHeuristic<'task> {
     pub fn from_config(
         task: &'task dyn AbstractNumericTask,
         config: LmCutNumericConfig,
     ) -> Result<Self, String> {
-        if config.precision < 0.0 {
-            return Err("lmcutnumeric precision must be non-negative".to_string());
-        }
-        if config.epsilon < 0.0 {
-            return Err("lmcutnumeric epsilon must be non-negative".to_string());
-        }
-        if config.random_pcf {
-            return Err("lmcutnumeric random_pcf=true is not implemented yet".to_string());
-        }
+        config.validate().map_err(|error| error.to_string())?;
         Ok(Self {
             name: "lmcutnumeric".to_string(),
             task,
@@ -179,21 +191,7 @@ impl crate::heuristic_factory::HeuristicFeature for LmCutNumericFeature {
     const NAME: &'static str = "lmcutnumeric";
     type Config = LmCutNumericConfig;
     fn validate(config: &Self::Config) -> Result<(), crate::config::ConfigError> {
-        for (name, value) in [("precision", config.precision), ("epsilon", config.epsilon)] {
-            if value < 0.0 {
-                return Err(crate::config::ConfigError::from(format!(
-                    "lmcutnumeric {name} must be non-negative"
-                ))
-                .at_option(name));
-            }
-        }
-        if config.random_pcf {
-            return Err(crate::config::ConfigError::from(
-                "lmcutnumeric random_pcf=true is not implemented yet",
-            )
-            .at_option("random_pcf"));
-        }
-        Ok(())
+        config.validate()
     }
     fn build<'a>(
         config: &Self::Config,

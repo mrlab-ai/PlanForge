@@ -65,14 +65,8 @@ impl crate::config::ApplyOptions for Icaps26CartesianConfig {
                 }
                 "max_states" => self.max_states = usize::from_option_value(arg.value())?,
                 "max_time" => {
-                    let seconds = f64::from_option_value(arg.value())?;
-                    self.max_time = if seconds.is_infinite() {
-                        None
-                    } else {
-                        Some(Duration::try_from_secs_f64(seconds).map_err(|error| {
-                            format!("invalid ICAPS 2026 max_time {seconds}: {error}")
-                        })?)
-                    };
+                    self.max_time =
+                        crate::config::TimeLimit::from_option_value(arg.value())?.duration()?;
                 }
                 "random_seed" => {
                     let seed = u64::from_option_value(arg.value())?;

@@ -195,8 +195,8 @@ impl ConfigCall {
     /// config, which owns the canonical option order.
     pub fn from_value(value: &ConfigValue) -> Result<Self, String> {
         match value {
-            ConfigValue::Atom(name) => Ok(Self::new(name.clone(), Vec::new())),
-            ConfigValue::Call(call) => Ok(Self::new(call.name.clone(), call.args.clone())),
+            ConfigValue::Call(call) => Ok(call.clone()),
+            ConfigValue::Atom(atom) => Err(format!("expected heuristic, got `{atom}`")),
             ConfigValue::List(_) => Err("expected heuristic, got a list".to_string()),
         }
     }
@@ -371,11 +371,9 @@ impl FromOptionValue for u64 {
 impl FromOptionValue for f64 {
     fn from_option_value(value: &ConfigValue) -> Result<Self, crate::config::ConfigError> {
         let s = value.as_atom()?;
-        if s.eq_ignore_ascii_case("infinity") {
-            Ok(f64::INFINITY)
-        } else {
-            Ok(s.parse::<f64>()
-                .map_err(|_| format!("expected float or infinity, got `{s}`"))?)
+        match s.parse::<f64>() {
+            Ok(number) if !number.is_nan() => Ok(number),
+            _ => Err(format!("expected a number or infinity, got `{s}`").into()),
         }
     }
 }

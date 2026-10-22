@@ -46,7 +46,7 @@ fn parses_and_round_trips_astar_mpd() {
 #[test]
 fn rejects_invalid_or_duplicate_astar_mpd() {
     let error = parse_search_spec("astar(blind(), mpd=yes)").unwrap_err();
-    assert!(error.contains("expects true or false"), "got `{error}`");
+    assert_eq!(error, "astar.mpd: expected boolean, got `yes`");
 
     let error = parse_search_spec("astar(blind(), mpd=true, mpd=false)").unwrap_err();
     assert!(error.contains("duplicate option `mpd`"), "got `{error}`");
@@ -351,4 +351,17 @@ fn construction_clock_overflow_is_rejected_without_rejecting_capped_source_budge
     parse_search_spec("astar(scp(domain(max_time=1e19),construction_max_time=900))").unwrap();
     // Potential optimization uses elapsed seconds rather than an Instant deadline.
     parse_search_spec("astar(numeric_potential(max_diverse_generation_time=1e100))").unwrap();
+}
+
+#[test]
+fn rejects_nan_floats_quoted_heuristics_and_zero_budgets() {
+    for spec in [
+        "astar(lmcutnumeric(precision=nan))",
+        "astar(\"blind\")",
+        "astar(5)",
+        "astar(canonical(icaps26_cartesian(max_time=-infinity)))",
+        "astar(canonical(domain(), construction_max_time=1e-100))",
+    ] {
+        assert!(parse_search_spec(spec).is_err(), "{spec}");
+    }
 }

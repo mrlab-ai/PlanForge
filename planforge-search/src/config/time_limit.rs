@@ -30,9 +30,9 @@ impl TimeLimit {
     }
     pub(crate) fn positive_bounded(value: &ConfigValue) -> Result<Self, String> {
         let limit = Self::from_option_value(value)?;
-        if !limit.0.is_finite() || limit.0 <= 0.0 {
+        if !limit.0.is_finite() || limit.duration()? == Some(Duration::ZERO) {
             return Err(format!(
-                "time limit must be finite and > 0, got {}",
+                "time limit must be finite and at least one nanosecond, got {}",
                 limit.0
             ));
         }

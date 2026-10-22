@@ -130,7 +130,7 @@ fn extract_astar_options(call: &ConfigCall) -> Result<SearchConfig, String> {
                 }
                 saw_mpd = true;
                 mpd = bool::from_option_value(&arg.value)
-                    .map_err(|_| "`astar` option `mpd` expects true or false".to_string())?;
+                    .map_err(|error| error.at_option("mpd").at("astar"))?;
             }
             Some(other) => return Err(format!("unknown option `{other}` for `astar`")),
         }

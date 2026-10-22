@@ -529,8 +529,8 @@ fn pdb_sources_take_patterns_and_heuristics_as_separate_options() {
         let spec = parse_call(spec).unwrap();
         configure("pdb", super::PdbSourceConfig::default(), &spec.args).unwrap_err();
     }
-    // Positive values below Duration precision were already accepted.
-    source_config("astar(canonical(domain(),construction_max_time=1e-100))").unwrap();
+    // A positive budget that rounds to no time at all is no budget.
+    source_config("astar(canonical(domain(),construction_max_time=1e-100))").unwrap_err();
 }
 
 #[test]

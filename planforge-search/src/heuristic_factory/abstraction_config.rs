@@ -274,8 +274,7 @@ impl SourcesConfig {
         let mut other = Vec::new();
         for_each_option(named, &[], |key, value| {
             if key == "construction_max_time" {
-                self.construction_max_time = TimeLimit::positive_bounded(value)
-                    .map_err(|error| format!("construction_max_time: {error}"))?;
+                self.construction_max_time = TimeLimit::positive_bounded(value)?;
             } else {
                 other.push(ConfigArg::new(Some(key.into()), value.clone()));
             }
