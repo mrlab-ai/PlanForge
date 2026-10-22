@@ -803,13 +803,13 @@ fn function_numeric_context_keeps_consistent_additive_derived_partition() {
         + derived_partition * hash_multipliers[3];
 
     let mut numeric_intervals = Vec::new();
-    fill_state_intervals(
+    assert!(fill_state_intervals(
         &task,
         function.partitions(),
         function.layout(),
         state_hash,
         &mut numeric_intervals,
-    );
+    ));
 
     assert_eq!(
         numeric_intervals[0],

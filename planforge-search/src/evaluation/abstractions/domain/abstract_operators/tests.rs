@@ -842,12 +842,12 @@ fn combo_interval_build_keeps_missing_derived_operand_unknown_during_propagation
 
     let function = identity_function(&task, partitions);
     let mut intervals = Vec::new();
-    fill_source_intervals(
+    assert!(fill_source_intervals(
         &task,
         &function,
         &[(VariableIndex::from_usize(0), 0)],
         &mut intervals,
-    );
+    ));
 
     assert_eq!(intervals[0], Interval::singleton(NumericValue::new(5.0)));
     assert_eq!(intervals[1], Interval::singleton(NumericValue::new(0.0)));
