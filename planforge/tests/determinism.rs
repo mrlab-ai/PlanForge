@@ -71,14 +71,17 @@ fn strip_ansi(line: &str) -> String {
     plain
 }
 
-/// A reported message that says how long something took, and so cannot be
+/// A reported message that measures time or memory, and so cannot be
 /// expected to repeat. Everything else is expected to, verbatim.
 ///
 /// `t=` catches the progress lines, which pair an elapsed time with a
 /// resident-set size; `time` the search and total times; ` in: ` the durations
-/// the pipeline reports for a stage of its own.
-fn reports_a_duration(message: &str) -> bool {
-    message.contains("t=") || message.contains("time") || message.contains(" in: ")
+/// the pipeline reports for a stage of its own; `Peak` the final memory peaks.
+fn reports_a_measurement(message: &str) -> bool {
+    message.contains("t=")
+        || message.contains("time")
+        || message.contains(" in: ")
+        || message.starts_with("Peak ")
 }
 
 /// Everything the planner reported that a rerun has to report again.
@@ -102,7 +105,7 @@ fn reported_lines(domain: &Path, problem: &Path) -> Vec<String> {
 
     text.lines()
         .map(message_of)
-        .filter(|message| !message.is_empty() && !reports_a_duration(message))
+        .filter(|message| !message.is_empty() && !reports_a_measurement(message))
         .collect()
 }
 
